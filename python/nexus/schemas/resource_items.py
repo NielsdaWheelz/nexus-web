@@ -78,6 +78,7 @@ class ExcerptOut(_Out):
 class NamedResourceBodyOut(_Out):
     kind: Literal["named"] = "named"
     title: str
+    image_url: str | None
     media_kind: str | None
     contributors: list[ContributorCreditOut] | None
 

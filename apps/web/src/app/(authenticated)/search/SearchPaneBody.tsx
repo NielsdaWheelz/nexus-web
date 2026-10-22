@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -144,12 +144,12 @@ function SearchResults({ query }: { query: SearchQuery }) {
     {list.current && list.metadata?.semantic_status === "unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }} announcement="Polite" /> : null}
     {query.view === "resources" ? resourceSections.filter((section) => section.rows.length > 0).map((section) => <section className={styles.section} key={section.key} aria-label={section.label}>
       <h2 className={styles.sectionHeading}>{section.label}</h2>
-      <ResourceOutlineList scope={`search:${key}:${section.key}`} ariaLabel={section.label} busy={searching}>
+      <ResourceList ariaLabel={section.label} busy={searching}>
         {section.rows.map((row) => <SearchResult key={row.item.ref} row={row} />)}
-      </ResourceOutlineList>
-    </section>) : <ResourceOutlineList scope={`search:${key}`} ariaLabel="Passages" busy={searching}>
+      </ResourceList>
+    </section>) : <ResourceList ariaLabel="Passages" busy={searching}>
       {results.map((row) => <SearchResult key={row.item.ref} row={row} />)}
-    </ResourceOutlineList>}
+    </ResourceList>}
     {count === 0 && !failure ? blank && !unsupported ? <FeedbackNotice
       content={{ tone: "Info", title: query.view === "passages" ? "search inside your sources" : "search your nexus", message: query.view === "passages" ? "type text to find individual passages." : "type a name or text, or open filters to narrow by format or author." }} announcement="None"
     /> : list.current && list.complete ? <div className={styles.empty}>
@@ -169,14 +169,14 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
-  return <ResourceOutlineRow incoming={null}
+  return <ResourceIndexRow
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
     nestedContent={passage ? <div className={styles.matchingPassage}>
-      <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">
+      <ResourceList ariaLabel="Matching passage">
         <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />
-      </ResourceOutlineList>
+      </ResourceList>
     </div> : undefined}
   />;
 }

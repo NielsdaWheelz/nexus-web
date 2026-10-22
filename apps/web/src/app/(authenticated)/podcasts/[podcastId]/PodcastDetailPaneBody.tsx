@@ -1,7 +1,5 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // One show: exact listening counts and visit-local detail above episode pages.
 // Head reads observe lifecycle/settings; episode and ordering changes reload pages.
 // Preparation belongs to this visit until confirmation hands off an immutable
@@ -369,7 +367,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     handle: podcastId,
     bodies: { linkedItems: connections },
   });
-  const insertion = useResourceComposer({kind:"resource",ref:`podcast:${podcastId}`}, `podcast:${podcastId}`, "add item");
   const text = filterRows.query.trim();
   const known = STATES.find(option => option.value === state)?.value;
   const podcast = ready?.data.podcast;
@@ -449,7 +446,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       disabled: reason !== undefined, disabledReason: reason, onSelect: () => { void prepare(target); } };
   });
   usePaneChrome({
-    menuActions: [...(insertion.action ? [insertion.action] : []), ...bulkActions],
+    menuActions: bulkActions,
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
       subscription !== null
@@ -477,7 +474,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     await requestPodcastRefresh({ kind: "Podcast", podcast_id: podcastId });
   });
   return (
-    <>{insertion.content}<PaneSurface>
+    <PaneSurface>
         {head.status === "loading" ? (
           <PaneLoadingState label="Loading podcast…" announcement="Polite" />
         ) : null}
@@ -591,6 +588,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             }} announcement="None" />}
           />
         )}
-    </PaneSurface></>
+    </PaneSurface>
   );
 }

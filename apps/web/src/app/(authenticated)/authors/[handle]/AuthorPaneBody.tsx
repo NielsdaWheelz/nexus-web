@@ -1,7 +1,5 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // The author pane: the person's other names and their visible works. The url
 // owns the works view (`sort`, `direction`) and passes it to the server, which
 // validates it; the text filter stays local. The filter and count cover the
@@ -143,7 +141,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
       contributors: selectMediaAuthors(work.contributors),
       context: null,
       resourceRef: null,
-      insertionSource:null,
     };
   }
   const roles = work.role_facts.map((fact) =>
@@ -157,7 +154,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
     contributors: [],
     context: { kind: "Text", text },
     resourceRef,
-    insertionSource:{kind:"resource",ref:work.resource_ref},
   };
 }
 
@@ -324,9 +320,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     refetchWorks().catch(() => {});
     return { kind: "Complete" as const, announcement: "Refreshing author" };
   }, [refetchDetail, refetchWorks]);
-  const insertion=useResourceComposer(detail.status === "ready" ? {kind:"resource",ref:detail.data.resource_ref} : null,`contributor:${handle}`,"add item");
   usePaneChrome({
-    menuActions:insertion.action ? [insertion.action] : [],
     query: queryControls,
     resourceRef:
       detail.status === "ready"
@@ -386,7 +380,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const { other_names: otherNames } = detail.data;
   return (
     <PaneSurface>
-      {insertion.content}
       <div className={styles.detail}>
         {otherNames.length > 0 ? (
           <section className={styles.otherNames}>

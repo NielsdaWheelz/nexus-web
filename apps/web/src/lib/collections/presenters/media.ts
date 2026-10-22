@@ -41,7 +41,6 @@ export function presentMedia(
     activity: null,
     exceptionalStatus: null,
     resourceRef: occurrence.resourceRef,
-    insertionSource: {kind: "resource", ref: `media:${summary.media_id}`},
     selected: occurrence.selected,
   };
 }

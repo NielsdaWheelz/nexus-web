@@ -119,8 +119,8 @@ export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Pro
   if (!insertion) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "this note is no longer available");
   return insertion;
 }
-export async function deleteLink({ linkId, requireUnannotated }: { linkId: string; requireUnannotated: boolean }): Promise<void> {
-  await graphCommands([{ kind: "unlink", link_id: linkId, require_unannotated: requireUnannotated, expected: null }]);
+export async function deleteLink({ linkId }: { linkId: string }): Promise<void> {
+  await graphCommands([{ kind: "unlink", link_id: linkId, expected: null }]);
 }
 
 /** The origin has already finalized its own local state before notifying observers. */
@@ -134,7 +134,7 @@ export async function mutateConnection(
 ): Promise<void> {
   switch (command.kind) {
     case "unlink":
-      return deleteLink({ linkId: command.link_id, requireUnannotated: false });
+      return deleteLink({ linkId: command.link_id });
     case "detach_context":
       await apiFetch(
         `/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`,

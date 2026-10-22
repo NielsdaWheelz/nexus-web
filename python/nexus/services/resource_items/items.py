@@ -158,7 +158,7 @@ def _resource_item_out(
     body: ResourceBodyOut
     if row is None:
         body = NamedResourceBodyOut(
-            title="Resource unavailable", media_kind=None, contributors=None
+            title="Resource unavailable", image_url=None, media_kind=None, contributors=None
         )
         source = None
         label = "Resource unavailable"
@@ -284,7 +284,10 @@ def _body(
             image_count=0,
         )
     return NamedResourceBodyOut(
-        title=row.get("title") or "Untitled", media_kind=row.get("media_kind"), contributors=credits
+        title=row.get("title") or "Untitled",
+        image_url=row.get("image_url"),
+        media_kind=row.get("media_kind"),
+        contributors=credits,
     )
 
 
@@ -409,7 +412,7 @@ _QUERIES = {
     "note_block": _NOTE_SQL,
     "conversation": "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled conversation') AS title FROM conversations WHERE id = ANY(:ids) AND owner_user_id = :viewer_id",
     "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role, 'conversation:' || c.id AS owner_ref FROM messages m JOIN conversations c ON c.id = m.conversation_id AND c.owner_user_id = :viewer_id WHERE m.id = ANY(:ids) AND m.status != 'pending'",
-    "podcast": "SELECT id, title FROM podcasts WHERE id = ANY(:ids)",
+    "podcast": "SELECT id, title, image_url FROM podcasts WHERE id = ANY(:ids)",
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",
     "external_snapshot": "SELECT id, title FROM resource_external_snapshots WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",

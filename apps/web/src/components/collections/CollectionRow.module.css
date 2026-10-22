@@ -10,10 +10,8 @@
   min-width: 0;
   max-width: 100%;
   align-items: baseline;
-  overflow: hidden;
-  white-space: nowrap;
+  flex-wrap: wrap;
 }
-
 
 
 .supportSeparator {
@@ -24,16 +22,13 @@
 
 .context {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
-
 
 
 .activity {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   white-space: nowrap;
 }
 
@@ -44,5 +39,3 @@
   align-items: center;
   gap: var(--space-2);
 }
-
-.year { white-space: nowrap; }

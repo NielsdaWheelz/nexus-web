@@ -36,6 +36,15 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
+index/outline separates collection/search/context browsing from outline editing
+across notes outline, note bodies/editor, notes pages/index, resource items/actions,
+resource graph, wire schemas, libraries/collections, search pane, chat, reader
+connections, workspace and visual primitives. against integrated main `968b76824`,
+authored runtime changes by -1,961 lines (2,049 added, 4,010 deleted), including new files and excluding
+generated wire, migration and docs. it deletes reference-token editors, branch
+focus/zoom, internal outline dragging, link-note paths and index outline sessions.
+these are scoped feature changes; earlier area totals retain their stated bases.
+
 durable writing recounts its 31 touched areas against main `d56c9e5f1`:
 192,268 authored runtime lines become 197,757 (+5,489 net; 9,967 added,
 4,478 deleted). the journal and immutable delivery intents replace the volatile

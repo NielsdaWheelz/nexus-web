@@ -7,7 +7,7 @@
 
 import { useRef, type ReactNode } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
-import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
+import { formatPublicationDate } from "@/lib/resources/metadata";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { apiFetch } from "@/lib/api/client";
@@ -87,7 +87,7 @@ const publication = (value: string | null): ReactNode =>
   value === null ? (
     "unknown"
   ) : (
-    <time dateTime={value}>{formatCollectionPublicationDate(value)}</time>
+    <time dateTime={value}>{formatPublicationDate(value)}</time>
   );
 
 function MediaInfo({
@@ -201,7 +201,7 @@ function MediaInfo({
             ? null
             : media.original_published_date === null
               ? "first publication remains unknown"
-              : `first publication unverified; kept ${formatCollectionPublicationDate(media.original_published_date)}`,
+              : `first publication unverified; kept ${formatPublicationDate(media.original_published_date)}`,
         ),
         fact(
           "not established by this run",

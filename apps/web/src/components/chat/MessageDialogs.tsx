@@ -18,7 +18,7 @@ import styles from "./MessageFooter.module.css";
 
 export type MessageDialogRequest = {
   readonly messageId: string;
-  readonly opener: HTMLButtonElement | null;
+  readonly opener: HTMLElement | null;
 } & (
   | { readonly kind: "Information" }
   | { readonly kind: "Repeat"; readonly operation: "rerun" | "regenerate"; readonly openIntent: OpenIntent }

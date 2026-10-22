@@ -1,0 +1,69 @@
+.bodyCount {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+.named {
+  font-weight: var(--weight-medium);
+}
+.prose,
+.passage {
+  white-space: pre-wrap;
+}
+.code {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  tab-size: 2;
+}
+.context,
+.quiet {
+  color: var(--ink-muted);
+}
+.exact {
+  color: inherit;
+  background: var(--accent-muted);
+  border-radius: var(--radius-xs);
+  box-decoration-break: clone;
+}
+.exact[data-color="yellow"] {
+  background: var(--highlight-yellow);
+}
+.exact[data-color="green"] {
+  background: var(--highlight-green);
+}
+.exact[data-color="blue"] {
+  background: var(--highlight-blue);
+}
+.exact[data-color="pink"] {
+  background: var(--highlight-pink);
+}
+.exact[data-color="purple"] {
+  background: var(--highlight-purple);
+}
+
+.source {
+  color: var(--ink-muted);
+  text-decoration: none;
+}
+.source:hover {
+  text-decoration: underline;
+}
+.match {
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+}
+.matchEvidence {
+  margin-top: var(--space-1);
+  color: var(--ink-muted);
+}
+
+.bibliography { color: var(--ink-muted); font-size: inherit; }
+
+.source:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Credit links inherit their family's readable bibliography size. */
+.credits > span { font-size: inherit; line-height: inherit; }

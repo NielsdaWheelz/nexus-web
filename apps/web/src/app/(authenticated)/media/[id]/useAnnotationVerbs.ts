@@ -61,7 +61,7 @@ export interface AnnotationVerbs {
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
   learn(intent?: OpenIntent): void;
-  share(trigger: HTMLButtonElement | null): void;
+  share(trigger: HTMLElement | null): void;
   focus(id: string | null): void;
   hover(id: string | null): void;
   chooseMark(id: string): void;

@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
-from nexus.schemas.note_bodies import Body
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
@@ -24,7 +23,6 @@ EdgeOrigin = Literal[
     "discovery",
     "document_embed",
     "assistant",
-    "link_note",
 ]
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 ConnectionDirection = Literal["incoming", "outgoing", "both"]
@@ -58,13 +56,6 @@ class ConnectionQueryRequest(Model):
     filters: ConnectionFiltersRequest = Field(default_factory=ConnectionFiltersRequest)
     limit: int = Field(default=100, ge=1, le=100)
     cursor: str | None = None
-
-
-class ConnectionLinkNoteOut(Model):
-    note_block_id: UUID
-    source_link_id: UUID
-    target_link_id: UUID
-    item: ResourceItemOut
 
 
 class ConnectionCreationOut(Model):
@@ -107,7 +98,6 @@ class ConnectionOut(Model):
     source: ResourceItemOut
     target: ResourceItemOut
     other: ResourceItemOut
-    link_note: ConnectionLinkNoteOut | None
     creation: ConnectionCreationOut | None
     mutation: ConnectionMutation | None
     created_at: datetime
@@ -182,24 +172,3 @@ InsertionSource = Annotated[
     | LinkDailyPageSource,
     Field(discriminator="kind"),
 ]
-
-
-class AbsentLinkNoteExpected(Model):
-    kind: Literal["absent"]
-    source_ref: str
-    links_version: int = Field(ge=1)
-
-
-class ExistingLinkNoteExpected(Model):
-    kind: Literal["version"]
-    version: int = Field(ge=1)
-
-
-class SetLinkNoteRequest(Model):
-    note_id: UUID
-    body_pm_json: Body
-    source_link_id: UUID
-    target_link_id: UUID
-    expected: Annotated[
-        AbsentLinkNoteExpected | ExistingLinkNoteExpected, Field(discriminator="kind")
-    ]

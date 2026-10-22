@@ -1,6 +1,7 @@
 "use client";
 
-import type { ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -22,9 +23,9 @@ export interface ContextActionSection {
  */
 export default function ContextualActionMenu({
   sections, resourceRef, title, subjectKey, onDefect,
-  omitResourceActions = [], showSourceSubject = false, commandDisabledReason, ...props
+  omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, ...props
 }: Pick<ActionMenuProps,
-  "label" | "placement" | "align" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo"
+  "label" | "placement" | "align" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
 > & {
   readonly title: string;
   readonly subjectKey: string;
@@ -32,11 +33,19 @@ export default function ContextualActionMenu({
   readonly resourceRef?: CanonicalResourceRef;
   readonly omitResourceActions?: readonly string[];
   readonly showSourceSubject?: boolean;
+  readonly displayedActivation?: ResourceActivation;
   readonly commandDisabledReason?: string;
   /** Loading defects belong to the resource's pane, even outside its provider. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 }) {
   const pane = usePaneRuntime();
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(any-pointer: coarse)");
+    const update = () => setCoarse(query.matches);
+    update(); query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
   const resource = useResourceActions(resourceRef ?? null, onDefect);
   const state = resource.state;
   const groups: MenuContent["sections"][number][] = sections
@@ -44,8 +53,16 @@ export default function ContextualActionMenu({
     .map((section) => ({ id: section.id, label: {
       Pane: "pane", Occurrence: "this occurrence", View: "view",
     }[section.id], options: section.actions }));
+  if (coarse && displayedActivation?.kind === "route" && displayedActivation.href && pane) {
+    const href = displayedActivation.href;
+    groups.push({ id: "Navigation", label: null, options: [{
+      kind: "command", id: "Row.OpenInNewPane", label: "open in new pane",
+      restoreFocusOnClose: false,
+      onSelect: () => { pane.activateTarget({ target: { href, labelHint: title }, disposition: { kind: "Fork" } }); },
+    }] });
+  }
   if (state?.kind === "Ready") {
-    const options = state.options.filter((action) => !omitResourceActions.includes(action.id));
+    const options = state.options.filter((action) => !omitResourceActions.includes(action.id) && !(displayedActivation && ["Open", "OpenInNewPane"].includes(action.id)));
     if (options.length > 0) groups.push({
       id: "Resource", label: showSourceSubject ? `source: ${state.facts.label}` : "item", options,
     });
@@ -56,7 +73,7 @@ export default function ContextualActionMenu({
     options: section.options.map((action) => commandDisabledReason && action.kind === "command"
       ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action),
   })) };
-  const identity = { title, subjectKey: `${pane?.visitId ?? "workspace"}:${subjectKey}:${resourceRef ?? "local"}` };
+  const identity = { title, subjectKey: `${pane?.visitId ?? "workspace"}:${subjectKey}:${resourceRef ?? "local"}:${JSON.stringify(displayedActivation ?? null)}` };
   const source: MenuSource = resourceRef ? {
     ...identity, kind: "Prepared", prepare: resource.prepare,
     state: state?.kind === "Ready" ? { kind: "Ready", request: state.request, content } : state,

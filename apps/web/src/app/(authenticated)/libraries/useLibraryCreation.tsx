@@ -55,7 +55,7 @@ export function useLibraryCreation() {
   const [visible, setVisible] = useState(false);
   const open = useRef(false);
   const mounted = useRef(false);
-  const trigger = useRef<HTMLButtonElement | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
   const navigating = useRef(false);
   const composing = useRef(false);
   const flowIntent = useRef<OpenIntent>("default");
@@ -73,7 +73,7 @@ export function useLibraryCreation() {
   }, [readCreation]);
 
   const transition = (creation: Creation) => owner.set(value => ({ ...value, creation }));
-  const show = (triggerEl: HTMLButtonElement | null, intent: OpenIntent) => {
+  const show = (triggerEl: HTMLElement | null, intent: OpenIntent) => {
     trigger.current = triggerEl;
     navigating.current = false;
     flowIntent.current = intent;

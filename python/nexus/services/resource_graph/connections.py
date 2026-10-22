@@ -17,11 +17,10 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight, PassageAnchor, ResourceEdge, ResourceVersion
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
     ConnectionDirection,
-    ConnectionLinkNoteOut,
     ConnectionOut,
     ConnectionPageOut,
     ConnectionQueryRequest,
@@ -31,9 +30,9 @@ from nexus.schemas.resource_graph import (
     UnlinkMutation,
 )
 from nexus.schemas.resource_items import CitationSourceTargetKey
-from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pairs, link_pair
+from nexus.services.resource_graph.edges import Pair
 from nexus.services.resource_graph.owners import owner_rows_sql
-from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
+from nexus.services.resource_graph.refs import assert_resource_ref, require_ref
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.resource_items.evidence import evidence_items
 from nexus.services.resource_items.items import resource_items_out
@@ -177,16 +176,6 @@ def query_connections(
     )
 
 
-def connection_for_edge(
-    db: Session, *, viewer_id: UUID, edge_id: UUID, ref: ResourceRef
-) -> ConnectionOut:
-    """One owned edge seen from its endpoint ``ref``; 404 unless owned and incident."""
-    row = db.get(ResourceEdge, edge_id)
-    if row is None or row.user_id != viewer_id or (ref.scheme, ref.id) not in link_pair(row):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Connection not found")
-    return hydrate_connections(db, viewer_id, [row], {(ref.scheme, ref.id)}, "both")[0]
-
-
 def hydrate_connections(
     db: Session,
     viewer_id: UUID,
@@ -194,8 +183,7 @@ def hydrate_connections(
     matched: set[Pair],
     direction: ConnectionDirection,
 ) -> list[ConnectionOut]:
-    """Endpoints (without per-media document metrics), activations and link-note
-    previews, each loaded once for the page."""
+    """Endpoints, canonical live media bodies and activations, batched for the page."""
     refs = list(
         {
             uri: assert_resource_ref(uri)
@@ -226,15 +214,6 @@ def hydrate_connections(
             strict=True,
         )
     )
-    pairs = {row.id: link_pair(row) for row in rows if row.origin == "user"}
-    notes = link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=list(pairs.values()))
-    note_ids = [ids[0] for ids in notes.values()]
-    note_items = {
-        item.ref: item
-        for item in resource_items_out(
-            db, viewer_id=viewer_id, refs=[ResourceRef("note_block", id_) for id_ in note_ids]
-        )
-    }
     chat_ids = {
         row.source_id
         for row in rows
@@ -259,16 +238,6 @@ def hydrate_connections(
     provenance = assistant_writes.edge_provenance(
         db, viewer_id, [row.id for row in rows if row.origin == "assistant"]
     )
-    attachment_ids = {
-        (edge.source_id, edge.target_scheme, edge.target_id): edge.id
-        for edge in db.scalars(
-            select(ResourceEdge).where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.origin == "link_note",
-                ResourceEdge.source_id.in_([note for group in notes.values() for note in group]),
-            )
-        )
-    }
     items = []
     for row in rows:
         source = f"{row.source_scheme}:{row.source_id}"
@@ -287,15 +256,6 @@ def hydrate_connections(
                 target_ref=target,
                 expected_context_version=chat_versions[row.source_id],
             )
-        link_note = None
-        if row.id in pairs and pairs[row.id] in notes:
-            note = notes[pairs[row.id]][0]
-            link_note = ConnectionLinkNoteOut(
-                note_block_id=note,
-                item=note_items[f"note_block:{note}"],
-                source_link_id=attachment_ids[(note, row.source_scheme, row.source_id)],
-                target_link_id=attachment_ids[(note, row.target_scheme, row.target_id)],
-            )
         items.append(
             ConnectionOut(
                 edge_id=row.id,
@@ -311,7 +271,6 @@ def hydrate_connections(
                 source=endpoints[source],
                 target=captured.get(row.id, endpoints[target]),
                 other=endpoints[source] if incoming else captured.get(row.id, endpoints[target]),
-                link_note=link_note,
                 creation=creation,
                 mutation=mutation,
                 created_at=row.created_at,

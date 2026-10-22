@@ -19,12 +19,8 @@ import { admitWriting, assertWritingRuntimeToken, readDraft, writingRuntimeToken
 import styles from "./AnnotationNoteEditor.module.css";
 
 type AttachedNote = Schema<"LinkedNoteBlockRef">;
-export type AnnotationTarget =
-  | { readonly kind: "highlight"; readonly id: string }
-  | { readonly kind: "link"; readonly id: string; readonly sourceRef: string };
-export type AnnotationAttachment =
-  | { readonly kind: "highlight"; readonly linkId: string }
-  | { readonly kind: "link"; readonly sourceLinkId: string; readonly targetLinkId: string };
+export type AnnotationTarget = { readonly kind: "highlight"; readonly id: string };
+export type AnnotationAttachment = { readonly kind: "highlight"; readonly linkId: string };
 export interface AnnotationNoteEditorProps {
   target: AnnotationTarget;
   attachment: AnnotationAttachment;
@@ -61,7 +57,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
   const text = useText(ref);
   const attached = !props.attachmentRemoved && (note !== null || text?.acked != null);
   const referencing = props.session.activeReference === (props.occurrenceKey ?? ref);
-  const versionRef = target.kind === "highlight" ? `highlight:${target.id}` : target.sourceRef;
+  const versionRef = `highlight:${target.id}`;
   const slot = usePaneFreeServerValue<Schema<"ResourceVersionState">>({
     key: attached || props.attachmentRemoved ? null : `annotation-slot:${versionRef}`,
     stale: "",
@@ -75,17 +71,13 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
     },
   });
   const linksVersion = slot.status === "ready" ? slot.data.links_version : null;
-  const publication = useMemo<Extract<Publication, { kind: "attach_highlight" | "attach_link" }> | null>(() => {
+  const publication = useMemo<Extract<Publication, { kind: "attach_highlight" }> | null>(() => {
     if (linksVersion === null) return null;
-    if (target.kind === "highlight" && attachment.kind === "highlight") return {
+    return {
       kind: "attach_highlight", highlight_id: target.id, request: { note_id: noteId, link_id: attachment.linkId,
         body_pm_json: emptyBody().body_pm_json, expected: { kind: "absent", version: linksVersion } },
     };
-    if (target.kind !== "link" || attachment.kind !== "link") throw new Error("annotation target and attachment disagree");
-    return { kind: "attach_link", link_id: target.id, request: { note_id: noteId,
-      source_link_id: attachment.sourceLinkId, target_link_id: attachment.targetLinkId, body_pm_json: emptyBody().body_pm_json,
-      expected: { kind: "absent", source_ref: versionRef, links_version: linksVersion } } };
-  }, [attachment, linksVersion, noteId, target.id, target.kind, versionRef]);
+  }, [attachment, linksVersion, noteId, target.id]);
   useEffect(() => {
     if (note) adoptText(ref, { body_pm_json: note.body_pm_json, body_text: note.body_text }, note.body_version);
     else if (!readText(ref)) createText(ref, emptyBody(), null);
@@ -105,7 +97,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
     if (version === null || reported.current === version || !text?.acked || typeof text.acked.value === "string") return;
     reported.current = version;
     latest.current.onSaved(target.id, {
-      note_block_id: noteId, link_id: attachment.kind === "highlight" ? attachment.linkId : attachment.sourceLinkId,
+      note_block_id: noteId, link_id: attachment.linkId,
       ...text.acked.value, body_version: version, embedded_item: note?.embedded_item ?? null,
     });
   }, [attachment, note?.embedded_item, noteId, target.id, text, version]);
@@ -116,19 +108,14 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
     const owner = props.onDetached;
     const failed = (error: unknown) => {
       if (!mounted.current || latest.current.noteId !== noteId || handleUnauthenticatedApiError(error)) return;
-      const title = target.kind === "link" ? "note wasn’t removed from link" : "annotation wasn’t removed";
+      const title = "annotation wasn’t removed";
       feedback.offer({ key: "annotation-note", announcement: "Polite", content: isApiError(error) && apiTransportFeedback(error, title) || {
         tone: "Danger", title, message: "your writing is kept. review the attachment before trying again.",
       } });
     };
     setDetaching(true);
     try {
-      const intent = target.kind === "highlight" && attachment.kind === "highlight"
-        ? { kind: "detach_highlight" as const, highlight_id: target.id, note_id: noteId, link_id: attachment.linkId }
-        : target.kind === "link" && attachment.kind === "link"
-          ? { kind: "detach_link" as const, link_id: target.id, note_id: noteId, source_link_id: attachment.sourceLinkId, target_link_id: attachment.targetLinkId }
-          : null;
-      if (intent === null) throw new Error("annotation target and attachment disagree");
+      const intent = { kind: "detach_highlight" as const, highlight_id: target.id, note_id: noteId, link_id: attachment.linkId };
       const admitted = admitWriting(intent, snapshotText(ref).then(snapshot => [snapshot]));
       void admitted.settled.then(ack => {
         assertWritingRuntimeToken(token);
@@ -149,9 +136,9 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
   if (!text || typeof text.value === "string") return null;
   return <div className={styles.shell} data-editable={editable ? "true" : "false"}>
     <CanonicalNoteEditor session={props.session} occurrence={{ key: props.occurrenceKey ?? ref, noteRef: ref }}
-      continuation={target.kind === "highlight" ? { source: { kind: "resource", ref }, position: null,
-        occurrencePrefix: props.occurrenceKey ?? ref, path: [] } : null}
-      label={props.label ?? (target.kind === "highlight" ? "edit note: annotation" : "edit note: note on link")}
+      continuation={{ source: { kind: "resource", ref }, position: null,
+        occurrencePrefix: props.occurrenceKey ?? ref, path: [] }}
+      label={props.label ?? "edit note: annotation"}
       editable={editable && !writing.paused} embeddedItem={note?.embedded_item ?? null} atomicEmbeds={props.atomicEmbeds} />
     {!attached && slot.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t prepare this attachment",
       message: text.durable ? "your draft is saved on this device. retry to save it here." : "keep this tab open until your draft is saved on this device.", requestId: slot.error.requestId }}
@@ -159,7 +146,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
     <div className={styles.actions}>
       <WritingStatus textRef={ref} />
       {attached && editable ? <Button variant="ghost" size="sm" onClick={() => void detach()} disabled={detaching || referencing || writing.paused || !text.ready}>
-        {target.kind === "link" ? "remove note from link" : "remove annotation"}
+        remove annotation
       </Button> : null}
     </div>
   </div>;

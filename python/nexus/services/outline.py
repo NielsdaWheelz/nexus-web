@@ -185,7 +185,7 @@ def apply_in_current_transaction(
     if any(isinstance(command, Move) for command in commands) and len(commands) != 1:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Move must be the only command")
     if unlinks:
-        strictest: dict[UUID, bool] = {}
+        ids: set[UUID] = set()
         for command in unlinks:
             if command.expected is not None:
                 known = authored_identities.recognize(
@@ -210,11 +210,9 @@ def apply_in_current_transaction(
                             "Unlink fence is not an owned link endpoint",
                         )
                     check(endpoint, command.expected.links_version)
-            strictest[command.link_id] = (
-                strictest.get(command.link_id, False) or command.require_unannotated
-            )
-        for id, strict in strictest.items():
-            links.unlink_in_txn(db, viewer_id=viewer_id, link_id=id, require_unannotated=strict)
+            ids.add(command.link_id)
+        for id in sorted(ids):
+            links.unlink_in_txn(db, viewer_id=viewer_id, link_id=id)
         return
     body_targets = {command.note_id for command in commands if isinstance(command, SetBody)}
     removed_ids = {
@@ -633,7 +631,9 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
                 action_ref=ref.uri,
                 label=title,
                 preview=ResourcePreviewOut(
-                    body=NamedResourceBodyOut(title=title, media_kind=None, contributors=None),
+                    body=NamedResourceBodyOut(
+                        title=title, image_url=None, media_kind=None, contributors=None
+                    ),
                     source=None,
                     annotation=None,
                 ),

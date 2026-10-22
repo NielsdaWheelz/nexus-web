@@ -87,6 +87,7 @@ import {
   type NoteBody,
 } from "@/lib/notes/noteBody";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/useOutlineSession";
+import type {OutlineSession, OutlineEditorCommands} from "@/lib/notes/useOutlineSession";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteEditor.module.css";
 
@@ -111,6 +112,7 @@ export interface StructuralKeys {
 
 export interface NoteEditorProps {
   reference?: ReferenceInputHost | null;
+  outlineSession?: OutlineSession;
   editorKey: string;
   occurrenceKey?: string;
   /** The acknowledged note identity; drafts supply null. */
@@ -519,13 +521,51 @@ export default function NoteEditor(props: NoteEditorProps) {
       return true;
     };
     const undoCommand: Command = (state, dispatch, current) =>
-      run(() => latest.current.history
-        ? latest.current.history.undo()
-        : ownUndo(state, dispatch, current))(state, dispatch, current);
+      run(() => latest.current.outlineSession
+        ? latest.current.outlineSession.executeCommand("undo")
+        : latest.current.history ? latest.current.history.undo() : ownUndo(state, dispatch, current))(state, dispatch, current);
     const redoCommand: Command = (state, dispatch, current) =>
-      run(() => latest.current.history
-        ? latest.current.history.redo()
-        : ownRedo(state, dispatch, current))(state, dispatch, current);
+      run(() => latest.current.outlineSession
+        ? latest.current.outlineSession.executeCommand("redo")
+        : latest.current.history ? latest.current.history.redo() : ownRedo(state, dispatch, current))(state, dispatch, current);
+    const commands: OutlineEditorCommands = {
+      key: latest.current.occurrenceKey ?? "",
+      insertLabel: latest.current.occurrenceKey?.startsWith("insertion:") ? "insert item" : "split note at caret",
+      commandState(command) {
+        const current = viewRef.current;
+        if (!current || !latest.current.editable || busy.current || current.composing)
+          return {enabled: false, reason: "finish the current text operation first"};
+        const query = referenceRef.current.getState();
+        if (query) {
+          if (command === "undo" || command === "redo")
+            return {enabled: (command === "undo" ? ownUndo : ownRedo)(current.state), reason: null};
+          return {enabled: false, reason: "finish linking or return to prose first"};
+        }
+        if (command === "undo" || command === "redo") return latest.current.history
+          ? latest.current.outlineSession!.historyState(command)
+          : {enabled: (command === "undo" ? ownUndo : ownRedo)(current.state), reason: null};
+        if (command === "insert") return {enabled: !!latest.current.keys?.split && current.state.selection.$from.parent.type === schema.nodes.paragraph,
+          reason: "insert requires an editable paragraph"};
+        return latest.current.outlineSession!.occurrenceCommandState(commands.key, command);
+      },
+      executeCommand(command) {
+        if (!commands.commandState(command).enabled) return;
+        const current = viewRef.current!;
+        const query = referenceRef.current.getState();
+        if (command === "undo" || command === "redo") {
+          if (query || !latest.current.history) (command === "undo" ? ownUndo : ownRedo)(current.state, current.dispatch, current);
+          else (command === "undo" ? latest.current.history?.undo : latest.current.history?.redo)?.();
+          return;
+        }
+        if (command === "insert") {
+          syncNativeSelection(current);
+          const state = current.state.selection.empty ? current.state : current.state.apply(current.state.tr.deleteSelection());
+          const body = state.doc.firstChild!;
+          const offset = state.selection.$from.parentOffset;
+          latest.current.keys!.split!(bodyFromNode(body.copy(body.content.cut(0, offset))), bodyFromNode(body.copy(body.content.cut(offset))));
+        } else latest.current.outlineSession!.executeOccurrenceCommand(commands.key, command);
+      },
+    };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
       state: EditorState.create({
@@ -698,11 +738,8 @@ export default function NoteEditor(props: NoteEditorProps) {
             event.key.toLowerCase() === "z"
           ) {
             event.preventDefault();
-            (event.shiftKey ? ownRedo : ownUndo)(
-              current.state,
-              current.dispatch,
-              current,
-            );
+            if (latest.current.outlineSession) latest.current.outlineSession.executeCommand(event.shiftKey ? "redo" : "undo");
+            else (event.shiftKey ? ownRedo : ownUndo)(current.state, current.dispatch, current);
             return true;
           }
           // Without an outline command, Escape belongs to the containing overlay.
@@ -718,12 +755,10 @@ export default function NoteEditor(props: NoteEditorProps) {
           if (!latest.current.editable || busy.current || current.composing)
             return true;
           const intent = referenceRef.current.getState();
-          if (intent !== null)
-            return (redo ? ownRedo : ownUndo)(
-                  current.state,
-                  current.dispatch,
-                  current,
-                );
+          if (intent !== null) {
+            if (latest.current.outlineSession) {latest.current.outlineSession.executeCommand(redo ? "redo" : "undo"); return true;}
+            return (redo ? ownRedo : ownUndo)(current.state, current.dispatch, current);
+          }
           return (redo ? redoCommand : undoCommand)(
             current.state,
             current.dispatch,
@@ -732,6 +767,8 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
         focus(current) {
           suspended.current = false;
+          latest.current.outlineSession?.bindEditor(commands);
+          latest.current.onSelectionChange?.({anchor: current.state.selection.anchor, head: current.state.selection.head});
           setReferenceFocused(true);
           setReferenceVisible(true);
           refreshMarks(current.state);
@@ -906,6 +943,9 @@ export default function NoteEditor(props: NoteEditorProps) {
         const { selection } = current.state;
         const at = { anchor: selection.anchor, head: selection.head };
         if (event.key === "Tab") {
+          const command = event.shiftKey ? "outdent" : "indent";
+          if (latest.current.outlineSession) return latest.current.outlineSession.commandState(command).enabled
+            ? act(() => latest.current.outlineSession!.executeCommand(command)) : false;
           const arrange = event.shiftKey ? keys.outdent : keys.indent;
           return arrange ? act(() => arrange(at)) : false;
         }
@@ -935,6 +975,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           event.preventDefault();
           return true;
         }
+        if (latest.current.outlineSession) return act(() => latest.current.outlineSession!.executeCommand("insert"));
         const state = selection.empty
           ? current.state
           : current.state.apply(current.state.tr.deleteSelection());
@@ -997,10 +1038,12 @@ export default function NoteEditor(props: NoteEditorProps) {
           });
         refreshMarks(after);
         if (view.hasFocus()) setToolbar(!after.selection.empty);
+        latest.current.outlineSession?.refreshCommands();
       },
     });
     viewRef.current = view;
     return () => {
+      latest.current.outlineSession?.releaseEditor(commands);
       viewRef.current = null;
       view.destroy();
     };
