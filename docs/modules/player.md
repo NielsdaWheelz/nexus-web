@@ -58,7 +58,14 @@ downloads are adjacent, not player state ([offline](offline.md)).
    viewer's row (taking the viewer lock before the media, as teardown does).
 8. A mounted reader or player of a media flushes and pauses its unsaved
    progress before unread, reset and undo of that media, and reads the
-   server's after (`holdProgress`).
+   server's after (`holdProgress`). bulk podcast state writes use the same
+   boundary for their fixed target ids. every started preparation settles;
+   one failure prevents the write, and only successfully prepared holder/id
+   pairs reconcile. fulfillment proves acknowledgment or authoritative
+   supersession. `ProgressPreparationError` leaves pending progress and the
+   reader/player's recovery intact, releasing only the temporary command hold.
+   unresolved reader-position conflicts require the existing choice. successful
+   writes stay acknowledged even if reconciliation needs owner-local recovery.
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
    play next) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own

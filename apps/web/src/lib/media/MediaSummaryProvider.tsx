@@ -16,6 +16,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -241,7 +242,7 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
     window.addEventListener("online", store.retryFailed);
     return () => window.removeEventListener("online", store.retryFailed);
   }, [store]);
-  useOnChange(useChangeStamp("Consumption"), store.invalidateAll);
+  useOnChange(useChangeStamp("Consumption", "PodcastEpisodes"), store.invalidateAll);
   useOnChange(
     `${useChangeStamp("Metadata")}:${foreground}`,
     store.invalidateQueries,
@@ -260,17 +261,18 @@ export function useMediaSummaries(seeds: readonly MediaSummary[]) {
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
   useEffect(() => store.retain(seedsRef.current), [store, key]);
+  const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");
     return {
       resolve: store.resolve,
       error: store.error(ids),
-      retry: () => store.retry(ids),
+      retry,
       retrying: store.retrying(ids),
       revision,
       queryRevision: store.queryRevision(),
     };
-  }, [store, revision, key]);
+  }, [store, revision, key, retry]);
 }
 
 export function useMediaQueryRevision(): number {

@@ -150,8 +150,18 @@ def list_podcast_episodes(
     )
 
 
-@router.post("/podcasts/{podcast_id}/episodes/mark-played")
-def mark_podcast_episode_selection_played(
-    podcast_id: UUID, body: wire.PodcastEpisodeSelection, viewer: ViewerDep
-) -> Data[wire.PodcastEpisodeMarkPlayedOut]:
-    return Data(data=episodes.mark_played(viewer.user_id, podcast_id, body.state))
+@router.post("/podcasts/{podcast_id}/episodes/consumption/prepare")
+def prepare_podcast_episode_consumption(
+    podcast_id: UUID,
+    body: wire.PodcastEpisodeSelection,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+) -> Data[wire.PodcastEpisodeConsumptionPreparedOut]:
+    return Data(data=episodes.prepare_consumption(db, viewer.user_id, podcast_id, body.state))
+
+
+@router.put("/podcasts/{podcast_id}/episodes/consumption")
+def set_podcast_episode_consumption(
+    podcast_id: UUID, body: wire.PodcastEpisodeConsumptionRequest, viewer: ViewerDep
+) -> Data[wire.PodcastEpisodeConsumptionOut]:
+    return Data(data=episodes.set_consumption(viewer.user_id, podcast_id, body))

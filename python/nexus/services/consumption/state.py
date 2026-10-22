@@ -19,6 +19,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import consumption as wire
+from nexus.schemas.podcast import PodcastEpisodeConsumptionItem
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot, XReaderResumeState
 from nexus.services.consumption import lectern, listening, projection, reader_cursor, viewer_txn
 from nexus.services.reader_publication import lock_publication_generation
@@ -250,19 +251,33 @@ def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn)
 
 
 def set_episode_states_in_txn(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID], state: Literal["Finished", "Unread"]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    items: list[PodcastEpisodeConsumptionItem],
+    desired_state: Literal["played", "unplayed"],
 ) -> int:
-    """Mark played / unplayed for readable episode ids in the caller's viewer_txn; how many
-    changed state."""
-    media_ids = list(dict.fromkeys(media_ids))
-    before = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
-    for media_id in media_ids:
-        if state == "Finished":
-            _finish(db, viewer_id, media_id, _override(db, viewer_id, media_id))
+    """Conditional absolute write for validated readable episodes in the caller's viewer_txn.
+
+    Preflight every override before writing. Current = desired succeeds without touching
+    revisions, progress fences or completion facts; otherwise the captured revision must match.
+    """
+    desired = {"played": "finished", "unplayed": "unread"}[desired_state]
+    changes: list[tuple[UUID, Row | None]] = []
+    for item in items:
+        current = _override(db, viewer_id, item.media_id)
+        if current is not None and current.status == desired:
+            continue
+        if (current.revision if current else None) != item.expected_override_revision:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Episode state changed")
+        changes.append((item.media_id, current))
+    for media_id, current in changes:
+        if desired_state == "played":
+            _finish(db, viewer_id, media_id, current)
         else:
             _set_override(db, viewer_id, media_id, "unread")
             _fence(db, viewer_id, media_id, _EPISODE)
-    return sum(1 for media_id in media_ids if before[media_id].state != state)
+    return len(changes)
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:

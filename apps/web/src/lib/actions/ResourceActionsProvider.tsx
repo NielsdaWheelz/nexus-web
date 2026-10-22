@@ -23,6 +23,7 @@ import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
@@ -41,6 +42,7 @@ import {
   usePlayerCommands,
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
+import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
 import {
@@ -90,6 +92,7 @@ export interface ActionContext {
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
+  readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
@@ -100,6 +103,7 @@ interface Runtime {
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
   readonly busy: BusyKeys;
+  readonly defect: { error: unknown } | null;
 }
 
 interface BusyKeys {
@@ -114,6 +118,13 @@ export function useActionRuntime(): Runtime {
   const runtime = useContext(RuntimeContext);
   if (!runtime) throw new Error("ResourceActionsProvider is missing");
   return runtime;
+}
+
+/** Render beneath workspace containment so account command recovery stays mounted. */
+export function ResourceActionDefect() {
+  const { defect } = useActionRuntime();
+  if (defect !== null) throw defect.error;
+  return null;
 }
 
 /** The tracked verbs of `ref` now running: a reopened menu shows them busy. */
@@ -187,6 +198,7 @@ export default function ResourceActionsProvider({
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const [overlay, setOverlay] = useState<
     (Overlay & { key: number; open: boolean; opener: HTMLElement | null }) | null
   >(null);
@@ -236,6 +248,7 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption: consumption.commands,
       admissions,
+      podcastEpisodes: podcastEpisodes.commands,
       mediaContinuations,
       observeChatCommand,
       overlays: { open },
@@ -255,6 +268,7 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption.commands,
       admissions,
+      podcastEpisodes.commands,
       mediaContinuations,
       observeChatCommand,
       open,
@@ -278,6 +292,10 @@ export default function ResourceActionsProvider({
           await command.execute();
         } catch (error) {
           if (signal.aborted) return;
+          if (error instanceof ProgressPreparationError) {
+            feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." } });
+            return;
+          }
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
@@ -297,14 +315,14 @@ export default function ResourceActionsProvider({
     },
     [busy, feedback, session],
   );
-  const runtime = useMemo(() => ({ ctx, run, busy }), [ctx, run, busy]);
+  const runtime = useMemo(() => ({ ctx, run, busy, defect }), [ctx, run, busy, defect]);
 
-  if (defect) throw defect.error;
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
       {chatCommandFeedback}
       {consumption.feedback}
+      {podcastEpisodes.feedback}
       <ResourceOverlays
         overlay={overlay}
         close={close}
