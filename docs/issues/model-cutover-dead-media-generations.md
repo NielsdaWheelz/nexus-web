@@ -13,9 +13,9 @@ release backup `releases/3ea1b8e6e762963ca3cd2d3c9b367ccbe6287dc9/database.dump`
 
 2026-10-18: 0246's reviewed reset ran in that release and retired the original jobs
 (its `model_cutover_archives` row recorded the disposition). 0304 dropped that
-table in production `99320b630` on 2026-10-22; the verified stopped-writer release
-backup and releases 665e7b3af through 8a67e218a retain the row, while 3ea1b8e6e
-retains the originals.
+table in production `99320b630` on 2026-10-22; that release's stopped-writer
+backup retains the row and 3ea1b8e6e retains the originals. these are the only two
+r2 archives left; the other release and maintenance backups were deleted 2026-10-22.
 what remains, unverified here: new ordinary metadata jobs for the selected saved
 items.
 
