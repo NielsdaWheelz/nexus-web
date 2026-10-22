@@ -16,6 +16,7 @@ import {
   draftIsDurable,
   exportWriting,
   openDraft,
+  readDraft,
   readWriting,
   releaseDraft,
   retryWriting,
@@ -404,9 +405,12 @@ function TextWritingStatus({ textRef }: { textRef: string }) {
 /** This tab's branch of a text, when it carries a conflict or refusal decision. */
 export function NoteConflict({ textRef }: { textRef: string }) {
   const text = useText(textRef);
-  const writing = useWriting();
+  const writing = useSyncExternalStore(subscribeWriting, () => {
+    const current = textDraft(textRef);
+    return current && readDraft(current.draft_id)?.conflict ? readWriting() : null;
+  }, () => null);
   const handle = textDraft(textRef);
-  const draft = handle && writing.drafts.find(item => item.draft_id === handle.draft_id);
+  const draft = handle && writing?.drafts.find(item => item.draft_id === handle.draft_id);
   if (!text || !draft?.conflict) return null;
   const resolve = (decision: "mine" | "saved", shown: ConflictShown) => resolveConflict(textRef, decision, shown);
   // Only a saved version can take the old branch's place after a save as a new note.
