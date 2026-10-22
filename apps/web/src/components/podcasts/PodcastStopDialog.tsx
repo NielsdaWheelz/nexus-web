@@ -92,7 +92,7 @@ function StopPreview({ podcastId, title, libraryId, episodes, removeOnly, onClos
     {preview.blocked.length > 0 ? <FeedbackNotice content={{ tone: "Warning", title: "this change needs a library admin.", message: preview.blocked.map(item => item.name).join(", ") }} announcement="Polite" /> : null}
     {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh this preview.")} announcement="Polite" /> : null}
     {stale ? <FeedbackNotice content={{ tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "library changed. review it and choose again.", message: "this confirmation is disarmed. close and reopen it to review the current state." }} announcement="Polite" actions={pending?.phase === "Refused" ? episodes === "remove" && !removeOnly
-      ? [{ label: "review this scope", onClick: review }, { label: "stop keeping episodes instead", onClick: stopKeeping }]
+      ? [{ label: "review this scope", onClick: review }, { label: "stop adding; keep episodes instead", onClick: stopKeeping }]
       : [{ label: "review this scope", onClick: review }] : undefined} /> : null}
     <div className={styles.actions}>
       <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
