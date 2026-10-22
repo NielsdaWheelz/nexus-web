@@ -140,6 +140,8 @@ export function createNativeEngine(
     const subject = state.playbackSubject;
     if (loaded === null || subject === null)
       throw new PlaybackPreferenceError("playback source changed. try again.");
+    if (!responding)
+      throw new PlaybackPreferenceError("the native player is not responding. try again.");
     try {
       await call(op, { ...args, key: loaded, expected_load_id: subject });
     } catch (error) {
