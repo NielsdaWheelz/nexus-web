@@ -14,29 +14,12 @@
   transition: background-color var(--duration-fast) var(--ease-glide);
 }
 
-.row.withLeading {
-  grid-template-columns: [leading] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
-}
-
 .row.withVisual {
   grid-template-columns: [visual] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
 }
 
-.row.withLeading.withVisual {
-  grid-template-columns: [leading] auto [visual] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
-}
-
 .leadingVisual {
   grid-column: visual;
-  grid-row: 1 / span 2;
-  align-self: start;
-}
-
-.leadingControl {
-  position: relative;
-  z-index: 2;
-  display: inline-flex;
-  grid-column: leading;
   grid-row: 1 / span 2;
   align-self: start;
 }
@@ -72,7 +55,7 @@
 }
 
 .primary {
-  display: block;
+  display: inline;
   min-width: 0;
   max-width: 100%;
   border: 0;
@@ -81,14 +64,6 @@
   font: inherit;
   text-align: left;
   text-decoration: none;
-}
-
-/* The whole row is the primary's hit area; nested controls sit above it. */
-.stretched::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
 }
 
 button.primary {
@@ -107,20 +82,15 @@ button.primary:disabled {
   z-index: 1;
   border: var(--focus-ring-width) solid var(--ring);
   border-radius: var(--radius-sm);
-  pointer-events: none;
 }
 
 .title {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
   color: var(--ink);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-snug);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .supporting,
@@ -136,7 +106,6 @@ button.primary:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
 }
 
 .supporting {
@@ -233,13 +202,6 @@ button.primary:disabled {
 }
 
 @container (max-width: 520px) {
-  .title {
-    display: -webkit-box;
-    white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
   .row:not(.wrapped) .secondary {
     display: flex;
     min-width: 0;
@@ -295,7 +257,6 @@ button.primary:disabled {
   content: "";
   position: absolute;
   opacity: 0;
-  pointer-events: none;
   transition: opacity var(--duration-instant) var(--ease-glide);
 }
 
@@ -342,34 +303,3 @@ button.primary:disabled {
 :global([data-theme="elvish"]) .selected::after {
   opacity: var(--ornament);
 }
-
-/* two leading controls and their gaps; insertion shares the same text edge. */
-.outlineGeometry {
-  --outline-control-inline-size: var(--size-xs);
-  --outline-control-block-size: var(--size-xs);
-  --outline-gap: calc(var(--space-1) / 2);
-  --outline-content-start: calc(2 * (var(--outline-control-inline-size) + var(--outline-gap)));
-}
-
-@media (any-pointer: coarse) {
-  .outlineGeometry {
-    --outline-control-inline-size: var(--size-xl);
-    --outline-control-block-size: var(--size-xl);
-  }
-}
-
-.outlineRow { container-type: inline-size; min-width: 0; position: relative; padding: var(--space-1) 0; color: var(--ink); }
-.outlineHead { display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0; }
-.outlineBody { flex: 1; min-width: 0; user-select: text; }
-.outlineRow[data-selected="true"] > .outlineHead { background: var(--accent-muted); }
-.outlineRow[data-drop="before"] { box-shadow: 0 -2px 0 var(--accent); }
-.outlineRow[data-drop="after"] { box-shadow: 0 2px 0 var(--accent); }
-.outlineRow[data-drop="inside"] > .outlineHead { outline: 1px solid var(--accent); }
-.outlineRow[data-focus-path="true"] > .outlineHead:not(:has([data-outline-focused-root])) { display: none; }
-.outlineRow[data-focus-path="true"] > .outlineHead:has([data-outline-focused-root]) { display: block; }
-.outlineRow[data-focus-path="true"] > .outlineHead:has([data-outline-focused-root]) > :not(:has([data-outline-focused-root])),
-.outlineRow[data-focus-path="true"] > .outlineHead > .outlineBody:has([data-outline-focused-root]) > * > :not(:has([data-outline-focused-root])) { display: none; }
-.outlineRow[data-focus-path="true"]:has(> .outlineHead [data-outline-focused-root]) > .outlineHead ~ * { display: none; }
-
-.outlineRow[data-focus-path="true"] > :last-child { margin-left: 0; }
-.outlineRow[data-active="true"] > .outlineHead { background: var(--surface-hover); }

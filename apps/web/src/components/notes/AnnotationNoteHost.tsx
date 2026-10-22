@@ -4,6 +4,7 @@
 // body and acknowledgement, including a save that settles while this is unmounted.
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import AnnotationNoteEditor, {
   type AnnotationTarget,
 } from "./AnnotationNoteEditor";
@@ -18,14 +19,15 @@ import {
 import { resourceOccurrenceKey } from "@/lib/notes/outline";
 import type { OutlineBranch } from "@/lib/resources/outlineProjection";
 import { bodyHasContent } from "@/lib/notes/noteBody";
-import { readTextTitle, textCreationReady, useText } from "@/lib/notes/texts";
+import { readTextTitle, useText } from "@/lib/notes/texts";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import {
   isDeletedResource,
   subscribeLinkMutations,
 } from "@/lib/resourceGraph/links";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import styles from "@/components/resources/ResourceOutline.module.css";
+import factualStyles from "@/components/resources/ResourceContent.module.css";
+import styles from "./AnnotationNoteEditor.module.css";
 
 export default function AnnotationNoteHost({
   target,
@@ -199,7 +201,7 @@ export default function AnnotationNoteHost({
   if (deleted) return null;
   return (
     <ResourceBranch value={branch}>
-      <div className={styles.annotation} ref={root} tabIndex={-1}>
+      <div className={styles.host} ref={root} tabIndex={-1}>
         {note === null && text?.acked == null && attachedRef !== null ? (
           read.status === "failed" ? (
             <FeedbackNotice
@@ -262,50 +264,14 @@ export default function AnnotationNoteHost({
             />
           </div>
         )}
-        {target.kind === "highlight" && !atomicEmbeds && session ? (
-          <button
-            type="button"
-            className={styles.textButton}
-            disabled={
-              text === undefined ||
-              typeof text.value === "string" ||
-              !textCreationReady(ref) ||
-              session.activeReference !== null
-            }
-            onClick={() => {
-              if (
-                !text ||
-                typeof text.value === "string" ||
-                !textCreationReady(ref) ||
-                session.activeReference !== null
-              )
-                return;
-              expanded.set(true);
-              void session.insertNote({
-                destination: {
-                  source: { kind: "resource", ref },
-                  position: null,
-                  occurrencePrefix: bodyKey,
-                  path: [],
-                },
-                body: { body_pm_json: { type: "paragraph" }, body_text: "" },
-                ...(text.acked === null
-                  ? { creator: { noteRef: ref, base: text.value } }
-                  : {}),
-              });
-            }}
-          >
-            add item to annotation
-          </button>
-        ) : null}
         {target.kind === "highlight" &&
-        expanded.value &&
+        (expanded.value || editable) &&
         session &&
         !atomicEmbeds &&
         (text?.acked != null || note !== null) ? (
           <section aria-label="annotation items">
             {showItemsLabel ? (
-              <p className={styles.quiet}>annotation items</p>
+              <p className={factualStyles.quiet}>annotation items</p>
             ) : null}
             <ResourceDisclosure
               resourceRef={ref}
@@ -315,15 +281,15 @@ export default function AnnotationNoteHost({
             />
           </section>
         ) : null}
-        {target.kind === "link" || editable ? (
-          <button
-            type="button"
-            className={styles.textButton}
+        {editable ? (
+          <Button
+            variant="ghost"
+            className={styles.done}
             disabled={session?.activeReference?.startsWith(bodyKey)}
             onClick={close}
           >
             done editing note
-          </button>
+          </Button>
         ) : null}
       </div>
     </ResourceBranch>

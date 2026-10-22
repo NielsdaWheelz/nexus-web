@@ -1,6 +1,7 @@
 import { Fragment } from "react";
+import MediaIdentity from "@/components/media/MediaIdentity";
 import type { Schema } from "@/lib/api/wire";
-import styles from "./ResourceOutline.module.css";
+import styles from "./ResourceContent.module.css";
 
 type Excerpt = Schema<"ExcerptOut">;
 type Body = Schema<"ResourceItemOut">["preview"]["body"];
@@ -29,8 +30,10 @@ function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMat
 /** Literal phrasing content; navigation, editing and graph state belong to callers. */
 export default function ResourceBody({ body, match = null }: { body: Body; match?: ResourceMatch | null }) {
   switch (body.kind) {
+    case "media":
+      return <MediaIdentity title={body.media_summary.title} />;
     case "named":
-      return <span data-resource-primary className={styles.named}>{body.title || "untitled"}</span>;
+      return <MediaIdentity title={body.title} />;
     case "passage":
       return <span data-resource-primary className={styles.passage}>
         {body.prefix && !body.exact.truncated_before ? <span className={styles.context}><ExcerptText excerpt={body.prefix} /></span> : null}

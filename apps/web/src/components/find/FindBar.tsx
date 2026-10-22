@@ -222,7 +222,6 @@ export function FindResults({
       activity: null,
       exceptionalStatus: null,
       resourceRef: null,
-      insertionSource:null,
       selected: current,
     };
   }) : [];

@@ -12,7 +12,6 @@ export interface PodcastPresenterItem {
   readonly contributors: readonly ContributorCredit[];
   readonly unplayedCount: PositiveCount | null;
   readonly syncStatus: Schema<"PodcastSyncStatus"> | null;
-  readonly publicationDate: string | null;
 }
 
 export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
@@ -28,7 +27,7 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
     title: { text: item.title },
     artwork: { imageUrl: item.imageUrl },
     contributors: item.contributors,
-    publicationDate: item.publicationDate,
+    publicationDate: null,
     context: null,
     activity:
       sync === "Pending" || sync === "Running"
@@ -41,7 +40,6 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
         ? { kind: "PodcastSync", status: "Failed" }
         : null,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: item.id }),
-    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "podcast", id: item.id })},
     selected: false,
   };
 }

@@ -35,12 +35,6 @@
   text-overflow: ellipsis;
 }
 
-.contributorList {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-
 .activity {
   min-width: 0;
   overflow: hidden;
@@ -78,7 +72,6 @@
   max-width: 100%;
 }
 
-.year,
 .readingFacts {
   white-space: nowrap;
 }
@@ -90,8 +83,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-:global([data-media-identity="true"]) .supportItem,
-:global([data-media-identity="true"]) .contributorList {
+:global([data-media-identity="true"]) .supportItem {
   display: inline;
   max-width: none;
   overflow: visible;

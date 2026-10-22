@@ -14,6 +14,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import type {OutlineCommand, OutlineCommandState} from "@/lib/notes/useOutlineSession";
 import type { FindController } from "@/lib/find/useFind";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import type {
@@ -117,8 +118,18 @@ export interface PaneLayout {
   readonly rail: { readonly widthPx: number; readonly body: ReactNode } | null;
 }
 
+/** Only the interacting outline publishes commands; route chrome keeps its owner. */
+export interface PaneOutlineCommands {
+  readonly session: string;
+  readonly insertLabel: string;
+  commandState(command: OutlineCommand): OutlineCommandState;
+  executeCommand(command: OutlineCommand): void;
+  done(): void;
+}
+
 export interface PaneChromeState {
   readonly chrome: PaneChrome | null;
+  readonly outlineCommands: PaneOutlineCommands | null;
   readonly companion: PaneCompanion | null;
   readonly layout: PaneLayout | null;
   /** Find's transient results in the Companion; never persisted. */
@@ -140,6 +151,7 @@ export interface PaneChromeStore {
 export function createPaneChromeStore(): PaneChromeStore {
   let state: PaneChromeState = {
     chrome: null,
+    outlineCommands: null,
     companion: null,
     layout: null,
     results: null,
@@ -162,7 +174,7 @@ export function createPaneChromeStore(): PaneChromeStore {
 
 export const PaneChromeContext = createContext<PaneChromeStore | null>(null);
 
-function usePublish<K extends "chrome" | "companion" | "layout">(
+function usePublish<K extends "chrome" | "companion" | "layout" | "outlineCommands">(
   key: K,
   value: PaneChromeState[K],
 ): void {
@@ -176,6 +188,15 @@ function usePublish<K extends "chrome" | "companion" | "layout">(
       if (store.get()[key] === value) store.set({ [key]: null });
     };
   }, [store, key, value]);
+}
+
+export function usePaneOutlineCommands(commands: PaneOutlineCommands | null): void {
+  const store = useContext(PaneChromeContext);
+  useLayoutEffect(() => {
+    if (!store || commands === null) return;
+    store.set({outlineCommands: commands});
+    return () => {if (store.get().outlineCommands === commands) store.set({outlineCommands: null});};
+  }, [store, commands]);
 }
 
 /** A body's identity, independent navigation and query controls, menu and refresh. */

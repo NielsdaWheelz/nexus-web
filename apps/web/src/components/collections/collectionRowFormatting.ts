@@ -62,39 +62,3 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
       return assertNever(activity, "Unsupported collection activity");
   }
 }
-
-const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/;
-const YEAR_MONTH = /^(\d{4})-(\d{2})$/;
-const YEAR_ONLY = /^\d{4}$/;
-const MONTH_YEAR_FORMAT = new Intl.DateTimeFormat("en-US", {
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-});
-const FULL_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
-  month: "long",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-export function collectionPublicationYear(value: string): string {
-  return value.slice(0, 4);
-}
-
-export function formatCollectionPublicationDate(value: string): string {
-  if (YEAR_ONLY.test(value)) return value;
-
-  const monthMatch = YEAR_MONTH.exec(value);
-  if (monthMatch) {
-    return MONTH_YEAR_FORMAT.format(new Date(`${value}-01T00:00:00Z`));
-  }
-
-  const dateMatch = DATE_ONLY.exec(value);
-  if (dateMatch) {
-    return FULL_DATE_FORMAT.format(
-      new Date(`${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}T00:00:00Z`),
-    );
-  }
-  throw new Error(`Invalid decoded PublicationDate: ${JSON.stringify(value)}`);
-}

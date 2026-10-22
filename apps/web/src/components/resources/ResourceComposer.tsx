@@ -151,35 +151,3 @@ export default function ResourceComposer({
     </div>
   );
 }
-
-/** A mounted root owns its source and exposes this local action to pane chrome. */
-export function useResourceComposer(
-  source: InsertionSource | null,
-  occurrenceKey: string,
-  label: string,
-) {
-  const opened = useResourceDraft<boolean>(
-    `Resources.RootComposer:${occurrenceKey}`,
-    () => false,
-  );
-  const action =
-    source === null
-      ? null
-      : {
-          kind: "command" as const,
-          id: "Resource.AddItem",
-          label: "add item",
-          onSelect: () => opened.set(true),
-        };
-  return {
-    action,
-    content:
-      opened.value && source ? (
-        <ResourceComposer
-          source={source}
-          occurrenceKey={occurrenceKey}
-          label={label}
-        />
-      ) : null,
-  };
-}

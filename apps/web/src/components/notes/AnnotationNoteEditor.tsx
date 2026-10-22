@@ -1,6 +1,6 @@
 "use client";
 
-// An occurrence's autosaving note on an existing highlight or link. Its first
+// An occurrence's autosaving note on an existing highlight. Its first
 // non-empty save creates and attaches it; later edits save like any note.
 // Detaching keeps the note. Text ownership retains first-save retries by note id;
 // subsequent edits use the canonical acknowledged body version.
@@ -43,7 +43,7 @@ import styles from "./AnnotationNoteEditor.module.css";
 type AttachedNote = Schema<"LinkedNoteBlockRef">;
 
 export interface AnnotationTarget {
-  readonly kind: "highlight" | "link";
+  readonly kind: "highlight";
   readonly id: string;
 }
 
@@ -60,11 +60,10 @@ export interface AnnotationNoteEditorProps {
 }
 
 const notePath = (
-  target: AnnotationTarget["kind"],
   id: string,
   noteId?: string,
 ) =>
-  `/api/${target === "highlight" ? "highlights" : "resource-graph/links"}/${id}/note${
+  `/api/highlights/${id}/note${
     noteId ? `/${noteId}` : ""
   }` as ApiPath;
 
@@ -147,7 +146,7 @@ function SessionAnnotationEditor(
       return;
     const creator: Creator = {
       request: (value: NoteBody) => ({
-        path: notePath(target.kind, targetId),
+        path: notePath(targetId),
         method: "PUT",
         link_refs: target.kind === "highlight" ? [`highlight:${targetId}`] : [],
         body: {
@@ -185,7 +184,7 @@ function SessionAnnotationEditor(
 
   const detach = () => {
     setDetaching(true);
-    apiFetch(notePath(target.kind, targetId, noteId), { method: "DELETE" })
+    apiFetch(notePath(targetId, noteId), { method: "DELETE" })
       .then(
         () => {
           publishChange("Notes");
@@ -193,10 +192,7 @@ function SessionAnnotationEditor(
         },
         (error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
-          const title =
-            target.kind === "link"
-              ? "note wasn’t removed from link"
-              : "annotation wasn’t removed";
+          const title = "annotation wasn’t removed";
           const content = (isApiError(error) &&
             apiTransportFeedback(error, title)) || {
             tone: "Danger" as const,
@@ -231,9 +227,7 @@ function SessionAnnotationEditor(
         }
         label={
           props.label ??
-          (target.kind === "highlight"
-            ? "edit note: annotation"
-            : "edit note: note on link")
+          "edit note: annotation"
         }
         editable={editable && textCreationReady(ref)}
         embeddedItem={note?.embedded_item ?? null}
@@ -266,9 +260,7 @@ function SessionAnnotationEditor(
             onClick={detach}
             disabled={detaching || referencing}
           >
-            {target.kind === "link"
-              ? "remove note from link"
-              : "remove annotation"}
+            remove annotation
           </Button>
         ) : null}
       </div>

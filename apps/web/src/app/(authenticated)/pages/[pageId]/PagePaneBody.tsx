@@ -43,7 +43,7 @@ export default function PagePaneBody() {
   const id = source ? source.item.ref.slice("page:".length) : pageId;
   const content = source?.content;
   const dailyDate = content?.kind === "page" ? content.daily_date : localDate;
-  const titleRef = useRef<HTMLInputElement | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const { query, queryControls } = useOutlineFilter(
     outline,
     `page:${pageId ?? localDate}`,

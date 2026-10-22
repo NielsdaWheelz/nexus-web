@@ -251,7 +251,6 @@ export default function PodcastsPaneBody() {
               ? { value: row.unplayed_count }
               : null,
           syncStatus: row.sync_status,
-          publicationDate: row.latest_episode_published_at,
         }),
       )}
       status={list.status === "loading" ? "loading" : "ready"}

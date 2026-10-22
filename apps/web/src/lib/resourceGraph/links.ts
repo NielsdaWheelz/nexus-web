@@ -118,8 +118,8 @@ export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Pro
   const result = await graphCommands([{ kind: "insert_note", ...input }]);
   return result.insertions[0]!;
 }
-export async function deleteLink({ linkId, requireUnannotated }: { linkId: string; requireUnannotated: boolean }, retrying?: (error: unknown) => void): Promise<void> {
-  await graphCommands([{ kind: "unlink", link_id: linkId, require_unannotated: requireUnannotated }], retrying);
+export async function deleteLink({ linkId }: { linkId: string }, retrying?: (error: unknown) => void): Promise<void> {
+  await graphCommands([{ kind: "unlink", link_id: linkId }], retrying);
   announceLinkDeletions({ linkIds: [linkId], origin: null });
 }
 
@@ -135,7 +135,7 @@ export async function mutateConnection(
 ): Promise<void> {
   switch (command.kind) {
     case "unlink":
-      return deleteLink({ linkId: command.link_id, requireUnannotated: false }, retrying);
+      return deleteLink({ linkId: command.link_id }, retrying);
     case "detach_context":
       await apiFetch(
         `/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`,

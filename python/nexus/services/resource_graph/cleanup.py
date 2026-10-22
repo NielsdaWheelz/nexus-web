@@ -2,8 +2,7 @@
 
 1. A cited (ordinal) edge dies only with its source unless the dying resource's owner
    requests removal of inbound citations too (note deletion).
-2. Every other edge dies with either endpoint, and a dying endpoint takes its whole
-   link-note motif (the sibling attachment targets a survivor).
+2. Every other edge dies with either endpoint; independent links at survivors stay.
 
 View states go before their edges, surviving link and annotation ends get a ``links`` version, and
 external snapshots no longer cited by anything go too. Flush-only; death is global, so
@@ -76,20 +75,12 @@ def delete_edges_for_deleted_resources(
 
     at_source = at(ResourceEdge.source_scheme, ResourceEdge.source_id)
     at_target = at(ResourceEdge.target_scheme, ResourceEdge.target_id)
-    motif_notes = select(ResourceEdge.source_id).where(
-        ResourceEdge.origin == "link_note", at_target
-    )
     dying = select(ResourceEdge.id).where(
         or_(
             at_source,
             at_target
             if remove_inbound_citations
             else and_(ResourceEdge.ordinal.is_(None), at_target),
-            and_(
-                ResourceEdge.origin == "link_note",
-                ResourceEdge.source_scheme == "note_block",
-                ResourceEdge.source_id.in_(motif_notes),
-            ),
         )
     )
     from nexus.services.library_entries import lock_media_rows_in_order

@@ -405,15 +405,7 @@ export function useOutline(input: {
     setLatentDate(null);
     refetchDaily();
   }, [proposed, publishedDraft?.acked, refetchDaily]);
-  let endpoint = root;
-  for (const edge of session.view.zoom)
-    endpoint =
-      endpoint === null
-        ? null
-        : (session
-            .outline(endpoint)
-            ?.links.find((link) => link.link_id === edge)?.target.item.ref ??
-          null);
+  const endpoint = root;
   const occurrencePrefix = root === null ? session.scope : `outline:${root}`;
   const rows =
     endpoint === null
@@ -421,7 +413,7 @@ export function useOutline(input: {
       : session.projectChildren({
           endpoint,
           occurrencePrefix,
-          path: session.view.zoom,
+          path: [],
           branch: EMPTY_BRANCH,
         });
   const publication: DailyPublication | null =
@@ -472,7 +464,7 @@ export function useOutline(input: {
           : { kind: "resource", ref: owner },
       position,
       occurrencePrefix,
-      path: row ? row.path.slice(0, -1) : session.view.zoom,
+      path: row ? row.path.slice(0, -1) : [],
     };
   }
   return {

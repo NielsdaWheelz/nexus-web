@@ -34,7 +34,7 @@ export default function NotePaneBody() {
   const deleted = isDeletedResource(ref);
   const outline = useOutline({ root: ref, dailyDate: null });
   const text = useText(ref);
-  const titleRef = useRef<HTMLInputElement | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
   usePaneReturnReady(deleted || outline.status !== "loading");

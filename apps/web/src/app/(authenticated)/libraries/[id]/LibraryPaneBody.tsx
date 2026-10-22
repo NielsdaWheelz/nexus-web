@@ -1,7 +1,5 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // One library: its entries under the url's view, drag order for those who manage
 // a named library, the Reading Slate, the inspector's Members and Linked items,
 // and Leave for a member who is not its owner. The url owns sort, type, view and
@@ -287,8 +285,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         }),
     }
     : undefined;
-  const insertion = useResourceComposer(library ? {kind:"resource",ref:`library:${id}`} : null, `library:${id}`, "add item");
-  const menuActions: ActionDescriptor[] = [...(insertion.action ? [insertion.action] : []), ...(addContent ? [addContent] : [])];
+  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   if (library?.can_leave) {
     menuActions.push({
       kind: "command",
@@ -421,7 +418,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       : null;
 
   return (
-    <> {insertion.content}<PaneSurface
+    <PaneSurface
       state={
         feedback || leaving || loadFailure || summaries.error || ordering !== undefined ? (
           <>
@@ -500,6 +497,6 @@ function LibraryPane({ id }: { readonly id: string }) {
             return accepted ? "Accepted" : "Retained";
           }}
         />
-    </PaneSurface></>
+    </PaneSurface>
   );
 }

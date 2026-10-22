@@ -15,13 +15,13 @@ paths below are relative to `python/nexus/services/resource_graph`.
 | `refs.py` | canonical `<scheme>:<uuid>` identity; `require_ref` rejects invalid requests |
 | `resolve.py` | viewer-scoped domain/prompt reads; writes use `assert_ref_visible` |
 | `edges.py` | fact shape, endpoint visibility, uniqueness, rank and version changes; flush-only writer |
-| `links.py` | flush-only source/target materialization and preserving unlink; serializable link-note commands |
+| `links.py` | flush-only source/target materialization and exact preserving unlink |
 | `order.py` | endpoint display order for every incident fact; dense ranks and exact placement |
 | `../outline.py` | bounded mixed reads and serializable command batches |
 | `connections.py` | one row per visible incident fact, direction and owner-supplied mutation |
 | `citations.py` | canonical ordinal edges composed with captured evidence |
 | `context.py` | `context_facts_sql`, current admission, versioned complete detachment |
-| `cleanup.py` | resource death, link-note cleanup and orphan external snapshots |
+| `cleanup.py` | resource death and orphan external snapshots |
 
 `resource_items/items.py` supplies bounded current presentations.
 `resource_items/evidence.py` captures and projects historical evidence and resolves
@@ -39,8 +39,8 @@ connection may instead be an annotation, embed, citation, assistant write, disco
 fact or automatic context membership. unaccepted suggestions are not facts.
 
 `ConnectionOut` retains `edge_id`, direction, kind, origin, snapshot, rank, ordinal,
-source/target/other, link note, creation, mutation and creation time. endpoints are
-`ResourceItemOut`; the link note contains its own item. `other` is the endpoint
+source/target/other, creation, mutation and creation time. endpoints are
+`ResourceItemOut`; `other` is the endpoint
 opposite the query. user links are undirected. connection queries page newest first
 using creation time and edge id. arranged disclosure uses the mixed outline read;
 owner rollup remains for surfaces explicitly gathering an owner's references.
@@ -61,8 +61,6 @@ never substitutes for the referenced object's body.
 | `POST /resource-graph/connections/query` | visible paged facts; unknown/private roots yield no adjacency |
 | `GET /resource-graph/outline/{ref}?limit&cursor` | bounded exact mixed adjacency, rank then creation/id; version-bound cursor conflicts on change |
 | `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
-| `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
-| `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
 | `GET /conversations/{id}/context` | `{items: [{item, admission_edge_ids, mutation}]}`: one shared item per admitted target in first-attachment order, with the ids of its current admission facts; each detach mutation carries the context version read in the same statement |
 | `DELETE /conversations/{id}/context/{target_ref}?expected_context_version=…` | remove every current admission fact atomically; absent succeeds; present with stale version is 409 `E_CONTEXT_CHANGED` |
 
@@ -78,18 +76,22 @@ appends at commit; a position carries its exact predecessor and expected links
 version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
-`unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
-ids use the strictest annotation precondition. absent ids succeed without effects;
-foreign or unsupported-origin facts conflict atomically. owned user, discovery
-and assistant facts permit exact removal. acknowledgement contains empty result
-arrays; readers reconcile through the acknowledged graph event.
+`unlink {link_id}` is an unlink-only atomic batch; duplicate exact ids are applied
+once. absent succeeds without resolving a replacement. foreign or unsupported
+origins conflict atomically. owned user/discovery/assistant edges permit removal;
+acknowledgement has empty result arrays and readers reconcile through the existing
+graph change signal. `unlink_in_txn` preserves resources, historical receipts and
+all other edges. `edges.delete_edge` removes only that edge's occurrence state and
+advances endpoint versions; retention and source-owned cleanup remain unchanged.
 
-`unlink_in_txn` preserves resources and historical receipts. for user links only,
-the explicit annotation precondition runs before `edges.detach_link_notes`;
-annotation prose survives. every allowed origin then uses `edges.delete_edge`
-to remove occurrence state and advance endpoint versions. machine unlink leaves
-parallel user links and their annotations intact. historical assistant undo,
-resource deletion and complete context detachment retain their separate owners.
+relationship annotations no longer exist. migration 0307 converts each validated
+old attachment independently to an ordinary user link, changing origin only.
+ids, endpoints, ranks including null, prose and original relationships survive.
+invalid/foreign/invisible endpoints, conversation attachments, inconsistent view
+states and unordered pair collisions refuse before effects. affected links lanes
+advance once per endpoint, suggestions input once. visibility rules are frozen in
+the migration. release requires stopped writers and verified backup; rollback uses
+that backup. no API, motif cleanup or annotation guard remains.
 
 
 ## context ordering
@@ -129,8 +131,8 @@ existing change owners. expansion is read-only and never broadens prompt scope.
 
 ## resource death
 
-ordinal edges die with their source; other facts die with either endpoint. a dying
-endpoint takes its link-note motif, then orphan external snapshots are collected.
+ordinal edges die with their source; other facts die with either endpoint.
+independent links at surviving resources remain; orphan external snapshots are collected.
 explicit note deletion retains its domain rule of deleting historical citation
 edges. preserved historical text is not permission to resurrect deleted resources,
 editor drafts or undo entries.

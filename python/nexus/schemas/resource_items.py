@@ -14,6 +14,7 @@ from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.note_bodies import Body
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
@@ -77,8 +78,14 @@ class ExcerptOut(_Out):
 class NamedResourceBodyOut(_Out):
     kind: Literal["named"] = "named"
     title: str
+    image_url: str | None
     media_kind: str | None
     contributors: list[ContributorCreditOut] | None
+
+
+class MediaResourceBodyOut(_Out):
+    kind: Literal["media"] = "media"
+    media_summary: MediaSummaryOut
 
 
 class PassageResourceBodyOut(_Out):
@@ -111,6 +118,7 @@ class ReferenceResourceBodyOut(_Out):
 
 ResourceBodyOut = Annotated[
     NamedResourceBodyOut
+    | MediaResourceBodyOut
     | PassageResourceBodyOut
     | ProseResourceBodyOut
     | ImagesResourceBodyOut

@@ -1,7 +1,5 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // One show: exact listening counts and visit-local detail above episode pages.
 // Head reads observe lifecycle/settings; only source revisions reload pages.
 // Observation stops when the pane or document leaves the screen.
@@ -353,9 +351,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     handle: podcastId,
     bodies: { linkedItems: connections },
   });
-  const insertion = useResourceComposer({kind:"resource",ref:`podcast:${podcastId}`}, `podcast:${podcastId}`, "add item");
   usePaneChrome({
-    menuActions: insertion.action ? [insertion.action] : [],
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
       subscription !== null
@@ -387,7 +383,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   });
   return (
     <div className={styles.page}>
-      {insertion.content}
       <PaneSection>
         {head.status === "loading" ? (
           <PaneLoadingState label="Loading podcast…" announcement="Polite" />

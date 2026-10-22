@@ -13,6 +13,7 @@ export type ResourceRowPrimary =
       paneLabelHint?: string;
       target?: "_self" | "_blank";
       rel?: string;
+      ref?: Ref<HTMLAnchorElement>;
     }
   | {
       kind: "button";
@@ -23,23 +24,13 @@ export type ResourceRowPrimary =
     }
   | { kind: "static" };
 
-/**
- * A list row, clickable anywhere: an interactive primary stretches over the
- * row while nested controls stay live above it. Status sits beside the title;
- * `wrapped` lets supporting text, status, evidence and the panel take full lines.
- * a passive leading visual spans the title and supporting rows; expanded content
- * starts at the text column, after any leading control and visual.
- * Outline rows keep their own controls and selectable bodies. Their exported
- * `outlineGeometry` class shares control sizes and content-start alignment with
- * an owning outline's insertion affordance. Domain formatting stays with callers.
- */
+/** Ordinary index geometry; title navigation stays native and controls are separate. */
 export default function ResourceRow({
   primary,
   title,
   supporting,
   status,
   evidence,
-  leadingControl,
   leadingVisual,
   primaryControl,
   actions,
@@ -48,15 +39,12 @@ export default function ResourceRow({
   wrapped = false,
   as: Root = "li",
   rootProps,
-  rowRef,
-  outline,
 }: {
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
   readonly supporting?: ReactNode;
   readonly status?: ReactNode;
   readonly evidence?: ReactNode;
-  readonly leadingControl?: ReactNode;
   readonly leadingVisual?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly actions?: ReactNode;
@@ -66,34 +54,7 @@ export default function ResourceRow({
   readonly as?: "li" | "div";
   readonly rootProps?: HTMLAttributes<HTMLElement> &
     Partial<Record<`data-${string}`, string | boolean>>;
-  readonly rowRef?: Ref<HTMLLIElement>;
-  readonly outline?: { controls: ReactNode; body: ReactNode };
 }) {
-  // justify-type-assertion: the selected native root receives the same DOM ref.
-  if (outline)
-    return (
-      <Root
-        {...rootProps}
-        ref={rowRef as Ref<HTMLLIElement & HTMLDivElement>}
-        className={cx(
-          styles.outlineGeometry,
-          styles.outlineRow,
-          rootProps?.className,
-        )}
-      >
-        <div className={styles.outlineHead}>
-          {outline.controls}
-          <div className={styles.outlineBody}>{outline.body}</div>
-          {primaryControl}
-          {actions}
-        </div>
-        {expanded}
-      </Root>
-    );
-  const interactive =
-    primary.kind === "link" ||
-    (primary.kind === "button" && !primary.disabled && !primary.busy);
-  const className = cx(styles.primary, interactive && styles.stretched);
   const label = (
     <span className={styles.title} data-row-title="" dir="auto">
       {title}
@@ -101,27 +62,22 @@ export default function ResourceRow({
   );
   return (
     <Root
-      ref={rowRef as Ref<HTMLLIElement & HTMLDivElement>}
       className={cx(
         styles.row,
-        Boolean(leadingControl) && styles.withLeading,
-        Boolean(leadingControl) && styles.outlineGeometry,
         Boolean(leadingVisual) && styles.withVisual,
         wrapped && styles.wrapped,
         selected && styles.selected,
       )}
       {...rootProps}
     >
-      {leadingControl ? (
-        <div className={styles.leadingControl}>{leadingControl}</div>
-      ) : null}
       {leadingVisual ? (
         <div className={styles.leadingVisual}>{leadingVisual}</div>
       ) : null}
       <div className={styles.titleCell}>
         {primary.kind === "link" ? (
           <a
-            className={className}
+            ref={primary.ref}
+            className={styles.primary}
             data-row-focusable=""
             href={primary.href}
             data-pane-label-hint={primary.paneLabelHint}
@@ -133,7 +89,7 @@ export default function ResourceRow({
         ) : primary.kind === "button" ? (
           <button
             type="button"
-            className={className}
+            className={styles.primary}
             data-row-focusable=""
             disabled={primary.disabled || primary.busy}
             aria-busy={primary.busy || undefined}
@@ -146,7 +102,7 @@ export default function ResourceRow({
             {label}
           </button>
         ) : (
-          <div className={className}>{label}</div>
+          <div className={styles.primary}>{label}</div>
         )}
       </div>
       {supporting || evidence || status ? (

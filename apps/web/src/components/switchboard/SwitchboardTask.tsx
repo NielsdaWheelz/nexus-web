@@ -140,7 +140,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
                 const name = [row.label, rowFacts(row, false), unavailable].filter(Boolean).join(". ");
                 const body = row.item?.preview.body;
-                const hasEvidence = row.matchingPassage || (body && (body.kind !== "named" || (row.match && row.match.excerpt.text !== body.title)));
+                const hasEvidence = row.matchingPassage || (body && ((body.kind !== "named" && body.kind !== "media") || (row.match && row.match.excerpt.text !== (body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : null))));
                 return (
                   <li key={row.key} className={styles.row} data-current={row.state === "Current" || undefined} data-nested={row.parent ? true : undefined} onPointerDown={() => controller.setActive(row.key)}>
                     <button

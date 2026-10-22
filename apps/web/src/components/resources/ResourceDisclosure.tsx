@@ -9,6 +9,7 @@ import OutlineSurface from "@/components/notes/OutlineSurface";
 import type { Schema } from "@/lib/api/wire";
 import { useResourceOutline } from "@/lib/resourceGraph/useResourceOutline";
 import { OutlineSessionContext, ResourceBranch } from "./ResourceOutlineList";
+import factualStyles from "@/components/resources/ResourceContent.module.css";
 import styles from "./ResourceOutline.module.css";
 
 export default function ResourceDisclosure({
@@ -140,7 +141,7 @@ export default function ResourceDisclosure({
         aria-label={separateOwner ? "passage connections" : "linked resources"}
       >
         {showLabels && rows.length > 0 ? (
-          <p className={styles.quiet}>passage connections</p>
+          <p className={factualStyles.quiet}>passage connections</p>
         ) : null}
         <OutlineSurface
           session={session}
@@ -151,6 +152,7 @@ export default function ResourceDisclosure({
           path={path}
           editable={!readOnly}
           historicalBranch={historicalBranch}
+          insertionSource={separateOwner ? null : source}
           sourceForRow={() =>
             source?.kind === "resource" && source.ref === resourceRef
               ? source
@@ -158,36 +160,11 @@ export default function ResourceDisclosure({
           }
         />
       </section>
-      {read.status === "ready" && read.complete && rows.length === 0 ? (
-        <>
-          <p className={styles.status}>no linked resources</p>
-          {source && !separateOwner ? (
-            <button
-              type="button"
-              className={styles.textButton}
-              disabled={session.activeReference !== null}
-              onClick={() => {
-                if (session.activeReference !== null) return;
-                void session.insertNote({
-                  destination: {
-                    source,
-                    position: null,
-                    occurrencePrefix,
-                    path,
-                  },
-                });
-              }}
-            >
-              add item
-            </button>
-          ) : null}
-        </>
-      ) : null}
       {separateOwner ? (
         <ResourceBranch value={childBranch}>
           <section aria-label="passage items">
             {showLabels && rows.length > 0 ? (
-              <p className={styles.quiet}>passage items</p>
+              <p className={factualStyles.quiet}>passage items</p>
             ) : null}
             <ResourceDisclosure
               resourceRef={durableOwner}

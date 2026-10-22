@@ -23,7 +23,6 @@ from nexus.services.resource_graph.edges import (
     conversation_rank,
     create_edge,
     delete_edge,
-    detach_link_notes,
     get_owned_edge,
     lock_conversation_endpoints,
 )
@@ -214,7 +213,6 @@ def detach_context_target(
         assert edge is not None
         if edge.origin == "user":
             user_link = True
-            detach_link_notes(db, viewer_id=viewer_id, link=edge)
         delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
     if not user_link:
         versions.bump_version(db, viewer_id=viewer_id, ref=chat_ref, lane="context")

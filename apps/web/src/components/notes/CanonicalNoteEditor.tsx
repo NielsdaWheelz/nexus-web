@@ -54,6 +54,7 @@ export default function CanonicalNoteEditor({
   return (
     <>
       <NoteEditor
+        outlineSession={session}
         editorKey={`${occurrence.noteRef}@${occurrence.key}`}
         occurrenceKey={occurrence.key}
         containingNoteRef={text.acked === null ? null : occurrence.noteRef}
@@ -103,6 +104,10 @@ export default function CanonicalNoteEditor({
         keys={
           canEdit
             ? {
+                selectBlock: () => {
+                  if (occurrence.key === "") session.revokeCommands();
+                  else session.selectOccurrence(occurrence.key);
+                },
                 ...structuralKeys,
                 ...(continuation
                   ? ({
@@ -120,6 +125,7 @@ export default function CanonicalNoteEditor({
               }
             : null
         }
+        onSelectionChange={selection => session.setTextSelection(occurrence.key, selection)}
         onEdit={(edit) => session.editBody({ occurrence, edit })}
       />
       <NoteConflict textRef={occurrence.noteRef} />

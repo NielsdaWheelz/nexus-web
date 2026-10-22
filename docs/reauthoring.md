@@ -24,6 +24,15 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
+index/outline separates collection/search/context browsing from outline editing
+across notes outline, note bodies/editor, notes pages/index, resource items/actions,
+resource graph, wire schemas, libraries/collections, search pane, chat, reader
+connections, workspace and visual primitives. against `832d8e4b8`, authored runtime
+changes by -1,766 lines (1,964 added, 3,730 deleted), including new files and excluding
+generated wire, migration and docs. it deletes reference-token editors, branch
+focus/zoom, internal outline dragging, link-note paths and index outline sessions.
+these are scoped feature changes; earlier area totals retain their stated bases.
+
 collection loading recounts its touched rows against `5ead65981`: -269 authored
 runtime lines (833 added, 1,102 deleted). it removes manual collection pagination,
 the browse traversal owner, preview pagination and the member-library loop;

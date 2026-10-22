@@ -369,27 +369,7 @@ export function useReferenceInput(
                   onClick: () => {
                     if (owner.onUndoCreated) owner.onUndoCreated(result);
                     else
-                      void deleteLink({
-                        linkId: result.connection.edge_id,
-                        requireUnannotated: true,
-                      }).catch((error: unknown) => {
-                        if (
-                          !isApiError(error) ||
-                          error.code !== "E_RESOURCE_CONFLICT"
-                        ) {
-                          reportError(error);
-                          return;
-                        }
-                        feedback.offer({
-                          key: "resource-insertion-undo",
-                          announcement: "Polite",
-                          content: {
-                            tone: "Warning",
-                            title:
-                              "this link has a note. use remove link to disconnect it.",
-                          },
-                        });
-                      });
+                      void deleteLink({linkId: result.connection.edge_id}).catch(reportError);
                   },
                 },
               ]

@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
-from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
+from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
@@ -23,7 +23,6 @@ EdgeOrigin = Literal[
     "discovery",
     "document_embed",
     "assistant",
-    "link_note",
 ]
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 ConnectionDirection = Literal["incoming", "outgoing", "both"]
@@ -57,11 +56,6 @@ class ConnectionQueryRequest(Model):
     filters: ConnectionFiltersRequest = Field(default_factory=ConnectionFiltersRequest)
     limit: int = Field(default=100, ge=1, le=100)
     cursor: str | None = None
-
-
-class ConnectionLinkNoteOut(Model):
-    note_block_id: UUID
-    item: ResourceItemOut
 
 
 class ConnectionCreationOut(Model):
@@ -104,7 +98,6 @@ class ConnectionOut(Model):
     source: ResourceItemOut
     target: ResourceItemOut
     other: ResourceItemOut
-    link_note: ConnectionLinkNoteOut | None
     creation: ConnectionCreationOut | None
     mutation: ConnectionMutation | None
     created_at: datetime
@@ -179,9 +172,3 @@ InsertionSource = Annotated[
     | LinkDailyPageSource,
     Field(discriminator="kind"),
 ]
-
-
-class LinkNoteOut(LinkedNoteBlockRef):
-    model_config = ConfigDict(extra="forbid")
-
-    connection: ConnectionOut

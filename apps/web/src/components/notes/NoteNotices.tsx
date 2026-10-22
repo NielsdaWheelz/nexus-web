@@ -27,7 +27,7 @@ export function NoteConflict({ textRef }: { textRef: string }) {
   const text = useText(textRef);
   if (text?.failure && !text.conflict)
     return (
-      <FeedbackNotice content={{ tone: "Danger", title: "note change not confirmed", message: "your text remains in this tab. edit it to try saving again.", requestId: text.failure.requestId }} announcement="Polite" />
+      <FeedbackNotice content={{ tone: "Danger", title: typeof text.value === "string" ? "title change not confirmed" : "note change not confirmed", message: "your text remains in this tab. edit it to try saving again.", requestId: text.failure.requestId }} announcement="Polite" />
     );
   if (!text?.conflict) return null;
   const what = typeof text.value === "string" ? "title" : "note";

@@ -167,7 +167,7 @@ def execute_in_current_transaction(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
 ) -> OutlineCommandsOut:
     """Apply one complete insertion/outline batch; the caller owns commit and retry."""
-    unlinks: dict[UUID, bool] = {}
+    unlinks: set[UUID] = set()
     edits: list[
         SetBody
         | SetTitle
@@ -181,9 +181,7 @@ def execute_in_current_transaction(
     ] = []
     for command in commands:
         if isinstance(command, Unlink):
-            unlinks[command.link_id] = (
-                unlinks.get(command.link_id, False) or command.require_unannotated
-            )
+            unlinks.add(command.link_id)
         else:
             edits.append(command)
     if unlinks and edits:
@@ -192,12 +190,11 @@ def execute_in_current_transaction(
         )
     if unlinks:
         changed = False
-        for link_id, require_unannotated in unlinks.items():
+        for link_id in sorted(unlinks):
             if links.unlink_in_txn(
                 db,
                 viewer_id=viewer_id,
                 link_id=link_id,
-                require_unannotated=require_unannotated,
             ):
                 changed = True
         if changed:
@@ -593,7 +590,9 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
                 action_ref=ref.uri,
                 label=title,
                 preview=ResourcePreviewOut(
-                    body=NamedResourceBodyOut(title=title, media_kind=None, contributors=None),
+                    body=NamedResourceBodyOut(
+                        title=title, image_url=None, media_kind=None, contributors=None
+                    ),
                     source=None,
                     annotation=None,
                 ),

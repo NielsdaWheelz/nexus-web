@@ -2,17 +2,14 @@
 
 import {
   Fragment,
-  useState,
-  useContext,
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
+import MediaIdentity from "@/components/media/MediaIdentity";
+import ResourceMetadata from "@/components/resources/ResourceMetadata";
+import { bibliographyMetadata } from "@/lib/resources/metadata";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import { ChevronRight } from "lucide-react";
 import Pill from "@/components/ui/Pill";
-import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
-import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
 import ResourceRow from "@/components/ui/ResourceRow";
 import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
 import ContextualActionMenu, {
@@ -26,11 +23,8 @@ import type {
 import {
   collectionActivityText,
   collectionConsumptionText,
-  collectionPublicationYear,
-  formatCollectionPublicationDate,
 } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
-import outlineStyles from "@/components/resources/ResourceOutline.module.css";
 import styles from "./CollectionRow.module.css";
 
 function renderContext(context: CollectionContext): ReactNode {
@@ -86,12 +80,6 @@ export default function CollectionRow({
   readonly viewTransitionName?: string;
 }) {
   const mediaLayout = row.mediaIdentity !== undefined;
-  const outline = useContext(ResourceOutlineContext);
-  const [localOpen,setLocalOpen] = useState(false);
-  const occurrenceKey=`${outline?.scope ?? "collection"}/${row.id}`;
-  const disclosed = outline?.view.folds.get(row.id) ?? localOpen;
-  const setDisclosed = (open:boolean) => outline ? outline.toggle(row.id,open) : setLocalOpen(open);
-
   const title = row.title.segments
     ? (
         <EmphasisSegments
@@ -106,24 +94,9 @@ export default function CollectionRow({
     row.activity !== null && row.activity.kind === "RemainingTime"
       ? collectionActivityText(row.activity)
       : null;
-  const date = row.publicationDate !== null ? (
-    <time key="date" className={styles.year} dateTime={row.publicationDate}>
-      {mediaLayout
-        ? collectionPublicationYear(row.publicationDate)
-        : formatCollectionPublicationDate(row.publicationDate)}
-    </time>
-  ) : null;
-  const contributors = row.contributors.length > 0 ? (
-    <ContributorCreditList
-      key="contributors"
-      className={styles.contributorList}
-      credits={row.contributors}
-      maxVisible={row.mediaIdentity === "External" ? row.contributors.length : 2}
-      overflowNoun={mediaLayout ? "authors" : "contributors"}
-    />
-  ) : null;
-  if (contributors) supportParts.push(contributors);
-  if (date) supportParts.push(date);
+  if (row.contributors.length || row.publicationDate !== null) supportParts.push(
+    <ResourceMetadata key="bibliography" parts={bibliographyMetadata(row.contributors, row.publicationDate)} linkSource={false} />,
+  );
   if (row.context !== null && !mediaLayout) {
     supportParts.push(
       <span key="context" className={styles.context}>
@@ -195,15 +168,16 @@ export default function CollectionRow({
   const sections: readonly ContextActionSection[] = [
     {
       id: "View",
-      actions: rowActionsAvailable && row.insertionSource ? [{kind: "command",id:"Resource.AddItem",label:"add item",onSelect:()=>{setDisclosed(true);}}] : rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
+      actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
   const actions = rowActionsAvailable &&
     (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
-      title={row.title.text} subjectKey={occurrenceKey}
+      title={row.title.text} subjectKey={`collection:${row.id}`}
       sections={sections}
       resourceRef={row.resourceRef ?? undefined}
+      displayedActivation={row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
       label={menuLabel}
       triggerAttributes={{ "data-row-actions-control": "" }}
     />
@@ -216,7 +190,7 @@ export default function CollectionRow({
   return (
     <ResourceRow
       as={as}
-      primary={row.insertionSource ? {kind:"static"} : row.primary}
+      primary={row.primary}
       selected={row.selected}
       rootProps={{
         "aria-current": row.selected ? "true" : undefined,
@@ -225,12 +199,11 @@ export default function CollectionRow({
         "data-media-identity": mediaLayout ? "true" : undefined,
         style: rootStyle,
       }}
-      title={row.insertionSource && row.primary.kind === "link" ? <><a href={row.primary.href} data-row-focusable="" aria-label={`open ${row.title.text}`}>•</a> {title}</> : title}
+      title={<MediaIdentity title={title} />}
       supporting={supporting}
       status={status}
       wrapped={mediaLayout}
       evidence={evidence}
-      leadingControl={row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : undefined}
       leadingVisual={row.artwork !== undefined ? (
         <PodcastRowArtwork
           key={row.artwork.imageUrl}
@@ -240,7 +213,7 @@ export default function CollectionRow({
       ) : undefined}
       primaryControl={primaryControl}
       actions={actions}
-      expanded={<>{panel}{disclosed && row.insertionSource?.kind === "resource" ? <ResourceDisclosure resourceRef={row.insertionSource.ref} occurrencePrefix={occurrenceKey} /> : null}</>}
+      expanded={panel}
     />
   );
 }

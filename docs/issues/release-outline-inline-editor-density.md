@@ -2,9 +2,11 @@
 
 after normal release, inspect a plain note, a resource reference and a nested
 search passage in narrow and wide panes. reference text must open its resource;
-unused primary space must focus a caret without writing. enter and committed
-prose must create a sibling after the exact occurrence, preserving the reference.
-the per-row insertion button and replacement menu command must be absent.
+unused primary space must select the occurrence without opening a keyboard.
+enter or the pane accessory opens the captured sibling insertion line; focus
+alone writes nothing. the index/outline cut supersedes reference-token editing;
+follow [the current notes contract](../modules/notes.md). obsolete add-item and
+structural menu commands must be absent.
 
 check keyboard focus, native link modifiers, copy/cut, reference search, enlarged
 text and touch targets. opening, folding, source attribution and menus retain
