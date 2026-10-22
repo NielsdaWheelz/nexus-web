@@ -108,7 +108,7 @@ export function useSubscriptionSettingsSave(podcastId: string | null, subject: s
     state,
     reset: (subscriptionId: string | null) => {
       if (flight.current?.subject === subject) return;
-      if ((state?.kind === "Unknown" || state?.kind === "ReadFailed") &&
+      if ((state?.kind === "Rejected" || state?.kind === "Unknown" || state?.kind === "ReadFailed") &&
         (subscriptionId === null || subscriptionId === state.command.patch.expected_subscription_id)) return;
       setState(null);
     },

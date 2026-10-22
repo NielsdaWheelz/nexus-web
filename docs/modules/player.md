@@ -211,8 +211,11 @@ finish, undo, unread, reset and settle publish `Consumption`.
   the descriptor it was given), serialized loads with the latest request
   winning, requested playback preferences and keyboard shortcuts. requested rate
   and silence choices stay separate from observed engine state; one flight
-  applies the newest pair. queued work retains its engine, source object and
-  load generation. source replacement retires old work and presentation.
+  applies the newest pair. queued work retains its engine-owned load subject and
+  request generation. replacement retires old work and presentation; temporary
+  native unavailability retains the confirmed subject and captured save receipts.
+  `seekTo({positionMs, expectedSubject?})` captures the current subject when
+  omitted and validates it again at engine application. retired seeks do nothing.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
   Server rendering and the first client render start absent. Only the existing
@@ -244,9 +247,10 @@ finish, undo, unread, reset and settle publish `Consumption`.
   `window.nexusPlayer` (below); an unanswered bounded request shows "Player
   unavailable" until the next frame arrives. preference commands resolve after
   application and snapshot publication. expired replies are ignored; live
-  preference replies cannot replace a newer source. real pushes remain authoritative.
+  replies cannot replace an intervening confirmed load. real pushes from the
+  current controller remain authoritative.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
-  sheet, anchored playback/chapter pickers and shared presentational fields.
+  sheet, desktop playback/chapter pickers and shared presentational fields.
   the authenticated workspace always renders one stable player slot and footer,
   including server rendering and initial hydration. `Absent` shows “nothing
   playing” and a real `/lectern` link using workspace follow/fork activation;
@@ -257,11 +261,25 @@ finish, undo, unread, reset and settle publish `Consumption`.
   required. stop calls the existing dismiss command; confirmed absence returns
   to idle. closing an overlay preserves playback. the downloaded shelf is a
   separate composition.
-  normal idle/loaded footprints match at the same available width and text scale;
-  status and enlarged content may grow. chapter/saved-time captions share one
-  reserved line and keep seek/volume controls in place. desktop anchored pickers
-  preserve an interactive footer;
-  mobile embeds preferences, chapters, volume and saved time in now playing.
+  normal idle/loaded footprints match: wide desktop is 80px, narrow desktop
+  128px; coarse pointing adds 16px for seeking. the 42rem breakpoint belongs to
+  the player container. equal side tracks center transport in the whole player.
+  enlarged text and substantive failures may grow without clipping controls.
+  the 64px mobile mini adds the existing safe inset and shows artwork, title,
+  subtitle and play/pause in one row, with a decorative progress edge.
+  the mobile drawer orders identity, transport, seek and utilities. its native
+  handle is the only header control. playback and chapters begin closed and
+  are mutually exclusive plain disclosures; opening/closing the sheet, changing
+  subject or changing viewport mode retires them. desktop retains anchored
+  pickers and an interactive footer. positive estimated device-only saved time
+  and episode up-next live inside playback; chapter context lives in chapters.
+  preview exposes rate only, with no episode history, chapters or default save.
+  numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
+  work uses control markers; failures expose details and recovery. application
+  gain is unity; volume belongs exclusively to the os/device.
+  pointer scrubbing previews locally and commits once on captured release,
+  including outside the range. cancellation, capture loss, source retirement or
+  sheet closure discards it. keyboard seeks carry the rendered range's subject.
   mobile motion, occupied space and keyboard/sheet suppression follow the shared
   [workspace geometry contract](workspace.md#mobile-reader-chrome).
   source-specific overlays close on absence, unavailability or viewport-mode
@@ -294,9 +312,10 @@ pair; later control changes do not become remembered implicitly.
 
 silence defaults are podcast-owned: `Natural` means on; `Off` or null means off.
 the current browser engine has no silence processor and explicitly refuses on,
-including an inherited on choice; it never reports a fake applied state. real
-browser processing and cross-platform audio qualification remain the dependency
-in [release playback settings](../issues/release-playback-settings.md).
+including an inherited on choice; it never reports a fake applied state.
+browser capability handling must preserve android defaults when remembering
+speed; see [release playback settings](../issues/release-playback-settings.md).
+browser silence processing is not a release dependency.
 
 ## The Android bridge
 
@@ -307,8 +326,13 @@ second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 `preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
 `skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
-`volume{value}`, `sessionShortenPauses{key, on}` (this load's boolean override),
+`sessionShortenPauses{key, on}` (this load's boolean override),
 `dismiss{}`.
+every keyed op also carries `expected_load_id`; every snapshot has nullable
+`load_id`, mapped to the web session's `playbackSubject`. each install, including
+same-media reload and service restart, gets a fresh id. the service checks both
+key and load id under its load lock immediately before application; mismatch
+answers `Stale` without mutation. transient transport loss preserves identity.
 The object's name is the compatibility identity: an incompatible change renames
 it, and an app without it renders "Update Nexus for Android". There is no
 protocol version or hash.
@@ -334,10 +358,15 @@ on 204, plays the first audio row after the ended one in the `GET /lectern` it
 read before settling, so an episode advances with the webview gone. A downloaded
 episode plays from its `OfflineStore` lease. pause shortening is
 `skipSilenceEnabled`: this load's override, else the podcast mode, else off.
-only the time-saved counter remains device-owned. settings join the existing
-load lock, recheck their media key there and publish their actual effect before
-acknowledging. source publication follows installation of its initial settings;
-a descriptor/native-media key mismatch suppresses intermediate snapshots.
+only the time-saved counter remains device-owned. settings and seeks join the
+existing load lock and publish their actual effect before acknowledging. source
+publication follows the complete install, including initial settings; no
+intermediate snapshot can claim the new occurrence. a terminal recorder write
+advances only its still-attached originating episode; durable restored writes
+settle without advancing a later load. reconnect hello replies cannot overwrite
+an intervening push or a replacement controller/document.
+the media session retains device-volume access and hardware/audio-focus handling;
+application-volume commands and grants are absent.
 
 ## Boundary with podcast sync
 

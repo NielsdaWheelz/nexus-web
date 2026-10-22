@@ -535,6 +535,13 @@ fixed. the player registers its moving inner footer; its normal-flow outer slot
 stays untransformed and measured through every runtime state and reader retreat.
 chrome alone owns the footer's inertness; local keyboard/sheet suppression owns
 the outer slot. desktop anchored player pickers leave the footer interactive.
+the player drawer uses the shared sheet's native handle button; playback and
+chapters are mutually exclusive inline regions inside its existing body.
+`MobileSheet` accepts either `handleLabel` or `renderHeader`, never both.
+its captured header drag uses sticky 8px tap slop and a 96px downward dismissal
+threshold. moved/cancelled gestures suppress only their own click; every exit
+uses the same dismissal guard. default title/close and custom headers retain
+their existing behavior.
 
 the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
 media pane binds `registerReaderScrollport`. the newest mobile registration

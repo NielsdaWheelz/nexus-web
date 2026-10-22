@@ -12,7 +12,7 @@
  * position older than this device's own last write. The engine that hears an end settles it and
  * plays the next audio row after the ended one, read from the Lectern before the settle.
  * Requested playback preferences are separate from observed engine state: one serialized flight
- * coalesces newer intent, fenced by engine, source reference and the existing load generation.
+ * coalesces newer intent, fenced by engine-owned load identity and the request generation.
  * Podcast persistence belongs to the presentation owner and never invokes this runtime.
  */
 
@@ -72,15 +72,16 @@ export type PlayerSource =
   | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor };
 export type PlayerPhase = "Buffering" | "Playing" | "Paused" | "Ended";
 
-/** What an engine reports; on Android it is the native snapshot as pushed. */
+/** What an engine reports; the native adapter maps bridge load_id to playbackSubject. */
 export interface EngineState {
   readonly source: PlayerSource | null;
+  /** Engine-owned load occurrence; independent of preferences and transport availability. */
+  readonly playbackSubject: string | null;
   readonly phase: PlayerPhase;
   readonly positionMs: number;
   readonly durationMs: number; // 0 until known
   readonly bufferedMs: number;
   readonly rate: number;
-  readonly volume: number;
   /** Observed processing state; requested preferences are owned separately by the runtime. */
   readonly shortenPauses: boolean;
   readonly shortenPausesSavedMs: number;
@@ -91,12 +92,12 @@ export interface EngineState {
 
 export const IDLE_ENGINE_STATE: EngineState = {
   source: null,
+  playbackSubject: null,
   phase: "Paused",
   positionMs: 0,
   durationMs: 0,
   bufferedMs: 0,
   rate: 1,
-  volume: 1,
   shortenPauses: false,
   shortenPausesSavedMs: 0,
   error: null,
@@ -114,11 +115,10 @@ export interface Engine {
    * descriptor) stands in for an unanswered ask when it knows a reset the session has not. */
   play(given?: PlayerDescriptor): void;
   pause(): void;
-  seekTo(positionMs: number): void;
+  seekTo(input: { readonly positionMs: number; readonly expectedSubject?: string }): void;
   skipBy(deltaMs: number): void;
   /** Pins the episode rate; resolves after application and snapshot publication. */
   setRate(rate: number): Promise<void>;
-  setVolume(volume: number): void;
   /** This load's explicit choice; resolves after application and snapshot publication. */
   setShortenPauses(on: boolean): Promise<void>;
   /** An operational refusal rejects with action feedback; its consumption write must not send. */
@@ -137,7 +137,7 @@ export type PlayerState =
     }
   | ({ readonly kind: "Loaded"; readonly source: PlayerSource } & Omit<
       EngineState,
-      "source" | "positionMs" | "durationMs" | "bufferedMs"
+      "source" | "playbackSubject" | "positionMs" | "durationMs" | "bufferedMs"
     >);
 /** Expected engine refusal; unexpected exceptions belong to the existing defect boundary. */
 export class PlaybackPreferenceError extends Error {}
@@ -153,7 +153,6 @@ export interface PlaybackPreferences {
 
 interface PreferenceIntent extends PlaybackPreferences {
   readonly engine: Engine;
-  readonly source: PlayerSource;
   readonly generation: number;
   readonly subject: string;
 }
@@ -168,6 +167,7 @@ export interface PlayerSession {
   readonly pendingPlayback: PendingPlayback | null;
   readonly nextUp: PlayerDescriptor | null;
   readonly preferences: PlaybackPreferences | null;
+  /** Confirmed engine load, retained through temporary native unavailability. */
   readonly playbackSubject: string | null;
 }
 export interface PlayerTimeline {
@@ -181,12 +181,12 @@ export interface PlayerCommands {
   playPreviewAudio(input: { target: string; resolveDescriptor: () => Promise<PreviewAudioDescriptor> }): Promise<"Installed" | "Superseded">;
   resume(): void;
   pause(): void;
-  seekTo(positionMs: number): void;
+  /** Omission captures the confirmed load at admission; stale application is a silent no-op. */
+  seekTo(input: { readonly positionMs: number; readonly expectedSubject?: string }): void;
   skipBy(deltaMs: number): void;
   previous(): void;
   next(): void;
   setPlaybackRate(rate: number): void;
-  setVolume(volume: number): void;
   setShortenPauses(on: boolean): void;
   retryPlaybackPreferences(): void;
   dismiss(): void;
@@ -248,7 +248,6 @@ export function GlobalPlayerProvider({
   const latest = useRef(0);
   const pendingLoad = useRef<number | null>(null);
   const [pendingPlayback, setPendingPlayback] = useState<PendingPlayback | null>(null);
-  const sourceToken = useRef(0);
   const intent = useRef<PreferenceIntent | null>(null);
   const [preferenceState, setPreferenceState] = useState<PreferenceIntent | null>(null);
   const applying = useRef(false);
@@ -259,7 +258,7 @@ export function GlobalPlayerProvider({
   }, []);
   const ownsPreferences = useCallback((value: PreferenceIntent) =>
     engineRef.current === value.engine &&
-    value.engine.state().source === value.source &&
+    value.engine.state().playbackSubject === value.subject &&
     latest.current === value.generation && pendingLoad.current === null,
   []);
 
@@ -306,7 +305,7 @@ export function GlobalPlayerProvider({
   const syncPreferences = useCallback(() => {
     const target = engineRef.current;
     const snapshot = target?.state();
-    if (target === null || snapshot === undefined || snapshot.source === null) {
+    if (target === null || snapshot === undefined || snapshot.source === null || snapshot.playbackSubject === null) {
       if (intent.current !== null) publishPreferences(null);
       return;
     }
@@ -318,22 +317,21 @@ export function GlobalPlayerProvider({
         publishPreferences({ ...before, rate: snapshot.rate, skipSilence: snapshot.shortenPauses });
       return;
     }
-    // The processing PR supplies browser silence skipping. Until then a Natural load retains
-    // its requested ON choice and fails explicitly; native restores its actual session choice.
+    // Browser silence skipping is unsupported: a Natural load retains its requested ON
+    // choice and fails explicitly; native restores its actual session choice.
     const skipSilence = androidShell ? snapshot.shortenPauses :
       snapshot.source.kind === "Episode" && snapshot.source.descriptor.pause_shortening_mode === "Natural";
     const needsApplication = skipSilence !== snapshot.shortenPauses;
     publishPreferences({
       engine: target,
-      source: snapshot.source,
       generation: latest.current,
-      subject: `${accountId}:${latest.current}:${++sourceToken.current}`,
+      subject: snapshot.playbackSubject,
       rate: snapshot.rate,
       skipSilence,
       application: { kind: needsApplication ? "Applying" : "Ready" },
     });
     if (needsApplication) applyPreferences();
-  }, [accountId, androidShell, applyPreferences, ownsPreferences, publishPreferences]);
+  }, [androidShell, applyPreferences, ownsPreferences, publishPreferences]);
 
   const requestPreferences = useCallback((patch: Partial<Pick<PlaybackPreferences, "rate" | "skipSilence">>) => {
     const before = intent.current;
@@ -345,19 +343,24 @@ export function GlobalPlayerProvider({
     PlayerState,
     { kind: "Unavailable" }
   > | null>(null);
+  const unavailableRef = useRef(false);
 
   useEffect(() => {
     if (androidShell && !nativePlayerAvailable) {
+      unavailableRef.current = true;
+      setEngine(null);
       setUnavailable({ kind: "Unavailable", reason: "UpdateRequired" });
       return;
     }
     setUnavailable(null);
+    unavailableRef.current = false;
     const created = androidShell
-      ? createNativeEngine(accountId, (responding) =>
+      ? createNativeEngine(accountId, (responding) => {
+          unavailableRef.current = !responding;
           setUnavailable(
             responding ? null : { kind: "Unavailable", reason: "NotResponding" },
-          ),
-        )
+          );
+        })
       : createBrowserEngine({
           settle: settleNaturalEnd,
           // Read before the settle removes the ended row; none when it had no row.
@@ -489,6 +492,13 @@ export function GlobalPlayerProvider({
   const commands = useMemo<PlayerCommands>(() => {
     const live = () => engineRef.current;
     const current = () => live()?.state() ?? IDLE_ENGINE_STATE;
+    const seekTo: PlayerCommands["seekTo"] = ({ positionMs, expectedSubject }) => {
+      const target = live();
+      if (target === null || unavailableRef.current) return;
+      const subject = target.state().playbackSubject;
+      if (subject === null || (expectedSubject !== undefined && expectedSubject !== subject)) return;
+      target.seekTo({ positionMs, expectedSubject: expectedSubject ?? subject });
+    };
     const playing = () => {
       const source = current().source;
       return source?.kind === "Episode" ? source.descriptor : null;
@@ -529,14 +539,14 @@ export function GlobalPlayerProvider({
         const owner = live();
         void enqueue(async () => { if (owner === live()) owner?.pause(); }, null).catch(error => fail({ error }));
       },
-      seekTo: (positionMs) => live()?.seekTo(positionMs),
-      skipBy: (deltaMs) => live()?.skipBy(deltaMs),
+      seekTo,
+      skipBy: (deltaMs) => { if (!unavailableRef.current) live()?.skipBy(deltaMs); },
       previous() {
         const now = playing();
         const target = back.current.at(-1);
         if (now === null) return;
         if (current().positionMs > RESTART_AFTER_MS || target === undefined) {
-          live()?.seekTo(0);
+          seekTo({ positionMs: 0 });
           return;
         }
         back.current.pop();
@@ -558,7 +568,6 @@ export function GlobalPlayerProvider({
         if (lecternTarget !== null) void play({ mediaId: lecternTarget.media_id, knownDescriptor: lecternTarget }).catch(error => fail({ error }));
       },
       setPlaybackRate: (rate) => requestPreferences({ rate }),
-      setVolume: (volume) => live()?.setVolume(volume),
       setShortenPauses: (on) => requestPreferences({ skipSilence: on }),
       retryPlaybackPreferences: () => requestPreferences({}),
       dismiss() {
@@ -626,7 +635,7 @@ export function GlobalPlayerProvider({
   }, []);
 
   // Session readers re-render on what they show, never on the clock.
-  const { positionMs, durationMs, bufferedMs, source, ...display } = s;
+  const { positionMs, durationMs, bufferedMs, source, playbackSubject, ...display } = s;
   const derived: PlayerState =
     unavailable ??
     (source === null
@@ -648,8 +657,8 @@ export function GlobalPlayerProvider({
       skipSilence: activePreferences.skipSilence,
       application: activePreferences.application,
     },
-    playbackSubject: activePreferences?.subject ?? null,
-  }), [state, pendingPlayback, nextUp, activePreferences]);
+    playbackSubject,
+  }), [state, pendingPlayback, nextUp, activePreferences, playbackSubject]);
   const chapters = episode?.chapters;
   const timeline = useMemo<PlayerTimeline>(
     () => ({
