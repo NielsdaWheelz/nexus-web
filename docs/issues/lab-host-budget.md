@@ -200,7 +200,7 @@ must be empty, or cleanup fails with 125. until §2 lands, `down` gains
 
 testing-standards "disposable verification" gains a host-budget paragraph:
 - engine: docker desktop only (d1).
-- vm budget: 16 gib, 8 cpus, citing dev-server (d2).
+- vm budget: 8 gib, 8 cpus, citing dev-server (d2).
 - slots and throttled exclusivity: §4.
 - worker image retention: §2–§3.
 - load definition: §5.
@@ -241,7 +241,7 @@ these are updated or retired in the implementing change:
   - `c3rh-pg-data` (6 gb).
 - after the docker resize, two checks:
   - one ordinary lab run end to end.
-  - the macos release lane at 16 gib and 8 cpus while one lab run holds the
+  - the macos release lane at 8 gib and 8 cpus while one lab run holds the
     other slot. if it fails for memory, the release lane takes the whole budget
     before d2's memory rises.
 
