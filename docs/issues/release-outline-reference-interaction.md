@@ -13,9 +13,7 @@ before release:
   0298, including its daily-page publication contract. recheck the release
   boundary if another release lands first. no defaults, old routes or
   compatibility translation.
-- complete the existing [insertion release](release-resource-insertion.md)
-  prerequisites for the combined migration head. this change adds no migration,
-  environment key or historical resource rewrite.
+- this change adds no migration, environment key or historical resource rewrite.
 - smoke ordinary/shift navigation, selected unlink, annotated refusal, preserved
   creation undo/redo and coarse-pointer deletion on the paired build. production
   writes and fixture cleanup need their own scoped authorization.

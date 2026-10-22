@@ -21,6 +21,4 @@ publisher inputs do not reproduce the intended active configuration. remove the
 retired keys during that reconciliation and validate the complete publication
 diff before running `deploy/hetzner/sync-env.sh`.
 
-resolved when: a release carrying the squash has run (`alembic current` reads
-its head under the new graph) and the env file holds none of those keys. delete
-this file then.
+resolved when: the env file holds none of those keys. delete this file then.

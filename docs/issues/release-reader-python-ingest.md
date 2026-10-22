@@ -30,12 +30,6 @@ before release, on the newest production backup brought to the release's head
   the same values for every text under 2^32 boundaries (the 64 MiB output cap
   bounds a fragment far below that), and leaves `html_tree.py` byte-identical.
 
-0293: main's #713 froze 0293 at its historical schema; it imports no application
-module, so nothing here runs inside it. (on a tree without #713, 0293 imports
-`web_article.prepare_article`, whose preparation is byte-identical but for a
-breached apparatus budget, an abort either way: stored web html holds no
-`template`, and both trees prepare a `&#13;` as a line feed.)
-
 after deploy, the owner's smoke: import a standard ebooks epub with endnotes
 (progress, contents, an endnote in the evidence pane); upload an arxiv pdf
 (bibliography markers); add a web article with footnotes and refresh it (its

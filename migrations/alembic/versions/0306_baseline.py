@@ -1,13 +1,13 @@
-"""Baseline schema: revisions 0236-0292 squashed into the schema they produced.
+"""Baseline schema: revisions 0292-0306 squashed into the schema they produced.
 
-Revision ID: 0292
+Revision ID: 0306
 Revises:
-Create Date: 2026-10-18
+Create Date: 2026-10-22
 
-Production already stands at 0292, so this revision never runs there; it is the
-same node that 0293 revises. It builds a database from nothing. The SQL beside
+Production already stands at 0306, so this revision never runs there; the next
+revision revises this same node. It builds a database from nothing. The SQL beside
 this file is `pg_dump --schema-only --no-owner --no-privileges` of the old chain
-replayed to 0292, plus the rows that chain seeds (the system user, the `Heavy`
+replayed to 0306, plus the rows that chain seeds (the system user, the `Heavy`
 capacity lease, the `suggestion_inputs` singleton and the two sequence positions),
 minus pg_dump's `\\restrict` guards and its session `search_path` reset.
 The chain's conversions, refusals and backfills left with it; production ran them.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from alembic import op
 
-revision: str = "0292"
+revision: str = "0306"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -29,9 +29,9 @@ def upgrade() -> None:
     # text() would read `:` as a bind parameter and exec_driver_sql() would hand psycopg
     # a parameterised query that chokes on the `%`.
     with op.get_bind().connection.cursor() as cursor:
-        for name in ("0292_baseline_schema.sql", "0292_baseline_data.sql"):
+        for name in ("0306_baseline_schema.sql", "0306_baseline_data.sql"):
             cursor.execute(Path(__file__).with_name(name).read_text(encoding="utf-8"))
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0292 is the baseline schema; there is nothing beneath it")
+    raise NotImplementedError("0306 is the baseline schema; there is nothing beneath it")
