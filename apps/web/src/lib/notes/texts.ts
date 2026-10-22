@@ -300,11 +300,11 @@ function intentFor(ref: string, current: Entry, explicit: boolean): WritingInten
     if (current.creator === null || typeof current.value === "string" || (!explicit && !bodyHasContent(current.value))) return null;
     return publicationWithBody(current.creator, current.value);
   }
-  if (same(current.value, current.acked.value) || typeof current.value === "string" && !current.value.trim()) return null;
-  const id = ref.slice(ref.indexOf(":") + 1);
-  const policy = explicit ? "explicit" : "autosave";
   const lane = typeof current.value === "string" ? "title" : "body";
   const preceding = current.handle === null ? null : draftDependency(current.handle, lane);
+  if ((same(current.value, current.acked.value) && preceding?.kind !== "result") || (typeof current.value === "string" && !current.value.trim())) return null;
+  const id = ref.slice(ref.indexOf(":") + 1);
+  const policy = explicit ? "explicit" : "autosave";
   const expected: LaneDependency = preceding?.kind === "result" ? preceding : { kind: "observed", ref, lane, version: current.acked.version };
   return typeof current.value === "string"
     ? { kind: "title", policy, page_id: id, title: current.value, expected }

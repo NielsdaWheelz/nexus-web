@@ -231,8 +231,10 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   daily title proves only unchanged initial version one. structural dependencies
   still require genuine checked lane/placement facts. an observed expectation retains its captured
   version; an unrelated acknowledgement cannot rebase another branch. same-branch
-  autosave successors name their pending predecessor explicitly. a later read
-  permits an explicit new decision.
+  autosave successors name their pending predecessor explicitly. reverting to
+  the confirmed value still queues a successor when a different value is pending;
+  equality alone cannot cancel an already sent request. a later read permits an
+  explicit new decision.
   a retained-note inverse owns its historical-body match certificate. only that
   inverse's canonical acknowledgement can prove its named body successor; newer
   authored prose never supplies the historical comparison.

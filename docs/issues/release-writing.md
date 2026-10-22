@@ -18,8 +18,10 @@ review/export pending writing before a later incompatible journal/wire release;
 never rewrite a sealed request under a new header or clear incompatible work.
 release qualification includes the exact built desktop and android authoring,
 restart recovery, replay after deletion, sign-out and receive/performance journeys.
-the concurrent suggestion-counter issue remains a blocker until the scoped
-writing/index-publication journey passes.
+the scoped concurrent writing/index-publication journey passed locally. this
+does not establish global counter throughput or close the separate contention
+stress qualification. desktop/device performance and native completion remain
+acceptance blockers until their real journeys pass.
 
 resolved when the paired source is released through the normal backup/migration
 controller and the installed clients pass those journeys on that source. no

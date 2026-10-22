@@ -67,8 +67,11 @@ failed-storage or unfinished local work does not qualify as a clean fork. a
 committed value already equal to the actual current canonical value needs no
 write or new causal proof; preexisting conflicts remain. awaiting qualification.
 
-two remaining boundaries are being repaired: a clean disk row may already hold
-c as its base, so ordinary snapshot merge still loses original a on recovery;
-title cancellation clears its capture at end, so a following native noncomposing
-input could submit old a without that capture. the latter is a source ordering
-hazard; run17 proves end-before-input for the body editor, not the html title input.
+run18 at `2808a6124`, lab `20261021-173813-e9aef096df90`, passed the actual
+native first-publication and numeric-acknowledgement boundaries: no preedit
+checkpoint, same editor/focus/selection through acknowledgement, then exact rich
+committed durability. the real foreign-update journey also retained original a,
+local b and saved c on disk without sending b. it stopped at the separate mobile
+conflict-layout defect. html title composition remains unqualified; its deferred
+completion retains the captured base through the following native input and
+reads that same actual input's committed value once.

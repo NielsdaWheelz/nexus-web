@@ -2894,7 +2894,12 @@ export function useOutlineSession({
       }
       const at = { anchor: joined.caret, head: joined.caret };
       if (
-        commit(joined.edits, { kind: "text", key: joined.earlier.key, ...at })
+        commit(joined.edits, { kind: "text", key: joined.earlier.key, ...at }, true, selection, {
+          occurrences: rows.filter(candidate => joined.edits.some(edit => edit.kind === "consume_note" && edit.link_id === candidate.link.link_id)).map(candidate => ({
+            edgeId: candidate.link.link_id, key: candidate.key,
+            item: candidate.link.target.item, originSourceRef: candidate.endpoint,
+          })),
+        })
       )
         focusRow(joined.earlier.key, at);
     },
@@ -2982,6 +2987,12 @@ export function useOutlineSession({
             },
           ],
           null,
+          true,
+          selection,
+          { occurrences: [{
+            edgeId: row.link.link_id, key: row.key,
+            item: row.link.target.item, originSourceRef: row.endpoint,
+          }] },
         );
     },
     persisted(ref: string) {

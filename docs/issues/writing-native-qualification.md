@@ -9,9 +9,13 @@ input were captured; the end event itself was untrusted. the passive observer
 uses actual trusted input state and retains every event's trust flag. run17 kept
 the same focused editor, native selection and ongoing composition through the
 real first-page acknowledgement, then continued and committed native input.
-the journey stopped before convergence because blank-title publication caused a
-false conflict; it also exposed premature preedit checkpoints. their owning
-records are `writing-page-default-title.md` and `writing-ime-preedit-admitted.md`.
+run18 at `2808a6124`, lab `20261021-173813-e9aef096df90`, then passed exact
+committed rich checkpoints without preedit admission across both first-page and
+numeric body acknowledgements. a real foreign canonical change during native
+composition retained the original base, local rich successor and saved comparison
+without sending the conflicting successor. it stopped at a mobile conflict
+layout defect: the comparison covers `use saved version`. html title composition
+and the recovery-file journey remain unqualified.
 
 the export driver also awaited webview work while the system picker paused it
 (`MainActivity.kt:491`). repair that temporary driver to operate the picker

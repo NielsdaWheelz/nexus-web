@@ -12,4 +12,8 @@ current acknowledgement. no causal expectation or retry semantics change.
 
 resolved when a real held-a acknowledgement followed by committed z preserves
 the exact successor on disk and eventually saves z without another input event.
-this finding is source-proven; live qualification remains pending.
+live reproduction: lab `20261021-173813-e9aef096df90`,
+`writing-revert-pending.spec.ts`. exact z revision 2 completed its checkpoint;
+only sealed a was sent. after its genuine acknowledgement, canonical a remained
+and z/base-a remained dirty with an empty outbox. the dependency-before-equality
+repair is source-reviewed; green qualification remains pending.
