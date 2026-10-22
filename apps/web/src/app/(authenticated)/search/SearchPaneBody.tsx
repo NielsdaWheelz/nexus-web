@@ -86,7 +86,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   if (visible) admitted.current = key;
   const list = useServerList<Row, Metadata>({
     key: admitted.current === key ? key : null,
-    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
+    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`,
     pageSize: 20,
     active: active && !idle,
     visit: VISIT,

@@ -8,7 +8,6 @@ import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import NoteEditor from "@/components/notes/NoteEditor";
 import { isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { bodyHasContent, emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
@@ -64,7 +63,6 @@ export default function NewPagePaneBody() {
     if (texts.readText(`page:${current.page}`)?.acked) texts.editText(`page:${current.page}`, title);
     claim(delivery);
   }, [delivery, claim, readDraft, setDraft]);
-  const fail = useThrowLater();
   const noteText = texts.useText(`note_block:${draft.note}`);
   usePaneReturnReady(true);
 
@@ -145,9 +143,9 @@ export default function NewPagePaneBody() {
     });
   }
 
+  // A refusal or a reported defect (it may have landed): retry resends this same request.
   function refuse(error: unknown) {
     if (handleUnauthenticatedApiError(error)) return;
-    if (!modeledApiError(error, fail)) return;
     setSubmitting(false);
     setFailure({ tone: "Danger", title: "this page couldn’t finish saving", message: "your input remains in this tab. retry the same request.", requestId: isApiError(error) ? error.requestId : undefined });
   }

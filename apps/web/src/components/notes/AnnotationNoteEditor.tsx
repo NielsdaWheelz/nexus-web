@@ -25,6 +25,7 @@ import {
   type ApiPath,
 } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
+import { sendWrite } from "@/lib/notes/api";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -163,7 +164,7 @@ function SessionAnnotationEditor(
         const saved = reply as AttachedNote;
         reported.current = saved.body_version;
         latest.current.onSaved(targetId, saved);
-        return saved.body_version;
+        return saved;
       },
     };
     setCreator(ref, creator);
@@ -185,7 +186,7 @@ function SessionAnnotationEditor(
 
   const detach = () => {
     setDetaching(true);
-    apiFetch(notePath(target.kind, targetId, noteId), { method: "DELETE" })
+    sendWrite(notePath(target.kind, targetId, noteId), "DELETE")
       .then(
         () => {
           publishChange("Notes");
