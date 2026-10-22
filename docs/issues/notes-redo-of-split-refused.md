@@ -42,5 +42,8 @@ copy); an XPASS there is expected while the defect is intermittent.
 impact: a person who undoes and redoes a split can see the redo refused and kept as a draft
 instead of applied.
 
-resolved when: both journeys pass a 20-run repeat on a loaded host (`REPEAT=20`, prefixes
-`notes/N2.undo-redo-across notes/N2.undo-split`, load average above 10), and their `xfail` goes.
+resolved when: both journeys pass a 20-run repeat under the calibrated client cpu throttle
+([lab-host-budget](lab-host-budget.md) §5) and their `xfail` goes. calibration first proves the
+throttle reproduces this failure on the base sha (at least 5 of 20). until that instrument
+lands, the operative check remains the earlier form: `REPEAT=20`, prefixes
+`notes/N2.undo-redo-across notes/N2.undo-split`, load average above 10.
