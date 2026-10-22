@@ -3,6 +3,8 @@ name: backend images
 on:
   push:
     branches: [main, "release/**"]
+    # Docs reach no image (python/README.md and apps/worker do, so no blanket *.md).
+    paths-ignore: ["docs/**", AGENTS.md, CLAUDE.md, README.md, deployment.md]
 
 permissions: {}
 

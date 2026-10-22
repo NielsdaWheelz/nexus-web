@@ -36,6 +36,8 @@ deployment, the API and worker image digests, and the expected Alembic revision.
   push for that exact SHA. `backend-images.yml` publishes only under `github.run_attempt == 1`,
   and the release refuses a run whose `run_attempt` is not 1. A rerun therefore
   cannot produce a deployable candidate: merge a new commit instead.
+- a push that changes only `docs/**` or the top-level markdown files builds no
+  images, so that commit cannot be released: release the newest commit that has them.
 - Production pulls GHCR digests named by the candidate manifest. It never
   builds an application image.
 - Config publication (`sync-env.sh`) and the Oracle corpus seed are explicit,
