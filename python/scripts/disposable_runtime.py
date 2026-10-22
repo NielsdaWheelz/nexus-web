@@ -561,12 +561,18 @@ def main() -> int:
         try:
             for offset in range(10):
                 port = 31000 + (host_slot - 1) * 10 + offset
-                listener = socket.socket()
-                sockets.append(listener)
                 try:
-                    listener.bind(("127.0.0.1", port))
+                    try:
+                        probe = socket.create_connection(("127.0.0.1", port), timeout=0.2)
+                    except ConnectionRefusedError:
+                        pass
+                    else:
+                        probe.close()
+                        raise OSError("port already has a listener")
+                    listener = socket.create_server(("127.0.0.1", port))
                 except OSError as exc:
                     raise RuntimeError(f"host slot {host_slot} port {port} unavailable") from exc
+                sockets.append(listener)
             (
                 db_port,
                 storage_port,
