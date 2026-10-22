@@ -269,6 +269,7 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
       held.watch.stop(); held.controller?.abort(); noteWatches.delete(ref);
     }
     for (const [ref, note] of notes) {
+      let generation = generations.get(ref);
       let held = noteWatches.get(ref);
       if (!held) {
         const binding: { watch: WritingWatch; controller: AbortController | null } = {
@@ -297,13 +298,13 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
           } }),
         };
         held = binding; noteWatches.set(ref, held);
+        generation = held.watch.capture();
       }
-      const generation = generations.get(ref);
-      if (generation !== undefined && held.watch.adopt({ body_version: note.body_version }, generation)) adoptText(ref, parseBody(note.body_pm_json), note.body_version);
       const current = readText(ref)?.acked;
       if (current && typeof current.value !== "string" && current.version > note.body_version) {
         Object.assign(note, { body_pm_json: current.value.body_pm_json, body_text: current.value.body_text, body_version: current.version });
       }
+      if (generation !== undefined && held.watch.adopt({ body_version: note.body_version }, generation)) adoptText(ref, parseBody(note.body_pm_json), note.body_version);
     }
   }
 
