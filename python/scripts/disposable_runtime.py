@@ -948,18 +948,16 @@ def main() -> int:
         ).strip()
         if observed_auth_project != auth_project:
             raise RuntimeError("auth gateway project identity mismatch")
-        container_ids = command(compose + ["ps", "-q"], env=compose_env).split()
+        store_services = ["postgres", "storage"]
         if args.fake_providers:
-            fake_ids = command(
-                compose + ["ps", "-q", "fake-providers", "fake-codex"], env=compose_env
-            ).split()
-            if len(fake_ids) != 2:
-                raise RuntimeError("owned fake provider containers missing")
-            container_ids += fake_ids
+            store_services += ["fake-providers", "fake-codex"]
+        container_ids = command(compose + ["ps", "-q", *store_services], env=compose_env).split()
+        if len(container_ids) != len(store_services):
+            raise RuntimeError("owned store containers missing")
         container_ids += command(
             ["docker", "ps", "-q", "--filter", f"label=com.supabase.cli.project={auth_project}"]
         ).split()
-        if len(container_ids) < 6:
+        if len(container_ids) < len(store_services) + 4:
             raise RuntimeError("owned stores and isolated auth containers missing")
         app_env |= {"SUPABASE_URL": auth_origin, "SUPABASE_ANON_KEY": status["PUBLISHABLE_KEY"]}
         phase = "bucket and migration"

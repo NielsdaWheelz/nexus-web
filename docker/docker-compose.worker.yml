@@ -3,10 +3,6 @@
 
 x-worker: &worker
   image: ${NEXUS_LOCAL_WORKER_IMAGE:?prepare the checkout worker image}
-  build:
-    context: ..
-    dockerfile: docker/Dockerfile.backend
-    target: worker-checkout
   environment: &worker-environment
     DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
     R2_S3_API_ORIGIN: ${WORKER_R2_S3_API_ORIGIN:-http://storage:8333}
