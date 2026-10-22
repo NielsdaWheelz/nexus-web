@@ -200,7 +200,7 @@ export function useReferenceInput(
   );
   const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
   const admitted = pickerOpen && state !== null && !paused && search.querySettled && !search.minimum && search.list.current;
-  const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: null })) : [];
+  const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
     firstExistingKey: options[0]?.key ?? null, active: state?.active ?? null });
   const selected = admitted ? reconciled?.key ?? null : null;
@@ -238,6 +238,7 @@ export function useReferenceInput(
     if (
       !value ||
       !admitted ||
+      value.message !== null ||
       value.raw !== state?.raw ||
       !target ||
       !search.items.includes(target)
