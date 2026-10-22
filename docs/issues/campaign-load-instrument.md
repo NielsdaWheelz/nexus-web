@@ -1,12 +1,18 @@
 # campaigns measure load with host cpu burners
 
-problem: campaign "under load" runs start `nice -n 19` busy loops across the whole
-host and accept a run when the host load average exceeds 10. examples:
+status: open. burner and load-average guidance is retired; its calibrated
+replacement is not yet qualified. calibration and the 20-run repeats
+remain deferred to slice 6, after the operator resize window. ask for owner
+approval before calibration or the 20-run repeats.
+
+problem: historical campaign "under load" runs started `nice -n 19` busy loops
+across the whole host and accepted a run when the host load average exceeded 10.
+examples:
 - `loaded.sh` defaults to 16 burners; the c3nt port ran `BURNERS=24`.
 - `journeys/run.mjs` logs `os.loadavg()`.
 - `notes/design.md` §12 O-1 sets the criterion, and
   [notes-redo-of-split-refused](notes-redo-of-split-refused.md) uses it in its
-  resolution check.
+  historical resolution check.
 
 the property under test is that journeys survive a slow client, but burners also
 slow the playwright driver, the fakes, the api and every other session on the
