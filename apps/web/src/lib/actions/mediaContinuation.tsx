@@ -89,9 +89,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       if (operation.destination.kind === "Library")
         confirmed = await placement.addToLibrary({ kind: "Media", id: mediaId }, operation.destination.library.id);
       else {
-        const pending = ctx.lectern.pending.get(mediaId);
-        const outcome = pending !== undefined ? await pending.check()
-          : await ctx.lectern.ensure({ mediaId, title: operation.subject.title });
+        const outcome = await ctx.lectern.ensure({ mediaId, title: operation.subject.title });
         confirmed = outcome === "Acknowledged";
       }
       if (signal.aborted) return;
