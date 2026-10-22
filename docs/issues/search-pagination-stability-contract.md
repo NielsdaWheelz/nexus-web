@@ -17,8 +17,14 @@ id tiebreaker, so deterministic ordering of returned neighbours does not prove
 stable membership at a tied cutoff.
 
 impact: concatenated pages may omit or repeat hits under changed candidate sets.
-deduplication removes repetitions but cannot recover omissions. no live failure
-was reproduced by this audit.
+deduplication removes repetitions but cannot recover omissions. the original
+audit reproduced no live failure. on 2026-10-22 utc, collection qualification also
+observed this live-view boundary in `search/pickers.py`: a resource-target walk
+ended with 139 candidates at `03:02:50.740Z`; `note_reindex_job` published
+`evidence_span:a18240ce-bd4b-42b3-ae3c-e9577fbd697a` at `03:02:54.334Z`, and
+the browser's later walk ended with 140 at `03:02:56.168Z`. preceding pages
+were identical. fixed-corpus verification must await index readiness; this
+observation does not establish an omission in a quiescent corpus.
 
 current decision: live offset pagination with refresh reconciliation for this
 prototype. stronger result-set retention needs an actual requirement.

@@ -1825,9 +1825,8 @@ history, and the chat read tool's completed messages.
 - **One page contract** for the six families (`schemas/collection_page.py`):
   query `limit` (1..200, default 100), `cursor` and the list's own keys; an
   unknown or repeated key, a bad limit or an empty cursor is
-  `400 E_INVALID_REQUEST`. The response is `{data: {items, nextCursor}}`.
-  The other lists keep their envelopes (`page.nextCursor`, snake
-  `next_cursor`).
+  `400 E_INVALID_REQUEST`. the response is `{data: {items, next_cursor}}`.
+  specialized lists retain their typed envelopes and snake_case keys.
 - **The keyset guarantee.** Following cursors to the end returns every row
   whose sort values do not change during the walk exactly once, in plan
   order. A row inserted or moved after the cursor appears; one inserted or
@@ -1868,8 +1867,9 @@ reads remain single responses. authored outline branches alone retain explicit
 In-tab change topics (`lib/api/changes.ts`) tell mounted lists that a
 committed write in this tab changed server state. A writer publishes after
 the write; an observing list puts the topics' stamp in its `stale` token.
-Nothing crosses tabs, and no list rereads on focus (media summaries do,
-through the media query revision some lists also follow).
+change topics do not cross tabs. domain owners admit focus observations:
+imports refreshes its summary and reconciles collections when its observation
+clock advances; media-summary revisions also invalidate their observing lists.
 
 | topic | publishers | observers |
 | --- | --- | --- |
