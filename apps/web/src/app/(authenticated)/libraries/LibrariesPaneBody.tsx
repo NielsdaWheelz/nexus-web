@@ -49,7 +49,6 @@ export default function LibrariesPaneBody() {
     key: `/libraries?${query}`,
     stale: useChangeStamp("Libraries"),
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (library) => library.id,
@@ -163,7 +162,7 @@ export default function LibrariesPaneBody() {
   return (
     <>
       {creation.content}
-      <LibraryInvitations />
+      <LibraryInvitations returnFocus={() => inputRef.current} />
       <CollectionView
         returnScope="Libraries.Items"
         rows={list.items
@@ -186,8 +185,8 @@ export default function LibrariesPaneBody() {
                   }
                 : {
                     tone: "Neutral",
-                    title: "no libraries yet.",
-                    message: "use new library to create one.",
+                    title: list.complete ? "no libraries yet." : "no libraries loaded so far.",
+                    message: list.complete ? "use new library to create one." : undefined,
                   }
             }
             announcement="Polite"
@@ -195,8 +194,8 @@ export default function LibrariesPaneBody() {
         }
         footer={
           <>
-            <CollectionExhaustionNotice list={list} />
-            {loadFailure}
+            <CollectionExhaustionNotice list={list} unit={{ singular: "library", plural: "libraries" }} returnFocus={() => inputRef.current} />
+            {list.status === "ready" ? loadFailure : null}
           </>
         }
       />

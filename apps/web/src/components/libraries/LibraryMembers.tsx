@@ -12,7 +12,7 @@ import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import Select from "@/components/ui/Select";
 import PeopleSearch, { personLabel, type Person } from "@/components/users/PeopleSearch";
 import { useThrowLater } from "@/lib/api/serverState";
@@ -31,6 +31,7 @@ import {
   type LibraryRole,
 } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryMembers.module.css";
 
@@ -51,6 +52,7 @@ interface Question {
 /** Null unless the viewer manages the library; lists load while `open`. */
 export function useLibraryMembers(library: Library | null, open: boolean, reread: () => void) {
   const fail = useThrowLater();
+  const active = usePaneIsActive() && open;
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
@@ -62,8 +64,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     key: key && `members:${key}`,
     stale: String(version),
     pageSize: 100,
-    drain: false,
-    active: open,
+    active,
     visit: MEMBERS,
     id: (member) => member.user_id,
     fetchPage: (cursor, limit, signal) => membersPage(id, cursor, limit, signal),
@@ -72,8 +73,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     key: key && `invitations:${key}`,
     stale: String(version),
     pageSize: 100,
-    drain: false,
-    active: open,
+    active,
     visit: INVITATIONS,
     id: (invitation) => invitation.id,
     fetchPage: (cursor, limit, signal) => invitationsPage(id, cursor, limit, signal),
@@ -183,10 +183,10 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
     </div>
   );
 
-  const footer = (list: ServerList<unknown>, what: string) =>
-    list.status === "loading" ? (
+  const footer = (list: ServerList<unknown>, singular: string, what: string) => <>
+    {list.status === "loading" ? (
       <FeedbackStatus content={{ tone: "Neutral", title: `loading ${what}…` }} announcement="Polite" />
-    ) : list.failure ? (
+    ) : list.failure && list.failure.op !== "More" ? (
       <FeedbackNotice
         content={
           libraryErrorFeedback(list.failure.error, `The ${what} couldn’t be loaded`, throwDefect) ?? {
@@ -197,15 +197,9 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
         announcement="Polite"
         actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
       />
-    ) : (
-      <LoadMoreFooter
-        hasMore={list.current && !list.complete}
-        loading={list.running === "More"}
-        disabled={busy}
-        onLoadMore={list.more}
-        label={`Load more ${what}`}
-      />
-    );
+    ) : null}
+    <CollectionExhaustionNotice list={list} unit={{ singular, plural: what }} returnFocus={() => heading.current} />
+  </>;
 
   return (
     <section className={styles.surface} aria-labelledby={headingId}>
@@ -334,7 +328,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             </div>
           );
         })}
-        {footer(members, "members")}
+        {footer(members, "member", "members")}
       </div>
 
       <div className={styles.section}>
@@ -384,7 +378,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             </div>
           );
         })}
-        {footer(invitations, "invitations")}
+        {footer(invitations, "invitation", "invitations")}
       </div>
       <p className={styles.note}>
         Removing a member closes only this library’s access; they may keep access through another

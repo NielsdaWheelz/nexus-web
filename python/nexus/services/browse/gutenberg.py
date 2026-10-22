@@ -32,9 +32,8 @@ def candidates(db: Session, viewer_id: UUID, ebook_ids: Sequence[int]) -> list[E
     credits = load_contributor_credits_for_catalogue(db, list(rows))
     return [
         EpubCandidate(
-            resolution=PreviewResolution(
-                target=seal_target(ProjectGutenbergEpubTarget(ebookRef=str(ebook_id)))
-            ),
+            target=seal_target(ProjectGutenbergEpubTarget(ebookRef=str(ebook_id))),
+            resolution=PreviewResolution(),
             title=rows[ebook_id]["label"] or "Untitled ebook",
             contributors=credits.get(ebook_id, []),
             description=rows[ebook_id]["text"],
@@ -67,6 +66,6 @@ def preview(
         published_at=None,
         image=None,
         source_href=landing,
-        resolution=PreviewResolution(target=handle),
+        resolution=PreviewResolution(),
         kind_facts=EpubPreviewFacts(ebook_ref=ref, import_href=f"{landing}.epub.noimages"),
     )

@@ -6,7 +6,7 @@ import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
@@ -14,7 +14,7 @@ import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
@@ -68,6 +68,7 @@ function InvalidSearch() {
 function SearchResults({ query }: { query: SearchQuery }) {
   const router = usePaneRouter();
   const visible = usePaneIsVisible();
+  const active = usePaneIsActive();
   const { inputRef, focusInput } = usePaneQueryInput();
   const blank = query.text.trim().length === 0 && (
     query.view === "passages" || query.formats.length + query.authors.length + query.roles.length === 0
@@ -81,12 +82,13 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const unsupported = query.view === "passages" && ![...(query.requestedKinds ?? SEARCH_KINDS)]
     .some((kind) => !disabled.has(kind) && PASSAGE_KINDS.has(kind));
   const key = searchQueryToParams(query).toString();
+  const admitted = useRef<string | null>(null);
+  if (visible) admitted.current = key;
   const list = useServerList<Row, Metadata>({
-    key: visible ? key : null,
+    key: admitted.current === key ? key : null,
     stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
     pageSize: 20,
-    drain: false,
-    active: true,
+    active: active && !idle,
     visit: VISIT,
     id: (row) => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
@@ -103,7 +105,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), {
   }), [router]);
-  const failure = list.failure;
+  const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
   const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
@@ -113,18 +115,16 @@ function SearchResults({ query }: { query: SearchQuery }) {
       ? count > 0
         ? `${count} ${unit} retained from the previous search; ${failure ? "update failed" : "updating"}.`
         : failure ? "results unavailable." : "searching…"
-      : failure?.op === "More"
-        ? `${count} loaded ${unit}; loading more failed.`
-        : `${count} loaded ${unit}${list.complete ? "." : "; more available."}`;
+      : `${count}${list.complete ? "" : " loaded"} ${unit}${list.complete ? "." : "; results incomplete."}`;
   usePaneReturnReady(list.current || failure !== null);
   usePaneChrome({
     query: {
       kind: "Controls", label: "Search content", focusInput,
-      content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: status, announce: list.current || failure === null }} />,
+      content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: status, announce: searching && active }} />,
     },
     header: {
       kind: "Section",
-      meta: searching ? { kind: "Pending" } : list.current && count > 0
+      meta: searching ? { kind: "Pending" } : list.complete && count > 0
         ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" }
         : { kind: "None" },
     },
@@ -162,7 +162,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
         <Button variant="secondary" size="md" onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
       </div> : filtered ? <Button variant="secondary" size="md" onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
     </div> : null : null}
-    <LoadMoreFooter hasMore={list.current && !list.complete} loading={list.running === "More"} disabled={list.running !== null} onLoadMore={list.more} label="Load more" />
+    <CollectionExhaustionNotice list={list} unit={query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }} returnFocus={() => inputRef.current} />
   </div>;
 }
 

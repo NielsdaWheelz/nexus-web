@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import ContributorFilter, {
   useContributorFilterLabels,
 } from "@/components/contributors/ContributorFilter";
@@ -48,6 +49,8 @@ export default function SearchControls(props: {
 }) {
   const { query, commit, inputRef, status } = props;
   const [draft, setDraft] = useState(query.text);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const paneActive = usePaneIsActive();
   const written = useRef(query.text);
   const statusId = useId();
   const { labels, remember } = useContributorFilterLabels(query.authors);
@@ -177,6 +180,7 @@ export default function SearchControls(props: {
       options={{
         label: "Filters",
         activeCount: chips.length,
+        onExpandedChange: setOptionsOpen,
         onClear: () => write({ ...emptySearchQuery(), text: query.text, view: query.view }),
         content: (
           <>
@@ -219,6 +223,7 @@ export default function SearchControls(props: {
               </div>
             </fieldset>
             <ContributorFilter
+              active={paneActive && optionsOpen}
               selectedHandles={query.authors}
               onAdd={(item) => {
                 remember(item);

@@ -3,7 +3,7 @@
 // Presentation only. The editor remains the combobox and keeps keyboard focus.
 import ResourceBody from "./ResourceBody";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import {
   parseResourceRef,
   resourceTypeLabel,
@@ -15,10 +15,12 @@ export default function ReferencePicker({
   input,
   id,
   onReviewPosition,
+  returnFocus,
 }: {
   input: ReferenceInput;
   id: string;
   onReviewPosition(): void;
+  returnFocus: () => HTMLElement | null;
 }) {
   const { state, search, selected } = input;
   if (!state) return null;
@@ -49,7 +51,7 @@ export default function ReferencePicker({
         search.items.length === 0 &&
         !busy ? (
           <FeedbackStatus
-            content={{ tone: "Neutral", title: "no matching resources" }}
+            content={{ tone: "Neutral", title: search.list.complete ? "no matching resources" : "no matching resources found so far" }}
             announcement="Polite"
           />
         ) : null}
@@ -97,16 +99,11 @@ export default function ReferencePicker({
             requestId: search.error.requestId,
           }}
           announcement="Polite"
-          actions={[{ label: "retry", onClick: search.retry }]}
+          actions={[{ label: "retry", onClick: search.retry, busy: search.list.running !== null }]}
+          returnFocus={returnFocus}
         />
       ) : null}
-      {!busy ? (
-        <LoadMoreFooter
-          hasMore={search.hasMore}
-          loading={search.loadingMore}
-          onLoadMore={search.more}
-        />
-      ) : null}
+      {!busy && !search.minimum && search.querySettled ? <CollectionExhaustionNotice list={search.list} unit={{ singular: "resource", plural: "resources" }} returnFocus={returnFocus} /> : null}
       {state.message ? (
         <FeedbackNotice
           content={{

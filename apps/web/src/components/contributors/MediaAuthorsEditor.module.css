@@ -136,13 +136,3 @@
 .status {
   padding: var(--space-3);
 }
-
-.textButton {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}

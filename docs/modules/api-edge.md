@@ -51,7 +51,10 @@ server components: callFastAPI ────────────────�
   once it held still: a search reads by its settled text and shows results
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
-  way (architecture §8.12); `usePagePrefix` is a value over page prefixes.
+  way (architecture §8.12), automatically exhausting active collections. strict
+  refresh supersedes; periodic `revalidate()` waits behind admitted reads and
+  coalesces observations. `usePagePrefix` belongs only to explicit authored
+  outline branches.
 - `stream.ts`: `openStream({path: "/api/stream/…", after?, decode, isTerminal,
   onEvent, onError, onComplete?, onReconnect?, signal?, maxReconnects = 8,
   maxBackoffMs = 30 s})` returns a stop function. Resume is `?after=<id>` only.
