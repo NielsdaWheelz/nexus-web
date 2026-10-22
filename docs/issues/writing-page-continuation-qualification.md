@@ -14,3 +14,10 @@ has failed and the required row count must remain unchanged.
 
 resolved when the real continuation displays all 200 required rows and both
 desktop and android performance qualification reach their measured phases.
+
+the requested-prefix repair passed the focused 200-row/refresh/real-409 journey
+in run24. run26's full fixture did send its cursor request and eventually mounted
+all 200 unique rows in response order; the first post-deadline snapshot proves
+this 338 ms after the ten-second setup assertion expired. the two reads consumed
+7.374 s. use a bounded setup-readiness deadline without weakening measured
+budgets. slow initial reads are tracked in `outline-large-workspace-read-latency.md`.
