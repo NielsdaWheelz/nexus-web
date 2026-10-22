@@ -11,15 +11,12 @@ after that release, on the host:
 
 - `sudo systemd-analyze verify /etc/systemd/system/nexus-nightly-backup.service
   /etc/systemd/system/nexus-nightly-backup.timer` is clean and
-  `systemctl list-timers nexus-nightly-backup.timer` shows the next 03:30 utc run.
+  `systemctl list-timers nexus-nightly-backup.timer` shows the next 11:00 utc run.
 - the first nightly's journal ends in verified evidence for
   `nightly/<date>/database.dump`. it is the first backup one-off (512 mib cap)
   and `pg_dump` to run beside all seven live services; no qualification covers
   that working set, so check it for memory pressure.
 - `release.py --check` reports that archive and passes.
-- optional: the receipts of the archives deleted by hand on 2026-10-22 stay
-  under `/var/backups/nexus/r2/<sha>/`. remove those whose
-  `releases/<sha>/database.dump` no longer exists.
 
 the util-linux `flock`, the systemd units and r2 deletion have run only against
 stand-ins. the backup credentials first delete at the first prune that expires

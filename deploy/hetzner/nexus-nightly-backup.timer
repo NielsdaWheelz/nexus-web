@@ -2,7 +2,7 @@
 Description=Back up the Nexus database nightly
 
 [Timer]
-OnCalendar=*-*-* 03:30:00 UTC
+OnCalendar=*-*-* 11:00:00 UTC
 Persistent=true
 
 [Install]

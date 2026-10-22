@@ -242,7 +242,7 @@ its `database.json` recovery manifest beside it: `releases/<sha>/` from step 4,
 all take `nexus.release_backup create`'s one path (stream, read back, publish
 the manifest). loss on host failure is bounded by a day, not by the last release.
 
-**nightly.** `nexus-nightly-backup.timer` fires at 03:30 utc (`Persistent=true`
+**nightly.** `nexus-nightly-backup.timer` fires at 11:00 utc, the owner's night (`Persistent=true`
 catches up after downtime) and runs `deploy/hetzner/nightly-backup.sh` as
 `/usr/local/sbin/nexus-nightly-backup`. it requires the running api image's
 revision label to equal `/var/lib/nexus/releases/current`, then runs that
