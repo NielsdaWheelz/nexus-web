@@ -37,8 +37,9 @@ is established. these counters measure different layers: host task-charged io,
 guest block io and process page dirtying. root cgroup `io.stat` aliases disk
 statistics; parent/child cgroups and waited-child process counters overlap.
 missing lifetime edges and host-to-guest accounting remain unresolved; do not
-sum these counters or label the residual overhead. a proposed bounded host
-disk-io trace would expose system-wide disk metadata and paths despite its pid
-argument. the owner approved that trace, but the noninteractive attempt could
-not start because sudo requires a password. it awaits execution from the owner's
-terminal; no trace capture has run.
+sum these counters or label the residual overhead. the approved bounded host
+disk-io trace exposes system-wide disk metadata and paths despite its pid
+argument. the initial noninteractive attempt could not start because sudo
+required a password. the owner completed the 60-second probe over
+18:32:53–18:33:57 utc with the same vm identity, but its write counter stayed
+flat and the capture was empty. this does not attribute the earlier residual.
