@@ -186,12 +186,12 @@ def _write_fake_tls(directory: Path) -> str:
 
     directory.mkdir(mode=0o755)
     root_key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab fake providers")])
+    root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab provider root")])
     now = datetime.datetime.now(datetime.UTC)
     root = (
         x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
+        .subject_name(root_name)
+        .issuer_name(root_name)
         .public_key(root_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
@@ -202,7 +202,9 @@ def _write_fake_tls(directory: Path) -> str:
     key = ec.generate_private_key(ec.SECP256R1())
     certificate = (
         x509.CertificateBuilder()
-        .subject_name(name)
+        .subject_name(
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab fake providers")])
+        )
         .issuer_name(root.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
