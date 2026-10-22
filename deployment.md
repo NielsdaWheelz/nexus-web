@@ -36,6 +36,8 @@ deployment, the API and worker image digests, and the expected Alembic revision.
   push for that exact SHA. `backend-images.yml` publishes only under `github.run_attempt == 1`,
   and the release refuses a run whose `run_attempt` is not 1. A rerun therefore
   cannot produce a deployable candidate: merge a new commit instead.
+- a push that changes only `docs/**` or the top-level markdown files builds no
+  images, so that commit cannot be released: release the newest commit that has them.
 - Production pulls GHCR digests named by the candidate manifest. It never
   builds an application image.
 - Config publication (`sync-env.sh`) and the Oracle corpus seed are explicit,
@@ -116,17 +118,22 @@ agree with the source SHA, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
 the two image digests and the expected Alembic revision.
 
-before creating a builder or writing the deploy key, publication requires at
+backend publication uses a fresh github-hosted `ubuntu-24.04` linux/x64 vm
+per job. devbox labs, rehearsal data and retained images cannot consume its
+build capacity. hosted-runner availability and quota govern scheduling; local
+build cache does not survive the job. pr static checks remain self-hosted.
+
+before creating a builder, publication requires at
 least 8 gib free at the actual docker data root and runner temp directory. this
 budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
 roughly 3 gb of additional scratch and runner output; the build-state measurement
-is a lower bound, so this is an admission floor, not a guaranteed peak under
-concurrent host writes. after both builds, the workflow removes only its own
+is a lower bound, so this is an admission floor, not a guaranteed peak.
+after both builds, the workflow removes only its own
 builder and cache before pulling the published images. build summaries and
 local build-record export are disabled; image provenance and sboms remain.
-insufficient space refuses publication without pruning other workloads. recover
-capacity deliberately, then publish a fresh source commit under the same
-first-attempt rule. qualify the budget against the actual successor publication.
+insufficient space refuses publication without host-wide pruning. qualify hosted
+capacity against the actual publication; a failed run still requires a fresh
+source commit under the same first-attempt rule.
 
 The release resolves that artifact through `gh`, requires exactly one unexpired
 copy, and requires its workflow run to be a `push` to `main` or a `release/`
@@ -140,11 +147,11 @@ Compose, the Caddyfile, the resource slice and the boot-guard unit come from
 the checkout, which preflight pins to `HEAD == source-sha` and proves is in
 `origin/main` history.
 
-the universal-memory source repository is public. local installs, ci and backend
-image builds fetch its locked revision over https without a deploy key. its
-installed python source is included in the public images; keep the public
-digest-access proof. dependency acquisition is separate from the optional
-runtime memory-client credentials.
+the universal-memory source repository is public. dependency installation in
+ci and backend images fetches its locked revision over https without credentials.
+its installed python source is included in the public images; keep the anonymous
+digest-access proof. dependency acquisition is separate from the optional private
+runtime memory-client declaration.
 
 ## Explicit config publication
 

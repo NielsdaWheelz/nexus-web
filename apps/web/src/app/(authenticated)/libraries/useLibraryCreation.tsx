@@ -18,7 +18,8 @@ import { openAsyncResult } from "@/lib/panes/openResult";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import styles from "./page.module.css";
 
 type Attempt = Readonly<{ id: string; name: string; openIntent: OpenIntent }>;
@@ -30,7 +31,6 @@ type Creation =
 type Delivery = {
   mayOpen: boolean;
 };
-const CREATION = definePaneVisitDataKey<Attempt>("Libraries.Creation");
 const UNCERTAIN: FeedbackContent = {
   tone: "Warning",
   title: "creation not confirmed",
@@ -42,20 +42,19 @@ export function useLibraryCreation() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "library creation");
   const { ctx } = useActionRuntime();
   const fail = useThrowLater();
-  const current = useRef<Creation>({ kind: "Draft", text: "", feedback: null });
-  const retained = usePaneVisitData(CREATION, () => {
-    const value = current.current;
-    return value.kind === "Sending" || value.kind === "Unconfirmed" ? value.attempt : null;
-  });
-  const writeAttempt = usePaneVisitDataWriter(CREATION);
-  const [creation, setCreation] = useState<Creation>(() => {
-    if (retained) current.current = { kind: "Unconfirmed", attempt: retained, feedback: UNCERTAIN };
-    return current.current;
-  });
+  const guard = useWorkGuard();
+  const owner = useResourceDraft<{ creation: Creation; flight: Delivery | null }>("Libraries.Creation", () => ({
+    creation: { kind: "Draft", text: "", feedback: null }, flight: null,
+  }), value => ({
+    changed: value.creation.kind === "Draft" && value.creation.text.trim() !== "",
+    unconfirmed: value.creation.kind === "Sending" || value.creation.kind === "Unconfirmed",
+    stopsBrowserWork: false,
+  }));
+  const creation = owner.value.creation;
+  const readCreation = owner.read;
   const [visible, setVisible] = useState(false);
   const open = useRef(false);
   const mounted = useRef(false);
-  const flight = useRef<Delivery | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const navigating = useRef(false);
   const composing = useRef(false);
@@ -68,28 +67,26 @@ export function useLibraryCreation() {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      if (flight.current) flight.current.mayOpen = false;
+      const flight = readCreation().flight;
+      if (flight) flight.mayOpen = false;
     };
-  }, []);
+  }, [readCreation]);
 
-  const transition = (next: Creation) => {
-    current.current = next;
-    writeAttempt(next.kind === "Sending" || next.kind === "Unconfirmed" ? next.attempt : null);
-    setCreation(next);
-  };
+  const transition = (creation: Creation) => owner.set(value => ({ ...value, creation }));
   const show = (triggerEl: HTMLButtonElement | null, intent: OpenIntent) => {
     trigger.current = triggerEl;
     navigating.current = false;
     flowIntent.current = intent;
-    if (current.current.kind === "Draft" || current.current.kind === "Created")
+    if (owner.read().creation.kind === "Created")
       transition({ kind: "Draft", text: "", feedback: null });
     open.current = true;
     setVisible(true);
   };
+  const requestDismiss = () => owner.read().creation.kind !== "Draft" || guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] }) ? "accepted" as const : "blocked" as const;
   const close = () => {
     composing.current = false;
-    if (flight.current) flight.current.mayOpen = false;
-    if (current.current.kind === "Draft")
+    if (owner.read().flight) owner.read().flight!.mayOpen = false;
+    if (owner.read().creation.kind === "Draft")
       transition({ kind: "Draft", text: "", feedback: null });
     open.current = false;
     setVisible(false);
@@ -100,24 +97,24 @@ export function useLibraryCreation() {
     setVisible(false);
   };
   const openLibrary = (library: Library, intent: OpenIntent) => {
-    release();
     const target = { href: `/libraries/${library.id}`, labelHint: library.name };
-    runtime.activateTarget({ target, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
+    const result = runtime.activateTarget({ target, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
+    if (result.kind !== "Cancelled") release();
   };
   const deliver = async (attempt: Attempt, wasUnconfirmed: boolean) => {
-    if (!mounted.current || flight.current) return;
+    if (!mounted.current || owner.read().flight) return;
     const delivery: Delivery = { mayOpen: true };
-    flight.current = delivery;
+    owner.set(value => ({ ...value, flight: delivery }));
     transition({ kind: "Sending", attempt, wasUnconfirmed });
     // The answer is classified where it lands: openAsyncResult opens only a created library.
     await openAsyncResult({
       ctx, originPaneId: runtime.paneId, intent: attempt.openIntent,
       mayOpen: () => delivery.mayOpen && open.current,
-      beforeOpen: release,
+      onOpened: release,
       create: async () => {
         const outcome = await sendCreation(attempt);
-        const owns = mounted.current && flight.current === delivery;
-        if (owns) flight.current = null;
+        const owns = !ctx.sessionSignal().aborted && owner.read().flight === delivery;
+        if (owns) owner.set(value => ({ ...value, flight: null }));
         if (outcome.kind === "Created") {
           if (owns) transition({ kind: "Created", library: outcome.library });
           return { target: { href: `/libraries/${outcome.library.id}`, labelHint: outcome.library.name }, title: "library created", openLabel: "open library" };
@@ -135,8 +132,8 @@ export function useLibraryCreation() {
     }).catch((error: unknown) => fail({ error }));
   };
   const submitCreation = (intent: OpenIntent) => {
-    if (composing.current || flight.current) return;
-    const value = current.current;
+    if (composing.current || owner.read().flight) return;
+    const value = owner.read().creation;
     if (value.kind === "Created") return openLibrary(value.library, intent);
     const openIntent = intent === "new_pane" ? intent : flowIntent.current;
     if (value.kind === "Unconfirmed") return void deliver({ ...value.attempt, openIntent: openIntent === "new_pane" ? openIntent : value.attempt.openIntent }, true);
@@ -162,7 +159,7 @@ export function useLibraryCreation() {
     kind: "command",
     id: "Libraries.Create",
     label: "new library",
-    icon: <Plus size={16} aria-hidden="true" />,
+    icon: <Plus size={20} aria-hidden="true" />,
     onSelect: ({ triggerEl, openIntent }) => show(triggerEl, openIntent),
   };
   const draft = creation.kind === "Draft";
@@ -199,7 +196,8 @@ export function useLibraryCreation() {
         title="new library"
         className={styles.creationDialog}
         onClose={close}
-        initialFocus={(panel) => current.current.kind === "Draft" ? input.current : current.current.kind === "Unconfirmed" ? submit.current : panel}
+        onDismissRequest={requestDismiss}
+        initialFocus={(panel) => owner.read().creation.kind === "Draft" ? input.current : owner.read().creation.kind === "Unconfirmed" ? submit.current : panel}
         returnFocusTo={() => trigger.current}
         returnFocusFallback={() => findPaneLandmarkFocusTarget(runtime.paneId)}
         skipReturnFocus={() => navigating.current || !mounted.current}
@@ -226,9 +224,10 @@ export function useLibraryCreation() {
             aria-invalid={validation ? true : undefined}
             aria-describedby={validation ? errorId : undefined}
             onChange={(event) => {
-              if (current.current.kind !== "Draft") return;
+              const value = owner.read().creation;
+              if (value.kind !== "Draft") return;
               const text = event.currentTarget.value;
-              const error = current.current.feedback ? libraryNameError(text) : null;
+              const error = value.feedback ? libraryNameError(text) : null;
               transition({ kind: "Draft", text, feedback: error ? { tone: "Danger", title: error } : null });
             }}
           />
@@ -237,7 +236,7 @@ export function useLibraryCreation() {
             <FeedbackStatus content={feedback} announcement="Polite" />
           ) : <FeedbackNotice content={feedback} announcement="Polite" /> : null}
           <div className={styles.creationActions}>
-            <Button variant="ghost" onClick={close}>{draft ? "cancel" : "close"}</Button>
+            <Button variant="ghost" onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
             <Button ref={submit} type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
               {creation.kind === "Unconfirmed" || (sending && creation.wasUnconfirmed) ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
             </Button>

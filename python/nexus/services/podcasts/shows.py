@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import integrity_constraint_name
+from nexus.db.retries import integrity_constraint_name
 from nexus.services.browse.targets import ResolvedPodcast
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import PodcastTarget

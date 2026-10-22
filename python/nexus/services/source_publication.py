@@ -21,7 +21,7 @@ from uuid import UUID
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import MediaSourceAttempt
+from nexus.db.models import MediaSourceAttempt, ProcessingStatus
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.jobs.queue import JobExecutionContext, JobRow, lock_running_job_claim
@@ -42,13 +42,13 @@ from nexus.services.import_history import append_processing_event
 from nexus.services.media_processing_state import (
     mark_media_failed_by_id,
     mark_ready_for_reading_by_id,
+    retained_publication_sql,
 )
 from nexus.services.podcasts.transcription_failure import (
     PodcastTranscriptionFailure,
     publish_podcast_transcription_failure,
 )
 from nexus.services.transcripts.state import set_media_transcript_state
-from nexus.services.x_source import has_retained_x_publication
 
 logger = get_logger(__name__)
 
@@ -238,10 +238,11 @@ class SourceAttemptFailure:
 def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -> None:
     """Settle one nonterminal attempt failed and mirror it on its media (I3); a podcast
     transcript fails through the transcript owner, which leaves the episode readable, and a
-    retained X publication stays ready (its failed refresh is the attempt, not the copy)."""
-    db.execute(
-        text("SELECT id FROM media WHERE id = :id FOR NO KEY UPDATE"), {"id": failure.media_id}
-    ).one()
+    retained publication stays ready: a failed refresh is the attempt's, not the copy's."""
+    status = db.execute(
+        text("SELECT processing_status::text FROM media WHERE id = :id FOR NO KEY UPDATE"),
+        {"id": failure.media_id},
+    ).scalar_one()
     row = (
         db.execute(
             text("""
@@ -295,8 +296,11 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
             ),
         )
         return
-    if has_retained_x_publication(db, media_id=failure.media_id):
-        mark_ready_for_reading_by_id(db, media_id=failure.media_id, now=failure.now)
+    retained = text(f"SELECT {retained_publication_sql('m')} FROM media m WHERE m.id = :id")
+    if db.scalar(retained, {"id": failure.media_id}):
+        # the copy stays readable as it was (a warning it carries included)
+        if status != ProcessingStatus.ready_for_reading.value:
+            mark_ready_for_reading_by_id(db, media_id=failure.media_id, now=failure.now)
         return
     transcript = source_type in st.TRANSCRIPT_SOURCE_TYPES
     mark_media_failed_by_id(

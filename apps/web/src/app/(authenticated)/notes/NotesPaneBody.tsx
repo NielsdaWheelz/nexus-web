@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useId, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useSyncExternalStore } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import WritingRecovery from "@/components/notes/WritingRecovery";
@@ -58,7 +58,8 @@ import {
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import type { WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import {
   definePaneVisitDataKey,
@@ -89,7 +90,6 @@ const VIEW_CODEC = {
       decoded.kind === "Valid" ? decoded.view : CANONICAL,
       current,
     ),
-  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
 
 /**
@@ -110,7 +110,6 @@ export default function NotesPaneBody() {
     key: invalid ? null : `/notes/pages?${viewQuery}`,
     stale: `${notesStamp}:${writingRevision}`,
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (item) => item.id,
@@ -210,16 +209,25 @@ export default function NotesPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const title = useHydrationPreservedInput();
+  const title = useResourceDraft("Notes.NewPageTitle", () => "", value => ({ changed: value !== "", unconfirmed: false, stopsBrowserWork: false }));
+  const titleInput = useRef<HTMLInputElement>(null);
+  const setTitle = title.set;
+  useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
   const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
   const openToday = (event: TargetActivationEvent) =>
     activateTargetLink({
       event, runtime, target: { href: todayHref },
     });
-  const submitIntent = (fork: boolean) => runtime.activateTarget({
-    target: { href: `/pages/new${title.value ? `?title=${encodeURIComponent(title.value)}` : ""}` },
-    disposition: { kind: fork ? "Fork" : "Follow" },
-  });
+  const submitIntent = (fork: boolean) => {
+    const request: WorkspaceTargetActivationRequest = {
+      originPaneId: runtime.paneId, target: { href: "/pages/new" },
+      disposition: { kind: fork ? "Fork" : "Follow" },
+      ...(title.read() ? { entry: { kind: "ComposePage", title: title.read() } } : {}),
+    };
+    const result = runtime.activateTarget(request);
+    if (result.kind !== "Cancelled") title.set("");
+    return result;
+  };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Consume") event.preventDefault();
@@ -273,7 +281,7 @@ export default function NotesPaneBody() {
             content={{
               tone: "Neutral",
               title: !filtering
-                ? "No pages yet."
+                ? list.complete ? "no pages yet." : "no pages loaded so far."
                 : list.complete
                   ? "No pages match this filter."
                   : "No matching page found so far.",
@@ -281,7 +289,7 @@ export default function NotesPaneBody() {
             announcement="None"
           />
         }
-        footer={<CollectionExhaustionNotice list={list} />}
+        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "page", plural: "pages" }} returnFocus={() => inputRef.current} />}
         toolbar={
           <>
             <form
@@ -293,7 +301,10 @@ export default function NotesPaneBody() {
               onKeyDown={submitGesture}
             >
               <Input
-                {...title.inputProps}
+                ref={titleInput}
+                value={title.value}
+                onChange={event => title.set(event.currentTarget.value)}
+                onInput={event => title.set(event.currentTarget.value)}
                 placeholder="New page"
                 aria-label="New page title"
                 style={{ flex: 1 }}

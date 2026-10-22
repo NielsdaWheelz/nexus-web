@@ -19,6 +19,8 @@ import {
 } from "./journal";
 
 const REQUEST_DEADLINE_MS = 30_000;
+// The BFF refuses larger bodies before the api sees them.
+const BODY_LIMIT = 4_500_000;
 const RETRY_MIN_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
 const REJECTIONS = new Set([
@@ -118,6 +120,9 @@ async function attempt(row: OutboxRow, signal: AbortSignal): Promise<void> {
     catch (error) {
       if (!(error instanceof WritingDecisionError)) throw error;
       await parkWriting(row, { code: "E_WRITING_DEPENDENCY_REVIEW", request_id: null, current: error.message }, true); return;
+    }
+    if (new TextEncoder().encode(dispatch.body_json ?? "").length > BODY_LIMIT) {
+      await parkWriting(row, { code: "E_INVALID_REQUEST", request_id: null, current: "this change is too large to save" }, !priorUncertainty); return;
     }
     const sealed = await updateOutbox({ ...row, dispatch });
     if (sealed === null) return;

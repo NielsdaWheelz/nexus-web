@@ -252,7 +252,7 @@ def _page_sql(view: EntryView, *, is_default: bool, keyset: str, order: str) -> 
 
 
 def _shows(db: Session, viewer_id: UUID, podcast_ids: list[UUID]) -> dict[UUID, Any]:
-    """Title, latest episode, unplayed count and the viewer's sync status per show."""
+    """title, artwork, latest episode, unplayed count and viewer sync status per show."""
     if not podcast_ids:
         return {}
     episode_state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
@@ -273,7 +273,7 @@ def _shows(db: Session, viewer_id: UUID, podcast_ids: list[UUID]) -> dict[UUID, 
                 WHERE pe.podcast_id = ANY(:ids)
                 GROUP BY pe.podcast_id
             )
-            SELECT p.id, p.title, COALESCE(u.n, 0) AS unplayed_count, ps.sync_status,
+            SELECT p.id, p.title, p.image_url, COALESCE(u.n, 0) AS unplayed_count, ps.sync_status,
                    (SELECT max(published_at) FROM podcast_episodes WHERE podcast_id = p.id)
                        AS published_date
             FROM podcasts p
@@ -356,6 +356,7 @@ def list_library_entries(
                 added_at=row["added_at"],
                 podcast_id=show.id,
                 title=show.title,
+                image_url=show.image_url,
                 contributors=credits.get(show.id, []),
                 unplayed_count=show.unplayed_count,
                 published_date=show.published_date,

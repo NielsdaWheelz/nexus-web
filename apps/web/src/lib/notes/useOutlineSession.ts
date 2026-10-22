@@ -3163,6 +3163,14 @@ export function useOutlineSession({
           .read()
           .find((action) => action.phase === "failed");
         if (action) {
+          // its failed write broke the position chain: it goes again at the reviewed position.
+          const { position, source } = action.destination;
+          const version = graph.get(sourceRef(source))?.links_version;
+          if (position !== null && version !== undefined)
+            action.destination = {
+              ...action.destination,
+              position: { ...position, expected_links_version: version },
+            };
           action.phase = "creating";
           void admitAction(action);
         }

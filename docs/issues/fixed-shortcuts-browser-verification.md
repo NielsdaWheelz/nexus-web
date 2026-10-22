@@ -14,10 +14,10 @@ gesture contract. native screen-reader qualification is separately tracked in
 
 the remaining fixed shortcuts were not exercised by that change:
 
-- settings and nexus expose the four-shortcut reference; old browser-local
-  assignments have no effect after reload.
+- settings and nexus expose the four-shortcut reference; no editing controls
+  remain. old browser-local assignments have no effect after reload.
 - native mac control+k remains a text-edit command; extra modifiers and
-  composition do not invoke app shortcuts.
+  composition do not invoke app shortcuts; hints and aria keys agree.
 - command/control+f searches only the active ready pane, including its editor;
   unsupported/resolving panes and overlays retain browser find.
 - command/control+shift+left/right activates adjacent visible panes from body

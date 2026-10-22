@@ -9,6 +9,8 @@ orphan sweep reclaims it (I7). Actual x containment propagates retention from
 library/grant/annotation/evidence roots; incidental cycles do not. Teardown locks
 contained candidates in media-id order and claims newly unrooted children through
 the same jobs. Retry rule: removal is idempotent; teardown acts on its exact intent.
+normal episode removal retains media and aliases, and always records the viewer's
+removal marker so automatic acquisition cannot restore the episode.
 """
 
 from __future__ import annotations
@@ -27,9 +29,13 @@ from nexus.auth.permissions import (
     non_system_media_ref_exists_sql,
     retained_x_post_roots_sql,
 )
-from nexus.db.errors import TransactionRestart, integrity_constraint_name
 from nexus.db.models import Highlight
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import (
+    TransactionRestart,
+    integrity_constraint_name,
+    retry_read_committed,
+    retry_serializable,
+)
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiErrorCode, ForbiddenError
 from nexus.ids import new_uuid7
@@ -223,8 +229,9 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
         if kind in _DOCUMENT_KINDS and not _references(db, media_id):
             _claim_teardown(db, media_id)
-        elif can_read_media(db, viewer_id, media_id):
-            # A system-library membership is a path the viewer cannot remove: hide it.
+        elif kind == "podcast_episode" or can_read_media(db, viewer_id, media_id):
+            # Episodes retain removal intent even after their last readable path goes.
+            # Other retained media need hiding when a path the viewer cannot remove stays.
             _run(
                 db,
                 """

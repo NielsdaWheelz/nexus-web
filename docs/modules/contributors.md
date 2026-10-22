@@ -75,7 +75,10 @@ publication orders sort by `(date_missing asc, date, title, href)`, so undated
 works stay last both ways. cursors bind viewer, handle and view (`AuthorWorks`,
 architecture §8.12): a cursor issued for another binding is 400
 `E_INVALID_CURSOR`. podcast works carry role facts and no date ("Publication date
-unknown"); catalogue works carry their author credits and no action ref. the
+unknown"); catalogue works carry their author credits and no action ref. each
+gutenberg work carries its sealed source target; its title opens that target's
+preview pane and its shared media icons admit explicit membership. the landing
+href remains source provenance and occurrence identity, never an import URL. the
 pane drains every page while active (`useServerList`), so its count and filter
 cover all works; a failed continuation keeps the rows and offers Retry, a
 rejected cursor Refresh list.
@@ -90,3 +93,21 @@ observation. a pinned media withholds automatic author proposals and reports
 `retained_manual_authors`. the editor mints a new person's id when the row is
 added, keeps it across retries and treats a confirmed PUT as the commit point: a
 failure after it never re-sends.
+
+## author search choices
+
+`GET /contributors` is a paginated name search, not a ten-result suggestion
+contract. `lib/contributors/api.ts` normalizes each typed response for the shared
+collection owner. the author editor and search refinement both retain ten-row
+requests, publish each page and load to source exhaustion while eligible.
+handles identify rows; exact settled-query admission controls existing and new
+author choices. later failures retain current choices and require explicit retry.
+appending never replaces the active option or moves focus.
+
+the author editor's field is shell-owned: its mounted interactive lifetime and
+open suggestions determine activity, without requiring a pane runtime. search
+refinement activity requires both its pane and its options disclosure. closing
+suggestions or filters pauses further appends; admitted reads may settle. shared
+exhaustion feedback owns progress, recovery and completion speech, returning retry
+focus to the author input. the existing explicit create/bind/save commands are
+unchanged.

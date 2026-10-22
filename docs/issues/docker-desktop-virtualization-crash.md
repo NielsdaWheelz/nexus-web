@@ -56,3 +56,20 @@ next: investigate host capacity and engine failure evidence before attributing
 the recurrence. coordinate any shared-engine operation through the active owner;
 preserve every task's volumes. repeated healthy task checks establish recovery,
 not a durable repair of the underlying host issue.
+
+2026-10-21 capacity, measured with no crash:
+- the desktop vm was set to 24 gib with all 18 cpus, beside a 12 gib campaign
+  colima vm.
+- host memory pressure was at warn, with 30 gib compressed and 4.25/5 gib swap.
+- `Docker.raw` held about 246 gb, and the vm wrote 231 gb in 28 h.
+- 160 leaked `nexus-lab-*` worker images were present.
+
+these are candidate stressors, not an established cause. see
+[lab-host-budget](lab-host-budget.md) and macbook-capacity d2.
+
+2026-10-20, unsaved-work qualification: an owned store start timed out; the
+backend process then disappeared and the socket refused daemon connections.
+the owner approved a normal desktop restart. engine 29.7.2 answered afterward,
+the six previously running unrelated services resumed, and host availability
+returned to 45 gib. no prune, reset or volume deletion occurred. this establishes
+recovery only; the backend exit's cause remains unproved.

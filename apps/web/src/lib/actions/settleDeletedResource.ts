@@ -10,12 +10,12 @@ import type { WorkspaceStoreValue } from "@/lib/workspace/store";
 export function settleDeletedResourcePanes(input: {
   readonly workspace: Pick<
     WorkspaceStoreValue,
-    "state" | "navigatePane" | "closePane"
+    "state" | "settleDeletedPanes"
   >;
   readonly deletedRef: string;
   readonly fallbackHref: string;
 }): void {
-  const { state, navigatePane, closePane } = input.workspace;
+  const { state, settleDeletedPanes } = input.workspace;
   // Collect first: each command commits, so a live projection would shift.
   const paneIds = state.panes
     .filter((pane) => {
@@ -24,9 +24,9 @@ export function settleDeletedResourcePanes(input: {
     })
     .map((pane) => pane.id);
   if (hasUnsavedOutline(input.deletedRef)) return;
-  for (const paneId of paneIds) {
-    if (paneId === state.active_primary_pane_id)
-      navigatePane(paneId, input.fallbackHref, { replace: true, activate: true });
-    else closePane(paneId);
-  }
+  settleDeletedPanes({
+    paneIds,
+    fallbackPaneId: paneIds.includes(state.active_primary_pane_id) ? state.active_primary_pane_id : null,
+    fallbackHref: input.fallbackHref,
+  });
 }

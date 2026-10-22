@@ -1,15 +1,13 @@
 "use client";
 
 // Podcast http for the web (docs/modules/podcast.md). Every podcast write
-// here publishes "Podcasts" after success (lib/api/changes); podcast panes put
-// its stamp in their refetch token. A transcript batch queues source attempts,
-// so it also invalidates Imports (open media panes follow theirs again).
+// publishes after success, except episode-wide commands: their account-memory
+// owner publishes acknowledgment or requests rereads after uncertainty.
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishImportsInvalidation } from "@/lib/imports/api";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
 export type PodcastSubscription = Schema<"PodcastSubscriptionStatusOut">;
@@ -59,12 +57,6 @@ export async function getSubscription(
   return (await apiFetch<Body>(path, { signal })).data;
 }
 
-/** An episode's show notes, read once when its row first expands. */
-export async function getShowNotes(mediaId: string): Promise<string | null> {
-  type Body = ApiJson<"/media/{media_id}", "get">;
-  return (await apiFetch<Body>(`/api/media/${mediaId}`)).data.description_text;
-}
-
 /** Observe one subscription's sync and backfill until it is terminal. */
 export function observeSubscription(
   podcastId: string,
@@ -80,7 +72,6 @@ export function observeSubscription(
     isTerminal: (frame) => frame.type === "done",
     onEvent: (frame) => {
       onState(frame.data);
-      if (frame.type === "done") publishChange("Metadata");
     },
     onError: onLost,
   });
@@ -109,6 +100,7 @@ export async function subscribeToPodcast(input: {
 export async function addEpisodeFromDiscovery(input: {
   readonly target: string;
   readonly namedLibraryIds: readonly string[];
+  readonly signal?: AbortSignal;
 }): Promise<ApiJson<"/podcast-episodes/from-discovery", "post">["data"]> {
   const { target, namedLibraryIds } = input;
   type Body = ApiJson<"/podcast-episodes/from-discovery", "post">;
@@ -117,6 +109,7 @@ export async function addEpisodeFromDiscovery(input: {
     {
       method: "POST",
       body: JSON.stringify({ target, named_library_ids: namedLibraryIds }),
+      signal: input.signal,
     },
   );
   publishChange("Entries");
@@ -130,24 +123,32 @@ export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   publishChange("Podcasts", "Entries");
 }
 
+/** A retry captures its traversal: repeats cannot replace a newer repair. */
 export async function retryPodcastSubscriptionBackfill(
   podcastId: string,
-): Promise<void> {
-  await apiFetch(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
+  expectedBackfillId: string,
+): Promise<ApiJson<"/podcasts/subscriptions/{podcast_id}/backfill/retry", "post">["data"]> {
+  type Body = ApiJson<"/podcasts/subscriptions/{podcast_id}/backfill/retry", "post">;
+  const response = await apiFetch<Body>(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
     method: "POST",
+    body: JSON.stringify({ expected_backfill_id: expectedBackfillId }),
   });
   publishChange("Podcasts");
+  return response.data;
 }
 
+/** Save one captured pair/version. An exact accepted replay is inert. */
 export async function savePodcastSubscriptionSettings(
   podcastId: string,
   patch: Schema<"PodcastSubscriptionSettingsPatchRequest">,
-): Promise<void> {
-  await apiFetch(`/api/podcasts/subscriptions/${podcastId}/settings`, {
+): Promise<PodcastSubscription> {
+  type Body = ApiJson<"/podcasts/subscriptions/{podcast_id}/settings", "patch">;
+  const response = await apiFetch<Body>(`/api/podcasts/subscriptions/${podcastId}/settings`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
   publishChange("Podcasts");
+  return response.data;
 }
 
 /** Admits a refresh of every subscription in scope; returns how many. */
@@ -171,15 +172,21 @@ export function podcastRefreshRequestAnnouncement(count: number): string {
     : `Refresh requested for ${count} show${count === 1 ? "" : "s"}`;
 }
 
-export async function markEpisodesPlayed(
-  podcastId: string,
-  state: EpisodeState,
-): Promise<void> {
-  await apiFetch(`/api/podcasts/${podcastId}/episodes/mark-played`, {
-    method: "POST",
-    body: JSON.stringify({ state }),
-  });
-  publishChange("Podcasts", "Consumption");
+/** Read-only snapshot; apply retries use these exact observed versions. */
+export async function prepareEpisodeConsumption(
+  podcastId: string, state: EpisodeState, signal: AbortSignal,
+): Promise<Schema<"PodcastEpisodeConsumptionPreparedOut">> {
+  return (await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes/consumption/prepare", "post">>(
+    `/api/podcasts/${podcastId}/episodes/consumption/prepare`,
+    { method: "POST", body: JSON.stringify({ state }), signal },
+  )).data;
+}
+
+/** Transport only. The account command owner retains exact retry bytes and publishes outcomes. */
+export async function applyEpisodeConsumption(podcastId: string, body: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes/consumption", "put">>(
+    `/api/podcasts/${podcastId}/episodes/consumption`, { method: "PUT", body, signal },
+  )).data;
 }
 
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
@@ -192,27 +199,20 @@ const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
 export async function forecastEpisodeTranscripts(
   podcastId: string,
   state: EpisodeState,
+  signal: AbortSignal,
 ): Promise<ApiJson<"/media/transcript/forecasts", "post">["data"]> {
   type Body = ApiJson<"/media/transcript/forecasts", "post">;
   const response = await apiFetch<Body>("/api/media/transcript/forecasts", {
     method: "POST",
     body: JSON.stringify(transcriptTarget(podcastId, state)),
+    signal,
   });
   return response.data;
 }
 
-export async function requestEpisodeTranscripts(
-  podcastId: string,
-  state: EpisodeState,
-  selectionFingerprint: string,
-): Promise<ApiJson<"/media/transcript/request/batch", "post">["data"]> {
-  const target = transcriptTarget(podcastId, state);
-  type Body = ApiJson<"/media/transcript/request/batch", "post">;
-  const response = await apiFetch<Body>("/api/media/transcript/request/batch", {
-    method: "POST",
-    body: JSON.stringify({ target, selection_fingerprint: selectionFingerprint }),
-  });
-  publishChange("Podcasts");
-  publishImportsInvalidation();
-  return response.data;
+/** Transport only; a lost batch acknowledgment cannot safely replay its fingerprint. */
+export async function requestEpisodeTranscripts(body: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/media/transcript/request/batch", "post">>(
+    "/api/media/transcript/request/batch", { method: "POST", body, signal },
+  )).data;
 }

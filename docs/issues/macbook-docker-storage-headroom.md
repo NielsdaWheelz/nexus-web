@@ -29,3 +29,10 @@ volumes and keep large corpus restores on the dev server.
 acceptance: available host/engine storage accommodates the agreed local
 workload with documented headroom; representative normal docker writes remain
 healthy. record cleanup/moves and ownership, without global prune/reset.
+
+2026-10-20 unsaved-work qualification: host availability fell from 50 gib to
+11 gib; allocated swap was 29 gib. owned lab `20261020-111233-b8c33cd182cb`
+timed out starting postgres/storage after 120 seconds, before its driver ran.
+task lab artifacts occupied 23 mib. teardown completed and unrelated running
+services still listed healthy. a bounded backend-log read showed no space error;
+the timeout's cause is unproved. no shared restart or prune was attempted.

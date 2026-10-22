@@ -28,7 +28,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion, ResourceViewState
-from nexus.db.retries import admit_serializable
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.notes import (
     ConsumeNote,
@@ -150,17 +150,17 @@ def read(
 
 def execute(db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]) -> WritingAck:
     def op() -> WritingAck:
-        execute_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
+        apply_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
         result = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
             record_input_change(db)
         db.commit()
         return result
 
-    return admit_serializable(db, "outline_commands", op)
+    return retry_serializable(db, "outline_commands", op)
 
 
-def execute_in_current_transaction(
+def apply_in_current_transaction(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
 ) -> None:
     """Preflight the whole batch, then apply; the caller notifies and commits."""
@@ -507,7 +507,7 @@ def execute_in_current_transaction(
                     check(endpoint, command.expected_links_version)
             state.addressed.update(_apply(db, viewer_id, command))
     for ref in created_daily:
-        if not db.scalar(select(ResourceEdge.id).where(*_incident_to(viewer_id, ref)).limit(1)):
+        if not any(edge.origin == "user" for edge, _ in order.ordered(db, viewer_id, ref)):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, "Add an item to save this day"
             )
@@ -595,7 +595,9 @@ def _apply(
             )
             if block is None:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-            retained = retention.has_retainer(db, target, excluding_edge_ids=[edge.id])
+            retained = retention.has_retainer(
+                db, block.user_id, target, excluding_edge_ids=[edge.id]
+            )
             if retained and isinstance(command, ConsumeNote):
                 raise ConflictError(
                     ApiErrorCode.E_RESOURCE_CONFLICT,
@@ -658,9 +660,11 @@ def page_note_tree(db: Session, *, viewer_id: UUID, page_id: UUID) -> PageNoteTr
 
     def children(endpoint: ResourceRef) -> list[TreeNote]:
         out: list[TreeNote] = []
-        for edge, order_key in _ordered(db, viewer_id, endpoint):
+        for edge, order_key in order.ordered(db, viewer_id, endpoint):
             other = _other(edge, endpoint)
-            block = db.get(NoteBlock, other.id) if other.scheme == "note_block" else None
+            if edge.origin != "user" or other.scheme != "note_block":
+                continue
+            block = db.get(NoteBlock, other.id)
             if block is None or block.user_id != viewer_id or block.id in seen:
                 continue
             seen.add(block.id)
@@ -670,41 +674,16 @@ def page_note_tree(db: Session, *, viewer_id: UUID, page_id: UUID) -> PageNoteTr
     return PageNoteTree(page=page, roots=children(notes.page_ref(page_id)))
 
 
-def _ordered(
-    db: Session, viewer_id: UUID, endpoint: ResourceRef
-) -> list[tuple[ResourceEdge, str | None]]:
-    rows = db.execute(
-        select(ResourceEdge, ResourceViewState.order_key)
-        .outerjoin(
-            ResourceViewState,
-            (ResourceViewState.edge_id == ResourceEdge.id)
-            & (ResourceViewState.user_id == viewer_id)
-            & (ResourceViewState.surface_scheme == endpoint.scheme)
-            & (ResourceViewState.surface_id == endpoint.id),
-        )
-        .where(*_incident_to(viewer_id, endpoint))
-        .order_by(
-            ResourceViewState.order_key.asc().nulls_last(),
-            ResourceEdge.created_at,
-            ResourceEdge.id,
-        )
-    )
-    return [(edge, order_key) for edge, order_key in rows]
-
-
-def _incident_to(viewer_id: UUID, endpoint: ResourceRef):
-    return (
-        ResourceEdge.user_id == viewer_id,
-        ResourceEdge.origin == "user",
-        or_(edges.source_is(endpoint), edges.target_is(endpoint)),
-    )
-
-
 def _incident(
     db: Session, viewer_id: UUID, endpoint: ResourceRef, link_id: UUID
 ) -> ResourceEdge | None:
     return db.scalar(
-        select(ResourceEdge).where(ResourceEdge.id == link_id, *_incident_to(viewer_id, endpoint))
+        select(ResourceEdge).where(
+            ResourceEdge.id == link_id,
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "user",
+            or_(edges.source_is(endpoint), edges.target_is(endpoint)),
+        )
     )
 
 
@@ -738,23 +717,24 @@ def _require_endpoint(db: Session, viewer_id: UUID, ref: ResourceRef) -> None:
 def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[OutlineNodeOut]:
     resolved = resource_items_out(db, viewer_id=viewer_id, refs=refs)
     missing = {item.ref for item in resolved if item.missing}
-    note_ids = [ref.id for ref in refs if ref.scheme == "note_block" and ref.uri not in missing]
-    page_ids = [ref.id for ref in refs if ref.scheme == "page" and ref.uri not in missing]
+    live = [ref for ref in refs if ref.uri not in missing]
+    note_ids = [ref.id for ref in live if ref.scheme == "note_block"]
+    page_ids = [ref.id for ref in live if ref.scheme == "page"]
     bodies = note_bodies.read_notes(db, viewer_id=viewer_id, note_ids=note_ids)
     pages = notes.page_facts(db, viewer_id, page_ids)
-    lanes = {
-        (row.resource_id, row.lane): row.version
+    titles = {
+        row.resource_id: row.version
         for row in db.scalars(
             select(ResourceVersion).where(
                 ResourceVersion.user_id == viewer_id,
-                ResourceVersion.resource_id.in_([*note_ids, *page_ids]),
-                ResourceVersion.lane.in_(("body", "title")),
+                ResourceVersion.resource_id.in_(page_ids),
+                ResourceVersion.lane == "title",
             )
         )
     }
-    places = {
-        note_id: retention.retainer_count(db, note_bodies.note_ref(note_id)) for note_id in note_ids
-    }
+    places = retention.retainer_counts(
+        db, viewer_id, [note_bodies.note_ref(note_id) for note_id in note_ids]
+    )
     out: list[OutlineNodeOut] = []
     for ref, item in zip(refs, resolved, strict=True):
         body, page = bodies.get(ref.id), pages.get(ref.id)
@@ -766,21 +746,16 @@ def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[Ou
                 body_text=body.body_text,
                 body_version=body.body_version,
                 embedded_item=body.embedded_item,
-                places=places.get(ref.id, 0),
+                places=places.get(ref, 0),
             )
         elif page is not None:
             content = PageContentOut(
                 kind="page",
                 title=page.title,
-                title_version=lanes.get((ref.id, "title"), 1),
+                title_version=titles.get(ref.id, 1),
                 daily_date=page.daily_date,
             )
         else:
             content = ResourceContentOut(kind="resource")
-        out.append(
-            OutlineNodeOut(
-                item=item,
-                content=content,
-            )
-        )
+        out.append(OutlineNodeOut(item=item, content=content))
     return out

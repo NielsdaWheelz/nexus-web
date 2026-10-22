@@ -77,12 +77,11 @@ dev:
 		-x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest \
 		> .nexus-local/supabase-start.log 2>&1 || { echo "supabase start failed; inspect .nexus-local/supabase-start.log" >&2; exit 1; }
 	@umask 077; supabase status --output json > .nexus-local/supabase-status.json
-	@python/.venv/bin/python -c 'import json, os, pathlib, tomllib; \
+	@python/.venv/bin/python -c 'import json, os, pathlib; \
 		status=json.loads(pathlib.Path(".nexus-local/supabase-status.json").read_text()); \
 		url=status["API_URL"]; key=status["PUBLISHABLE_KEY"]; \
-		project=tomllib.loads(pathlib.Path("supabase/config.toml").read_text())["project_id"]; \
 		values={name:os.environ[name] for name in ("POSTGRES_PORT", "DATABASE_URL", "WEB_PORT", "API_PORT", "LOCAL_S3_PORT", "R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "R2_REGION")}; \
-		values.update(SUPABASE_URL=url, SUPABASE_ANON_KEY=key, SUPABASE_JWKS_URL=url+"/auth/v1/.well-known/jwks.json", WORKER_SUPABASE_JWKS_URL="http://supabase_kong_"+project+":8000/auth/v1/.well-known/jwks.json", SUPABASE_ISSUER=url+"/auth/v1", SUPABASE_AUDIENCES="authenticated", NEXT_PUBLIC_SUPABASE_URL=url, NEXT_PUBLIC_SUPABASE_ANON_KEY=key); \
+		values.update(SUPABASE_URL=url, SUPABASE_ANON_KEY=key, SUPABASE_JWKS_URL=url+"/auth/v1/.well-known/jwks.json", SUPABASE_ISSUER=url+"/auth/v1", SUPABASE_AUDIENCES="authenticated", NEXT_PUBLIC_SUPABASE_URL=url, NEXT_PUBLIC_SUPABASE_ANON_KEY=key); \
 		pathlib.Path(".dev-ports").write_text("".join(name+"="+value+"\n" for name,value in values.items())); \
 		pathlib.Path(".dev-ports").chmod(0o600); \
 		pathlib.Path(".nexus-local/supabase-status.json").unlink()'

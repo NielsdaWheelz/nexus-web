@@ -106,11 +106,11 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   media and span ids, context ref, `result_ref` (the model-visible `tool_citation` payload
   and search's web-snapshot source), `selected`, locator, captured evidence, candidate
   ordinal, cited edge.
-- browser: `sessionStorage["nx_chat_draft.v7:<account>:<pane>:<scope>"] = {text,
-  selection | null}` per tab (scope is the chat id or `new`), so a restored workspace
-  finds each pane's draft. it is the per-viewer unsent draft the conventions allow; no
-  request, run id or revision is ever stored. a pane's endpoint is its visit href.
-  commands live in tab memory and die with it.
+- browser memory: unsent text and explicit model selection belong to their
+  account/pane/chat owner (`new` for an unpublished chat). mobile remounts retain
+  that owner; pane retirement and account teardown remove it. commands remain
+  account/chat-owned, or pane-owned for a new chat. reload restores neither
+  drafts nor commands. a pane's endpoint remains its visit href.
 
 ### module contracts other code uses
 
@@ -166,7 +166,10 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   sent"/"response ready", "open response"); a menu's repeat lands the same way. the pane
   notice can discard an unconfirmed send, as a reload does: admission reopens and the
   draft keeps its text; the send may still land, fenced by the revision in an existing
-  chat, as a second chat for a new one.
+  chat, as a second chat for a new one. new-chat commands belong to the actual pane,
+  including reader sends that have no chat draft cell. hiding or evicting a reader
+  visit keeps that command; the same pane's ordinary new-chat composer exposes its
+  exact retry. closing the pane retires it after the common loss decision.
 - **the composer** (`ChatComposer.tsx`) holds the draft, the model controls and the one
   button: Send, Sending, Stop response, Stop requested, Retry send, Retry refresh. an
   untouched draft follows the run of the answer it replies to, else the catalog seed; an
@@ -204,8 +207,10 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   source through the existing literal chat views.
 - **reader recovery** uses `ComposeReaderQuestion{text, selection}` on a fresh `Fork`
   pane. its href names the chat/observed leaf and quote, never the question. after
-  hydration the composer claims that visit's entry and synchronously seeds text and
-  the exact observed model (or null) in one draft write before enabling input. model
+  registering the actual memory draft cell, the composer synchronously writes text and
+  the exact observed model (or null), then claims that visit's entry before enabling input.
+  the workspace retains and guards an unclaimed question until this transfer; no draft
+  or launch payload enters browser storage. model
   availability does not gate staging. a failed catalog read blocks sending even with
   retained data; recovery keeps the exact last observed model. the quote preview and ordinary model picker
   retain their owners. failed history reads keep the staged editor visible with
@@ -309,6 +314,7 @@ and source arrival remain resource-owned.
 21. a selection is never substituted: a provider change needs a model; within a provider
     keep the effort name, else the mode default, else the sole effort, else require one.
 22. saved terminal calls win over replayed frames; only saved authorship authorizes undo.
-23. browser storage holds `nx_chat_draft.v7:<account>:<pane>:<scope> = {text, selection}`
-    per tab and nothing else.
+23. drafts and live command identity remain in memory. the common work guard
+    warns before their actual loss; model selection alone is clean. accepted
+    server runs continue after local discard, navigation or reload.
 24. every chat create names its id; every fork rename names the title it replaces.

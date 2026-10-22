@@ -19,8 +19,8 @@ in the original checkout's ignored `.env`, renamed `MINIO_PORT` to
 removed its stale generated `.dev-ports`; `make dev` regenerates it. configure
 any separate private extension storage origin to the same local endpoint.
 
-owner delegated dependency-build credential setup. qualification used temporary
-read-only deploy key `167013513` on `NielsdaWheelz/universal-memory`; it was
-revoked, verified absent, and both private file copies deleted afterward. future
-builds fetch the public dependency at its locked revision over https without
-credentials.
+the temporary read-only dependency key used during qualification was revoked
+and its private files deleted. `universal-memory` is now public; local dependency
+installs, worker builds and the disposable lab fetch its locked revision over
+https without a dependency credential. runtime memory-client configuration is
+still an independent private input.

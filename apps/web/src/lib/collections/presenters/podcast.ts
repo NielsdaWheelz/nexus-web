@@ -8,6 +8,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 export interface PodcastPresenterItem {
   readonly id: string;
   readonly title: string;
+  readonly imageUrl: string | null;
   readonly contributors: readonly ContributorCredit[];
   readonly unplayedCount: PositiveCount | null;
   readonly syncStatus: Schema<"PodcastSyncStatus"> | null;
@@ -25,6 +26,7 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
       paneLabelHint: item.title,
     },
     title: { text: item.title },
+    artwork: { imageUrl: item.imageUrl },
     contributors: item.contributors,
     publicationDate: item.publicationDate,
     context: null,

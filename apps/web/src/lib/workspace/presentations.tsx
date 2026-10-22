@@ -57,17 +57,10 @@ interface Presentations {
 }
 const Context = createContext<Presentations | null>(null);
 
+/** The route's own noun (a daily page is a page), unless media names its kind. */
 function kindOf(route: ResolvedPaneRouteModel, canonical: Canonical | null | undefined): string {
   if (canonical && canonical.media_kind !== null) return mediaKindLabel(canonical.media_kind);
-  switch (route.id) {
-    case "conversation": return "chat";
-    case "podcastDetail": return "podcast";
-    case "dailyDate": return "page";
-    case "artifact": return "dossier";
-    case "oracleReading": return "reading";
-    case "browsePreview": return "preview";
-    default: return route.defaultLabel.toLowerCase();
-  }
+  return route.id === "dailyDate" ? "page" : route.defaultLabel.toLowerCase();
 }
 
 function metadata(canonical: Canonical, kind: string): string {

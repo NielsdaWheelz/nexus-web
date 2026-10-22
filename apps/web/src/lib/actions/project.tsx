@@ -12,7 +12,7 @@ import type {
   Overlay,
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isStaleBuild } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
@@ -338,8 +338,6 @@ export function projectResourceActions(
     const focused = document.activeElement;
     const pane =
       triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ??
-      triggerEl?.closest<HTMLElement>("[data-pane-chrome-for]")?.dataset
-        .paneChromeFor ??
       originPaneId();
     ctx.overlays.open({
       kind: "Metadata",
@@ -379,8 +377,10 @@ export function projectResourceActions(
     ],
     ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
-      () => {
-        const { anchor, fallback } = focusReturn();
+      ({ triggerEl }) => {
+        const paneId = triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? originPaneId();
+        const anchor = () => triggerEl;
+        const fallback = () => findPaneLandmarkFocusTarget(paneId);
         ctx.openLibraryPlacement(
           [{ kind: ref.startsWith("podcast:") ? "Podcast" : "Media", id }],
           { anchor, returnFocusFallback: fallback },
@@ -417,8 +417,10 @@ export function projectResourceActions(
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
     ],
-    RetryPodcastBackfill: [() => retryPodcastSubscriptionBackfill(id)],
-    RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
+    RemoveMedia: deleted(async () => {
+      await deleteMedia(id);
+      if (ctx.isActive()) ctx.mediaContinuations.forgetDeletedMedia(id);
+    }, "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(async () => {
@@ -547,22 +549,24 @@ export function projectResourceActions(
     }
   };
 
-  const admissionRecovery = (
+  const pendingAdmission = (
     kind: "SourceRefresh" | "MetadataResearch",
     actionId: "RefreshSource" | "RetryMetadata",
   ): ActionDescriptor | null => {
     const pending = ctx.admissions.pending(kind, id);
     if (pending === null) return null;
-    const cleanup = pending.kind === "Cleanup";
-    const disabledReason = pending.kind === "Sending"
+    if (isStaleBuild(pending.error)) {
+      return make(actionId, null, () => window.location.reload(), {
+        state: { label: "reload app", icon: ACTION_CATALOG.RefreshSource.icon },
+        tracked: false,
+      });
+    }
+    const disabledReason = pending.kind === "sending"
       ? "this request is being sent"
-      : pending.kind === "Blocked" && !pending.canConfirm
-        ? pending.content.message ?? pending.content.title
-        : !cleanup && !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
-    return make(actionId, null, () => cleanup
-      ? ctx.admissions.retryCleanup(pending.key)
-      : ctx.admissions.confirm(pending.key), {
-      state: { label: cleanup ? "retry cleanup" : "confirm request", icon: ACTION_CATALOG[actionId].icon },
+      : !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
+    return make(actionId, null, () => ctx.admissions.retry(pending.key), {
+      state: { label: "retry same request", icon: ACTION_CATALOG[actionId].icon },
+      tracked: false,
       disabledReason,
     });
   };
@@ -579,18 +583,25 @@ export function projectResourceActions(
           player.kind === "Loaded" &&
           player.source.kind === "Episode" &&
           player.source.descriptor.media_id === id;
-        const phase =
-          loaded && (player.phase === "Paused" || player.phase === "Ended")
-            ? player.phase
-            : "Idle";
-        // playAudio resumes the loaded episode, or starts at the server's resume point.
-        const descriptor = action.player_descriptor;
-        return make(
-          "Playback",
-          blocked,
-          () => ctx.player.commands.playAudio(descriptor),
-          { state: ACTION_CATALOG.Playback.states[phase] },
+        const pending = ctx.player.pendingPlayback?.kind === "Episode" &&
+          ctx.player.pendingPlayback.mediaId === id;
+        const updateRequired = player.kind === "Unavailable" && player.reason === "UpdateRequired";
+        const pausing = pending || loaded && (player.phase === "Playing" || player.phase === "Buffering");
+        const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
+        const descriptor = make(
+          "Playback", blocked,
+          () => pausing ? ctx.player.commands.pause()
+            : ctx.player.commands.playAudio({ mediaId: id, knownDescriptor: action.player_descriptor }),
+          { state: ACTION_CATALOG.Playback.states[phase], tracked: !pausing },
         );
+        // Pause cancels this start through the player lane; the existing start
+        // keeps its busy key until it settles. Server refusals still apply.
+        const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
+          : updateRequired ? "update nexus for android to play audio" : undefined;
+        return pausing || updateRequired ? { ...descriptor,
+          disabled: disabledReason !== undefined || undefined,
+          disabledReason,
+        } : descriptor;
       }
       case "Consumption": {
         const { finished, episode } = action;
@@ -667,12 +678,19 @@ export function projectResourceActions(
               : ctx.overlays.open({ kind: "Subscribe", podcastId: id }),
           {
             state: subscribed ? states.Subscribed : states.Unsubscribed,
+            confirmation: subscribed
+              ? ACTION_CATALOG.PodcastSubscription.confirmation
+              : null,
             tracked: subscribed,
           },
         );
       }
+      case "RetryPodcastBackfill":
+        return make("RetryPodcastBackfill", blocked, () =>
+          retryPodcastSubscriptionBackfill(id, action.backfill_id),
+        );
       case "RetryMetadata": {
-        const recovery = admissionRecovery("MetadataResearch", "RetryMetadata");
+        const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;
         const { retry } = action;
         return make(
@@ -685,6 +703,7 @@ export function projectResourceActions(
             if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `metadata-admission:${id}`, content: result.content, announcement: "Polite" });
           },
           {
+            tracked: false,
             state: {
               label: metadataResearchLabel(null, retry.purpose),
               icon: ACTION_CATALOG.RetryMetadata.icon,
@@ -698,7 +717,7 @@ export function projectResourceActions(
         );
       }
       case "RefreshSource": {
-        const recovery = admissionRecovery("SourceRefresh", "RefreshSource");
+        const recovery = pendingAdmission("SourceRefresh", "RefreshSource");
         if (recovery !== null) return recovery;
         return make(
           "RefreshSource",
@@ -710,6 +729,7 @@ export function projectResourceActions(
             if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `source-admission:${id}`, content: result.content, announcement: "Polite" });
           },
           {
+            tracked: false,
             blocked: ctx.online ? undefined : "RequiresOnline",
             disabledReason: action.expected_attempt_id === null
               ? "source refresh requires a settled source attempt"

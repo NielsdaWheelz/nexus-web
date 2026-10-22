@@ -1,23 +1,21 @@
-# annotation note receive ordering and retry
+# media preview receive ordering has limited direct evidence
 
-problem: annotation preview adoption can apply an older acknowledgement after a
-newer body read. a failed background body refresh can also remain stale without
-a visible retry.
+source cause fixed: `apps/web/src/app/(authenticated)/media/[id]/annotations.ts`
+keeps the newer canonical body when an older acknowledgement reaches its
+preview. annotation reads use the shared abortable read/retry owner; receive
+failure exposes the existing reconnect action.
 
-impact: the media preview can roll back or keep old note text while the canonical
-text owner has newer content. the mounted note can miss the receive budget.
+private runs20 and24 passed mounted annotation body updates and independent
+highlight membership changes. separate canonical-note journeys passed delayed
+old probes, superseded body responses and three failed reads followed by
+reconnect to the same committed version (`/tmp/nexus-writing-live-20.log`,
+`/tmp/nexus-writing-live-24.log`; archived `writing-receive-races.spec.ts` and
+`writing-receive-retry.spec.ts`). no continuing preview rollback was observed.
 
-evidence: the initial implementation of
-`apps/web/src/app/(authenticated)/media/[id]/annotations.ts::receiveNote` patched
-preview body/version without checking the current version. its body watch and
-`apps/web/src/components/notes/AnnotationNoteHost.tsx` used one-shot reads; the
-receive owner suppresses repeated invalidations for the same stale version.
-
-source repair now prefers the newer canonical body and uses the existing
-abortable `requestWithRetry` in both watches. that helper makes three attempts;
-exhausted failures still need qualification for reconnect/manual retry. no new
-retry owner was introduced. runtime proof remains pending.
-
-resolved when: the preview rejects older body versions, the existing abortable
-read retry owner handles transient failures, and real reordered-ack/read plus
-failed-read/reconnect cases show convergence without a whole-media body reread.
+remaining uncertainty: no case forced an older acknowledgement after a newer
+body read, or exhausted reads followed by reconnect, directly through the media
+preview adapter. the separate stale-response and reconnect cases covered the
+canonical note owner. ordinary annotation convergence is proven; those exact
+adapter interleavings remain untested. close when existing receive evidence
+covers that boundary without a whole-media body reread. no new retry owner or
+verification framework is required.

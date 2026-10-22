@@ -2,8 +2,8 @@
 
 // A page (/pages/{id}) or a dated page (/daily/{date}, latent until its first write;
 // a page bound to a date behaves the same at /pages/{id}). Serves the entries
-// EditPageTitle (focus and select the title), AppendNote (a new empty row, focused)
-// and FocusNote (the caret at the end of that row).
+// ComposePage (the launcher’s title), EditPageTitle (focus and select the title),
+// AppendNote (a new empty row, focused) and FocusNote (the caret at its end).
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
@@ -103,6 +103,11 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
   );
   usePaneReturnReady(outline.status !== "loading");
   usePaneDailyPage(dailyDate && id ? { localDate: dailyDate, pageId: id } : null);
+
+  useEffect(() => {
+    if (!creation || !titleReady || readWriting().paused || delivery?.entry.kind !== "ComposePage") return;
+    if (claim(delivery)) editText(`page:${creation.page_id}`, delivery.entry.title);
+  }, [claim, creation, delivery, titleReady]);
 
   const reloadedFor = useRef<string | null>(null);
   useEffect(() => {

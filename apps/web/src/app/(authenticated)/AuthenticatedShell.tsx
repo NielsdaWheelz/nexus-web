@@ -20,7 +20,8 @@ import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
-import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
+import ResourceActionsProvider, { ResourceActionDefect } from "@/lib/actions/ResourceActionsProvider";
+import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import { useWritingReceive } from "@/lib/api/writingReceive";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -31,7 +32,9 @@ import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
-import { AdmissionRecoveryProvider, AdmissionRecoveryHost } from "@/lib/media/AdmissionRecoveryProvider";
+import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
+import { useChatWorkOwners } from "@/lib/chat/drafts";
+import { WorkProvider } from "@/lib/unsavedWork";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import {
@@ -61,6 +64,7 @@ import {
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import { useLatestWorkspace, useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
+import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
 
 const returnWorkspaceFocus = () => document.getElementById("entry-failure") ?? findActivePaneLandmarkFocusTarget();
@@ -79,18 +83,20 @@ export default function AuthenticatedShell(props: {
         <UnauthenticatedApiBoundary>
           <MobileViewportProvider>
             <FeedbackProvider returnFocus={returnWorkspaceFocus}>
-              <AdmissionRecoveryProvider accountId={props.account.accountId}>
-                <ActivityCapture />
-                <ServerSeedsProvider seeds={props.seeds}>
-                  <ReaderProvider initialProfile={props.readerProfile}>
-                    <Workspace
-                      accountId={props.account.accountId}
-                      initialState={props.initialState}
-                      entryFailure={props.entryFailure}
-                    />
-                  </ReaderProvider>
-                </ServerSeedsProvider>
-              </AdmissionRecoveryProvider>
+              <WorkProvider>
+                <MediaAdmissionsProvider accountId={props.account.accountId}>
+                  <ActivityCapture />
+                  <ServerSeedsProvider seeds={props.seeds}>
+                    <ReaderProvider initialProfile={props.readerProfile}>
+                      <Workspace
+                        accountId={props.account.accountId}
+                        initialState={props.initialState}
+                        entryFailure={props.entryFailure}
+                      />
+                    </ReaderProvider>
+                  </ServerSeedsProvider>
+                </MediaAdmissionsProvider>
+              </WorkProvider>
             </FeedbackProvider>
           </MobileViewportProvider>
         </UnauthenticatedApiBoundary>
@@ -138,6 +144,7 @@ function Workspace(props: {
         columnWidthPx={columnWidthPx}
       >
         <WritingRuntime accountId={accountId}>
+          <ChatWorkOwners />
           <WorkspaceEntryNotice failure={props.entryFailure} />
           <SignOutProvider>
             <MobileChromeProvider>
@@ -151,19 +158,23 @@ function Workspace(props: {
                       <ShareControllerProvider>
                         <GlobalPlayerProvider accountId={accountId}>
                           <ResourceActionsProvider>
-                            <AdmissionRecoveryHost />
-                            <ImportsProvider>
-                              <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
-                                <Nexus />
-                                <div className={styles.layout}>
-                                  <AppNav />
-                                  <main className={styles.main}>
-                                    <WorkspaceHost />
-                                    <GlobalPlayerSurfaces />
-                                  </main>
-                                </div>
-                              </WorkspacePresentationsProvider>
-                            </ImportsProvider>
+                            <AuthenticatedWorkspaceErrorBoundary>
+                              <ResourceActionDefect />
+                              <MediaAdmissionsHost />
+                              <ImportsProvider>
+                                <MediaContinuationHost />
+                                <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                                  <Nexus />
+                                  <div className={styles.layout}>
+                                    <AppNav />
+                                    <main className={styles.main}>
+                                      <WorkspaceHost />
+                                      <GlobalPlayerSurfaces />
+                                    </main>
+                                  </div>
+                                </WorkspacePresentationsProvider>
+                              </ImportsProvider>
+                            </AuthenticatedWorkspaceErrorBoundary>
                           </ResourceActionsProvider>
                         </GlobalPlayerProvider>
                       </ShareControllerProvider>
@@ -249,6 +260,11 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     announcement="Assertive"
     actions={[{ label: "try again", onClick: runtime.retry, busy: runtime.state === "retrying" }]}
   />;
+}
+
+function ChatWorkOwners() {
+  useChatWorkOwners();
+  return null;
 }
 
 const ENTRY_NOTICE = "workspace-entry-read";

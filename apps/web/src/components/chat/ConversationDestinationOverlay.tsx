@@ -7,6 +7,8 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { useSettled } from "@/lib/api/serverState";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { pageQuery, usePaneFreeServerList } from "@/lib/api/useServerList";
 import { fetchConversationIndex, presentConversationListItem, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import { formatDisplayNumber } from "@/lib/display/format";
@@ -44,6 +46,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
   onSelect(conversation: Pick<ConversationListItem, "id" | "title">): void;
 }) {
   const env = useRenderEnvironment();
+  const paneActive = usePaneIsActive();
   const id = useId();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"Source" | "All">(hasSourceChats === false ? "All" : "Source");
@@ -57,11 +60,11 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
   if (search && !initializing) params.set("title_search", search);
   const queryKey = params.toString();
   const key = `conversation-destination:${queryKey}`;
-  const page = usePaneFreeServerList({ key, stale: "", pageSize: 25, drain: false, active: true,
+  const page = usePaneFreeServerList({ key, stale: "", pageSize: 25, active: paneActive && search === query.trim(),
     id: (item: ConversationListItem) => item.id,
     fetchPage: (cursor, limit, signal) => fetchConversationIndex(pageQuery(queryKey, cursor, limit), signal),
   });
-  const selectable = page.current && (!initializing || !search) && search === query.trim() && page.failure === null;
+  const selectable = page.current && (!initializing || !search) && search === query.trim();
   const items = selectable ? page.items : [];
   useEffect(() => {
     if (initializing && hasSourceChats !== null) {
@@ -77,9 +80,10 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       : { key, id: page.items[0]?.id ?? null });
   }, [hasSourceChats, initializing, key, page, query, search]);
   const current = selectable && active?.key === key ? active.id : null;
-  const status = page.failure ? "couldn’t load chats" : !selectable || page.status !== "ready" ? "searching…"
-    : !items.length ? search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet"
-    : `${formatDisplayNumber(items.length, env)} ${items.length === 1 ? "chat" : "chats"}`;
+  const failure = search !== query.trim() || page.failure?.op === "More" ? null : page.failure;
+  const status = failure ? "couldn’t load chats" : !selectable || page.status !== "ready" ? "searching…"
+    : !items.length ? !page.complete ? "no matching chats found so far" : search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet"
+    : `${formatDisplayNumber(items.length, env)} ${items.length === 1 ? "chat" : "chats"}${page.complete ? "" : " loaded; results incomplete"}`;
   const changeView = (next: "Source" | "All") => { setInitializing(false); setView(next); setActive(null); };
   return <div className={styles.destination}>
     <div className={styles.destinationViews}>
@@ -106,9 +110,9 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
           setActive({ key, id: items[to].id });
         }
       }} />
-    {page.failure ? <FeedbackNotice content={{ tone: "Warning", title: status, requestId: page.failure.error.requestId }} announcement="Polite"
+    {failure ? <FeedbackNotice content={{ tone: "Warning", title: status, requestId: failure.error.requestId }} announcement="Polite"
       actions={[{ label: "retry", onClick: page.retry, busy: page.running !== null }]} returnFocus={() => input.current} />
-      : <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" />}
+      : <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement={!selectable ? "Polite" : "None"} />}
     <div id={`${id}-list`} role="listbox" aria-label="chats" className={styles.destinationList}>
       {items.map(item => {
         const presentation = presentConversationListItem(item, env);
@@ -120,7 +124,6 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
         </div>;
       })}
     </div>
-    {page.current && !page.complete ? <Button variant="secondary" size="sm" disabled={page.running !== null || page.failure !== null}
-      onClick={page.more}>load more</Button> : null}
+    {search === query.trim() ? <CollectionExhaustionNotice list={page} unit={{ singular: "chat", plural: "chats" }} returnFocus={() => input.current} /> : null}
   </div>;
 }

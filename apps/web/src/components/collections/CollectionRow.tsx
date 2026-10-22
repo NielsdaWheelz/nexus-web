@@ -1,12 +1,15 @@
 "use client";
 
 import {
-  Fragment,
   useState,
   useContext,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import MediaActions from "@/components/media/MediaActions";
+import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import { ChevronRight } from "lucide-react";
@@ -14,18 +17,16 @@ import Pill from "@/components/ui/Pill";
 import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
 import ResourceRow from "@/components/ui/ResourceRow";
+import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
 import ContextualActionMenu, {
   type ContextActionSection,
 } from "@/components/resources/ContextualActionMenu";
 import type {
   CollectionContext,
   CollectionRowView,
-  ExceptionalStatus,
 } from "@/lib/collections/types";
 import {
   collectionActivityText,
-  collectionConsumptionText,
-  collectionPublicationYear,
   formatCollectionPublicationDate,
 } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
@@ -48,26 +49,6 @@ function renderContext(context: CollectionContext): ReactNode {
   }
 }
 
-function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
-  switch (status.kind) {
-    case "MediaProcessing":
-      return <span>processing failed</span>;
-    case "PodcastSync":
-      const podcastSyncStatus = status.status;
-      switch (podcastSyncStatus) {
-        case "Failed":
-          return <Pill tone="danger">Update failed</Pill>;
-        default:
-          return assertNever(
-            podcastSyncStatus,
-            "Unsupported podcast update status",
-          );
-      }
-    default:
-      return assertNever(status, "Unsupported exceptional status");
-  }
-}
-
 /** Canonical semantic renderer for every media-like collection row. */
 export default function CollectionRow({
   row,
@@ -84,7 +65,8 @@ export default function CollectionRow({
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
-  const mediaLayout = row.mediaIdentity !== undefined;
+  const mediaLayout = row.media !== undefined;
+  const paneId = usePaneRuntime()?.paneId;
   const outline = useContext(ResourceOutlineContext);
   const [localOpen,setLocalOpen] = useState(false);
   const occurrenceKey=`${outline?.scope ?? "collection"}/${row.id}`;
@@ -100,70 +82,15 @@ export default function CollectionRow({
       )
     : row.title.text;
 
-  const supportParts: ReactNode[] = [];
-  const remainingTime =
-    row.activity !== null && row.activity.kind === "RemainingTime"
-      ? collectionActivityText(row.activity)
-      : null;
-  const date = row.publicationDate !== null ? (
-    <time key="date" className={styles.year} dateTime={row.publicationDate}>
-      {mediaLayout
-        ? collectionPublicationYear(row.publicationDate)
-        : formatCollectionPublicationDate(row.publicationDate)}
-    </time>
-  ) : null;
-  const contributors = row.contributors.length > 0 ? (
-    <ContributorCreditList
-      key="contributors"
-      className={styles.contributorList}
-      credits={row.contributors}
-      maxVisible={row.mediaIdentity === "External" ? row.contributors.length : 2}
-      overflowNoun={mediaLayout ? "authors" : "contributors"}
-    />
-  ) : null;
-  if (contributors) supportParts.push(contributors);
-  if (date) supportParts.push(date);
-  if (row.context !== null && !mediaLayout) {
-    supportParts.push(
-      <span key="context" className={styles.context}>
-        {renderContext(row.context)}
-      </span>,
-    );
-  }
-  const bibliography = supportParts.length > 0 ? (
-      <span className={mediaLayout ? styles.bibliography : styles.supportLine}>
-        {supportParts.map((part, index) => (
-          <Fragment key={index}>
-            {index > 0 ? (
-              <span className={styles.supportSeparator}>
-                <span aria-hidden="true">·</span>
-                <span className="sr-only">, </span>
-              </span>
-            ) : null}
-            <span className={styles.supportItem}>{part}</span>
-          </Fragment>
-        ))}
-      </span>
-    ) : undefined;
-  const supporting = mediaLayout && (bibliography !== undefined || row.mediaIdentity === "Stored") ? (
-    <span className={styles.mediaSupportLine}>
-      {bibliography}
-      {row.mediaIdentity === "Stored" ? (
-        <span className={styles.readingFacts}>
-          <span>{collectionConsumptionText(row.consumption)}</span>
-          {remainingTime ? (
-            <>
-              <span className={styles.supportSeparator} aria-hidden="true">·</span>
-              <span>
-                <span aria-hidden="true" dir="auto">{remainingTime.visible}</span>
-                <span className="sr-only">, {remainingTime.accessible}</span>
-              </span>
-            </>
-          ) : null}
-        </span>
-      ) : null}
+  const supporting = row.media ? <MediaIdentity subject={row.media.subject} /> : (
+    <span className={styles.supportLine}>
+      {row.contributors.length ? <ContributorCreditList credits={row.contributors} maxVisible={2} overflowNoun="contributors" /> : null}
+      {row.publicationDate !== null && row.contributors.length ? <span className={styles.supportSeparator} aria-hidden="true">·</span> : null}
+      {row.publicationDate !== null ? <time className={styles.year} dateTime={row.publicationDate}>{formatCollectionPublicationDate(row.publicationDate)}</time> : null}
+      {row.context !== null && (row.contributors.length > 0 || row.publicationDate !== null) ? <span className={styles.supportSeparator} aria-hidden="true">·</span> : null}
+      {row.context !== null ? <span className={styles.context}>{renderContext(row.context)}</span> : null}
     </span>
-  ) : bibliography;
+  );
   const evidence =
     mediaLayout && row.context !== null
       ? <span className={styles.context}>{renderContext(row.context)}</span>
@@ -175,11 +102,10 @@ export default function CollectionRow({
       : null;
   const exceptionalStatus =
     row.exceptionalStatus !== null
-      ? renderExceptionalStatus(row.exceptionalStatus)
+      ? <Pill tone="danger">Update failed</Pill>
       : undefined;
-  const failed = mediaLayout && Boolean(exceptionalStatus);
   const status = exceptionalStatus || activity ? (
-    <span className={failed ? `${styles.status} ${styles.failed}` : styles.status}>
+    <span className={styles.status}>
       {exceptionalStatus}
       {activity ? (
         <span className={styles.activity}>
@@ -197,7 +123,7 @@ export default function CollectionRow({
       actions: rowActionsAvailable && row.insertionSource ? [{kind: "command",id:"Resource.AddItem",label:"add item",onSelect:()=>{setDisclosed(true);}}] : rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
-  const actions = rowActionsAvailable &&
+  const more = rowActionsAvailable &&
     (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
       title={row.title.text} subjectKey={occurrenceKey}
@@ -224,14 +150,43 @@ export default function CollectionRow({
         "data-media-identity": mediaLayout ? "true" : undefined,
         style: rootStyle,
       }}
-      title={row.insertionSource && row.primary.kind === "link" ? <><a href={row.primary.href} data-row-focusable="" aria-label={`open ${row.title.text}`}>•</a> {title}</> : title}
+      media={mediaLayout}
+      title={row.insertionSource && row.primary.kind === "link" ? (
+        <>
+          <a href={row.primary.href} data-row-focusable="" data-pane-label-hint={row.title.text} aria-label={`open ${row.title.text}`}>•</a>{" "}
+          {row.media ? (
+            <a href={row.primary.href} data-row-focusable="" data-pane-label-hint={row.title.text}>
+              <MediaTitle subject={row.media.subject} />
+            </a>
+          ) : title}
+        </>
+      ) : row.media ? <MediaTitle subject={row.media.subject} /> : title}
       supporting={supporting}
       status={status}
       wrapped={mediaLayout}
       evidence={evidence}
       leadingControl={row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : undefined}
-      primaryControl={primaryControl}
-      actions={actions}
+      leadingVisual={row.artwork !== undefined ? (
+        <PodcastRowArtwork
+          key={row.artwork.imageUrl}
+          title={row.title.text}
+          imageUrl={row.artwork.imageUrl}
+        />
+      ) : undefined}
+      primaryControl={mediaLayout ? undefined : primaryControl}
+      actions={
+        <>
+          {row.media && rowActionsAvailable ? (
+            <MediaActions
+              subject={row.media.subject}
+              knownDescriptor={row.media.knownDescriptor}
+              density="Row"
+              returnFocus={() => findPaneCollectionRowFocusTarget(paneId, row.id)}
+            />
+          ) : null}
+          {more}
+        </>
+      }
       expanded={<>{panel}{disclosed && row.insertionSource?.kind === "resource" ? <ResourceDisclosure resourceRef={row.insertionSource.ref} occurrencePrefix={occurrenceKey} /> : null}</>}
     />
   );

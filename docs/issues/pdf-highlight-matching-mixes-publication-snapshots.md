@@ -14,8 +14,8 @@ loads text, then checks readiness and fetches page bounds in separate statements
 replacement text/spans published between those reads can select the wrong text.
 
 `media_source_ingest.py:2060` permits source refresh from `ready_for_reading`;
-`pdf_lifecycle.py:96` and `pdf_ingest.py:1844` replace text and spans under the
-reader publication owner's media-row lock. highlight matching takes no matching
+`pdf_ingest.publish_pdf_plan`, inside `source_adapters.publish_prepared_file`'s
+publication, replaces text and spans under the reader publication owner's media-row lock. highlight matching takes no matching
 snapshot fence. the current typecheck fix handles cached missing text as pending;
 it does not make nonempty cached text and fresh spans coherent.
 

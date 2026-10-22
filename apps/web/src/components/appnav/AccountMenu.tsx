@@ -8,6 +8,7 @@ import { saveWritingFile, writingFileName } from "@/components/notes/NoteNotices
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
+import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import {
   commitSignOut,
@@ -53,6 +54,7 @@ const UNRESOLVED = "some writing still needs a decision. download it, discard it
  */
 export function SignOutProvider({ children }: { children: ReactNode }) {
   const form = useRef<HTMLFormElement>(null);
+  const guardedSignOut = useGuardedSignOut();
   const [step, setStepState] = useState<SignOutStep>({ kind: "Idle" });
   const current = useRef<SignOutStep>(step);
   const live = useRef(true);
@@ -90,25 +92,28 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   // Android's offline reading copies go first: they can be downloaded again. The
   // journal's writing cannot, so it is purged only after them, then the session.
   const leave = async (token: WritingRuntimeToken) => {
-    if (offlineAvailable) {
-      try {
-        await offlineCall("purge");
-      } catch {
-        return restore(token, "offline data couldn’t be fully removed. your writing stays on this device and your session is still open.");
-      }
-    }
-    // The journal's gates stay held through the session post until the document leaves.
+    let message = "offline data couldn’t be fully removed. your writing stays on this device and your session is still open.";
     try {
-      await commitSignOut(token);
+      const completed = await guardedSignOut(async () => {
+        if (offlineAvailable) await offlineCall("purge");
+        message = offlineAvailable
+          ? "offline data was removed, but writing on this device couldn’t be. it stays here and your session is still open."
+          : "writing on this device couldn’t be removed. it stays here and your session is still open.";
+        await commitSignOut(token);
+        message = "sign out couldn’t finish. your session is still open.";
+      }, () => {
+        if (!live.current || !form.current?.isConnected) throw new Error("Sign-out form is no longer available");
+        form.current.submit();
+      }, { reviewedOwnerIds: [`writing:${token.account_id}`] });
+      if (!completed) {
+        await finishSignOut(token, false);
+        nudgeWrites();
+        setStep({ kind: "Idle" });
+      }
     } catch (error) {
       if (!(error instanceof WritingDecisionError)) reportError(error);
-      return restore(token, offlineAvailable
-        ? "offline data was removed, but writing on this device couldn’t be. it stays here and your session is still open."
-        : "writing on this device couldn’t be removed. it stays here and your session is still open.");
+      await restore(token, message);
     }
-    if (live.current && form.current?.isConnected) form.current.submit();
-    // The shell left before the post: the purged runtime resumes rather than stays frozen.
-    else await finishSignOut(token, false);
   };
   const decide = async (token: WritingRuntimeToken, result: SignOutResult, note: string | null) => {
     switch (result.kind) {

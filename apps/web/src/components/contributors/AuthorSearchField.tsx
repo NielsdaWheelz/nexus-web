@@ -7,9 +7,11 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import { FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import Input from "@/components/ui/Input";
-import { usePaneFreeServerValue, useSettled } from "@/lib/api/serverState";
+import { useSettled } from "@/lib/api/serverState";
+import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import {
   searchContributors,
   type ContributorSearchItem,
@@ -66,17 +68,20 @@ export default function AuthorSearchField({
   const trimmed = query.trim();
   const overLength = [...trimmed].length > MAX_NAME_CODE_POINTS;
   const searchable = trimmed !== "" && !overLength;
-  // One read per query that held still for 180 ms; results show only for it.
+  // Exact settled-query admission; shell-owned fields need their open lifetime, not a pane.
   const settled = useSettled(trimmed, 180);
   const live = searchable && settled === trimmed;
-  const search = usePaneFreeServerValue({
+  const search = usePaneFreeServerList<ContributorSearchItem>({
     key: live ? `/contributors/search?q=${encodeURIComponent(trimmed)}` : null,
     stale: "",
-    load: (signal) => searchContributors(trimmed, signal),
+    pageSize: 10,
+    active: open && live,
+    id: (item) => item.handle,
+    fetchPage: (cursor, limit, signal) => searchContributors({ q: trimmed, cursor, limit, signal }),
   });
-  const page = live && search.status === "ready" ? search.data : null;
-  const failed = live && search.status === "failed";
-  const items = page?.contributors ?? [];
+  const current = live && search.current;
+  const failed = live && search.failure !== null && search.failure.op !== "More";
+  const items = current ? search.items : [];
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -91,7 +96,7 @@ export default function AuthorSearchField({
     item,
     disabled: takenHandles.has(item.handle),
   }));
-  if (page !== null && searchable) {
+  if (current && searchable) {
     const key = contributorNameKey(trimmed);
     const duplicate = takenNewKeys.has(key);
     options.push({ id: "create", kind: "Create", disabled: duplicate });
@@ -110,18 +115,15 @@ export default function AuthorSearchField({
   const active =
     options.find((option) => option.id === activeId) ?? options[0] ?? null;
   const listVisible = open && (overLength || searchable);
-  const truncated = page?.next_cursor != null;
   const status = overLength
     ? "A name can be up to 200 characters."
     : !searchable || failed
       ? ""
-      : page === null
-        ? "Searching…"
+      : !current
+        ? "searching…"
         : items.length === 0
-          ? "No matching authors"
-          : truncated
-            ? `Showing the first ${count(items.length, "author")} — keep typing to narrow.`
-            : `${count(items.length, "author")} found`;
+          ? search.complete ? "no matching authors" : "no matching authors found so far"
+          : search.complete ? `${count(items.length, "author")} found` : `${count(items.length, "author")} loaded; results incomplete`;
   const results = options.filter((option) => option.kind === "Existing");
   const creates = options.filter((option) => option.kind !== "Existing");
 
@@ -159,7 +161,7 @@ export default function AuthorSearchField({
       if (options.length > 0) setActiveId(options[moves[event.key]!]!.id);
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (failed) { if (!search.retrying) search.refetch(); }
+      if (failed && !current) { if (search.running === null) search.retry(); }
       else choose(active);
     }
   }
@@ -202,6 +204,7 @@ export default function AuthorSearchField({
         onFocus={() => setOpen(true)}
         onChange={(event) => {
           setQuery(event.target.value);
+          setActiveId(null);
           setOpen(true);
         }}
         onCompositionStart={() => (composing.current = true)}
@@ -211,14 +214,20 @@ export default function AuthorSearchField({
       <div
         id={`${id}-status`}
         className="sr-only"
-        role="status"
-        aria-live="polite"
       >
         {status}
       </div>
-      <div className="sr-only" role="alert" aria-live="assertive">
-        {failed ? "Couldn't load authors" : ""}
-      </div>
+      {listVisible && failed && search.failure !== null ? (
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "couldn’t load authors", requestId: search.failure.error.requestId }}
+          announcement={search.active ? "Assertive" : "None"}
+          actions={[{ label: "try again", onClick: search.retry, busy: search.running !== null }]}
+          returnFocus={() => inputRef.current}
+        />
+      ) : null}
+      {listVisible && !failed && status && (overLength || items.length === 0) ? (
+        <div className={styles.status}><FeedbackStatus content={{ tone: overLength ? "Warning" : "Neutral", title: status }} announcement={(open && overLength) || (search.active && !current) ? "Polite" : "None"} /></div>
+      ) : null}
       {listVisible ? (
         <div
           id={`${id}-list`}
@@ -226,85 +235,59 @@ export default function AuthorSearchField({
           aria-label="Authors"
           className={styles.list}
         >
-          {failed ? (
-            <div className={styles.status}>
-              <FeedbackStatus content={{ tone: "Warning", title: "couldn't load authors" }} announcement="None" />
-              <button
-                type="button"
-                className={styles.textButton}
-                tabIndex={-1}
-                aria-busy={search.retrying || undefined}
-                aria-disabled={search.retrying || undefined}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => { if (!search.retrying) search.refetch(); }}
+          {results.map((option) =>
+            option.kind === "Existing" ? (
+              <div
+                key={option.id}
+                className={styles.option}
+                {...optionProps(option)}
               >
-                try again
-              </button>
-            </div>
-          ) : status && (overLength || items.length === 0) ? (
-            <div className={styles.status}><FeedbackStatus content={{ tone: overLength ? "Warning" : "Neutral", title: status }} announcement="None" /></div>
-          ) : null}
-          {failed ? null : (
-            <>
-              {results.map((option) =>
-                option.kind === "Existing" ? (
-                  <div
-                    key={option.id}
-                    className={styles.option}
-                    {...optionProps(option)}
-                  >
-                    <span className={styles.name} dir="auto">
-                      {option.item.display_name}
+                <span className={styles.name} dir="auto">
+                  {option.item.display_name}
+                </span>
+                <span className={styles.meta}>
+                  {count(option.item.work_count, "work")}
+                  {option.item.work_examples.map((example, index) => (
+                    <span key={example.href} dir="auto">
+                      {index === 0 ? " · " : ", "}
+                      {example.title}
                     </span>
-                    <span className={styles.meta}>
-                      {count(option.item.work_count, "work")}
-                      {option.item.work_examples.map((example, index) => (
-                        <span key={example.href} dir="auto">
-                          {index === 0 ? " · " : ", "}
-                          {example.title}
-                        </span>
-                      ))}
-                    </span>
-                    {option.item.matched_alias ? (
-                      <span className={styles.meta}>
-                        also known as{" "}
-                        <span dir="auto">{option.item.matched_alias}</span>
-                      </span>
-                    ) : null}
-                    {option.disabled ? (
-                      <span className={styles.meta}>Already added</span>
-                    ) : null}
-                  </div>
-                ) : null,
-              )}
-              {truncated ? (
-                <div className={styles.status}>
-                  <FeedbackStatus content={{ tone: "Neutral", title: "keep typing to narrow results" }} announcement="None" />
-                </div>
-              ) : null}
-              {creates.map((option) => (
-                <div
-                  key={option.id}
-                  className={styles.create}
-                  {...optionProps(option)}
-                >
-                  <Plus size={16} aria-hidden="true" />
-                  {option.kind === "Create" ? (
-                    <span>
-                      Create “<span dir="auto">{trimmed}</span>” as a new author
-                    </span>
-                  ) : (
-                    <span>Create a different author with this name</span>
-                  )}
-                  {option.disabled ? (
-                    <span className={styles.meta}>Already added</span>
-                  ) : null}
-                </div>
-              ))}
-            </>
+                  ))}
+                </span>
+                {option.item.matched_alias ? (
+                  <span className={styles.meta}>
+                    also known as{" "}
+                    <span dir="auto">{option.item.matched_alias}</span>
+                  </span>
+                ) : null}
+                {option.disabled ? (
+                  <span className={styles.meta}>Already added</span>
+                ) : null}
+              </div>
+            ) : null,
           )}
+          {creates.map((option) => (
+            <div
+              key={option.id}
+              className={styles.create}
+              {...optionProps(option)}
+            >
+              <Plus size={16} aria-hidden="true" />
+              {option.kind === "Create" ? (
+                <span>
+                  Create “<span dir="auto">{trimmed}</span>” as a new author
+                </span>
+              ) : (
+                <span>Create a different author with this name</span>
+              )}
+              {option.disabled ? (
+                <span className={styles.meta}>Already added</span>
+              ) : null}
+            </div>
+          ))}
         </div>
       ) : null}
+      {listVisible ? <CollectionExhaustionNotice list={search} unit={{ singular: "author", plural: "authors" }} returnFocus={() => inputRef.current} /> : null}
     </div>
   );
 }

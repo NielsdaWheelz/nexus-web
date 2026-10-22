@@ -6,7 +6,7 @@ import { isAbsolute, join } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
-import { DEFAULT_RETURN_TARGET } from "@/lib/auth/urls";
+import { login } from "./browser";
 
 interface BootstrapInput {
   web_origin: string;
@@ -29,10 +29,6 @@ async function bootstrap() {
     throw new Error("browser bootstrap state path must be absolute");
   if (!isAbsolute(input.artifacts_dir))
     throw new Error("browser bootstrap artifacts path must be absolute");
-  const origin = new URL(input.web_origin);
-  if (origin.origin !== input.web_origin || origin.hostname !== "127.0.0.1" || origin.protocol !== "http:")
-    throw new Error("browser bootstrap requires an exact loopback http origin");
-
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext();
@@ -49,23 +45,7 @@ async function bootstrap() {
       if (url.origin === input.web_origin && url.pathname.startsWith("/api/") && response.status() >= 400)
         console.error(`browser api response: ${response.status()} ${url.pathname}`);
     });
-    await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Use email and password", exact: true }).click();
-    const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
-    await form.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
-    await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
-    // the hydrated form owns its continuation; a competing driver navigation
-    // can abort it. observe the real 303, then its authenticated destination.
-    const [login] = await Promise.all([
-      page.waitForResponse((response) =>
-        response.url() === `${input.web_origin}/auth/password/sign-in` &&
-        response.request().method() === "POST",
-      ),
-      form.getByRole("button", { name: "Sign in", exact: true }).click(),
-    ]);
-    if (login.status() !== 303)
-      throw new Error(`browser login refused: expected 303, received ${login.status()}`);
-    await page.waitForURL(`${input.web_origin}${DEFAULT_RETURN_TARGET}`, { waitUntil: "domcontentloaded" });
+    await login(page, { web_origin: input.web_origin, ...input.seed });
     try {
       await page.getByRole("navigation", { name: "Primary", exact: true }).waitFor({ state: "visible" });
     } catch {

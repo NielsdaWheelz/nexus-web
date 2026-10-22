@@ -52,11 +52,17 @@ Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
 owns the autofocused query; Choose Create, Choose Browse, Manage Tabs, Add, and
 recovery pages replace one another inside one opaque viewport-fixed dialog.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
-The Nexus control's native button-activation path — tap, click, keyboard, and
-assistive technology — remains unchanged and is the only way that control opens
-the task. Its primary-touch horizontal swipe is only an adjacent-pane
-accelerator over the workspace-store command; it adds no second Nexus ingress,
-navigation event, or full-screen-task gesture.
+the nexus control opens through native button activation: pointer click,
+keyboard and assistive technology. primary button-0 presses are captured so
+input blur restoring the player band cannot retarget their release. mouse, pen
+and touch share the 8 css px movement threshold: reaching it cancels activation,
+even if the pointer returns inside. only a primary-touch horizontal swipe can
+invoke the adjacent-pane workspace command; it adds no second nexus ingress,
+navigation event or full-screen-task gesture. admitted touch presses suppress
+compatibility mouse focus so it cannot move nexus between release and click.
+without a committed swipe, a cancelled touch preserves the existing input focus;
+an accepted click transfers focus into nexus, and a committed swipe uses normal
+destination focus. mouse/pen focus and keyboard activation remain native.
 When task activation occurs during an already-acquired physical contact,
 `SwitchboardTask` rejects the retargeted pointer click unless the same pointer
 began inside the already-active task. That task-local provenance check carries
@@ -85,18 +91,12 @@ activation opens the existing nexus root; its `Find anything…` query owns inpu
 and focus. the launcher has no query state.
 
 collapsed help names the launcher plus its shortcut and retains destination
-labels. `components/appnav/useRailTooltip.tsx` owns one caption for the launcher
-and `NAV_RAIL` links. mouse/pen entry or keyboard-visible focus reveals it;
-trigger focus or pointer presence over trigger, connecting corridor or caption
-retains it. plain escape dismisses without moving focus or reaching underlying
-escape actions. modified/composing keys and another interaction owner retain
-their existing handling. cleared help reopens only on a fresh entry/focus event.
-
-help is text-only and nonfocusable. only its active trigger describes the
-positioned, visible caption. activation, expansion, desktop unmount, a wholly
-clipped anchor or modal coverage clears it. positioning follows scroll/resize;
-footer controls and mobile keep their existing entrances. the passive overlay
-contract is documented in [overlays](overlays.md#passive-navigation-help).
+labels: each is the shared `Tooltip` placed right, opening at once on mouse/pen
+entry or keyboard-visible focus, disabled while the rail is expanded. its
+trigger keeps its name; escape, a press, blur, expansion and modal coverage
+close it. footer controls and mobile keep their existing entrances. the passive
+overlay contract is documented in
+[overlays](overlays.md#passive-navigation-help).
 
 ## Nexus content grammar
 
@@ -212,8 +212,8 @@ actions remain accessible through nexus and ordinary controls.
 | Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | The rail itself: activation, collapse, indicator, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
-| collapsed rail help and dismissal | `apps/web/src/components/appnav/useRailTooltip.tsx` |
-| Mobile top bar                                                     | `apps/web/src/components/appnav/MobilePaneBar.tsx` over `lib/mobileShell/chrome.tsx`                            |
+| collapsed rail help and dismissal | `Tooltip` (`placement: "right"`) in `apps/web/src/components/appnav/AppNav.tsx` |
+| Mobile top bar                                                     | the active pane's `SurfaceHeader` (`projection: "Mobile"`) in `apps/web/src/components/workspace/PaneShell.tsx`, over `lib/mobileShell/chrome.tsx` |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `enterWorkspace` in `apps/web/src/lib/workspace/model.ts`                                                         |

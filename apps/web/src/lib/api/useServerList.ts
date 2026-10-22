@@ -8,8 +8,12 @@
 //   to its end, so it stays complete) and commits it at once. It runs after the
 //   read in flight, superseding its success or failure, and calls made meanwhile
 //   share one reread. A change of `stale` under the same key refetches.
-// - `drain` continues page by page to the end while `active` and the document
-//   is visible, and stops at the first failure until `retry()`.
+// - Each page commits immediately, then continuation runs sequentially while
+//   `active` and the document is visible; settled failure requires `retry()`.
+//   Failure latches for this mounted read owner; snapshots retain data only.
+//   A remount has fresh admission under its existing route/open/query owner.
+// - `revalidate()` coalesces periodic observations behind traversal and strict
+//   refresh. It never supersedes a read or clears a settled failure.
 // - Rows are always kept. A continuation that fails in transport or with a 5xx
 //   is a failure, never a defect.
 // - A pane return paints this visit's snapshot and rereads it only if `stale`
@@ -20,7 +24,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { isApiError, type ApiError } from "@/lib/api/client";
+import { isApiError, ApiError } from "@/lib/api/client";
 import {
   modeledApiError,
   requestWithRetry,
@@ -45,6 +49,8 @@ export interface ListSnapshot<T, M = null> {
   readonly stale: string;
   readonly items: readonly T[];
   readonly cursor: string | null;
+  /** Consumed page cursors preserve exact prefix coverage, even for empty pages. */
+  readonly cursors: readonly (string | null)[];
   readonly orderRevision: string | null;
   readonly metadata: M | null;
 }
@@ -58,11 +64,13 @@ export interface ServerList<T, M = null> {
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
   readonly orderRevision: string | null;
-  /** Metadata from the same committed response as the shown rows, including an empty page. */
+  /** Metadata from the latest committed response, including an empty page. */
   readonly metadata: M | null;
   readonly running: Op | null;
   readonly failure: { readonly op: Op; readonly error: ApiError } | null;
-  readonly more: () => void;
+  /** Input activity and document visibility; admitted reads may finish inactive. */
+  readonly active: boolean;
+  readonly revalidate: () => void;
   /** Repeats what failed; a rejected cursor rereads instead. */
   readonly retry: () => void;
   readonly refetch: () => Promise<void>;
@@ -93,7 +101,6 @@ interface ListInput<T, M> {
   readonly stale: string;
   readonly pageSize: number;
   readonly readPolicy?: string;
-  readonly drain: boolean;
   readonly active: boolean;
   readonly id: (item: T) => string;
   readonly fetchPage: (
@@ -137,14 +144,16 @@ function useList<T, M>(
   const [held, setShown] = useState<ListSnapshot<T, M> | null>(() => {
     if (restored !== null || seed === null) return restored;
     const { items, next_cursor, order_revision, metadata } = seed.data;
-    return { key: seed.key, stale, items, cursor: next_cursor, orderRevision: order_revision ?? null, metadata: metadata ?? null };
+    return { key: seed.key, stale, items: unique(items, input.id), cursor: next_cursor, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
   });
   const shown = shownAccount === accountId ? held : null;
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
   const [failureAccount, setFailureAccount] = useState(accountId);
-  const [heldFailure, setFailure] = useState<ServerList<T, M>["failure"]>(null);
-  const failure = failureAccount === accountId ? heldFailure : null;
+  const [heldFailure, setFailure] = useState<(NonNullable<ServerList<T, M>["failure"]> & { readonly key: string }) | null>(null);
+  const failure = failureAccount === accountId && heldFailure?.key === key ? heldFailure : null;
+  const pendingObservation = useRef(false);
+  const [observation, setObservation] = useState(0);
   const [visible, setVisible] = useState(isVisible);
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
@@ -163,6 +172,7 @@ function useList<T, M>(
       // A reread of a key with no rows yet is its first load.
       const op = requested === "Refetch" && base === null ? "Load" : requested;
       const settle = op === "More" ? [] : waiters.current.splice(0);
+      if (op !== "More") pendingObservation.current = false;
       const generation = owner.generation;
       const controller = new AbortController();
       flight.current = controller;
@@ -173,49 +183,60 @@ function useList<T, M>(
         waiters.current.unshift(...settle);
         return true;
       };
+      // The cursor restart budget encloses transport retries, not each attempt.
+      let restarted = false;
+      const wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
+      const toEnd = op !== "Load" && base !== null && base.cursor === null;
       const read = async (signal: AbortSignal) => {
-        const want = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
-        const toEnd = base !== null && base.cursor === null;
+        const validateCursor = (page: ListPage<T, M>, cursors: readonly (string | null)[]) => {
+          if (page.next_cursor !== null && cursors.includes(page.next_cursor)) {
+            throw new ApiError(409, "E_INVALID_CURSOR", "list returned a repeated cursor");
+          }
+        };
         const walk = async () => {
           const items: T[] = [];
+          const cursors: (string | null)[] = [];
           let cursor: string | null = null;
           let orderRevision: string | null = null;
           let metadata: M | null = null;
           do {
-            const limit = toEnd ? 200 : Math.min(200, want - items.length);
-            const page = await fetchPage(cursor, limit, signal);
+            const page = await fetchPage(cursor, pageSize, signal);
+            cursors.push(cursor);
+            validateCursor(page, cursors);
             metadata = page.metadata ?? null;
             const revision = page.order_revision ?? null;
             if (cursor === null) orderRevision = revision;
             else if (revision !== orderRevision) throw new Error("list pages returned different order revisions");
             items.push(...page.items);
             cursor = page.next_cursor;
-          } while (cursor !== null && (toEnd || items.length < want));
-          return { items, cursor, orderRevision, metadata, continuation: false };
+          } while (cursor !== null && (toEnd || cursors.length < wantPages));
+          return { items, cursor, cursors, orderRevision, metadata, continuation: false };
         };
         try {
-          if (op === "More" && base !== null) {
+          if (op === "More" && base !== null && !restarted) {
             const page = await fetchPage(base.cursor, pageSize, signal);
+            const cursors = [...base.cursors, base.cursor];
+            validateCursor(page, cursors);
             const orderRevision = page.order_revision ?? null;
             if (orderRevision !== base.orderRevision) throw new Error("list continuation returned a different order revision");
-            return { items: page.items, cursor: page.next_cursor, orderRevision, metadata: page.metadata ?? null, continuation: true };
+            return { items: page.items, cursor: page.next_cursor, cursors, orderRevision, metadata: page.metadata ?? null, continuation: true };
           }
           return await walk();
         } catch (error) {
-          // A revision-bound cursor invalidates the whole walk, never just its last page.
-          if (isApiError(error) && error.code === "E_INVALID_CURSOR") return walk();
-          throw error;
+          // Restart from the source, never from a cached first page.
+          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted) throw error;
+          restarted = true;
+          return walk();
         }
       };
-      const demand = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
-      const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", demand,
-        op === "More" ? base?.cursor : null, base?.cursor === null, base?.orderRevision]);
+      const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
+        op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
       void owner.read(requestKey, signal => requestWithRetry(read, signal), controller.signal)
         .then(
-          ({ items, cursor, orderRevision, metadata, continuation }) => {
+          ({ items, cursor, cursors, orderRevision, metadata, continuation }) => {
             if (controller.signal.aborted) throw aborted();
             if (superseded()) return;
-            const next = { key, stale, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, orderRevision, metadata };
+            const next = { key, stale, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, cursors, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
             setShownAccount(accountId);
@@ -234,7 +255,7 @@ function useList<T, M>(
                 : modeledApiError(error, fail, signIn);
             if (modeled !== null) {
               setFailureAccount(accountId);
-              setFailure({ op, error: modeled });
+              setFailure({ key, op, error: modeled });
             }
             for (const waiter of settle) waiter.reject(error);
           },
@@ -261,6 +282,7 @@ function useList<T, M>(
   }, [owner]);
 
   useEffect(() => {
+    pendingObservation.current = false;
     if (key === null) return;
     const queue = waiters.current;
     const kept = shownRef.current;
@@ -275,24 +297,25 @@ function useList<T, M>(
     };
   }, [key, run, shownRef]);
 
+  const revalidate = useCallback(() => {
+    if (latest.current.key === null || pendingObservation.current) return;
+    pendingObservation.current = true;
+    setObservation((value) => value + 1);
+  }, []);
+
   useEffect(() => {
-    if (!input.drain) return;
     const update = () => setVisible(isVisible());
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
-  }, [input.drain]);
+  }, []);
 
   const ofKey = shown !== null && shown.key === key ? shown : null;
-  const drainable =
-    input.drain &&
-    input.active &&
-    visible &&
-    ofKey?.cursor != null &&
-    running === null &&
-    failure === null;
+  const active = input.active && visible;
   useEffect(() => {
-    if (drainable) run("More");
-  }, [drainable, shown, run]);
+    if (!active || ofKey === null || running !== null || failure !== null) return;
+    if (ofKey.cursor !== null) run("More");
+    else if (pendingObservation.current) run("Refetch");
+  }, [active, ofKey, running, failure, observation, run]);
 
   return {
     status: shown !== null ? "ready" : failure !== null ? "failed" : "loading",
@@ -304,7 +327,8 @@ function useList<T, M>(
     metadata: shown?.metadata ?? null,
     running,
     failure,
-    more: () => run("More"),
+    active,
+    revalidate,
     retry: () => {
       if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
         run("More");
@@ -330,7 +354,7 @@ export function pageQuery(
 
 /** The filter bar's status: `loadedCount` rows shown of the list, `visibleCount` matching. */
 export function listRowStatus(
-  list: ServerList<unknown>,
+  list: ServerList<unknown, unknown>,
   loadedCount: number,
   visibleCount: number,
   unit: { readonly singular: string; readonly plural: string },

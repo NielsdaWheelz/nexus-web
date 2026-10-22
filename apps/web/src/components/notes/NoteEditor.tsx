@@ -23,6 +23,12 @@ import {
 import { readWriting, subscribeWriting } from "@/lib/notes/journal";
 import type { TextEditBase } from "@/lib/notes/texts";
 import { createPortal } from "react-dom";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
+import { usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import {
   useReferenceInput,
@@ -70,7 +76,6 @@ import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
-import { holdBrowserWork } from "@/lib/unsavedWork";
 import { usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import {
   bodyFromNode,
@@ -155,6 +160,7 @@ interface LinkDialog {
   to: number;
   text: string;
   query: string;
+  baseline: string;
   error: string | null;
   left: number;
   top: number;
@@ -188,6 +194,24 @@ export default function NoteEditor(props: NoteEditorProps) {
   const latest = useRef(props);
   latest.current = { ...props, editable: props.editable && !paused };
   const busy = useRef(false);
+  const guard = useWorkGuard();
+  const { ctx } = useActionRuntime();
+  const workspace = useLatestWorkspace();
+  const subscribeWorkspace = useSubscribeWorkspace();
+  const visitScope = usePaneVisitWorkScope();
+  const linkDraft = useResourceDraft<LinkDialog | null>(`Notes.LinkInput:${props.editorKey}`, () => null,
+    value => ({ changed: value !== null && value.query !== value.baseline, unconfirmed: false, stopsBrowserWork: false }));
+  const attachment = useResourceDraft<{
+    controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
+    body: NoteBody | null; pending: boolean; file: File; id: string; failure: FeedbackContent | null;
+  } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
+    value => ({ changed: value !== null, unconfirmed: value !== null && value.body === null, stopsBrowserWork: value?.pending === true }));
+  busy.current = attachment.value?.pending === true;
+  const [linkVisible, setLinkVisible] = useState(false);
+  const link = linkDraft.value;
+  const setLink = linkDraft.set;
+  const readLink = linkDraft.read;
+  const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
@@ -196,19 +220,18 @@ export default function NoteEditor(props: NoteEditorProps) {
   );
   const [toolbar, setToolbar] = useState(false);
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
-  const [link, setLink] = useState<LinkDialog | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
   const feedback = useFeedback();
-  const reference = useReferenceInput(props.editorKey, props.reference ?? null);
+  const [referenceFocused, setReferenceFocused] = useState(false);
+  const [referenceVisible, setReferenceVisible] = useState(true);
+  const reference = useReferenceInput(props.editorKey, props.reference ?? null, referenceFocused && referenceVisible);
   const referenceReady = reference.isReady();
   latest.current = { ...props, editable: props.editable && !paused && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const referenceId = `reference-${useId().replaceAll(":", "")}`;
   const suspended = useRef(false);
-  const [referenceFocused, setReferenceFocused] = useState(false);
-  const [referenceVisible, setReferenceVisible] = useState(true);
   const literalSuppressed = useRef(false);
   const compositionBase = useRef<{
     body: NoteBody;
@@ -325,18 +348,28 @@ export default function NoteEditor(props: NoteEditorProps) {
     const { from, to } = view.state.selection;
     const caret = view.coordsAtPos(to);
     const text = view.state.doc.textBetween(from, to, " ", " ");
+    const existing = view.state.doc.nodeAt(from)?.marks.find(mark => mark.type === schema.marks.link)
+      ?? view.state.selection.$from.marks().find(mark => mark.type === schema.marks.link);
+    const baseline = existing ? String(existing.attrs.href) : "";
     latest.current.history?.boundary();
+    setLinkVisible(true);
+    const retained = readLink();
+    if (retained) {
+      setLink({ ...retained, from, to, text, left: Math.max(0, caret.left - box.left), top: Math.max(0, caret.bottom - box.top + 6) });
+      return true;
+    }
     setLink({
       from,
       to,
       text,
-      query: hrefFromInput(text) ?? "",
+      query: baseline || hrefFromInput(text) || "",
+      baseline,
       error: null,
       left: Math.max(0, caret.left - box.left),
       top: Math.max(0, caret.bottom - box.top + 6),
     });
     return true;
-  }, []);
+  }, [readLink, setLink]);
 
   const insertLink = () => {
     const view = viewRef.current;
@@ -359,11 +392,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       link.to > size ||
       view.state.doc.textBetween(link.from, link.to, " ", " ") !== link.text
     ) {
-      setLink(null);
-      return warn(
-        "Selection changed",
-        "The selected text changed. Select it again to add a link.",
-      );
+      return setLink({ ...link, error: "the selected text changed. select it again to add this link; your address is kept." });
     }
     const mark = schema.marks.link!.create({ href });
     const tr = view.state.tr.setMeta(SOURCE, "format");
@@ -400,47 +429,55 @@ export default function NoteEditor(props: NoteEditorProps) {
       if (files.length > 1) return refuse("Attach one file at a time here.");
       const problem = getFileUploadError(files[0]!);
       if (problem) return refuse(problem);
+      const prior = readAttachment();
+      if (prior?.pending) return;
+      if (prior && prior.file !== files[0] && !guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) return;
+      const retained = prior?.file === files[0] ? prior : null;
+      const controller = new AbortController();
+      const signal = ctx.sessionSignal();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      const owned = () => workspace().state.panes.some(pane =>
+        [pane.current_visit, ...pane.history.back, ...pane.history.forward].some(visit =>
+          visit.id === visitScope.visitId && resolvePaneRouteModel(visit.href).routeKey === visitScope.routeKey));
+      const unsubscribe = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
+      const task = { controller, base: retained?.base ?? latest.current.body, selection: retained?.selection ?? {
+        anchor: view.state.selection.anchor, head: view.state.selection.head,
+      }, body: null, pending: true, file: files[0]!, id: retained?.id ?? crypto.randomUUID(), failure: null };
+      setAttachment(task);
       busy.current = true;
-      const releaseWork = holdBrowserWork();
       view.setProps({ editable: () => false });
       try {
-        const upload = await uploadIngestFile({
-          file: files[0]!,
-          libraryIds: [],
-          id: crypto.randomUUID(),
-        });
-        if (view.isDestroyed || !latest.current.editable || !replaceable(view))
-          return refuse("The note changed before the upload finished.");
-        const embed = schema.nodes.object_embed!.create({
-          objectType: "media",
-          objectId: upload.mediaId,
-          label: files[0]!.name,
-          relationType: "embeds",
-          displayMode: "compact",
-        });
-        latest.current.history?.boundary();
-        const tr = view.state.tr.setMeta(SOURCE, "attachment");
-        view.dispatch(
-          tr
-            .replaceWith(0, view.state.doc.content.size, embed)
-            .scrollIntoView(),
-        );
+        const upload = await uploadIngestFile({ file: task.file, libraryIds: [], id: task.id, signal: controller.signal });
+        if (controller.signal.aborted || signal.aborted || readAttachment()?.controller !== controller) return;
+        const embed = schema.nodes.object_embed!.create({ objectType: "media", objectId: upload.mediaId,
+          label: files[0]!.name, relationType: "embeds", displayMode: "compact" });
+        setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
+        if (controller.signal.aborted || signal.aborted) return;
+        setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "attachment unconfirmed", message: "retry the same upload to check its result." } });
         if (handleUnauthenticated(error)) return;
         try {
-          setAttachmentFeedback(captureErrorFeedback(error, "AddAttachment"));
+          setAttachment({ ...task, pending: false, failure: captureErrorFeedback(error, "AddAttachment") });
         } catch (unmodeled) {
           setDefect({ error: unmodeled });
         }
       } finally {
-        releaseWork();
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
         busy.current = false;
-        if (!view.isDestroyed)
-          view.setProps({ editable: () => latest.current.editable });
+        if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable });
       }
     },
-    [handleUnauthenticated],
+    [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, ctx, subscribeWorkspace, visitScope.visitId, visitScope.routeKey, workspace],
   );
+
+  useEffect(() => {
+    const task = attachmentValue;
+    if (!task?.body || !props.editable || paused || !referenceReady || viewRef.current?.composing || !sameBody(props.body, task.base)) return;
+    props.onEdit({ before: props.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
+    setAttachment(null);
+  }, [attachmentValue, setAttachment, props, paused, referenceReady]);
 
   useLayoutEffect(() => {
     // Fresh reference ownership is installed by the hook's preceding layout
@@ -450,7 +487,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     viewRef.current?.setProps({
       editable: () => latest.current.editable && !busy.current,
     });
-    if (!props.editable || paused) setLink(null);
+    if (!props.editable || paused) setLinkVisible(false);
   }, [props.editable, paused, referenceReady, reference.state?.raw, reference.selected, referenceFocused]);
 
   useLayoutEffect(() => {
@@ -1058,7 +1095,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     };
   }, [inspection]);
 
-  const linkOpen = link !== null;
+  const linkOpen = link !== null && linkVisible;
   useEffect(() => {
     if (linkOpen) linkInput.current?.focus();
   }, [linkOpen]);
@@ -1095,12 +1132,26 @@ export default function NoteEditor(props: NoteEditorProps) {
           suspended.current = true;
           setReferenceFocused(false);
           setToolbar(false);
-          setLink(null);
+          setLinkVisible(false);
         })
       }
     >
       <div ref={host} className={styles.host} />
       {attachmentFeedback ? <FeedbackNotice content={attachmentFeedback} announcement="Polite" /> : null}
+      {attachmentValue && !attachmentValue.pending && !attachmentValue.body ? <FeedbackNotice announcement="Polite"
+        content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={[{
+          label: "retry same upload", onClick: () => { const task = readAttachment(), view = viewRef.current; if (task && view) void attach(view, [task.file]); },
+        }, { label: "discard attachment", onClick: () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); } }]} /> : null}
+      {attachmentValue?.body ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
+        label: "insert attachment", onClick: () => {
+          const task = readAttachment(), view = viewRef.current;
+          if (!task?.body || !view || !replaceable(view) || !latest.current.editable) return;
+          latest.current.onEdit({ before: latest.current.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
+          setAttachment(null);
+        },
+      }, { label: "discard attachment", onClick: () => {
+        if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null);
+      } }]} /> : null}
       {embed
         ? createPortal(
             <EmbeddedResource
@@ -1120,10 +1171,11 @@ export default function NoteEditor(props: NoteEditorProps) {
         <ReferencePicker
           input={reference}
           id={referenceId}
+          returnFocus={() => viewRef.current?.dom ?? null}
           onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
         />
       ) : null}
-      {props.editable && !paused && toolbar && !link && reference.state === null ? (
+      {props.editable && !paused && toolbar && !(link && linkVisible) && reference.state === null ? (
         <div
           className={styles.toolbar}
           role="toolbar"
@@ -1155,7 +1207,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           </button>
         </div>
       ) : null}
-      {link ? (
+      {link && linkVisible ? (
         <div
           className={styles.linkDialog}
           style={{ left: link.left, top: link.top }}
@@ -1184,7 +1236,9 @@ export default function NoteEditor(props: NoteEditorProps) {
                   return;
                 if (event.key === "Escape") {
                   event.preventDefault();
+                  if (!guard.confirmLoss({ scopes: [], ownerIds: [linkDraft.owner] })) return;
                   setLink(null);
+                  setLinkVisible(false);
                   viewRef.current?.focus();
                 } else if (event.key === "Enter") {
                   event.preventDefault();

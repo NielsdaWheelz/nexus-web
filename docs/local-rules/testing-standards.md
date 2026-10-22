@@ -21,7 +21,8 @@ but it runs static checks only:
 4. css-token lint, freshness of the generated wire types, browser tool contract
    ([typed-wire.md](typed-wire.md)) and shared citation-parser bundle, eslint, and
    typescript checking for the web app; and
-5. a structural alembic check requiring exactly one canonical head.
+5. structural alembic checks: exactly one canonical head, and no migration
+   importing the `nexus` application.
 
 keep this a fixed, explicit shell sequence. checks must be deterministic,
 unprivileged, network-independent after locked dependency installation, and
@@ -30,10 +31,10 @@ selectors, orchestration, receipts, coverage targets, or a second gate.
 
 `.github/workflows/ci.yml` installs locked dependencies and runs this command
 for pull requests on the self-hosted linux x64 devbox. it has read-only
-repository permission, a five-minute timeout, and cancels obsolete runs. locked
-dependencies are fetched without application credentials, including the public
-universal-memory git dependency. the check step receives no secret and uses no
-application services, browsers, devices or production systems.
+repository permission, a five-minute timeout, and cancels obsolete runs. public
+source dependencies are fetched at their locked revisions without credentials.
+the check step receives no secret and uses no application services, browsers,
+devices or production systems.
 
 passing establishes static consistency, not working user journeys or migration
 safety. production migration safety remains owned by the deployment controller:
@@ -79,10 +80,64 @@ scenario suite, fixture corpus or test-only product seams. playwright cases live
 in ignored `apps/web/.nexus-lab/cases/`. caller files survive runtime teardown;
 the author deletes them. logs and failure artifacts remain private and local.
 
-`--live-config FILE` explicitly supplies allowed provider settings to api/workers;
-core inherits no ambient provider configuration. credential propagation does not
-prove a successful model journey. temporary drivers run separately from the static
-gate; CI starts no services or browsers.
+campaigns use the same runtime in dedicated checkouts (macbook-capacity d5).
+playwright's own runner and `--repeat-each` own verdicts and repetition. copy
+scenario content
+deliberately into ignored temporary cases; never copy stack, provider or browser
+infrastructure. `nexus-web-campaign-artifacts` holds outputs and historical
+records, with no executable harness. preserve historical product/schema snapshots
+and recorded outputs when retiring a harness; source-shaped output is not a
+second runtime.
+
+use native expected-failure accounting: call `test.fail()` inside a catch only
+after observing the exact known failure signature, then rethrow that failure.
+a successful intermittent repeat stays a normal pass; unmatched failures
+propagate unannotated. retain no verdict wrapper. each temporary case owns its
+application/device reset across repeats: a fresh browser context does not reset
+the database.
+
+docker desktop is the sole lab engine (dev-server
+`docs/macbook-capacity-plan.md`, d1). d2 fixes the target at 8 gib and 8 cpus,
+with two concurrent ordinary lab invocations as acceptance; applying and
+qualifying that target belong to the operator window. host cpu burners and
+host load-average thresholds are retired. calibrated slow-client verification
+remains deferred to [lab-host-budget](../issues/lab-host-budget.md) §5; historical
+burner results do not satisfy it. ask for owner approval before calibration or
+the 20-run repeats after the window.
+
+### provider composition
+
+core requires no model credentials and inherits no ambient provider configuration.
+`--live-config FILE` explicitly supplies allowed api/worker provider settings as a
+json object whose values are strings or null. `provider_endpoint_overrides` is a
+json-encoded provider-to-https-origin map STRING, validated by the same import-light
+`provider_runtime.endpoints.normalize_endpoint_overrides` used at dispatch.
+`provider_ca_pem` is the actual pem certificate STRING, not a path. additional
+operator certificates extend normal verified trust roots for generation and
+embeddings; endpoint overrides retain each adapter's api path. ordinary live
+configuration may combine with `--codex-socket`, whose authenticated host/account
+remain caller-owned. api and the interactive worker use that host; the background
+worker stays in linux. credential propagation alone does not prove model success.
+
+`./scripts/lab --fake-providers -- COMMAND [ARG ...]` is retained lab composition,
+not a scenario fixture corpus. it excludes `--live-config` and `--codex-socket`.
+each invocation owns a fresh ca and signed server leaf, explicit https origins,
+synthetic credentials and real pinned codex hosts in separate host/linux socket
+namespaces. the api stays on the host, with its own native codex host for the
+catalog; both workers stay in linux and share the owned linux codex host.
+normal teardown stops owned process groups and removes owned containers/private
+inputs. after incomplete cleanup, the recovery note names the exact stores and
+short host socket directory. manual host/private-input cleanup requires verified
+shutdown of the recorded groups, never a blind saved-pid kill.
+
+fake responses carry fixed text over responses sse/websocket; embeddings are
+deterministic 256-dimensional word vectors. these establish wire/composition
+behavior, not tools, structured generation or model quality. the context's
+`fake_providers` is null normally, or `{origin, ca_file}` in fake mode. `/health`
+is the sole fake observation endpoint: identity and request counters, with no
+scenario control interface. cases and seeds remain temporary; each case owns its
+assertions and reset. temporary drivers run separately from the static gate;
+ci starts no services or browsers.
 
 ### host admission
 
@@ -96,7 +151,7 @@ the checkout lock remains separate and is released last. interruption releases
 the slot after teardown; a crash releases it through the kernel. child processes
 do not inherit the descriptors. slot files persist; their run ids are diagnostic,
 never ownership or permission to kill a process. throttled exclusive admission
-and campaign convergence remain pending in [lab-host-slots](../issues/lab-host-slots.md).
+remains pending in [lab-host-slots](../issues/lab-host-slots.md).
 
 ### reusable web package and fresh data
 
@@ -144,7 +199,11 @@ the `worker-checkout` target installs dependencies only: no application source,
 migrations, installed nexus project, source sha or runtime identity. checkout
 source and per-run identity are read-only binds.
 
-the owner builds only a missing tag. a host `fcntl.flock` at
+`worker_checkout_image.py` alone builds a missing tag, directly with the docker
+cli from `docker/Dockerfile.backend`'s `worker-checkout` target. consumers declare
+only the shared image tag, with no compose `build:` stanza. new cache images carry
+no compose project/service labels, so normal and saved `down --rmi local` retain
+them. a host `fcntl.flock` at
 `${XDG_STATE_HOME:-~/.local/state}/nexus-lab/worker-image.lock` serializes image
 acquisition through `compose up --no-start --no-deps --no-build`. the real
 containers pin their image before lock release, so later `up --no-build` uses
@@ -162,9 +221,10 @@ no per-run images. checkout images remain shared after teardown; generated
 
 ## retained foundation
 
-keep the reusable runtime and static gate. scenario cases and their fixtures are
-temporary: delete them after final qualification. retain no regression suite,
-coverage target or test-only application seam.
+keep the reusable runtime, provider composition, browser helpers and static gate.
+scenario cases and their fixtures are temporary: delete them after final
+qualification. retain no regression suite, coverage target or test-only
+application seam.
 
 historical test commands and proof checklists describe their original change;
 they do not revive retired work. actual product defects and unresolved manual

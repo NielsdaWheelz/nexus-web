@@ -6,6 +6,7 @@
 
 import { useId, useState } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -23,7 +24,9 @@ import styles from "./LibraryInvitations.module.css";
 
 const VISIT = definePaneVisitDataKey<ListSnapshot<ViewerInvitation>>("Libraries.Invitations");
 
-export default function LibraryInvitations() {
+export default function LibraryInvitations({ returnFocus }: {
+  readonly returnFocus: () => HTMLElement | null;
+}) {
   const headingId = useId();
   const fail = useThrowLater();
   const [answered, setAnswered] = useState(0);
@@ -31,7 +34,6 @@ export default function LibraryInvitations() {
     key: "invitations",
     stale: `${useChangeStamp("Libraries")}:${answered}`,
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (invitation) => invitation.id,
@@ -57,14 +59,14 @@ export default function LibraryInvitations() {
   };
 
   const failure =
-    list.failure &&
+    list.failure && list.failure.op !== "More" &&
     (libraryErrorFeedback(list.failure.error, "Library invitations couldn’t be loaded", throwDefect) ?? {
       tone: "Danger",
       title: "Library invitations couldn’t be loaded",
     });
-  if (list.items.length === 0 && feedback === null && !failure) return null;
-  return (
-    <section className={styles.inbox} aria-labelledby={headingId}>
+  const shown = list.items.length > 0 || feedback !== null || Boolean(failure);
+  return <>
+    {shown ? <section className={styles.inbox} aria-labelledby={headingId}>
       <div>
         <h2 id={headingId}>Library invitations</h2>
         <p>Accept to add the library here, or decline the invitation.</p>
@@ -134,6 +136,7 @@ export default function LibraryInvitations() {
           </div>
         ))}
       </div>
-    </section>
-  );
+    </section> : null}
+    <CollectionExhaustionNotice list={list} unit={{ singular: "invitation", plural: "invitations" }} returnFocus={returnFocus} />
+  </>;
 }

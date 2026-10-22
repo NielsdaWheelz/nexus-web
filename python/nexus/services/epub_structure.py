@@ -4,7 +4,6 @@ Contents destinations remain distinct from section ownership. Authored roles,
 complete containers and corroborated divisions prove parents; ranks organize
 only a local source container or publisher-correlated part. Unproved parents
 or ranges stay absent.
-Normal import and retained repair share this owner without changing source text.
 An anchored `[n] <em>incipit` sequence remains a supported source division.
 """
 
@@ -29,7 +28,6 @@ from nexus.services.canonicalize import (
     canonicalize_structure,
     generate_canonical_text,
 )
-from nexus.services.epub_sanitize import element_id, sanitize_epub_chapter
 from nexus.services.html_tree import parse_html_document, serialize_html
 from nexus.services.reader_structure import (
     DocumentPoint,
@@ -37,6 +35,7 @@ from nexus.services.reader_structure import (
     SectionRangeInput,
     resolve_section_ends,
 )
+from nexus.services.sanitize_html import element_id, sanitize_epub_chapter
 from nexus.text import normalize_whitespace
 
 type SectionSource = Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]

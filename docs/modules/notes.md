@@ -59,8 +59,13 @@ duplicate ids use the strictest annotation requirement. one transaction removes
 all or none and acknowledges exact removals and changed lanes. the flush-only
 `resource_graph.links.unlink_in_txn` owns removal; only user unlink checks/detaches
 relationship annotations. machine unlink preserves parallel user annotations.
-body writes cannot target a note removed or consumed by the same batch; admission
-rejects the combination before effects.
+before applying commands, the executor collects every `set_body.note_id`. remove
+and consume inspect the actual locked target and its complete graph retention;
+if they would delete an edited note, the whole transaction refuses with
+400 `E_INVALID_REQUEST` before removing its edge or body. this applies in either
+command order and forbids temporary deletion followed by recreation. editing one
+note while consuming another and removing a link to a retained edited note remain
+supported. a batch cannot remove and remint the same link identity.
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
@@ -76,7 +81,7 @@ the same binding-conflict contract as `ensure_daily`.
   `projectBody` mirrors it byte for byte (python whitespace and line breaks), the
   offset basis of passage anchors and source inspection.
 - I2 a body is one paragraph (text, hard_break, image; marks strong, em, code,
-  link, strikethrough, underline), code_block (text) or object_embed; a link href
+  link, strikethrough, underline), code_block (unmarked text) or object_embed; a link href
   is `/`-relative (not `//`), http(s) with a host and no `%` in the authority, or a
   mailto without an authority.
 - I3 actual body creation/change bumps the `body` lane, replaces the note's
@@ -88,7 +93,10 @@ the same binding-conflict contract as `ensure_daily`.
   creation only for a canonical empty paragraph; other rich bodies save normally.
   an existing note can be saved empty without changing its identity or links.
 - I8 structural retention counts every cross-owner graph fact and saved dossier
-  head, including derived endpoints and captured historical owners.
+  head, including derived endpoints and captured historical owners. it reads only
+  the facts incident to what the page or note owns (itself, its passage anchors,
+  evidence spans and content chunks) or that captured it, and only its owner's: no
+  other user's fact reaches a page or note (premise checked by census C12).
   ordinary menu/cut/block unlink preserves user links' resources and annotation
   prose. machine rows use their shared connection menu outside structural history.
   a mixed selection containing a non-user edge or another removal capability
@@ -194,6 +202,10 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   acknowledgements adopt confirmed bases without replacing newer input. exact
   per-ref subscriptions keep an unrelated outline out of the keystroke path.
   rich conflicts retain base/local/saved values for an explicit decision.
+  canonical acknowledgements publish `NoteBodies` for search, chat and connections;
+  title or structural membership changes also publish `Notes`. body-only receipts
+  leave unrelated outlines alone. memory-only writing participates in the common
+  work guard; completed journal checkpoints do not trigger loss warnings.
   composition carries its starting value and acknowledged version. only an exact
   owned desired-value receipt can advance that authority; a read cannot. a newer
   saved value during a clean owner's composition creates a fresh authored branch
@@ -219,7 +231,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   and wire revision before transport. retry those exact bytes after interruption,
   with a 30 s request deadline and persisted 1–30 s jittered backoff respecting
   retry-after. a definitive no-effect refusal parks its causal dependents and lets
-  independent work proceed; an unknown outcome blocks the suffix. explicit stop
+  independent work proceed; an unknown outcome blocks the suffix. a new unsealed
+  request over the bff's 4,500,000-byte limit is refused before transport; sealed
+  retries keep their original bytes and uncertainty fence. explicit stop
   retires that suffix without claiming server cancellation. presentation callbacks
   cannot govern delivery or settlement. a terminal compact acknowledgement stays
   in the outbox only until its originating live runtime consumes it or closes;
@@ -312,6 +326,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   eligibility window; selecting a resource/passage admits at once. admission freezes
   ids/body, then successor edits enter the shared text owner while the same mounted editor adopts publication and route identity in place.
   blank titles become `untitled`; no blank note is manufactured for publication.
+  title and body risk read the same retained cell. a transient `ComposePage`
+  delivery transfers only its title before claiming the delivery; it preserves
+  the cell's rich body, immutable request and editor ids.
 - a latent day shows one draft row; its first real body or structural insertion
   materializes the proposed page and first link in one command transaction. title
   edits stay local until publication. every successful materialization records its
@@ -349,7 +366,9 @@ quoted chat without changing the saved note. bodies use `NoteBody`'s canonical
 `body_pm_json`/`body_text`; edits and focus use `NoteEdit`/`FocusSelection`.
 composition and nested controls keep their own keys. caret, rich body and undo
 history survive reader body unmounts in the existing pane visit; completed rich
-checkpoints and selection survive restart, while undo history resets.
+checkpoints and selection survive restart, while undo history resets. canonical
+rich equality determines changed input; a model or quote choice alone is clean.
+saving a passage and sending its text as chat remain separate explicit operations.
 
 an empty resource-owned composer accepts typed `@` through the shared reference
 controller before persistence. mutable editor cells belong to the exact visit,
@@ -366,6 +385,14 @@ predecessor may leave that version unchanged. optimistic edits do not supply
 this authority. that reviewed slot also owns creation redo.
 correcting a definitively refused target keeps its original placement and starts
 a new causal capture; unknown outcomes retain the original request.
+
+hyperlink input compares against the actual loaded href, including removal to
+empty. a note attachment retains its original file, upload id, captured body and
+accepted result in its visit cell across harmless unmounts. only actual visit
+retirement or account teardown stops its remaining browser pipeline. an older
+upload acknowledgement never overwrites successor prose: insertion requires the
+same captured body, or an explicit whole-body replacement. accepted media stays
+on the server when its browser attachment is discarded.
 selection linking materializes
 the exact highlight and target in the same transaction, checking the frozen
 reader publication generation for text and pdf; search alone creates

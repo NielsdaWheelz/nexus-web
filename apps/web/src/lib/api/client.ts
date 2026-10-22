@@ -97,7 +97,7 @@ export function isRefusal(error: unknown): error is ApiError {
 }
 
 /** A write whose answer was lost: it may have landed, so a retry resends the same intent. */
-export function outcomeUnknown(error: unknown): error is ApiError {
+export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" } {
   return (
     isApiError(error) &&
     (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT")

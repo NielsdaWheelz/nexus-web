@@ -31,6 +31,7 @@ from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.highlights import HighlightNoteExpected
 from nexus.schemas.notes import (
     DailyPageOut,
+    EnsureDaily,
     InitialItem,
     InsertLink,
     InsertNote,
@@ -186,7 +187,7 @@ def create_page(
                     require_created=False,
                 )
             )
-            outline.execute_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
+            outline.apply_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
             record_input_change(db)
@@ -347,6 +348,8 @@ def capture_in_current_transaction(
     link_id: UUID | None = None,
 ) -> UUID | None:
     """The accepted link source freezes the daily incarnation across every retry."""
+    from nexus.services import outline
+
     link_id = link_id or uuid5(note_id, "daily-capture-link")
     known = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
     if known is not None:
@@ -391,11 +394,23 @@ def capture_in_current_transaction(
     ):
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Capture note id is taken")
     bound = _bound_page_id(db, viewer_id, local_date)
-    page = ensure_daily_page(db, viewer_id, local_date, bound or proposed_page_id or uuid4())
-    append_note_in_current_transaction(
-        db, viewer_id, page_id=page.id, note_id=note_id, link_id=link_id, body_pm_json=body_pm_json
+    page_id = bound or proposed_page_id or uuid4()
+    outline.apply_in_current_transaction(
+        db,
+        viewer_id=viewer_id,
+        commands=[
+            EnsureDaily(kind="ensure_daily", local_date=local_date, page_id=page_id),
+            InsertNote(
+                kind="insert_note",
+                source=LinkResourceEndpoint(ref=page_ref(page_id).uri),
+                link_id=link_id,
+                note_id=note_id,
+                body_pm_json=body_pm_json,
+                position=None,
+            ),
+        ],
     )
-    return page.id
+    return page_id
 
 
 def append_note_in_current_transaction(
@@ -411,7 +426,7 @@ def append_note_in_current_transaction(
     from nexus.services import outline
 
     page = page_ref(_owned_page(db, viewer_id, page_id).id)
-    outline.execute_in_current_transaction(
+    outline.apply_in_current_transaction(
         db,
         viewer_id=viewer_id,
         commands=[

@@ -1,15 +1,13 @@
 "use client";
 
 // A transcript's surroundings: its state until the text exists (with the
-// request where allowed), and above the text the playback, the chapters (the
-// active one follows the player) and the show notes with seekable times.
-// Playback never moves the transcript.
+// request where allowed), and above the text the video embed, chapters (the
+// active one follows the player) and show notes with seekable times. Audio
+// controls belong to the pane header. Playback never moves the transcript.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
-import Button from "@/components/ui/Button";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -18,17 +16,11 @@ import { clock } from "@/lib/documentReader/model";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { ReaderLink, activateReaderDestination } from "@/lib/documentReader/navigation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { lecternFull, useLecternCommands, useLectern } from "@/lib/lectern/lectern";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
 import {
-  playingEpisode,
-  usePlayerCommands,
-  usePlayerSession,
   usePlayerTimeline,
 } from "@/lib/player/playerRuntime";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./media.module.css";
 
 function requestFailure(error: unknown): FeedbackContent {
@@ -159,7 +151,7 @@ function showNotes(media: MediaDetail, hrefForTime: (ms: number) => string | nul
   return root.innerHTML;
 }
 
-/** Playback, chapters and show notes above the transcript text. */
+/** Video, chapters and show notes above the transcript text. */
 export function TranscriptChrome({
   media,
   paneActive,
@@ -174,13 +166,7 @@ export function TranscriptChrome({
   readonly onSeek: (ms: number) => void;
   readonly reader: Reader;
 }) {
-  const { playAudio } = usePlayerCommands();
-  const { state } = usePlayerSession();
   const { positionMs } = usePlayerTimeline();
-  const lectern = useLectern();
-  const lecternCommands = useLecternCommands();
-  const paneId = usePaneRuntime()?.paneId;
-  const playRef = useRef<HTMLButtonElement | null>(null);
   const identity = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc.identity : null);
   const notes = useMemo(() => showNotes(media, (ms) => identity === null ? null : reader.navigation?.href({ source_identity: identity, target: { kind: "time", ms } }) ?? null), [identity, media, reader]);
   const [locationUnavailable, setLocationUnavailable] = useState(false);
@@ -201,8 +187,6 @@ export function TranscriptChrome({
   const source = media.playback_source;
   const embed = source?.kind === "external_video" && source.embed_url && isAllowedYoutubeEmbedUrl(source.embed_url) ? source.embed_url : null;
   const descriptor = media.playerDescriptor;
-  // "Play next" goes after the playing episode's lectern row (the server puts it first without one).
-  const playing = playingEpisode(state)?.media_id ?? null;
   const active = media.chapters.findLast((chapter) => chapter.t_start_ms <= (positionMs ?? -1));
 
   // A visible, loaded video in the active pane is watching time.
@@ -243,30 +227,6 @@ export function TranscriptChrome({
         ) : (
           <FeedbackStatus content={{ tone: "Neutral", title: "in-app video playback is unavailable" }} announcement={paneActive ? "Polite" : "None"} />
         )
-      ) : descriptor ? (
-        <div className={styles.playback}>
-          <p>Playback continues in the global player.</p>
-          <Button ref={playRef} variant="secondary" size="sm" onClick={() => playAudio(descriptor)}>
-            Play
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              void lecternCommands.place({ mediaId: media.id, title: media.title,
-                placement: playing !== null && playing !== media.id ? { kind: "After", media_id: playing } : { kind: "First" },
-              })
-            }
-          >
-            Play next
-          </Button>
-          <LecternAddControl mediaId={media.id} title={media.title}
-            returnFocus={() => playRef.current?.isConnected && !playRef.current.closest("[inert]")
-              ? playRef.current : findPaneLandmarkFocusTarget(paneId)} />
-          {lecternFull(lectern) ? <FeedbackNotice
-            content={{ tone: "Neutral", title: "lectern is full", message: "remove an item to add another." }}
-            announcement="None" /> : null}
-        </div>
       ) : null}
       {(media.kind === "video" || !descriptor) && (source?.source_url || media.canonical_source_url) ? (
         <a href={source?.source_url || media.canonical_source_url!} target="_blank" rel="noopener noreferrer" className={styles.textButton}>

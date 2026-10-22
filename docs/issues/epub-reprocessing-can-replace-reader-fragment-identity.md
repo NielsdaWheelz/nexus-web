@@ -4,8 +4,9 @@ status: open
 origin: 2026-09-26 processing-plan adversarial review
 area: source recovery / reader identity
 
-`python/nexus/services/epub_ingest.py:445` assigns fresh fragment ids;
-`publish_epub_extraction_plan` at line 558 deletes/replaces previous fragments.
+`python/nexus/services/epub_ingest.py` (`_parse`) assigns fresh fragment ids;
+`publish_epub_plan` inserts every row, relying on the publication owner to refuse
+a second epub publication.
 `services/media_source_ingest.py:210` recovery eligibility does not inspect
 existing publication or reader state. failed status alone cannot prove a safe
 republication. this is a static preservation hazard; current affected rows have

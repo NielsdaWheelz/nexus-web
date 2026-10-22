@@ -288,9 +288,9 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 5. **FastAPI** receives the request through its middleware stack — executed in this
    order (`python/nexus/app.py`): Edge (request id, wire check) →
    **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
-   JWKS (`auth/verifier.py`), resolves first-login **bootstrap** through its bounded
-   process-local success cache (threadpool + database only on a miss), and attaches
-   a `Viewer{user_id, default_library_id, email, roles}` to `request.state`.
+   JWKS (`auth/verifier.py`, key fetches off the event loop), runs first-sight
+   **bootstrap** once per (user, token email) per process (threadpool + database
+   only then), and attaches a `Viewer{user_id, email}` to `request.state`.
 6. The **route handler** (`api/routes/*`) is transport-only: pull the `Viewer` and
    a DB `Session` via `Depends`, call exactly one **service** function, return
    its response model (`Data[XOut]`, per `docs/local-rules/typed-wire.md`) or
@@ -346,12 +346,16 @@ epoch and viewer before it can cross the stream.
 PostgreSQL is the single source of truth. The schema of record is the live
 database (`pg_dump --schema-only`) plus the **hand-written** Alembic migrations
 (`migrations/alembic/versions/NNNN_*.py`, linear chain, no autogenerate).
-Revisions `0001`-`0292` are squashed into one baseline, `0292_baseline.py`,
+Revisions `0001`-`0306` are squashed into one baseline, `0306_baseline.py`,
 which replays the dumped schema and seed rows beside it; the chain continues
-from there. `python/nexus/db/models.py` holds only the ~90 classes the code
-queries through the ORM — it mirrors no constraints or indexes — and many live
-tables are reached only from raw SQL, among them **`background_jobs`**, defined
-in `python/nexus/jobs/`.
+from there. `python/nexus/db/models.py` maps only the tables the code
+queries through the ORM: each class states its columns, their python types, its
+primary key and which columns the database fills, and no other DDL (no foreign
+key, constraint, index, delete rule or nullability). The only relationships
+are `Highlight`'s three anchor kinds and the pdf anchor's way back, so a flush
+inserts unrelated classes in class-name order and code flushes a parent before
+adding its child. The other live tables are reached only from raw SQL, among
+them **`background_jobs`**, defined in `python/nexus/jobs/`.
 
 Conventions throughout: UUID `id` PKs (`gen_random_uuid()`), `timestamptz` with
 `now()` defaults, heavy `CHECK`/`UNIQUE`/partial indexes encoding business rules,
@@ -574,7 +578,7 @@ transaction completes it (folio fields, omens, plate key, jsonb passages) or fai
 it; migration 0262 folded the retired event log's display into the same row.
 
 > `models.py` maps only the tables the code queries through the ORM; the
-> raw-SQL tables (`background_jobs` and roughly thirty others) never appear
+> raw-SQL tables (`background_jobs` and roughly forty others) never appear
 > there. The schema of record is the live database (`pg_dump --schema-only`)
 > plus the hand-written migrations; there is no autogenerate, so a forgotten
 > migration is caught only by a failing query.
@@ -601,9 +605,11 @@ discipline (this is the single most important backend invariant):
   not borrow the session. phase-owned stream sessions retain their own lifetime.
 - **Server-side prepared statements are disabled** (`prepare_threshold=None`) for
   pooler safety.
-- **SERIALIZABLE** isolation is opt-in via `use_serializable()` for
-  transactions needing sequential equivalence; serialization failures (SQLSTATE
-  `40001`) are detected and retried by callers. No `SELECT FOR UPDATE` is layered
+- **SERIALIZABLE** isolation is opt-in through `db/retries.py`
+  (`retry_serializable`, or `retry_read_committed` for a locked set re-checked
+  against a newer snapshot): the helper selects the isolation, reruns a
+  serialization failure, deadlock, `TransactionRestart` or named first-sight
+  unique race, and rolls back every refusal. No `SELECT FOR UPDATE` is layered
   on top except where genuinely required (e.g. PDF advisory locks).
 - **Role-scoped PG timeouts** are injected at connect time from env
   (`statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`).
@@ -706,20 +712,18 @@ use the same positions. Every call that reaches dispatch leaves one row, complet
 with its effects.
 
 Local execution capacity belongs to the single-process interactive/background
-lanes and queue claims. SERIALIZABLE retries everywhere go through the one helper
-`db/retries.py:retry_serializable`.
+lanes and queue claims. Every bounded transaction retry goes through
+`db/retries.py` (`retry_serializable`, `retry_read_committed`).
 
 ### 7.4 Auth, identity & bootstrap
 
 Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
-derives a `Viewer`. On a user's first request per process, `AuthMiddleware`
-coalesces concurrent cold requests into one cancellation-shielded task and runs
-**bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
-idempotent under SERIALIZABLE across processes, creating the `users` row, a default
-library, and an admin membership. Its bounded process-local LRU carries the
-resulting `default_library_id` on later `Viewer` projections without another
-threadpool or database hop. Failure is never cached; eviction only repeats the
-idempotent bootstrap on a later request.
+derives a `Viewer{user_id, email}`; the web checks the same claims
+(`docs/modules/auth.md`). On the first request of a (user, token email) pair per
+process, `AuthMiddleware` runs **bootstrap** (`services/bootstrap.py`:
+`ensure_user_and_default_library`): idempotent under SERIALIZABLE across
+processes, it creates the `users` row (the email mirror follows the token), a
+default library and an admin membership. Failure is never cached.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 
@@ -1666,7 +1670,7 @@ Year in Reading view. Exact session Exclude/Restore is the only correction
 lifecycle. Accepted writes publish the Consumption change topic (§8.12); the
 pane rereads on it only while active, on activation, and when the page returns
 to the screen, without polling. Its figures are one `useServerValue` and its
-sessions one `useServerList` (Load more) over the keyset sessions read. a
+sessions one automatically exhausted `useServerList` over the keyset sessions read. a
 `null` cursor ends the list; no empty-string cursor stands in for it. stats'
 full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
@@ -1729,8 +1733,10 @@ Podcast (Podcast Index). `/browse/preview` re-resolves a sealed
 their canonical pane; external results open Preview before explicit Add or
 Subscribe. Preview proxies remote images, never frames arbitrary web, loads the
 official YouTube iframe only after action, and starts remote Podcast audio only
-after action. `BrowseSearch` and `BrowsePreviewEpisodes` are signed, unversioned,
-query/plan-bound cursor families.
+after action. `BrowseSearch` has signed, unversioned, query/plan-bound cursors.
+podcast preview is one directory snapshot of up to 1,000 raw provider episodes;
+its target-only read has no continuation. external candidate identity is its
+discovery target, independent of ownership resolution.
 
 Acquisition reuses canonical owners: URL Add calls `/media/from-url`, episode
 Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
@@ -1784,7 +1790,7 @@ pane URL
   -> strict route parse + backend domain view
   -> authorized base relation
   -> domain filter -> order plan -> keyset -> limit+1
-  -> useServerList: one view's rows, drained or Load more (§8.12)
+  -> useServerList: publish each page and exhaust while active (§8.12)
   -> domain presenter + explicit local match fields
   -> visit-local Filter query -> CollectionView
 ```
@@ -1819,9 +1825,8 @@ history, and the chat read tool's completed messages.
 - **One page contract** for the six families (`schemas/collection_page.py`):
   query `limit` (1..200, default 100), `cursor` and the list's own keys; an
   unknown or repeated key, a bad limit or an empty cursor is
-  `400 E_INVALID_REQUEST`. The response is `{data: {items, nextCursor}}`.
-  The other lists keep their envelopes (`page.nextCursor`, snake
-  `next_cursor`).
+  `400 E_INVALID_REQUEST`. the response is `{data: {items, next_cursor}}`.
+  specialized lists retain their typed envelopes and snake_case keys.
 - **The keyset guarantee.** Following cursors to the end returns every row
   whose sort values do not change during the walk exactly once, in plan
   order. A row inserted or moved after the cursor appears; one inserted or
@@ -1832,27 +1837,39 @@ history, and the chat read tool's completed messages.
   "remaining" order with the in-progress and unfinished projections, and the
   episode state filter. The tab's own writes always reread from page one.
 
-The browser holds each list in `lib/api/useServerList.ts`. `key` names the
-view; a new key loads its first page while the previous view's rows stay
-shown (`current: false`), then swaps them at once and abandons the old
-continuation. Rows are deduped by id, first wins. `refetch()` rereads the
-loaded prefix (at least one page; a complete list to its end) in one commit,
-queued behind the read in flight and shared by every call made meanwhile; a
-change of `stale` under the same key calls it. `drain` loads to the end while
-the pane is active and the document visible and stops at the first failure
-until Retry; manual lists use `more()` (Load more, offered only while the
-rows shown are the current view's). Rows are always kept: a
-continuation that fails in transport or with a 5xx offers Retry, a rejected
-cursor restarts the entire walk from page one, and only "cursor absent" licenses the
-count header, the "Complete" filter status and reorder. A pane return paints
-the visit's snapshot and rereads only if `stale` moved since it was read; a
-server seed paints a first visit the same way.
+the browser holds every paginated collection in `lib/api/useServerList.ts`.
+`key` names the view; a new key admits exactly its first page while previous
+rows remain visible as `current: false`. each page publishes immediately, even
+when empty, then the list appends sequentially to cursor exhaustion while its
+surface is active and the document visible. embedded disclosures additionally
+require their open lifetime. an admitted logical read may finish inactive;
+query change or unmount aborts. scrolling admits no work. rows deduplicate by
+stable id, first occurrence wins; metadata follows the latest committed page.
+
+`refetch()` and `stale` changes supersede older work and atomically replace the
+loaded page prefix; a complete list rereads to its end. requests preserve each
+adapter's page size. `revalidate()` coalesces periodic observations behind
+initial traversal and strict refresh without superseding an admitted read; a
+last pending observation survives polling stopping. any settled failure stops
+automatic work until explicit recovery, a new query or strict invalidation.
+continuation failure retains usable current-query rows, including picker
+choices. an invalid cursor allows one source restart per logical operation,
+then requires explicit recovery. only a null cursor licenses completion counts
+and operations requiring completeness, including custom ordering.
+
+a pane return restores its visit snapshot and rereads only if `stale` moved;
+a server seed supplies the first page once. shared exhaustion feedback owns
+loading, pause, continuation recovery and active traversal announcements;
+filter status speaks subsequent user query changes. complete single-response
+reads remain single responses. authored outline branches alone retain explicit
+`usePagePrefix` expansion with their first-page authority and generations.
 
 In-tab change topics (`lib/api/changes.ts`) tell mounted lists that a
 committed write in this tab changed server state. A writer publishes after
 the write; an observing list puts the topics' stamp in its `stale` token.
-Nothing crosses tabs, and no list rereads on focus (media summaries do,
-through the media query revision some lists also follow).
+change topics do not cross tabs. domain owners admit focus observations:
+imports refreshes its summary and reconciles collections when its observation
+clock advances; media-summary revisions also invalidate their observing lists.
 
 | topic | publishers | observers |
 | --- | --- | --- |
@@ -2121,7 +2138,7 @@ Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
 linear `NNNN_*` numbering, no autogenerate), rooted at the squashed baseline
-`0292_baseline.py`. Dev: `make migrate`. The PR check
+`0306_baseline.py`. Dev: `make migrate`. The PR check
 requires one canonical Alembic head without starting a database. Production
 applies the candidate's baked head only inside the release, after the
 stopped-writer verified R2 backup and a revision-ancestry proof, and before the
@@ -2195,8 +2212,9 @@ The things most likely to bite you, distilled:
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
     `{"status":"failed"}` returns mark the _queue_ row succeeded; recovery is the
     user's retry, and a dead source job is its repair offer.
-12. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
-    (storage) effects after the DB commit.
+12. **No ORM cascades.** Deletion is explicit, reference-counted, and orders external
+    (storage) effects after the DB commit. The schema's own `ON DELETE CASCADE` and
+    `SET NULL` foreign keys are the only automatic deletes.
 13. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
     provider/model rows. A model change requires rebuilding current embeddings
     before semantic search should depend on them.
@@ -2216,7 +2234,7 @@ The things most likely to bite you, distilled:
 | Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
 | FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/api/edge.py`, `python/nexus/auth/`                                                                                                                                |
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
-| The schema                                                        | `migrations/alembic/versions/0292_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
+| The schema                                                        | `migrations/alembic/versions/0306_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/generation/`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempts.py`, `source_runner.py`, `source_publication.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py`, [`modules/ingest.md`](modules/ingest.md) |

@@ -36,11 +36,37 @@ it is main's: the notes write path on the tip is main's code (under `lib/notes` 
 python reproduces it at the same rates, and no run on the slice's old base `d6b73c712` (before
 #683/#686) failed.
 
+a candidate cause of the first mode (notes re-slice, 2026-10-21, design L11): every
+text save's reply reported its note's links fact with `checked_from_version: null`,
+and the queue breaks any position chain through such a fact, so a structure edit
+placed inside a note during that note's save window was refused at build. since the
+re-slice a text save reports no links fact (I14; notes harness `outline/O34`).
+
+a second, closer candidate (the same branch, D11): a reply reported `checked_from_version`
+only for lanes a command checked, so an own unchecked write (a structural remove, a relink's
+far end) broke the position chain through its lane. an undone split is such a remove (the
+write log's `remove+set_body`), so the redone split's insert could be refused at build;
+notes harness `outline/O9` (undo an indent, a split and two edits, redo them) was refused
+that way every run until each moved lane reported its batch-start version.
+
+with both fixed (`cleanup/notes-server-queue`), the notes harness's copies of the two
+journeys (`outline/O7`, `outline/O8`) passed in every harness cycle run on that
+branch's revisions (14 by its port onto main), one run each, unthrottled; that is not the
+20-run repeat below. the 140 refusal-free repeats under cpu burners ran on the later
+web-engine tree, and burners are no longer an instrument. the throttle's calibration
+(lab-host-budget §5) needs a sha before that branch, e.g. its base `61d2d1540`: after it
+the failure may stop reproducing for a reason other than the throttle.
+
 the harness XFAILs both journeys only on this signature (server `["one two"]` plus the refusal
 copy); an XPASS there is expected while the defect is intermittent.
 
 impact: a person who undoes and redoes a split can see the redo refused and kept as a draft
 instead of applied.
 
-resolved when: both journeys pass a 20-run repeat on a loaded host (`REPEAT=20`, prefixes
-`notes/N2.undo-redo-across notes/N2.undo-split`, load average above 10), and their `xfail` goes.
+resolved when: both journeys pass a 20-run repeat under the calibrated client cpu throttle
+([lab-host-budget](lab-host-budget.md) §5) and their `xfail` goes. calibration first proves the
+throttle reproduces this failure on the base sha (at least 5 of 20). until that instrument
+is calibrated, there is no replacement load acceptance. host burners and load-average
+thresholds are retired; the measurements above remain historical evidence.
+calibration and the 20-run repeats remain deferred to slice 6, after the operator
+resize window. ask for owner approval before running them.

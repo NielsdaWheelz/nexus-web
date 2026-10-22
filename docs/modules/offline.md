@@ -76,9 +76,13 @@ lease (`store.open`) and plays `file://`, else streams.
   open copy keeps the revision its reader started from (its next save still
   meets a remote move as a conflict).
 - **identity.** `hello {accountId}` from the hosted page binds the store; a
-  different account wipes everything first. deliberate sign-out first resolves
-  writing under its account locks; native `purge` then precedes journal purge and
-  the normal `POST /auth/signout`. native purge failure preserves the journal. without the bridge (desktop, android < 14) the
+  different account wipes everything first. deliberate sign-out resolves writing
+  under its account locks, then asks the common work guard about unreviewed
+  ephemeral work. approval makes the document inert while native `purge` precedes
+  journal purge and the normal `POST /auth/signout`. native purge failure preserves
+  the journal; cancellation or observable failure restores editing and protection.
+  approval suppresses only the corresponding unload warning. without the bridge
+  (desktop, android < 14) the
   download action is disabled *Not supported on this device*, there is no
   *Downloads* entry. writing sign-out still resolves its browser journal before
   the session post.

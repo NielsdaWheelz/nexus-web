@@ -9,9 +9,9 @@ import { useResourceComposer } from "@/components/resources/ResourceComposer";
 // the text filter stays local.
 
 import { useCallback, useId, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
@@ -79,7 +79,6 @@ import {
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -142,8 +141,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       useRefreshStamp(active, 60_000),
     ].join("|"),
     pageSize: 100,
-    drain: true,
-    active,
+    active: active && library !== null,
     visit: ENTRIES,
     id: libraryEntryId,
     fetchPage: (cursor, limit, signal) =>
@@ -158,7 +156,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     (changes: ViewChanges) => {
       scroll();
       router.replace(viewHref(`/libraries/${id}`, params, changes), {
-        viewTransition: { kind: "collection-reflow" },
       });
     },
     [id, params, router, scroll],
@@ -198,8 +195,7 @@ function LibraryPane({ id }: { readonly id: string }) {
 
   const members = useLibraryMembers(
     library,
-    active &&
-      runtime?.secondaryPane?.group_id === "resource-inspector" &&
+    runtime?.secondaryPane?.group_id === "resource-inspector" &&
       runtime.secondaryPane.visibility === "visible" &&
       runtime.secondaryPane.active_surface_id === "resource-members",
     detail.refetch,
@@ -280,6 +276,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       kind: "command",
       id: "ViewAction.Library.AddContent",
       label: "add content",
+      icon: <Plus size={20} aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: () =>
         requestNexusOpen({
@@ -415,9 +412,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     />
   ) : list.status !== "ready" ? null : list.complete ? (
     <EmptyEntries params={params} isAll={isAll} change={recover} />
-  ) : (
-    <CollectionExhaustionNotice list={list} />
-  );
+  ) : null;
   const firstLoad =
     list.status === "failed" && loadFailure !== null
       ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
@@ -462,19 +457,6 @@ function LibraryPane({ id }: { readonly id: string }) {
         returnScope="Library.Entries"
         rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry, added),
           id: entry.entry_id ?? libraryEntryId(entry) }))}
-        rowControls={Object.fromEntries(ordered.flatMap((entry) => {
-          if (entry.kind !== "media" ||
-            !["web_article", "epub", "pdf"].includes(entry.media_summary.media_kind)) return [];
-          const rowId = entry.entry_id ?? libraryEntryId(entry);
-          return [[rowId, (
-            <LecternAddControl
-              key={rowId}
-              mediaId={entry.media_summary.media_id}
-              title={entry.media_summary.title}
-              returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, rowId)}
-            />
-          )]];
-        }))}
         empty={empty}
         status={list.status === "failed" ? "error" : list.status}
         error={
@@ -489,7 +471,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         ariaLabel={name}
         rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
         rowActionsAvailable={list.current}
-        footer={visible.length > 0 ? <CollectionExhaustionNotice list={list} /> : undefined}
+        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "entry", plural: "entries" }} returnFocus={() => inputRef.current} />}
         collectionBusy={!list.current || !list.complete}
         surface={false}
         order={ordering}

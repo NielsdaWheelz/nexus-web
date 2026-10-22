@@ -20,6 +20,7 @@ import {
   PanelsTopLeft,
   Pencil,
   Play,
+  Pause,
   RefreshCw,
   RotateCcw,
   Rss,
@@ -83,6 +84,8 @@ export const ACTION_CATALOG = {
     group: "Consume",
     states: {
       Idle: { label: "Play", icon: Play },
+      Playing: { label: "Pause", icon: Pause },
+      Buffering: { label: "Pause", icon: Pause },
       Paused: { label: "Resume", icon: Play },
       Ended: { label: "Replay", icon: RotateCcw },
     },
@@ -138,6 +141,10 @@ export const ACTION_CATALOG = {
     label: "Subscribe",
     icon: Rss,
     group: "Organize",
+    confirmation: {
+      title: "unsubscribe?",
+      body: "this stops episode updates for “{title}”, deletes its subscription settings, and removes the show from libraries you own with no other members. saved episodes, listening progress, and shared library placements remain. subscribing again won’t restore the deleted settings or placements.",
+    },
     states: {
       Unsubscribed: { label: "Subscribe", icon: Rss },
       Subscribed: { label: "Unsubscribe", icon: Rss },
@@ -239,7 +246,7 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   PodcastSettings: {
-    label: "Podcast settings…",
+    label: "playback options…",
     icon: Settings,
     group: "Manage",
   },
@@ -249,7 +256,7 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   RetryPodcastBackfill: {
-    label: "Retry backlog",
+    label: "retry episode history",
     icon: RotateCcw,
     group: "Manage",
   },

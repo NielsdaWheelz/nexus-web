@@ -4,8 +4,8 @@ import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 // The author pane: the person's other names and their visible works. The url
 // owns the works view (`sort`, `direction`) and passes it to the server, which
-// validates it; the text filter stays local. While the pane is active it loads
-// every page, so the filter and the "N works" count cover all works.
+// validates it; the text filter stays local. The filter and count cover the
+// loaded prefix; the list footer owns explicit continuation.
 
 import { useCallback, useId, useMemo } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -38,6 +38,7 @@ import {
 } from "@/lib/api/useServerList";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { browsePreviewHref } from "@/lib/browse/api";
 import {
   getContributor,
   listContributorWorks,
@@ -127,7 +128,18 @@ function presentWork(work: ContributorWork): CollectionRowView {
     return {
       ...row,
       id: work.href,
-      mediaIdentity: "External",
+      primary: { ...row.primary, href: browsePreviewHref(work.target) },
+      media: {
+        subject: {
+          kind: "External",
+          target: work.target,
+          media_kind: "epub",
+          title: work.title,
+          contributors: work.contributors,
+          publication_date: null,
+        },
+        knownDescriptor: null,
+      },
       contributors: selectMediaAuthors(work.contributors),
       context: null,
       resourceRef: null,
@@ -176,8 +188,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     key: `/contributors/${encodeURIComponent(handle)}/works?${view}`,
     stale,
     pageSize: 100,
-    drain: true,
-    active,
+    active: active && detail.status === "ready",
     visit: WORKS,
     id: (work) => work.href,
     fetchPage: (cursor, limit, signal) =>
@@ -237,7 +248,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       }
       const suffix = query.toString() ? `?${query}` : "";
       router.replace(`/authors/${encodeURIComponent(handle)}${suffix}`, {
-        viewTransition: { kind: "collection-reflow" },
       });
     },
     [handle, params, router],
@@ -417,7 +427,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
                 />
               )
             }
-            footer={<CollectionExhaustionNotice list={works} />}
+            footer={<CollectionExhaustionNotice list={works} unit={{ singular: "work", plural: "works" }} returnFocus={() => inputRef.current} />}
             empty={
               text ? (
                 <FeedbackNotice
@@ -430,7 +440,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
                   announcement="None"
                 />
               ) : (
-                <p className={styles.empty}>No works yet.</p>
+                <p className={styles.empty}>{complete ? "no works yet." : "no works loaded so far."}</p>
               )
             }
           />

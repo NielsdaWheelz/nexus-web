@@ -1,13 +1,18 @@
-"""Per user + device workspace sessions: last write wins; stored state must validate."""
+"""Per user + device workspace sessions: last write wins; stored state must validate.
+
+A write keeps the user's newest `KEPT_DEVICES` rows: a device whose row was pruned
+resumes the newest other device's workspace, as a new device does."""
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import WorkspaceSession
 from nexus.schemas.workspace_session import WorkspaceSessionsOut, WorkspaceState
+
+KEPT_DEVICES = 10
 
 
 def get_workspace_sessions(db: Session, user_id: UUID, device_id: str) -> WorkspaceSessionsOut:
@@ -42,6 +47,17 @@ def put_workspace_session(
         .on_conflict_do_update(
             index_elements=["user_id", "device_id"],
             set_={"state": payload, "updated_at": func.now()},
+        )
+    )
+    newest = (
+        select(WorkspaceSession.id)
+        .where(WorkspaceSession.user_id == user_id)
+        .order_by(WorkspaceSession.updated_at.desc(), WorkspaceSession.id.desc())
+        .limit(KEPT_DEVICES)
+    )
+    db.execute(
+        delete(WorkspaceSession).where(
+            WorkspaceSession.user_id == user_id, WorkspaceSession.id.not_in(newest)
         )
     )
     db.commit()

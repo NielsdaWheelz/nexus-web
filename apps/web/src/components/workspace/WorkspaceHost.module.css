@@ -37,8 +37,7 @@
 
 /* ── Pane route boundary ── */
 
-.paneErrorBoundaryShell,
-.paneRouteBoundaryShell {
+.paneErrorBoundaryShell {
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -47,9 +46,7 @@
 }
 
 .paneWrap[data-mobile="true"] > .paneErrorBoundaryShell,
-.paneWrap[data-mobile="true"] .paneRouteBoundaryShell,
-.paneWrap[data-maximized="true"] > .paneErrorBoundaryShell,
-.paneWrap[data-maximized="true"] .paneRouteBoundaryShell {
+.paneWrap[data-maximized="true"] > .paneErrorBoundaryShell {
   width: 100%;
   min-width: 100%;
   max-width: 100%;

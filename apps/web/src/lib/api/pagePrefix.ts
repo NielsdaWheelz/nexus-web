@@ -28,7 +28,7 @@ export async function readPagePrefix<P extends { next_cursor: string | null }>({
 }
 
 /**
- * A cursor-paged read held as its first pages (docs/modules/imports.md): every
+ * Authored outline expansion retains its explicitly requested first pages: every
  * `stale` change rereads that prefix, Load more asks for one page more, and a
  * new `key` starts again at one page. `short` holds while the longer read is
  * running or failed; a failed read keeps the shorter prefix.

@@ -79,14 +79,23 @@
 }
 
 /* This header owns both axes through Button's existing density contract. */
-.trailing .companion {
+.trailing .headerButton {
   --pane-control-size: var(--size-md);
+  --pane-control-block-size: var(--pane-control-size);
+  flex: 0 0 auto;
 }
 
 @media (any-pointer: coarse) {
-  .trailing .companion {
+  .trailing .headerButton {
     --pane-control-size: var(--size-xl);
   }
+}
+
+.subscription {
+  display: inline-flex;
+  flex: 0 0 20px;
+  inline-size: 20px;
+  block-size: 20px;
 }
 
 /* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
@@ -191,6 +200,81 @@
   );
 }
 
+/* Mobile: the fixed top bar. Reader controls overlay the page; visibility
+   never changes its geometry (the authenticated layout reserves its height). */
+.mobile {
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: var(--z-overlay);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  block-size: calc(var(--effective-pane-header-height) + var(--viewport-safe-top));
+  padding: var(--viewport-safe-top) max(var(--space-2), var(--viewport-safe-right)) 0
+    max(var(--space-2), var(--viewport-safe-left));
+  background: var(--surface-2);
+  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.mobile .navigation,
+.mobile .trailing {
+  inline-size: auto;
+  min-width: 48px;
+  gap: 0;
+}
+
+.mobile .identity {
+  align-self: stretch;
+}
+
+/* 48px targets; the desktop button's states otherwise. */
+.mobile .navigationButton {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+}
+
+.mobile .navigationButton:disabled {
+  opacity: 0.5;
+}
+
+.mobile .trailing .headerButton {
+  --pane-control-size: 48px;
+}
+
+.mobileOverflow {
+  min-inline-size: 48px;
+  min-block-size: 48px;
+}
+
+.mobile .statusMarker {
+  inset-block-start: calc(var(--space-3) - var(--stroke-hairline));
+  inset-inline-end: calc(var(--space-3) - var(--stroke-hairline));
+  inline-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
+  block-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
+  border: var(--stroke-hairline) solid var(--surface-2);
+}
+
+.readerChromeToggle:focus-visible {
+  position: fixed;
+  top: calc(var(--viewport-safe-top) + var(--space-2));
+  left: calc(var(--viewport-safe-left) + var(--space-2));
+  z-index: calc(var(--z-overlay) + 1);
+  width: auto;
+  height: auto;
+  min-height: 48px;
+  max-width: calc(100vw - var(--viewport-safe-left) - var(--viewport-safe-right) - 2 * var(--space-2));
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  border: 1px solid var(--edge);
+  transition: none;
+}
+
 @media (forced-colors: active) {
   .statusMarker {
     background: currentColor;
@@ -198,6 +282,7 @@
   }
 
   .header,
+  .mobile,
   :global([data-theme="elvish"] [data-pane-shell]:focus-within) .header {
     border-block-end-color: CanvasText;
     background: Canvas;
@@ -209,6 +294,10 @@
 
   .navigationButton:disabled {
     color: GrayText;
+  }
+
+  .mobile .statusMarker {
+    border-color: Canvas;
   }
 
   .navigationButton:focus-visible {
@@ -224,5 +313,39 @@
 
   .trailing .pressed:focus-visible {
     outline-color: Highlight;
+  }
+}
+
+@container primaryPane (max-width: 479px) {
+  .header[data-media-header] {
+    block-size: calc(var(--pane-chrome-header-height) + 32px);
+    min-block-size: calc(var(--pane-chrome-header-height) + 32px);
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-rows: var(--pane-chrome-header-height) 32px;
+  }
+  .header[data-media-header] .trailing {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
+@media (any-pointer: coarse) {
+  @container primaryPane (max-width: 479px) {
+    .header[data-media-header] {
+      block-size: calc(var(--pane-chrome-header-height) + 44px);
+      min-block-size: calc(var(--pane-chrome-header-height) + 44px);
+      grid-template-rows: var(--pane-chrome-header-height) 44px;
+    }
+  }
+}
+
+@media (max-width: 479px) {
+  .mobile[data-media-header] {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: var(--pane-chrome-header-height) 48px;
+  }
+  .mobile[data-media-header] .trailing {
+    grid-column: 1 / -1;
+    justify-self: end;
   }
 }

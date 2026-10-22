@@ -62,6 +62,7 @@ export function presentLibraryEntry(
   const row = presentPodcast({
     id: entry.podcast_id,
     title: entry.title,
+    imageUrl: entry.image_url,
     contributors: entry.contributors,
     unplayedCount: entry.unplayed_count > 0 ? { value: entry.unplayed_count } : null,
     syncStatus: entry.sync_status,

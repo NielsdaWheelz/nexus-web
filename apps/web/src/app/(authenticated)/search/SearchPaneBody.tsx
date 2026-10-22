@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
@@ -14,8 +13,7 @@ import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -68,6 +66,7 @@ function InvalidSearch() {
 function SearchResults({ query }: { query: SearchQuery }) {
   const router = usePaneRouter();
   const visible = usePaneIsVisible();
+  const active = usePaneIsActive();
   const { inputRef, focusInput } = usePaneQueryInput();
   const blank = query.text.trim().length === 0 && (
     query.view === "passages" || query.formats.length + query.authors.length + query.roles.length === 0
@@ -81,12 +80,13 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const unsupported = query.view === "passages" && ![...(query.requestedKinds ?? SEARCH_KINDS)]
     .some((kind) => !disabled.has(kind) && PASSAGE_KINDS.has(kind));
   const key = searchQueryToParams(query).toString();
+  const admitted = useRef<string | null>(null);
+  if (visible) admitted.current = key;
   const list = useServerList<Row, Metadata>({
-    key: visible ? `/search?${key}` : null,
-    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
+    key: admitted.current === key ? `/search?${key}` : null,
+    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`,
     pageSize: 20,
-    drain: false,
-    active: true,
+    active: active && !idle,
     visit: VISIT,
     id: (row) => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
@@ -101,10 +101,8 @@ function SearchResults({ query }: { query: SearchQuery }) {
   });
   // Retained rows from a different query are useful only within the same view.
   const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
-  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), {
-    viewTransition: { kind: "collection-reflow" },
-  }), [router]);
-  const failure = list.failure;
+  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
+  const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
   const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
@@ -114,18 +112,16 @@ function SearchResults({ query }: { query: SearchQuery }) {
       ? count > 0
         ? `${count} ${unit} retained from the previous search; ${failure ? "update failed" : "updating"}.`
         : failure ? "results unavailable." : "searching…"
-      : failure?.op === "More"
-        ? `${count} loaded ${unit}; loading more failed.`
-        : `${count} loaded ${unit}${list.complete ? "." : "; more available."}`;
+      : `${count}${list.complete ? "" : " loaded"} ${unit}${list.complete ? "." : "; results incomplete."}`;
   usePaneReturnReady(list.current || failure !== null);
   usePaneChrome({
     query: {
       kind: "Controls", label: "Search content", focusInput,
-      content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: status, announce: list.current || failure === null }} />,
+      content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: status, announce: searching && active }} />,
     },
     header: {
       kind: "Section",
-      meta: searching ? { kind: "Pending" } : list.current && count > 0
+      meta: searching ? { kind: "Pending" } : list.complete && count > 0
         ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" }
         : { kind: "None" },
     },
@@ -163,18 +159,13 @@ function SearchResults({ query }: { query: SearchQuery }) {
         <Button variant="secondary" size="md" onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
       </div> : filtered ? <Button variant="secondary" size="md" onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
     </div> : null : null}
-    <LoadMoreFooter hasMore={list.current && !list.complete} loading={list.running === "More"} disabled={list.running !== null} onLoadMore={list.more} label="Load more" />
+    <CollectionExhaustionNotice list={list} unit={query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }} returnFocus={() => inputRef.current} />
   </div>;
 }
 
 function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
-  const body = item.preview.body;
-  const href = item.activation.href;
-  const ref = parseResourceRef(item.ref);
-  const readable = ref?.scheme === "media" && !item.missing && href !== null &&
-    body.kind === "named" && body.media_kind !== null && ["web_article", "epub", "pdf"].includes(body.media_kind);
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
@@ -182,7 +173,6 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
-    primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
     nestedContent={passage ? <div className={styles.matchingPassage}>
       <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">
         <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />

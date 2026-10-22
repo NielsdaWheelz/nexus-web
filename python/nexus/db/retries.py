@@ -1,32 +1,23 @@
-"""Bounded database transaction retry: the one owner of the retry loop."""
+"""Bounded transaction attempts: the one owner of database retry.
 
-from __future__ import annotations
+An operation passed here opens and commits its own transaction and reloads its state on every
+call. An attempt selects its isolation before its transaction opens; a session that arrives
+with a transaction open keeps that transaction's isolation (an open issue:
+docs/issues/retry-serializable-keeps-open-transaction-isolation.md). Every Exception rolls the
+attempt back; a BaseException (a cancellation) is left to the session's close. A serialization
+failure or deadlock, a TransactionRestart, or a violation of a name in
+RETRYABLE_UNIQUE_CONSTRAINTS runs the operation again; when the last attempt fails that way it
+raises DatabaseRetryExhaustedError (the edge answers 500). Anything else propagates.
+"""
 
 from collections.abc import Callable
+from typing import Literal
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import (
-    DatabaseRetryExhaustedError,
-    TransactionRestart,
-    integrity_constraint_name,
-    is_retryable_transaction_conflict,
-)
-from nexus.db.session import use_read_committed, use_serializable
-
-# Named uniqueness constraints whose violation is a legitimate concurrent-insert
-# race rather than a defect, owner-neutral across callers: the author
-# resolver's exact-batch operation (spec
-# lightweight-author-deduplication-hard-cutover.md §2.7), the reader profile's
-# first-PATCH insert (spec reader-profile-persistence-hard-cutover.md §6), the consumption
-# ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3),
-# and the Link mutation's first inserts — passage-anchor identity, canonical
-# neutral-link pair (docs/modules/connections.md)
-# — plus the daily page binding's first-capture date/Page assignment, the
-# first-login user/default library bootstrap, and the client-minted library
-# invitation and resource grant ids (with one pending invitation per invitee),
-# new-author ids and link ids all retry the whole operation on a first-sight race.
+# Unique constraints whose violation is a first-sight race, not a defect: two writers insert
+# the same identity (a client-minted id, a get-or-create key) and the rerun reads the winner.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_contributors_handle",
@@ -72,89 +63,59 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
 )
 
 
-def _retry_transaction[T](
-    db: Session,
-    label: str,
-    op: Callable[[], T],
-    prepare_attempt: Callable[[Session], None],
-    *,
-    retries: int,
-) -> T:
-    for attempt in range(retries):
-        prepare_attempt(db)
-        try:
-            return op()
-        except TransactionRestart as exc:
-            db.rollback()
-            if attempt == retries - 1:
-                # justify-defect: the operation could not establish its database invariant
-                # within the repository's bounded transaction retry budget.
-                raise DatabaseRetryExhaustedError(label, retries) from exc
-        except OperationalError as exc:
-            db.rollback()
-            if not is_retryable_transaction_conflict(exc):
-                raise
-            if attempt == retries - 1:
-                # justify-defect: retryable database conflicts must not cross the retry
-                # boundary as a product-facing dependency error.
-                raise DatabaseRetryExhaustedError(label, retries) from exc
-        except IntegrityError as exc:
-            db.rollback()
-            constraint_name = integrity_constraint_name(exc)
-            if constraint_name not in RETRYABLE_UNIQUE_CONSTRAINTS:
-                raise
-            if attempt == retries - 1:
-                # justify-defect: a persistent first-sight race after the bounded retry
-                # budget violates the owning operation's expected invariant.
-                raise DatabaseRetryExhaustedError(label, retries) from exc
-    # justify-defect: the loop returns or raises on the final attempt.
-    raise AssertionError(f"{label} retry loop exhausted")
+class TransactionRestart(Exception):
+    """Raised by an operation: roll back and run it again against fresh state."""
+
+
+class DatabaseRetryExhaustedError(RuntimeError):
+    """Every attempt ended in a retryable conflict."""
+
+    def __init__(self, label: str, attempts: int) -> None:
+        super().__init__(f"{label} exhausted after {attempts} transaction attempts")
+
+
+def integrity_constraint_name(exc: IntegrityError) -> str | None:
+    """The constraint a failed write violated, from psycopg's diagnostics."""
+    name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    return str(name) if name else None
 
 
 def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
-    """Run ``op`` in bounded SERIALIZABLE transaction attempts.
-
-    Each attempt sets SERIALIZABLE before ``op`` opens its transaction. A retryable
-    transaction conflict rolls back and retries. An ``IntegrityError`` against one of the named
-    ``RETRYABLE_UNIQUE_CONSTRAINTS`` is treated the same way — it is a
-    concurrent first-sight insert race, not a defect. ``op`` must open and commit
-    its transaction and reload all working state on every call.
-    """
-    return _retry_transaction(
-        db,
-        label,
-        op,
-        use_serializable,
-        retries=retries,
-    )
-
-
-def admit_serializable[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
-    """``retry_serializable`` for an admission that owns its transaction outright.
-
-    A refused admission (any exception ``op`` raises past the retry policy) rolls
-    back before it propagates, so the locks the refusal took never outlive the
-    call on the caller's session.
-    """
-    try:
-        return retry_serializable(db, label, op, retries=retries)
-    except Exception:
-        db.rollback()
-        raise
+    """Run `op` in at most `retries` SERIALIZABLE attempts."""
+    return _attempts(db, label, op, "SERIALIZABLE", retries)
 
 
 def retry_read_committed[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
-    """Run ``op`` in bounded READ COMMITTED transaction attempts.
+    """Run `op` in at most `retries` READ COMMITTED attempts: for an op that takes locks and
+    then must see a newer snapshot to decide whether its locked set is complete."""
+    return _attempts(db, label, op, "READ COMMITTED", retries)
 
-    Use this when one attempt deliberately takes locks and then must observe a
-    newer statement snapshot before deciding whether its locked set is complete.
-    ``TransactionRestart`` requests a fresh attempt without exposing that control
-    signal outside this boundary.
-    """
-    return _retry_transaction(
-        db,
-        label,
-        op,
-        use_read_committed,
-        retries=retries,
-    )
+
+def _attempts[T](
+    db: Session,
+    label: str,
+    op: Callable[[], T],
+    isolation: Literal["SERIALIZABLE", "READ COMMITTED"],
+    retries: int,
+) -> T:
+    attempt = 1
+    while True:
+        if not db.in_transaction():
+            db.connection(execution_options={"isolation_level": isolation})
+        try:
+            return op()
+        except Exception as exc:
+            db.rollback()
+            if not _retryable(exc):
+                raise
+            if attempt >= retries:
+                raise DatabaseRetryExhaustedError(label, attempt) from exc
+        attempt += 1
+
+
+def _retryable(exc: Exception) -> bool:
+    if isinstance(exc, OperationalError):
+        return getattr(exc.orig, "sqlstate", None) in ("40001", "40P01")
+    if isinstance(exc, IntegrityError):
+        return integrity_constraint_name(exc) in RETRYABLE_UNIQUE_CONSTRAINTS
+    return isinstance(exc, TransactionRestart)

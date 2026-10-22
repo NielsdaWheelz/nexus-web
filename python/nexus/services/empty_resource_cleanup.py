@@ -123,7 +123,7 @@ def _reason(
         return "recent"
     if isinstance(resource, NoteBlock) and not retention.canonical_blank(resource.body_pm_json):
         return "nonempty"
-    if retention.has_retainer(db, ref):
+    if retention.has_retainer(db, resource.user_id, ref):
         return "retained"
     return "eligible"
 
@@ -263,11 +263,7 @@ def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
             "preview_truncated": inventory.truncated,
         }
 
-    try:
-        return retry_read_committed(db, "apply_empty_resource_inventory", op)
-    except Exception:
-        db.rollback()
-        raise
+    return retry_read_committed(db, "apply_empty_resource_inventory", op)
 
 
 def _checkpoint(db: Session, context: queue.JobExecutionContext, progress: _Progress) -> None:

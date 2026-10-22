@@ -9,9 +9,9 @@ import { useEffect, useState } from "react";
 import { apiFetch, holdWireReload, isUnauthenticatedApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { beforeSecurityTeardown, useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { pauseWriting, startWritingRuntime, stopWritingRuntime } from "@/lib/notes/journal";
+import { pauseWriting, startWritingRuntime, stopWritingRuntime, subscribeWriting, readWriting, writingHasMemoryOnlyChanges } from "@/lib/notes/journal";
 import { nudgeWrites } from "@/lib/notes/writes";
-import { guardDocumentExit, reloadStrandsWriting } from "@/lib/unsavedWork";
+import { reloadStrandsWriting, useWorkGuard } from "@/lib/unsavedWork";
 
 export interface WritingRuntime {
   /**
@@ -29,6 +29,7 @@ export interface WritingRuntime {
 /** Starts nothing until the account is known. Mount once per tab. */
 export function useWritingRuntime(accountId: string | null): WritingRuntime {
   const handleUnauthenticated = useUnauthenticatedApiHandler();
+  const guard = useWorkGuard();
   const [attempt, setAttempt] = useState(0);
   const [settled, setSettled] = useState<{ accountId: string; attempt: number; ready: boolean } | null>(null);
   const [reloadHeld, setReloadHeld] = useState(false);
@@ -36,12 +37,25 @@ export function useWritingRuntime(accountId: string | null): WritingRuntime {
     if (accountId === null) return;
     let current = true;
     const releaseReload = holdWireReload(() => {
-      const held = reloadStrandsWriting();
+      const held = reloadStrandsWriting(guard);
       if (held && current) setReloadHeld(true);
       return held;
     });
     const releaseTeardown = beforeSecurityTeardown(pauseWriting);
-    const releaseExit = guardDocumentExit();
+    const memoryOnly = () => readWriting().account_id === accountId && writingHasMemoryOnlyChanges();
+    const releaseWriting = guard.register({
+      id: `writing:${accountId}`, scope: { kind: "account" },
+      subscribe: listener => {
+        let previous = memoryOnly();
+        return subscribeWriting(() => {
+          const next = memoryOnly();
+          if (next === previous) return;
+          previous = next;
+          listener();
+        });
+      },
+      read: () => ({ changed: memoryOnly(), unconfirmed: false, stopsBrowserWork: false }),
+    });
     // The lease rechecks the session's account; an ended session is null.
     const sessionAccountId = async (): Promise<string | null> => {
       try {
@@ -66,10 +80,10 @@ export function useWritingRuntime(accountId: string | null): WritingRuntime {
       current = false;
       releaseReload();
       releaseTeardown();
-      releaseExit();
+      releaseWriting();
       void stopWritingRuntime();
     };
-  }, [accountId, attempt, handleUnauthenticated]);
+  }, [accountId, attempt, guard, handleUnauthenticated]);
   const outcome = accountId !== null && settled?.accountId === accountId ? settled : null;
   return {
     state: outcome === null ? "starting"

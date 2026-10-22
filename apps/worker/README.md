@@ -24,8 +24,8 @@ background lane proves its cgroup v2 memory bound (exactly 448 mib,
 ## docker
 
 install the locked dependencies and start stores/auth with `make dev`, then
-`make migrate`. worker builds fetch the public git dependency at its locked
-revision over https without credentials:
+`make migrate`. worker builds fetch public source dependencies over https at
+their locked revisions without credentials:
 
 ```sh
 make worker-interactive

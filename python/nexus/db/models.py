@@ -1,8 +1,17 @@
-"""SQLAlchemy ORM models for Nexus.
+"""The ORM mapping: one class per table that services query through the ORM.
 
-The mapped classes the code queries through the ORM, in SQLAlchemy 2.x
-declarative form. The schema of record is the live database plus the
-hand-written Alembic migrations: constraints and indexes are not mirrored here.
+The baseline SQL and the migrations after it are the only DDL. A class maps every column of
+its table except generated ones. The annotation is the python type; an explicit SQL type
+appears only where the annotation cannot imply it (bigint, jsonb, arrays, the enum, closed
+text sets). Beyond that a class states its primary key and marks with
+`server_default=FetchedValue()` each column the database fills when an insert omits it (the
+ORM leaves it out of the INSERT and reads it back). No foreign key, constraint, index, delete
+rule, precision or nullability is restated.
+
+Runtime facts: nullable JSONB columns persist python None as SQL NULL (`none_as_null`), never
+the JSON 'null' scalar; numeric columns read as Decimal. No class has a relationship except
+Highlight's three anchors (and the pdf anchor's way back), so a flush inserts unrelated
+classes in class-name order: flush a parent before adding its child.
 """
 
 from datetime import date, datetime
@@ -11,75 +20,18 @@ from enum import Enum as PyEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import (
-    BigInteger,
-    Boolean,
-    Date,
-    Enum,
-    Float,
-    ForeignKey,
-    Integer,
-    Numeric,
-    Text,
-    text,
-)
+from sqlalchemy import BigInteger, Enum, FetchedValue, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from nexus.schemas.publication_dates import PublicationDate
-
 
 class Base(DeclarativeBase):
-    """Base class for all ORM models."""
-
-    pass
-
-
-class SuggestionInput(Base):
-    """The migration-seeded, global revision of suggestion ranking inputs."""
-
-    __tablename__ = "suggestion_inputs"
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
-    revision: Mapped[int] = mapped_column(BigInteger)
-
-
-class SuggestionFeed(Base):
-    """A requested viewer/destination and its one unfinished queue operation."""
-
-    __tablename__ = "suggestion_feeds"
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
-    library_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("libraries.id")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
-    # The raw-SQL queue has no ORM mapping; the migration owns this foreign key.
-    current_job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
-
-
-class SuggestionShortlist(Base):
-    """One successful, latest-only ranking publication; empty refs are a success."""
-
-    __tablename__ = "suggestion_shortlists"
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    feed_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("suggestion_feeds.id"))
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
-    ranked_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
-    ranked_revision: Mapped[int] = mapped_column(BigInteger)
-    target_refs: Mapped[list[str]] = mapped_column(JSONB)
-
-
-# =============================================================================
-# Enums
-# =============================================================================
+    type_annotation_map = {
+        UUID: PG_UUID(as_uuid=True),
+        datetime: TIMESTAMP(timezone=True),
+        str: Text(),
+    }
 
 
 class ProcessingStatus(str, PyEnum):
@@ -128,2205 +80,971 @@ class TranscriptCoverage(str, PyEnum):
     full = "full"
 
 
-# =============================================================================
-# Models
-# =============================================================================
+class SuggestionFeed(Base):
+    """A requested viewer/destination and its one unfinished queue operation."""
+
+    __tablename__ = "suggestion_feeds"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    library_id: Mapped[UUID | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    current_job_id: Mapped[UUID | None]
+
+
+class SuggestionShortlist(Base):
+    """One successful, latest-only ranking publication; empty refs are a success."""
+
+    __tablename__ = "suggestion_shortlists"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    feed_id: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    ranked_at: Mapped[datetime]
+    ranked_revision: Mapped[int] = mapped_column(BigInteger)
+    target_refs: Mapped[list[str]] = mapped_column(JSONB)
 
 
 class User(Base):
-    """User account model.
-
-    The user ID matches the Supabase auth user ID (sub claim).
-    """
+    """A user account; ``id`` is the Supabase auth user id (the token's ``sub``)."""
 
     __tablename__ = "users"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    email: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
-    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    calendar_time_zone: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="UTC",
-    )
-    lectern_order_revision: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        server_default=text("nextval('collection_order_revision_seq')"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    libraries: Mapped[list["Library"]] = relationship(
-        "Library", back_populates="owner", cascade="all, delete-orphan"
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    email: Mapped[str | None]
+    display_name: Mapped[str | None]
+    calendar_time_zone: Mapped[str] = mapped_column(server_default=FetchedValue())
+    lectern_order_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Page(Base):
     """Title-only page resource."""
 
     __tablename__ = "pages"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    last_activity_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    title: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    last_activity_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class DailyPageBinding(Base):
     """Assign one account-local date to one ordinary Page."""
 
     __tablename__ = "daily_page_bindings"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    local_date: Mapped[date] = mapped_column(Date, nullable=False)
-    page_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("pages.id"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    local_date: Mapped[date]
+    page_id: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class NoteBlock(Base):
     """Body-only note resource."""
 
     __tablename__ = "note_blocks"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    body_pm_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    body_text: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    last_activity_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    body_pm_json: Mapped[dict[str, object]] = mapped_column(JSONB)
+    body_text: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    last_activity_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class AuthoredIdentity(Base):
     """Account-lifetime identities; aliases point directly to their canonical row."""
 
     __tablename__ = "authored_identities"
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
-    kind: Mapped[str] = mapped_column(Text)
-    resource_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
-    canonical_identity_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("authored_identities.id")
-    )
-    source_ref: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
-    retired_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    kind: Mapped[str]
+    resource_id: Mapped[UUID]
+    canonical_identity_id: Mapped[UUID | None]
+    source_ref: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    retired_at: Mapped[datetime | None]
 
 
 class ResourceVersion(Base):
     """Service-owned concurrency version for one resource lane."""
 
     __tablename__ = "resource_versions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    resource_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    resource_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    lane: Mapped[str] = mapped_column(Text, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    resource_scheme: Mapped[str]
+    resource_id: Mapped[UUID]
+    lane: Mapped[str]
+    version: Mapped[int] = mapped_column(server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ResourceViewState(Base):
     """One link's rank at one endpoint: dense ``%010d`` display ``order_key`` and the
-    conversation's independent admission ``context_order_key``."""
+    conversation's independent admission ``context_order_key``.
+    """
 
     __tablename__ = "resource_view_states"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    surface_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    surface_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    edge_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("resource_edges.id"),
-        nullable=True,
-    )
-    target_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
-    target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    context_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    surface_scheme: Mapped[str]
+    surface_id: Mapped[UUID]
+    edge_id: Mapped[UUID | None]
+    target_scheme: Mapped[str | None]
+    target_id: Mapped[UUID | None]
+    order_key: Mapped[str | None]
+    context_order_key: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ResourceEdge(Base):
     """A provenance edge or undirected user link retaining its insertion endpoints."""
 
     __tablename__ = "resource_edges"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    origin: Mapped[str] = mapped_column(Text, nullable=False)
-    # Endpoints are polymorphic (scheme + id): deliberately no FKs; cleanup is
-    # the graph service's job (database.md: explicit cleanup, no cascades).
-    source_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    target_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    source_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # none_as_null: a bare edge's None snapshot must persist as SQL NULL, not the
-    # JSON 'null' scalar, or it fails ck_resource_edges_snapshot_object (which
-    # requires SQL NULL or a jsonb object).
-    snapshot: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    kind: Mapped[str]
+    origin: Mapped[str]
+    source_scheme: Mapped[str]
+    source_id: Mapped[UUID]
+    target_scheme: Mapped[str]
+    target_id: Mapped[UUID]
+    source_order_key: Mapped[str | None]
+    ordinal: Mapped[int | None]
+    snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ResourceExternalSnapshot(Base):
     """Stable citation target for a public web result or other non-local resource."""
 
     __tablename__ = "resource_external_snapshots"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    url: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    snippet: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    provider: Mapped[str]
+    url: Mapped[str]
+    title: Mapped[str]
+    snippet: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class PassageAnchor(Base):
-    """User-owned durable passage identity within one owner (media or
-    note_block), materialized when a link targets a derived passage
-    (docs/modules/connections.md). Owner,
-    normalized quote, and key are immutable; only the selector's locator_hint
-    is replaceable. ``id`` is application-generated. ``owner_id`` is
-    polymorphic and deliberately has no FK; owner visibility and explicit
-    owner cleanup replace it. Shape is service-validated, not a CHECK/trigger.
+    """A user-owned durable passage identity within one owner (media or note_block). Owner,
+    normalized quote and key are immutable; only the selector's locator_hint is replaceable.
     """
 
     __tablename__ = "passage_anchors"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_passage_anchors_user"),
-        nullable=False,
-    )
-    owner_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    owner_scheme: Mapped[str]
+    owner_id: Mapped[UUID]
     # sha256 hex of the canonical normalized quote {exact, prefix, suffix}.
-    anchor_key: Mapped[str] = mapped_column(Text, nullable=False)
-    # Quote identity plus non-identity locator_hint.
-    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    anchor_key: Mapped[str]
+    # the quote identity plus a non-identity locator_hint.
+    selector: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Library(Base):
-    """Library model - an access-control group + view over media."""
+    """An access-control group + view over media."""
 
     __tablename__ = "libraries"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    is_default: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
-    # System-owned identity for non-user-created libraries (e.g. 'oracle_corpus').
-    # NULL for ordinary user libraries; protects rename/delete/share/entry edits.
-    system_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    order_revision: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        server_default=text("nextval('collection_order_revision_seq')"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    owner: Mapped["User"] = relationship("User", back_populates="libraries")
-    library_entries: Mapped[list["LibraryEntry"]] = relationship(
-        "LibraryEntry", back_populates="library", cascade="all, delete-orphan"
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    owner_user_id: Mapped[UUID]
+    name: Mapped[str]
+    is_default: Mapped[bool] = mapped_column(server_default=FetchedValue())
+    # a system library's identity ('oracle_corpus'); null for user libraries. it refuses rename,
+    # delete, share and entry edits.
+    system_key: Mapped[str | None]
+    order_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Membership(Base):
-    """Library membership model - user's role in a library."""
+    """User's role in a library."""
 
     __tablename__ = "memberships"
-
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    role: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    library: Mapped["Library"] = relationship("Library")
-    user: Mapped["User"] = relationship("User")
+    library_id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    role: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class MediaUploadSession(Base):
     """Viewer-owned durable intent for one upload: a local PDF/EPUB or a browser capture."""
 
     __tablename__ = "media_upload_sessions"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    created_by_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_media_upload_sessions_created_by_user"),
-        nullable=False,
-    )
-    candidate_media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    filename: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(Text, nullable=False)
-    expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    input_origin: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    upload_url_expires_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    verification_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    verification_failed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    published_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_media_upload_sessions_published_media"),
-        nullable=True,
-    )
-    published_source_attempt_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "media_source_attempts.id",
-            name="fk_media_upload_sessions_published_source_attempt",
-        ),
-        nullable=True,
-    )
-    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    created_by_user_id: Mapped[UUID]
+    candidate_media_id: Mapped[UUID]
+    kind: Mapped[str]
+    filename: Mapped[str]
+    content_type: Mapped[str]
+    expected_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    input_origin: Mapped[dict[str, object]] = mapped_column(JSONB)
+    upload_generation: Mapped[int] = mapped_column(BigInteger)
+    upload_url_expires_at: Mapped[datetime]
+    verification_error_code: Mapped[str | None]
+    verification_failed_at: Mapped[datetime | None]
+    published_media_id: Mapped[UUID | None]
+    published_source_attempt_id: Mapped[UUID | None]
+    published_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class MediaUploadSessionDestination(Base):
     """One normalized library destination carried by upload intent."""
 
     __tablename__ = "media_upload_session_destinations"
-
-    upload_session_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "media_upload_sessions.id",
-            name="fk_media_upload_session_destinations_session",
-        ),
-        primary_key=True,
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "libraries.id",
-            name="fk_media_upload_session_destinations_library",
-        ),
-        primary_key=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    upload_session_id: Mapped[UUID] = mapped_column(primary_key=True)
+    library_id: Mapped[UUID] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Media(Base):
-    """Media model - a readable item (article, book, podcast, video, etc.)."""
+    """A readable item (article, book, podcast, video, etc.)."""
 
     __tablename__ = "media"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Processing lifecycle fields
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    kind: Mapped[str]
+    title: Mapped[str]
+    canonical_source_url: Mapped[str | None]
     processing_status: Mapped[ProcessingStatus] = mapped_column(
-        Enum(
-            ProcessingStatus,
-            name="processing_status_enum",
-            create_type=False,  # Type created in migration
-        ),
-        server_default="pending",
-        nullable=False,
+        Enum(ProcessingStatus, name="processing_status_enum"), server_default=FetchedValue()
     )
-    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # URL and file identity fields
-    requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    canonical_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    external_playback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Provider identity fields
-    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Exact captured-bytes identity of a new browser capture, reused within the account.
-    browser_capture_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Creator tracking
-    created_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
-    # PDF text readiness fields
-    plain_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    # Document metadata enrichment fields
-    # Bibliography dates preserve partial precision ("2023", "2023-01").
-    original_published_date: Mapped[PublicationDate | None] = mapped_column(Text, nullable=True)
-    edition_published_date: Mapped[PublicationDate | None] = mapped_column(Text, nullable=True)
-    edition_isbn: Mapped[str | None] = mapped_column(Text, nullable=True)
-    publisher: Mapped[str | None] = mapped_column(Text, nullable=True)
-    language: Mapped[str | None] = mapped_column(Text, nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_enriched_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-
-    # Author-pin: when true, automatic lanes never replace the media author slice
-    # (including an intentionally empty one). Non-author roles stay machine-owned.
-    authors_manually_managed: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default=text("false"),
-    )
-
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    fragments: Mapped[list["Fragment"]] = relationship(
-        "Fragment", back_populates="media", cascade="all, delete-orphan"
-    )
-    library_entries: Mapped[list["LibraryEntry"]] = relationship(
-        "LibraryEntry", back_populates="media", cascade="all, delete-orphan"
-    )
-    podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
-        "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
-    )
-    contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
-        "ContributorCredit",
-        back_populates="media",
-        order_by=lambda: ContributorCredit.ordinal,
-    )
+    last_error_code: Mapped[str | None]
+    last_error_message: Mapped[str | None]
+    requested_url: Mapped[str | None]
+    canonical_url: Mapped[str | None]
+    external_playback_url: Mapped[str | None]
+    provider: Mapped[str | None]
+    provider_id: Mapped[str | None]
+    # the captured bytes of a new browser capture, reused within the account.
+    browser_capture_sha256: Mapped[str | None]
+    created_by_user_id: Mapped[UUID | None]
+    plain_text: Mapped[str | None]
+    page_count: Mapped[int | None]
+    # bibliography dates keep partial precision ("2023", "2023-01").
+    original_published_date: Mapped[str | None]
+    edition_published_date: Mapped[str | None]
+    edition_isbn: Mapped[str | None]
+    publisher: Mapped[str | None]
+    language: Mapped[str | None]
+    description: Mapped[str | None]
+    metadata_enriched_at: Mapped[datetime | None]
+    # author pin: automatic lanes never replace the author slice, even an empty one.
+    authors_manually_managed: Mapped[bool] = mapped_column(server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class MediaSourceAttempt(Base):
     """One link of a media's source chain (``services/source_attempts.py``)."""
 
     __tablename__ = "media_source_attempts"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-    )
-    created_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    source_type: Mapped[str] = mapped_column(Text, nullable=False)
-    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    processing_stage: Mapped[str | None] = mapped_column(Text, nullable=True)
-    progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    progress_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
-    progress_updated_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_target_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_payload: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media"] = relationship("Media")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    media_id: Mapped[UUID]
+    created_by_user_id: Mapped[UUID | None]
+    source_type: Mapped[str]
+    attempt_no: Mapped[int]
+    processing_stage: Mapped[str | None]
+    progress_completed: Mapped[int] = mapped_column(server_default=FetchedValue())
+    progress_total: Mapped[int | None]
+    progress_unit: Mapped[str | None]
+    progress_updated_at: Mapped[datetime | None]
+    status: Mapped[str]
+    requested_url: Mapped[str | None]
+    canonical_source_url: Mapped[str | None]
+    provider: Mapped[str | None]
+    provider_target_ref: Mapped[str | None]
+    source_payload: Mapped[dict[str, object]] = mapped_column(JSONB, server_default=FetchedValue())
+    job_id: Mapped[UUID | None]
+    error_code: Mapped[str | None]
+    error_message: Mapped[str | None]
+    finished_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class XPostSource(Base):
     """One canonical post's current body; its provider revisions are aliases."""
 
     __tablename__ = "x_post_sources"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False, unique=True
-    )
-    source_attempt_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
-    )
-    source_revision_id: Mapped[str] = mapped_column(Text, nullable=False)
-    logical_post_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    edit_history_ids: Mapped[list[str] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    availability: Mapped[str] = mapped_column(Text, nullable=False)
-    body_captured_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    checked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    media_id: Mapped[UUID]
+    source_attempt_id: Mapped[UUID]
+    source_revision_id: Mapped[str]
+    logical_post_id: Mapped[str | None]
+    edit_history_ids: Mapped[list[str] | None] = mapped_column(JSONB(none_as_null=True))
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    availability: Mapped[str]
+    body_captured_at: Mapped[datetime | None]
+    checked_at: Mapped[datetime | None]
 
 
 class XPostAlias(Base):
     """An exact provider revision belongs to one canonical post."""
 
     __tablename__ = "x_post_aliases"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    revision_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    post_media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    revision_id: Mapped[str]
+    post_media_id: Mapped[UUID]
 
 
 class XThreadSource(Base):
     """A thread owns composition and the facts of its last membership capture."""
 
     __tablename__ = "x_thread_sources"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False, unique=True
-    )
-    source_attempt_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
-    )
-    author_id: Mapped[str] = mapped_column(Text, nullable=False)
-    root_post_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=True
-    )
-    published_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
-    )
-    membership_checked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    coverage: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    media_id: Mapped[UUID]
+    source_attempt_id: Mapped[UUID]
+    author_id: Mapped[str]
+    root_post_media_id: Mapped[UUID | None]
+    published_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    membership_checked_at: Mapped[datetime | None]
+    coverage: Mapped[dict[str, object]] = mapped_column(JSONB)
 
 
 class XThreadPost(Base):
     """An ordered primary occurrence; published partial threads may overlap."""
 
     __tablename__ = "x_thread_posts"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    thread_media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
-    )
-    post_media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    thread_media_id: Mapped[UUID]
+    post_media_id: Mapped[UUID]
+    ordinal: Mapped[int]
 
 
 class XArticleInspection(Base):
     """Current carrier inspection; no row means the carrier has not been inspected."""
 
     __tablename__ = "x_article_inspections"
-
-    thread_media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id", ondelete="CASCADE"), primary_key=True
-    )
-    carrier_post_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    article_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    article_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id", ondelete="SET NULL"), nullable=True
-    )
+    thread_media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    carrier_post_id: Mapped[str] = mapped_column(primary_key=True)
+    article_id: Mapped[str | None]
+    article_media_id: Mapped[UUID | None]
 
 
 class XArticleSource(Base):
     """The attempt and completeness claim of a native article's current body."""
 
     __tablename__ = "x_article_sources"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id", ondelete="CASCADE"), primary_key=True
-    )
-    source_attempt_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
-    )
-    completeness: Mapped[Literal["unknown", "incomplete"]] = mapped_column(Text, nullable=False)
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    source_attempt_id: Mapped[UUID]
+    completeness: Mapped[Literal["unknown", "incomplete"]] = mapped_column(Text)
 
 
 class MediaTeardownIntent(Base):
-    """Durable claim that a media row is being torn down (lectern-player-lifecycle
-    hard cutover §3.1).
-
-    Presence excludes the media from every public visibility query and makes new
-    references fail with ``E_MEDIA_DELETING``; ordinary reads still return
-    non-leaking ``E_NOT_FOUND``. ``id`` is application-generated (``nexus.ids.
-    new_uuid7()``), not a database default, because intent creation is the trusted
-    id-generation owner in the reference-creation/teardown-claim protocol. A later
-    void deletes only the exact matching intent; a committed deletion deletes the
-    intent together with the media row it claimed.
+    """A durable claim that a media row is being torn down: its presence hides the media from every
+    public visibility query and makes new references fail with ``E_MEDIA_DELETING``.
     """
 
     __tablename__ = "media_teardown_intents"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_media_teardown_intents_media"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    media_id: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ProjectGutenbergCatalogEntry(Base):
     """Local mirror of the Project Gutenberg catalog metadata feed."""
 
     __tablename__ = "project_gutenberg_catalog"
-
     ebook_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    subjects: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bookshelves: Mapped[str | None] = mapped_column(Text, nullable=True)
-    download_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
-        "ContributorCredit",
-        order_by=lambda: ContributorCredit.ordinal,
-    )
+    title: Mapped[str]
+    subjects: Mapped[str | None]
+    bookshelves: Mapped[str | None]
+    download_count: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Contributor(Base):
-    """Canonical person, organization, group, or local creator identity.
-
-    Every final contributor is active; there is no kind/status/sort_name/
-    disambiguation/merged_into. Duplicate identities are collapsed once in
-    migration 0179 and never tombstoned or merged at runtime.
-    """
+    """Canonical person, organization, group, or local creator identity."""
 
     __tablename__ = "contributors"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    handle: Mapped[str] = mapped_column(Text, nullable=False)
-    display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    aliases: Mapped[list["ContributorAlias"]] = relationship(
-        "ContributorAlias",
-        back_populates="contributor",
-        order_by=lambda: [
-            ContributorAlias.resolves_identity.desc(),
-            ContributorAlias.alias.asc(),
-        ],
-    )
-    credits: Mapped[list["ContributorCredit"]] = relationship(
-        "ContributorCredit",
-        back_populates="contributor",
-        order_by=lambda: ContributorCredit.ordinal,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    handle: Mapped[str]
+    display_name: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ContributorAlias(Base):
     """Searchable name associated with a contributor."""
 
     __tablename__ = "contributor_aliases"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    contributor_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    alias: Mapped[str] = mapped_column(Text, nullable=False)
-    normalized_alias: Mapped[str] = mapped_column(Text, nullable=False)
-    resolves_identity: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="aliases")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    contributor_id: Mapped[UUID]
+    alias: Mapped[str]
+    normalized_alias: Mapped[str]
+    resolves_identity: Mapped[bool]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ContributorExternalId(Base):
     """Provider or authority identifier for a contributor."""
 
     __tablename__ = "contributor_external_ids"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    contributor_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    authority: Mapped[str] = mapped_column(Text, nullable=False)
-    external_key: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    contributor: Mapped["Contributor"] = relationship("Contributor")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    contributor_id: Mapped[UUID]
+    authority: Mapped[str]
+    external_key: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ContributorCredit(Base):
     """Ordered contributor credit on a media item, podcast, or catalog item."""
 
     __tablename__ = "contributor_credits"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    contributor_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=True,
-    )
-    podcast_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id"),
-        nullable=True,
-    )
-    project_gutenberg_catalog_ebook_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("project_gutenberg_catalog.ebook_id"),
-        nullable=True,
-    )
-    credited_name: Mapped[str] = mapped_column(Text, nullable=False)
-    role: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_role: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # One-target, dense-ordinal, role-vocabulary, and bounded-value invariants are
-    # enforced in application code (services), not CHECK constraints. Six partial
-    # unique indexes in the database own per-target ordinal and (contributor, role)
-    # uniqueness; the whole-operation retry owner names them (services/contributors).
-
-    contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="credits")
-    media: Mapped["Media | None"] = relationship("Media", back_populates="contributor_credits")
-    podcast: Mapped["Podcast | None"] = relationship(
-        "Podcast",
-        back_populates="contributor_credits",
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    contributor_id: Mapped[UUID]
+    media_id: Mapped[UUID | None]
+    podcast_id: Mapped[UUID | None]
+    project_gutenberg_catalog_ebook_id: Mapped[int | None] = mapped_column(BigInteger)
+    credited_name: Mapped[str]
+    role: Mapped[str]
+    raw_role: Mapped[str | None]
+    ordinal: Mapped[int]
+    source: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class MediaFile(Base):
-    """Media file storage metadata (0..1 per media).
-
-    Stores metadata about files uploaded to object storage.
-    The actual file is stored outside the database.
-    """
+    """Media file storage metadata (0..1 per media)."""
 
     __tablename__ = "media_file"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(Text, nullable=False)
-    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
-
-    # Relationship
-    media: Mapped["Media"] = relationship("Media")
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    storage_path: Mapped[str]
+    content_type: Mapped[str]
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    source_sha256: Mapped[str]
 
 
 class ReaderPublication(Base):
     """Current document publication generation for offline fencing."""
 
     __tablename__ = "reader_publications"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-        unique=True,
-    )
-    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    media_id: Mapped[UUID]
+    generation: Mapped[int] = mapped_column(BigInteger)
     source_issues: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+        JSONB, server_default=FetchedValue()
     )
-    changed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    changed_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Fragment(Base):
-    """Fragment model - an immutable render unit of a media item."""
+    """An immutable render unit of a media item."""
 
     __tablename__ = "fragments"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
-    html_sanitized: Mapped[str] = mapped_column(Text, nullable=False)
-    t_start_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    t_end_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    speaker_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    media_id: Mapped[UUID]
+    idx: Mapped[int]
+    canonical_text: Mapped[str]
+    html_sanitized: Mapped[str]
+    t_start_ms: Mapped[int | None] = mapped_column(BigInteger)
+    t_end_ms: Mapped[int | None] = mapped_column(BigInteger)
+    speaker_label: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class DocumentEmbedArtifactState(Base):
     """Aggregate inline-embed extraction state for one current readable media artifact."""
 
     __tablename__ = "document_embed_artifact_states"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
-    )
-    source_attempt_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=True
-    )
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    total_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    resolved_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    unsupported_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    diagnostics: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    media_id: Mapped[UUID]
+    source_attempt_id: Mapped[UUID | None]
+    status: Mapped[str]
+    total_count: Mapped[int] = mapped_column(server_default=FetchedValue())
+    resolved_count: Mapped[int] = mapped_column(server_default=FetchedValue())
+    unsupported_count: Mapped[int] = mapped_column(server_default=FetchedValue())
+    failed_count: Mapped[int] = mapped_column(server_default=FetchedValue())
+    diagnostics: Mapped[dict[str, object]] = mapped_column(JSONB, server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class DocumentEmbed(Base):
     """One source-authored inline embed occurrence in the current readable artifact."""
 
     __tablename__ = "document_embeds"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
-    )
-    fragment_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("fragments.id"), nullable=True
-    )
-    source_attempt_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=True
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    occurrence_key: Mapped[str] = mapped_column(Text, nullable=False)
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    embed_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_shape: Mapped[str] = mapped_column(Text, nullable=False)
-    resolution_status: Mapped[str] = mapped_column(Text, nullable=False)
-    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_target_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
-    target_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=True
-    )
-    title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    authored_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    placeholder_text: Mapped[str] = mapped_column(Text, nullable=False)
-    source_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    source_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    canonical_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    canonical_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    document_order_key: Mapped[str] = mapped_column(Text, nullable=False)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    diagnostics: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    media_id: Mapped[UUID]
+    fragment_id: Mapped[UUID | None]
+    source_attempt_id: Mapped[UUID | None]
+    ordinal: Mapped[int]
+    occurrence_key: Mapped[str]
+    provider: Mapped[str]
+    embed_kind: Mapped[str]
+    source_shape: Mapped[str]
+    resolution_status: Mapped[str]
+    source_url: Mapped[str | None]
+    canonical_source_url: Mapped[str | None]
+    provider_target_ref: Mapped[str | None]
+    target_media_id: Mapped[UUID | None]
+    title: Mapped[str | None]
+    description: Mapped[str | None]
+    thumbnail_url: Mapped[str | None]
+    authored_text: Mapped[str | None]
+    placeholder_text: Mapped[str]
+    source_start_offset: Mapped[int | None]
+    source_end_offset: Mapped[int | None]
+    canonical_start_offset: Mapped[int | None]
+    canonical_end_offset: Mapped[int | None]
+    document_order_key: Mapped[str]
+    error_code: Mapped[str | None]
+    error_message: Mapped[str | None]
+    diagnostics: Mapped[dict[str, object]] = mapped_column(JSONB, server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class LibraryEntry(Base):
     """Association between a library and exactly one content target."""
 
     __tablename__ = "library_entries"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=True,
-    )
-    podcast_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-
-    library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
-    media: Mapped["Media | None"] = relationship("Media", back_populates="library_entries")
-    podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    library_id: Mapped[UUID]
+    media_id: Mapped[UUID | None]
+    podcast_id: Mapped[UUID | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    position: Mapped[int] = mapped_column(server_default=FetchedValue())
 
 
 class Podcast(Base):
     """Global podcast metadata from discovery providers."""
 
     __tablename__ = "podcasts"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_podcast_id: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    feed_url: Mapped[str] = mapped_column(Text, nullable=False)
-    website_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    episodes: Mapped[list["PodcastEpisode"]] = relationship(
-        "PodcastEpisode", back_populates="podcast", cascade="all, delete-orphan"
-    )
-    library_entries: Mapped[list["LibraryEntry"]] = relationship(
-        "LibraryEntry", back_populates="podcast", cascade="all, delete-orphan"
-    )
-    contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
-        "ContributorCredit",
-        back_populates="podcast",
-        order_by=lambda: ContributorCredit.ordinal,
-    )
-
-
-class PodcastEpisode(Base):
-    """Global episode identity and metadata for podcast media rows."""
-
-    __tablename__ = "podcast_episodes"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    podcast_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
-    description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rss_transcript_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Unknown until a real feed observation; enriched Media values cannot seed it.
-    rss_metadata_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode")
-    podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
-
-
-class ContentIndexState(Base):
-    """Active evidence index pointer for a content owner."""
-
-    __tablename__ = "content_index_states"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    active_embedding_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
-    active_embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class MediaSummary(Base):
-    """Per-media unit head: one current summary + claim set per media (1:1)."""
-
-    __tablename__ = "media_summaries"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    content_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    summary_md: Mapped[str] = mapped_column(Text, nullable=False)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-# =============================================================================
-# Highlights
-# =============================================================================
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    provider: Mapped[str]
+    provider_podcast_id: Mapped[str]
+    title: Mapped[str]
+    feed_url: Mapped[str]
+    website_url: Mapped[str | None]
+    image_url: Mapped[str | None]
+    description: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Highlight(Base):
-    """Highlight model - a user-owned selection anchored to media content.
-
-    Supports typed anchor subtypes:
-    - fragment_offsets: half-open [start_offset, end_offset) over canonical_text
-    - pdf_page_geometry: page-space geometry (quads/rects) on a PDF page
+    """A user-owned selection anchored to media content: ``fragment_offsets`` (half-open over
+    canonical_text) or ``pdf_page_geometry``.
     """
 
     __tablename__ = "highlights"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-
-    # Canonical typed-anchor fields used by all runtime highlight reads.
-    anchor_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
-    anchor_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=True,
-    )
-
-    color: Mapped[str] = mapped_column(Text, nullable=False)
-    exact: Mapped[str] = mapped_column(Text, nullable=False)
-    prefix: Mapped[str] = mapped_column(Text, nullable=False)
-    suffix: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships. No ORM cascade ownership: Highlight deletion is explicit
-    # child-first cleanup (universal-link-authoring-hard-cutover.md, Highlight
-    # Durability).
-    fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship(
-        "HighlightFragmentAnchor",
-        back_populates="highlight",
-        uselist=False,
-    )
-    pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(
-        "HighlightPdfAnchor",
-        back_populates="highlight",
-        uselist=False,
-    )
-    pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship(
-        "HighlightPdfQuad",
-        back_populates="highlight",
-    )
-
-
-# =============================================================================
-# Typed Highlight Anchor Subtypes + PDF Text Artifacts
-# =============================================================================
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    anchor_kind: Mapped[str | None]
+    anchor_media_id: Mapped[UUID | None]
+    color: Mapped[str]
+    exact: Mapped[str]
+    prefix: Mapped[str]
+    suffix: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship()
+    pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(back_populates="highlight")
+    pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship()
 
 
 class HighlightFragmentAnchor(Base):
-    """Fragment-offset anchor subtype (1:1 with highlights).
-
-    Stores the canonical fragment/offset data for html/epub/transcript
-    highlights.
-    """
+    """Fragment-offset anchor subtype (1:1 with highlights)."""
 
     __tablename__ = "highlight_fragment_anchors"
-
-    highlight_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id"),
-        primary_key=True,
-    )
-    # Disposable locator cache pointer: no FK — fragments are replaceable
-    # index rows, and a stale fragment_id is an expected state resolved by
-    # quote (universal-link-authoring-hard-cutover.md, Highlight Durability).
-    fragment_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
-    fragment: Mapped["Fragment | None"] = relationship(
-        "Fragment",
-        primaryjoin="foreign(HighlightFragmentAnchor.fragment_id) == Fragment.id",
-        viewonly=True,
-    )
+    highlight_id: Mapped[UUID] = mapped_column(ForeignKey("highlights.id"), primary_key=True)
+    fragment_id: Mapped[UUID]
+    start_offset: Mapped[int]
+    end_offset: Mapped[int]
 
 
 class HighlightPdfAnchor(Base):
     """PDF geometry anchor subtype (1:1 with highlights): page-space geometry metadata."""
 
     __tablename__ = "highlight_pdf_anchors"
-
-    highlight_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-    )
-    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    sort_top: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    sort_left: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    rect_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_anchor")
-    media: Mapped["Media"] = relationship("Media")
+    highlight_id: Mapped[UUID] = mapped_column(ForeignKey("highlights.id"), primary_key=True)
+    media_id: Mapped[UUID]
+    page_number: Mapped[int]
+    sort_top: Mapped[Decimal]
+    sort_left: Mapped[Decimal]
+    rect_count: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    highlight: Mapped["Highlight"] = relationship(back_populates="pdf_anchor")
 
 
 class HighlightPdfQuad(Base):
-    """PDF geometry segment (quad/rect) for a PDF highlight.
-
-    Composite PK: (highlight_id, quad_idx).
-    Coordinates are in canonical page-space points.
-    """
+    """PDF geometry segment (quad/rect) for a PDF highlight."""
 
     __tablename__ = "highlight_pdf_quads"
-
-    highlight_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id"),
-        primary_key=True,
-    )
-    quad_idx: Mapped[int] = mapped_column(Integer, primary_key=True)
-    x1: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    y1: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    x2: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    y2: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    x3: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    y3: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    x4: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    y4: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-
-    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_quads")
+    highlight_id: Mapped[UUID] = mapped_column(ForeignKey("highlights.id"), primary_key=True)
+    quad_idx: Mapped[int] = mapped_column(primary_key=True)
+    x1: Mapped[Decimal]
+    y1: Mapped[Decimal]
+    x2: Mapped[Decimal]
+    y2: Mapped[Decimal]
+    x3: Mapped[Decimal]
+    y3: Mapped[Decimal]
+    x4: Mapped[Decimal]
+    y4: Mapped[Decimal]
 
 
 class PdfPageTextSpan(Base):
-    """Page-indexed offsets into media.plain_text for PDF quote matching.
-
-    Composite PK: (media_id, page_number).
-    Offsets are Unicode codepoint spans in the post-normalization plain_text.
-    """
+    """Page-indexed offsets into media.plain_text for PDF quote matching."""
 
     __tablename__ = "pdf_page_text_spans"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="pdf_page_text_spans_media_id_fkey"),
-        primary_key=True,
-    )
-    page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
-    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    page_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    page_width: Mapped[float | None] = mapped_column(Float, nullable=True)
-    page_height: Mapped[float | None] = mapped_column(Float, nullable=True)
-    page_rotation_degrees: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-# =============================================================================
-# Chat, Conversations, and LLM Infrastructure
-# =============================================================================
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    page_number: Mapped[int] = mapped_column(primary_key=True)
+    start_offset: Mapped[int]
+    end_offset: Mapped[int]
+    page_label: Mapped[str | None]
+    page_width: Mapped[float | None]
+    page_height: Mapped[float | None]
+    page_rotation_degrees: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class Conversation(Base):
-    """Conversation model - a thread of messages owned by one user."""
+    """A thread of messages owned by one user."""
 
     __tablename__ = "conversations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
-    next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    branch_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    # Null exactly when empty; admission, selection and deletion preserve a leaf.
-    active_leaf_message_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="SET NULL", use_alter=True),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    owner: Mapped["User"] = relationship("User")
-    messages: Mapped[list["Message"]] = relationship(
-        "Message",
-        back_populates="conversation",
-        cascade="all, delete-orphan",
-        foreign_keys="Message.conversation_id",
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    owner_user_id: Mapped[UUID]
+    title: Mapped[str] = mapped_column(server_default=FetchedValue())
+    next_seq: Mapped[int] = mapped_column(server_default=FetchedValue())
+    branch_revision: Mapped[int] = mapped_column(server_default=FetchedValue())
+    # null exactly when empty; admission, selection and deletion keep a leaf.
+    active_leaf_message_id: Mapped[UUID | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class LLMCall(Base):
     """One generation, opened before dispatch and closed once (sole writer: the ledger)."""
 
     __tablename__ = "llm_calls"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    generation_spec: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True), nullable=False
-    )
-    # The job attempt that runs it; no foreign key, finished jobs are pruned.
-    job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    terminal: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    owner_kind: Mapped[str]
+    owner_id: Mapped[UUID]
+    generation_seq: Mapped[int]
+    generation_spec: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
+    # the job attempt that runs it; finished jobs are pruned, so it may dangle.
+    job_id: Mapped[UUID | None]
+    outcome: Mapped[str | None]
+    failure_code: Mapped[str | None]
+    terminal: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    completed_at: Mapped[datetime | None]
 
 
 class Message(Base):
-    """Message model - a single message in a conversation."""
+    """A single message in a conversation."""
 
     __tablename__ = "messages"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[Literal["user", "assistant"]] = mapped_column(Text, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    # The immutable per-message reader-quote snapshot (quote-to-chat cutover).
-    # Present only on a quoted user message; none_as_null keeps DB NULL (Absent)
-    # distinct from a JSON `null` value, which strict decode rejects.
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    conversation_id: Mapped[UUID]
+    seq: Mapped[int]
+    role: Mapped[Literal["user", "assistant"]] = mapped_column(Text)
+    content: Mapped[str]
+    # the immutable reader-quote snapshot of a quoted user message.
     reader_selection_snapshot: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
+        JSONB(none_as_null=True)
     )
     status: Mapped[Literal["pending", "complete", "error", "cancelled"]] = mapped_column(
-        Text, nullable=False, server_default="complete"
+        Text, server_default=FetchedValue()
     )
-    parent_message_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=True,
-    )
-    branch_anchor_kind: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="none",
-    )
-    branch_anchor: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    # A user turn's optional fork name (the Forks outline title).
-    fork_title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    conversation: Mapped["Conversation"] = relationship(
-        "Conversation", back_populates="messages", foreign_keys=[conversation_id]
-    )
+    parent_message_id: Mapped[UUID | None]
+    branch_anchor_kind: Mapped[str] = mapped_column(server_default=FetchedValue())
+    branch_anchor: Mapped[dict[str, object]] = mapped_column(JSONB, server_default=FetchedValue())
+    # a user turn's optional fork name (the Forks outline title).
+    fork_title: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ToolCall(Base):
-    """One model tool call that reached dispatch (sole writer: ``services.tools.run``).
-
-    Written ``running`` before it runs, completed with its effects; undo stamps
-    ``reverted_at``. It outlives its answer (``assistant_message_id`` set null).
-    """
+    """One model tool call that reached dispatch (sole writer: ``services.tools.run``)."""
 
     __tablename__ = "tool_calls"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    principal_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    assistant_message_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
-    )
-    tool_id: Mapped[str] = mapped_column(Text, nullable=False)
-    arguments: Mapped[object | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    created_refs: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    generation_id: Mapped[UUID]
+    generation_seq: Mapped[int]
+    position: Mapped[int]
+    principal_user_id: Mapped[UUID]
+    assistant_message_id: Mapped[UUID | None]
+    tool_id: Mapped[str]
+    arguments: Mapped[object | None] = mapped_column(JSONB(none_as_null=True))
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    created_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default=FetchedValue())
+    status: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    reverted_at: Mapped[datetime | None]
 
 
 class MessageRetrieval(Base):
     """One result an answer retrieved: by a tool call, or attached as context."""
 
     __tablename__ = "message_retrievals"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    assistant_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    assistant_message_id: Mapped[UUID]
     # null: the answer's attached context, retrieved by no call.
-    tool_call_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("tool_calls.id"), nullable=True
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    result_type: Mapped[str] = mapped_column(Text, nullable=False)
-    source_id: Mapped[str] = mapped_column(Text, nullable=False)
-    media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=True,
-    )
-    evidence_span_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=True,
-    )
-    context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    citation_candidate_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # One-way provenance pointer to the citation resource_edge, set when this
-    # result is cited. Deliberately no FK: edge and telemetry rows are cleaned
-    # up by different owners (resource provenance graph D6).
-    cited_edge_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media | None"] = relationship("Media")
+    tool_call_id: Mapped[UUID | None]
+    ordinal: Mapped[int]
+    result_type: Mapped[str]
+    source_id: Mapped[str]
+    media_id: Mapped[UUID | None]
+    evidence_span_id: Mapped[UUID | None]
+    context_ref: Mapped[dict[str, object]] = mapped_column(JSONB)
+    captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    result_ref: Mapped[dict[str, object]] = mapped_column(JSONB)
+    selected: Mapped[bool] = mapped_column(server_default=FetchedValue())
+    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    citation_candidate_ordinal: Mapped[int | None]
+    # the citation edge, set when this result is cited; may dangle.
+    cited_edge_id: Mapped[UUID | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ChatRun(Base):
     """Durable lifecycle row for one user chat send."""
 
     __tablename__ = "chat_runs"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    user_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    assistant_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    generation_spec: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=False,
-    )
-    # The frozen prompt (``GenerationIntent``) the worker runs; never re-read live.
-    generation_intent: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=False,
-    )
-    admitted_context_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    cancel_requested_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    publication_warning_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    owner: Mapped["User"] = relationship("User")
-    conversation: Mapped["Conversation"] = relationship("Conversation")
-    user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
-    assistant_message: Mapped["Message"] = relationship(
-        "Message",
-        foreign_keys=[assistant_message_id],
-    )
-    events: Mapped[list["ChatRunEvent"]] = relationship(
-        "ChatRunEvent",
-        back_populates="run",
-        order_by="ChatRunEvent.seq",
-        cascade="all, delete-orphan",
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    owner_user_id: Mapped[UUID]
+    conversation_id: Mapped[UUID]
+    user_message_id: Mapped[UUID]
+    assistant_message_id: Mapped[UUID]
+    generation_spec: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
+    # the frozen prompt (GenerationIntent) the worker runs; never re-read live.
+    generation_intent: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
+    admitted_context_version: Mapped[int | None]
+    status: Mapped[str] = mapped_column(server_default=FetchedValue())
+    cancel_requested_at: Mapped[datetime | None]
+    started_at: Mapped[datetime | None]
+    completed_at: Mapped[datetime | None]
+    error_code: Mapped[str | None]
+    support_id: Mapped[str | None]
+    publication_warning_code: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ChatRunEvent(Base):
     """Append-only replay event for a chat run."""
 
     __tablename__ = "chat_run_events"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    run_id: Mapped[UUID]
+    seq: Mapped[int]
+    event_type: Mapped[str]
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class ExtensionSession(Base):
-    """ExtensionSession model - opaque bearer token for browser capture."""
+    """Opaque bearer token for browser capture."""
 
     __tablename__ = "extension_sessions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    user: Mapped["User"] = relationship("User")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    token_hash: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    last_used_at: Mapped[datetime | None]
+    revoked_at: Mapped[datetime | None]
 
 
 class AuthHandoffCode(Base):
-    """AuthHandoffCode model - single-use code that hands a Supabase session into the Android WebView."""
+    """A single-use code that hands a Supabase session into the Android WebView."""
 
     __tablename__ = "auth_handoff_codes"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    code_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    challenge: Mapped[str] = mapped_column(Text, nullable=False)
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-
-    user: Mapped["User"] = relationship("User")
-
-
-# =============================================================================
-# Library Sharing
-# =============================================================================
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    code_hash: Mapped[str]
+    challenge: Mapped[str]
+    access_token: Mapped[str]
+    refresh_token: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    expires_at: Mapped[datetime]
 
 
 class ResourceGrant(Base):
-    """One active user or bearer-link path to an exact ResourceRef subject.
-
-    Owned by ``services.resource_grants``. The database enforces the row shape:
-    the subject is a media or a highlight, exactly one of ``grantee_user_id`` and
-    ``share_token`` is set, and a creator holds one grant per subject and audience.
-    """
+    """One active user or bearer-link path to an exact ResourceRef subject."""
 
     __tablename__ = "resource_grants"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    subject_scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    subject_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    created_by_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    grantee_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    # The grantee's email as the creator typed it; null when they found the grantee by name.
-    grantee_email: Mapped[str | None] = mapped_column(Text, nullable=True)
-    share_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class UserMediaDeletion(Base):
-    """Viewer-specific tombstone for media hidden after delete."""
-
-    __tablename__ = "user_media_deletions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-# =============================================================================
-# EPUB
-# =============================================================================
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    subject_scheme: Mapped[str]
+    subject_id: Mapped[UUID]
+    created_by_user_id: Mapped[UUID]
+    grantee_user_id: Mapped[UUID | None]
+    # as the creator typed it; null when they found the grantee by name.
+    grantee_email: Mapped[str | None]
+    share_token: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class EpubTocNode(Base):
     """Persisted EPUB navigation node."""
 
     __tablename__ = "epub_toc_nodes"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-        primary_key=True,
-    )
-    node_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
-    nav_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="toc")
-    parent_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    label: Mapped[str] = mapped_column(Text, nullable=False)
-    href: Mapped[str | None] = mapped_column(Text, nullable=True)
-    fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    target_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    resolution: Mapped[str] = mapped_column(Text, nullable=False)
-    depth: Mapped[int] = mapped_column(Integer, nullable=False)
-    order_key: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    media: Mapped["Media"] = relationship("Media")
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    node_id: Mapped[str] = mapped_column(primary_key=True)
+    nav_type: Mapped[str] = mapped_column(server_default=FetchedValue())
+    parent_node_id: Mapped[str | None]
+    label: Mapped[str]
+    href: Mapped[str | None]
+    fragment_idx: Mapped[int | None]
+    target_offset: Mapped[int | None]
+    section_id: Mapped[str | None]
+    resolution: Mapped[str]
+    depth: Mapped[int]
+    order_key: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class EpubNavLocation(Base):
-    """Canonical EPUB section/navigation targets.
-
-    Persisted, deterministic section targets consumed by reader navigation UI.
-    """
+    """Canonical EPUB section/navigation targets."""
 
     __tablename__ = "epub_nav_locations"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-        primary_key=True,
-    )
-    location_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    parent_section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    label: Mapped[str] = mapped_column(Text, nullable=False)
-    fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    href_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    href_fragment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media"] = relationship("Media")
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    location_id: Mapped[str] = mapped_column(primary_key=True)
+    ordinal: Mapped[int]
+    parent_section_id: Mapped[str | None]
+    label: Mapped[str]
+    fragment_idx: Mapped[int]
+    href_path: Mapped[str | None]
+    href_fragment: Mapped[str | None]
+    start_offset: Mapped[int]
+    end_fragment_idx: Mapped[int | None]
+    end_offset: Mapped[int | None]
+    source: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class EpubFragmentSource(Base):
     """EPUB package source metadata for one persisted fragment."""
 
     __tablename__ = "epub_fragment_sources"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-    )
-    fragment_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id"),
-        nullable=False,
-    )
-    package_href: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media"] = relationship("Media")
-    fragment: Mapped["Fragment"] = relationship("Fragment")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    media_id: Mapped[UUID]
+    fragment_id: Mapped[UUID]
+    package_href: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class EpubResource(Base):
     """Stored EPUB package resource owned by one media row."""
 
     __tablename__ = "epub_resources"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-    )
-    package_href: Mapped[str] = mapped_column(Text, nullable=False)
-    asset_key: Mapped[str] = mapped_column(Text, nullable=False)
-    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(Text, nullable=False)
-    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media"] = relationship("Media")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    media_id: Mapped[UUID]
+    package_href: Mapped[str]
+    asset_key: Mapped[str]
+    storage_path: Mapped[str]
+    content_type: Mapped[str]
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class FragmentBlock(Base):
-    """FragmentBlock model - block boundary index for context window computation.
-
-    Blocks are contiguous and non-overlapping within a fragment.
-    Block offsets are codepoint indices in canonical_text.
-    Delimiter (\n\n) is included at the END of the preceding block's range.
-    """
+    """Block boundary index for context window computation."""
 
     __tablename__ = "fragment_blocks"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    fragment_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    # Relationships
-    fragment: Mapped["Fragment"] = relationship("Fragment")
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    fragment_id: Mapped[UUID]
+    block_idx: Mapped[int]
+    start_offset: Mapped[int]
+    end_offset: Mapped[int]
 
 
 class ReaderProfile(Base):
     """Per-user reader defaults."""
 
     __tablename__ = "reader_profiles"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    theme: Mapped[str] = mapped_column(Text, nullable=False)
-    font_size_px: Mapped[int] = mapped_column(Integer, nullable=False)
-    line_height: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False)
-    font_family: Mapped[str] = mapped_column(Text, nullable=False)
-    column_width_ch: Mapped[int] = mapped_column(Integer, nullable=False)
-    focus_mode: Mapped[str] = mapped_column(Text, nullable=False)
-    hyphenation: Mapped[str] = mapped_column(Text, nullable=False)
-    # Creation metadata only; never in the DTO. The service's
-    # READER_PROFILE_DEFAULTS is the one preference-default authority.
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship("User")
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    theme: Mapped[str]
+    font_size_px: Mapped[int]
+    line_height: Mapped[Decimal]
+    font_family: Mapped[str]
+    column_width_ch: Mapped[int]
+    focus_mode: Mapped[str]
+    hyphenation: Mapped[str]
+    # creation metadata only; READER_PROFILE_DEFAULTS owns preference defaults.
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class WorkspaceSession(Base):
     """Per user + device persisted workspace pane set."""
 
     __tablename__ = "workspace_sessions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    device_id: Mapped[str] = mapped_column(Text, nullable=False)
-    state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    device_id: Mapped[str]
+    state: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class OracleCorpusSource(Base):
     """One corpus work (``corpus.json`` key) and the system media that holds its text."""
 
     __tablename__ = "oracle_corpus_sources"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
-    )
-    work_key: Mapped[str] = mapped_column(Text, nullable=False)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
-    )
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    author_text: Mapped[str] = mapped_column(Text, nullable=False)
-    source_download_url: Mapped[str] = mapped_column(Text, nullable=False)
-    source_media_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    work_key: Mapped[str]
+    media_id: Mapped[UUID]
+    title: Mapped[str]
+    author_text: Mapped[str]
+    source_download_url: Mapped[str]
+    source_media_kind: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class OraclePassageAnchor(Base):
-    """One curated passage and its cache pointers into its work's current index.
-
-    The pointers carry no FK: chunks and spans are regenerated on reindex, and the
-    reading job re-resolves stale pointers lazily.
-    """
+    """One curated passage and its cache pointers into its work's current index."""
 
     __tablename__ = "oracle_passage_anchors"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
-    )
-    corpus_source_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("oracle_corpus_sources.id"), nullable=False
-    )
-    passage_key: Mapped[str] = mapped_column(Text, nullable=False)
-    display_label: Mapped[str] = mapped_column(Text, nullable=False)
-    quote: Mapped[str] = mapped_column(Text, nullable=False)
-    tags: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
-    current_evidence_span_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
-    current_content_chunk_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
-    resolution_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'pending'")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    corpus_source_id: Mapped[UUID]
+    passage_key: Mapped[str]
+    display_label: Mapped[str]
+    quote: Mapped[str]
+    tags: Mapped[list[str]] = mapped_column(JSONB, server_default=FetchedValue())
+    current_evidence_span_id: Mapped[UUID | None]
+    current_content_chunk_id: Mapped[UUID | None]
+    resolution_status: Mapped[str] = mapped_column(server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class OracleReading(Base):
-    """One reading: pending until one transaction makes it complete or failed. 0262
-    folded the retired event log into it, so history may be partial or ``streaming``."""
+    """One reading: pending until one transaction makes it complete or failed; history folded in by
+    0262 may be partial or ``streaming``.
+    """
 
     __tablename__ = "oracle_readings"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    folio_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    question_text: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
-    folio_motto: Mapped[str | None] = mapped_column(Text, nullable=True)
-    folio_motto_gloss: Mapped[str | None] = mapped_column(Text, nullable=True)
-    folio_theme: Mapped[str | None] = mapped_column(Text, nullable=True)
-    argument_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    interpretation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    omens: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, server_default=text("'{}'")
-    )
-    plate_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # schemas.oracle.OraclePlateOut: the plate as publication (or history) showed it
-    plate: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    # list of schemas.oracle.OracleStoredPassage, descent, ordeal, ascent
-    passages: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # when the retired writers began streaming (their meta event); a pending reading with
-    # it displays `streaming`. nothing writes it now.
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    folio_number: Mapped[int]
+    question_text: Mapped[str]
+    status: Mapped[str] = mapped_column(server_default=FetchedValue())
+    folio_motto: Mapped[str | None]
+    folio_motto_gloss: Mapped[str | None]
+    folio_theme: Mapped[str | None]
+    argument_text: Mapped[str | None]
+    interpretation_text: Mapped[str | None]
+    omens: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=FetchedValue())
+    plate_key: Mapped[str | None]
+    # schemas.oracle.OraclePlateOut as publication (or history) showed it.
+    plate: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    # OracleStoredPassage list: descent, ordeal, ascent.
+    passages: Mapped[list[dict[str, object]]] = mapped_column(JSONB, server_default=FetchedValue())
+    error_code: Mapped[str | None]
+    error_detail: Mapped[str | None]
+    # set by the retired streaming writers; a pending reading with it shows `streaming`.
+    started_at: Mapped[datetime | None]
+    completed_at: Mapped[datetime | None]
+    failed_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

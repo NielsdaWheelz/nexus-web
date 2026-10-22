@@ -3,6 +3,8 @@ name: backend images
 on:
   push:
     branches: [main, "release/**"]
+    # Docs reach no image (python/README.md and apps/worker do, so no blanket *.md).
+    paths-ignore: ["docs/**", AGENTS.md, CLAUDE.md, README.md, deployment.md]
 
 permissions: {}
 
@@ -16,7 +18,7 @@ jobs:
     # First-attempt provenance: a rerun of this workflow publishes nothing, so
     # the only images a release can deploy are the ones attempt 1 built.
     if: github.run_attempt == 1
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read

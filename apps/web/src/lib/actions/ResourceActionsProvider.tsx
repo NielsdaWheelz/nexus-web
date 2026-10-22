@@ -14,25 +14,23 @@ import {
   useFeedback,
   type FeedbackContextValue,
 } from "@/components/feedback/Feedback";
+import { useMediaContinuationOwner } from "@/lib/actions/mediaContinuation";
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import {
-  projectLecternAction,
   type ActionCommand,
 } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { useConsumptionCommands } from "@/lib/consumption/state";
-import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
+import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
-import { compareRevision } from "@/lib/collections/order";
 import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   useLectern,
   useLecternCommands,
-  type LecternIntent,
-  type LecternPending,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -44,9 +42,9 @@ import {
   usePlayerCommands,
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
+import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useLatestWorkspace,
   type WorkspaceStoreValue,
@@ -80,6 +78,7 @@ export interface ActionContext {
   } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
+    readonly pendingPlayback: ReturnType<typeof usePlayerSession>["pendingPlayback"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
   };
   /** The workspace when a verb runs; menus do not re-render on its changes. */
@@ -93,7 +92,9 @@ export interface ActionContext {
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
-  readonly admissions: ReturnType<typeof useAdmissionRecovery>;
+  readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
+  readonly admissions: ReturnType<typeof useMediaAdmissions>;
+  readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
@@ -102,6 +103,7 @@ interface Runtime {
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
   readonly busy: BusyKeys;
+  readonly defect: { error: unknown } | null;
 }
 
 interface BusyKeys {
@@ -118,6 +120,13 @@ export function useActionRuntime(): Runtime {
   return runtime;
 }
 
+/** Render beneath workspace containment so account command recovery stays mounted. */
+export function ResourceActionDefect() {
+  const { defect } = useActionRuntime();
+  if (defect !== null) throw defect.error;
+  return null;
+}
+
 /** The tracked verbs of `ref` now running: a reopened menu shows them busy. */
 export function useBusyActionIds(ref: string | null): ReadonlySet<ActionId> {
   const { busy } = useActionRuntime();
@@ -130,54 +139,6 @@ export function useBusyActionIds(ref: string | null): ReadonlySet<ActionId> {
         .map((key) => key.slice(prefix.length) as ActionId),
     );
   }, [keys, ref]);
-}
-
-/** An explicit add uses shared facts; mounting a row never reads its action menu. */
-export function useLecternAddAction({
-  mediaId, title,
-}: {
-  readonly mediaId: string;
-  readonly title: string;
-}):
-  | { readonly kind: "Loading" }
-  | { readonly kind: "Failed"; readonly retry: () => void; readonly busy: boolean }
-  | { readonly kind: "Present" }
-  | {
-      readonly kind: "Action";
-      readonly action: Extract<ActionDescriptor, { kind: "command" }>;
-      readonly busy: boolean;
-      readonly pending: {
-        readonly intent: LecternIntent["kind"];
-        readonly phase: LecternPending["phase"];
-      } | null;
-    } {
-  const { ctx, run } = useActionRuntime();
-  const busy = useBusyActionIds(`media:${mediaId}`);
-  const { read, pending, receipts } = ctx.lectern;
-  const request = pending.get(mediaId);
-  if (!request) {
-    const receipt = receipts.get(mediaId);
-    if (receipt && (
-      read.status !== "ready" ||
-      compareRevision(receipt.order_revision, read.data.order_revision) > 0
-    )) {
-      if (receipt.present) return { kind: "Present" };
-    } else if (read.status === "ready") {
-      if (read.data.items.some((item) => item.media_summary.media_id === mediaId))
-        return { kind: "Present" };
-    } else if (read.status === "failed") {
-      return { kind: "Failed", retry: read.refetch, busy: read.retrying };
-    } else return { kind: "Loading" };
-  }
-  return {
-    kind: "Action",
-    action: projectLecternAction({
-      mediaId, title, intent: "Ensure", blocked: null, ctx, busy, run,
-    }),
-    busy: (request !== undefined && request.phase !== "Unconfirmed") ||
-      busy.has("LecternMembership"),
-    pending: request ? { intent: request.intent.kind, phase: request.phase } : null,
-  };
 }
 
 function createBusyKeys(): BusyKeys {
@@ -233,10 +194,11 @@ export default function ResourceActionsProvider({
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const consumption = useConsumptionCommands();
-  const admissions = useAdmissionRecovery();
+  const admissions = useMediaAdmissions();
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const [overlay, setOverlay] = useState<
     (Overlay & { key: number; open: boolean; opener: HTMLElement | null }) | null
   >(null);
@@ -255,11 +217,17 @@ export default function ResourceActionsProvider({
   }, []);
   const close = useCallback(
     () =>
-      setOverlay((current) =>
-        current?.kind === "Metadata" ? { ...current, open: false } : null,
-      ),
-    [],
+      setOverlay((current) => {
+        if (current !== overlay) return current;
+        return current?.kind === "Metadata" ? { ...current, open: false } : null;
+      }),
+    [overlay],
   );
+  const mediaContinuations = useMediaContinuationOwner({
+    isActive: () => !session.controller.signal.aborted,
+    sessionSignal: () => session.controller.signal,
+    lectern, reportDefect: setDefect, workspace,
+  });
   const ctx = useMemo(
     (): ActionContext => ({
       isActive: () => !session.controller.signal.aborted,
@@ -271,7 +239,7 @@ export default function ResourceActionsProvider({
           ? { kind: "Loading" }
           : { kind: "Ready", items: offlineSnapshot.items },
       lectern,
-      player: { state: playerSession.state, commands: playerCommands },
+      player: { state: playerSession.state, pendingPlayback: playerSession.pendingPlayback, commands: playerCommands },
       workspace,
       sessionSignal: () => session.controller.signal,
       feedback,
@@ -280,6 +248,8 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption: consumption.commands,
       admissions,
+      podcastEpisodes: podcastEpisodes.commands,
+      mediaContinuations,
       observeChatCommand,
       overlays: { open },
     }),
@@ -289,6 +259,7 @@ export default function ResourceActionsProvider({
       offlineSnapshot,
       lectern,
       playerSession.state,
+      playerSession.pendingPlayback,
       playerCommands,
       workspace,
       session,
@@ -297,12 +268,14 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption.commands,
       admissions,
+      podcastEpisodes.commands,
+      mediaContinuations,
       observeChatCommand,
       open,
     ],
   );
 
-  const run = useCallback(
+  const run: (command: ActionCommand) => void = useCallback(
     (command: ActionCommand) => {
       const signal = session.controller.signal;
       if (signal.aborted) return;
@@ -310,7 +283,7 @@ export default function ResourceActionsProvider({
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
         const { title, body } = command.confirmation;
-        const text = body.replaceAll("{title}", command.title);
+        const text = body.replaceAll("{title}", () => command.title);
         if (!window.confirm(`${title}\n\n${text}`)) return;
       }
       if (command.tracked) busy.set(key, true);
@@ -319,13 +292,21 @@ export default function ResourceActionsProvider({
           await command.execute();
         } catch (error) {
           if (signal.aborted) return;
+          if (error instanceof ProgressPreparationError) {
+            feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." } });
+            return;
+          }
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
           feedback.offer({
             key: `resource-action:${command.ref}:${command.id}`,
             announcement: "Polite",
-            content: actionFailure(command.id, command.label, error),
+            content: command.id === "Playback" ? {
+              tone: "Warning", title: error.code === "E_AUDIO_UNAVAILABLE" ? "audio unavailable" : "couldn’t start playback",
+              requestId: error.requestId,
+            } : actionFailure(command.id, command.label, error),
+            actions: command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined,
           });
         } finally {
           if (command.tracked) busy.set(key, false);
@@ -334,14 +315,14 @@ export default function ResourceActionsProvider({
     },
     [busy, feedback, session],
   );
-  const runtime = useMemo(() => ({ ctx, run, busy }), [ctx, run, busy]);
+  const runtime = useMemo(() => ({ ctx, run, busy, defect }), [ctx, run, busy, defect]);
 
-  if (defect) throw defect.error;
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
       {chatCommandFeedback}
       {consumption.feedback}
+      {podcastEpisodes.feedback}
       <ResourceOverlays
         overlay={overlay}
         close={close}

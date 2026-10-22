@@ -3,6 +3,7 @@
 // Reference intent is visit-owned draft state above prose persistence. Acceptance
 // freezes identity and placement; only the queue head seals its causal version.
 import { useEffect, useLayoutEffect, useRef } from "react";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { ApiError } from "@/lib/api/client";
 import type { OutlinePosition } from "@/lib/notes/outline";
@@ -74,7 +75,9 @@ export function queueReferenceInsertion({ input, prelude, authored = [], depende
 export function useReferenceInput(
   editorKey: string,
   host: ReferenceInputHost | null,
+  pickerOpen: boolean,
 ) {
+  const paneActive = usePaneIsActive();
   const draft = useResourceDraft<{ state: State | null; completion: number; ready: boolean }>(
     `Resources.ReferenceDraft:${editorKey}`,
     () => ({ state: null, completion: 0, ready: false }),
@@ -191,6 +194,7 @@ export function useReferenceInput(
     state?.raw ?? "",
     sourceRef,
     state !== null,
+    paneActive && pickerOpen,
     sourceRef,
   );
   const query = state?.raw.slice(1).trim() ?? "";

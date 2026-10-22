@@ -61,6 +61,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     event.stopPropagation();
   };
   const failures = [...controller.failures].map((source) => NEXUS_SOURCE_FAILURES[source]);
+  if (controller.searchUnavailable) failures.push("search is unavailable for this input. shorten the search or ask nexus with the full text.");
   if (controller.semanticUnavailable) failures.push("related matches are unavailable; showing text matches");
   const textLabels = ["ask nexus", "add to today", "browse…", "create…"];
 
@@ -83,7 +84,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               if (activation.kind === "Unowned") return "unhandled";
               event.preventDefault();
               if (activation.kind === "Consume") return "consumed";
-              controller.openTarget({ kind: "InternalHref", href: destination.href, labelHint: destination.label }, activation.intent === "new_pane" ? { disposition: { kind: "Fork" } } : undefined);
+              if (!controller.openTarget({ kind: "InternalHref", href: destination.href, labelHint: destination.label }, activation.intent === "new_pane" ? { disposition: { kind: "Fork" } } : undefined)) return "consumed";
               return "handled-destination-focus";
             }}
           />
@@ -129,7 +130,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching ? <div className={styles.searchStatus}>{controller.busy ? "searching…" : "\u00a0"}</div> : null}
       </div>
       <div ref={listRef} className={styles.searchScroll} aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
-        {searching ? <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
+        {searching ? <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} searchUnavailable={controller.searchUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
         <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
@@ -139,7 +140,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
                 const name = [row.label, rowFacts(row, false), unavailable].filter(Boolean).join(". ");
                 const body = row.item?.preview.body;
-                const hasEvidence = row.matchingPassage || (body && (body.kind !== "named" || (row.match && row.match.excerpt.text !== body.title)));
+                const hasEvidence = row.matchingPassage || (body && (body.kind === "media" ? row.match && row.match.excerpt.text !== body.media_summary.title : body.kind !== "named" || (row.match && row.match.excerpt.text !== body.title)));
                 return (
                   <li key={row.key} className={styles.row} data-current={row.state === "Current" || undefined} data-nested={row.parent ? true : undefined} onPointerDown={() => controller.setActive(row.key)}>
                     <button
@@ -174,7 +175,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 );
               })}
             </ul>
-            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} tabs`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
+            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} ${controller.panes.length === 1 ? "tab" : "tabs"}`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
           </section>
         ))}
         {searching && typed ? (
@@ -183,7 +184,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
           />
         ) : null}
-        {searching && typed && results === 0 && !controller.pending && controller.failures.size === 0 ? <p className={styles.empty}>no results.</p> : null}
+        {searching && typed && results === 0 && !controller.pending && !controller.searchUnavailable && controller.failures.size === 0 ? <p className={styles.empty}>no results.</p> : null}
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your tabs, library and commands.</p> : null}
       </div>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">

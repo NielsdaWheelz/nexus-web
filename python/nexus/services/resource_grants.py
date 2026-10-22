@@ -11,9 +11,8 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, ColumnExpressionArgument, delete, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import TransactionRestart
 from nexus.db.models import Highlight, Media, ResourceGrant, User
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import TransactionRestart, retry_read_committed
 from nexus.db.session import transaction
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import new_share_token
@@ -37,18 +36,6 @@ def media_grant_path_exists_expr(
     return direct | child
 
 
-def highlight_grant_path_exists_expr(
-    viewer_user_id: UUID, highlight_id_expr: UUID | ColumnExpressionArgument[UUID]
-) -> ColumnElement[bool]:
-    """A grant on exactly this highlight that the viewer created or received."""
-    g = ResourceGrant.__table__.alias("highlight_grant_path_g")
-    return exists().where(
-        g.c.subject_scheme == "highlight",
-        g.c.subject_id == highlight_id_expr,
-        or_(g.c.grantee_user_id == viewer_user_id, g.c.created_by_user_id == viewer_user_id),
-    )
-
-
 def media_grant_path_exists_sql(media_expr: str, viewer_param: str = ":viewer_id") -> str:
     """Text-SQL twin of `media_grant_path_exists_expr`."""
     return f"""EXISTS (
@@ -65,7 +52,7 @@ def media_grant_path_exists_sql(media_expr: str, viewer_param: str = ":viewer_id
 
 
 def highlight_grant_path_exists_sql(highlight_expr: str, viewer_param: str = ":viewer_id") -> str:
-    """Text-SQL twin of `highlight_grant_path_exists_expr`."""
+    """A grant on exactly this highlight that the viewer created or received."""
     return f"""EXISTS (
         SELECT 1 FROM resource_grants highlight_grant_path_g
         WHERE highlight_grant_path_g.subject_scheme = 'highlight'
@@ -299,7 +286,7 @@ def insert_grant(
         created_by_user_id=creator_id,
         grantee_user_id=grantee_id,
         grantee_email=grantee_email,
-        share_token=None if grantee_id is not None else str(new_share_token()),
+        share_token=None if grantee_id is not None else new_share_token(),
     )
     db.add(grant)
     db.flush()

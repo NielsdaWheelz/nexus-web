@@ -255,15 +255,18 @@ reopening the account attaches a fresh observer, including development effect
 replay. pane closure alone does not stop admitted work's observation. late review
 or admission replies cannot invalidate the next account's views.
 
-`lib/media/admissionRecovery.ts` owns uncertain research admission, separately from
-job observation and review. it freezes `expected_job_id` (including null), persists
-before sending, serializes confirmation across tabs, and restores an unconfirmed
-workspace condition after browser restart without posting. unsupported browser
-storage/locks block admission. every attempted send wakes imports and metadata
-observation; the shared 30-second admission deadline includes body consumption.
-accepted jobs and refused fresh requests retire their exact local dispatch; failed
-local deletion offers cleanup only. [imports](imports.md#source-refresh) describes
-the shared two-command recovery boundary. personal review durability is unchanged.
+`lib/media/admissions.tsx` owns live research admission, separately from job
+observation and review. it freezes `expected_job_id` (including null) in account
+memory. retry sends that same request; a new expectation requires a new action.
+every sent attempt wakes imports and metadata observation; the existing deadline
+includes body consumption. accepted replies and definitive first-attempt refusals
+retire their exact entry. a refusal after response loss preserves uncertainty
+about the earlier attempt. the common work guard protects explicit dismissal
+and document exit; dismissal does not cancel server work. only the captured
+current entry may settle local feedback. reload forgets local requests and posts
+nothing; canonical job reads still show accepted work.
+[imports](imports.md#source-refresh) describes the shared two-command boundary.
+personal review durability is unchanged.
 
 each successful stamp rereads media and reloads the reader through its source port.
 title-job admission also rereads: source publication and its new naming obligation
@@ -300,7 +303,7 @@ canonical urls distinct from the source url share one descriptive label.
 
 `0256` (typed job outcomes, 2026-10-13 release) and `0278` (current x snapshots;
 every settled old metadata payload tagged `purpose=bibliography`, by 2026-10-15)
-ran in production and are now part of the 0292 baseline. the archived legacy
+ran in production and are now part of the 0306 baseline. the archived legacy
 metadata jobs survive only in those releases' backups. no runtime legacy decoder
 remains; unavailable saved x copies stay readable through a refresh. the old
 publication-date backfill and metadata arm of `/media/{id}/retry` are removed;

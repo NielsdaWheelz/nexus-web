@@ -28,7 +28,6 @@
 @media (max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .main {
     width: 100%;
-    padding-top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
   }
 
   .rail {

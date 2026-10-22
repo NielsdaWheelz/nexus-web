@@ -12,6 +12,7 @@ import type {
   WorkspacePaneEntry,
   WorkspaceTarget,
   WorkspaceTargetDisposition,
+  WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
@@ -33,7 +34,8 @@ export interface TargetLinkActivationRuntime {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
     entry?: WorkspacePaneEntry;
-  }): void;
+    discardOwnerIds?: readonly string[];
+  }): WorkspaceTargetActivationResult | null | undefined;
 }
 
 export function activateTargetLink(input: {
@@ -41,8 +43,9 @@ export function activateTargetLink(input: {
   runtime: TargetLinkActivationRuntime | null;
   target: WorkspaceTarget | null;
   entry?: WorkspacePaneEntry;
+  discardOwnerIds?: readonly string[];
   /** Same-source local inspection; destination placement belongs to the workspace. */
-  onDefault?: () => void;
+  onDefault?: () => WorkspaceTargetActivationResult | null | void;
 }): TargetLinkActivationResult {
   const { event, runtime } = input;
   const href =
@@ -56,12 +59,13 @@ export function activateTargetLink(input: {
   if (activation.kind === "Unowned") return "unhandled";
   event.preventDefault();
   if (activation.kind === "Consume") return "consumed";
-  if (activation.intent === "default" && input.onDefault) input.onDefault();
-  else runtime.activateTarget({
+  const result = activation.intent === "default" && input.onDefault ? input.onDefault() : runtime.activateTarget({
     target: { ...input.target, href },
     disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" },
     entry: input.entry,
+    discardOwnerIds: input.discardOwnerIds,
   });
+  if (result?.kind === "Cancelled") return "consumed";
   return activation.intent === "new_pane" ? "handled-new-pane" : "handled-default";
 }
 

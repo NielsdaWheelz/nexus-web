@@ -20,7 +20,7 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services.net.safe_fetch import safe_get
 from nexus.services.sanitize_html import sanitize_html
-from nexus.services.url_normalize import validate_requested_url
+from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 logger = get_logger(__name__)
 
@@ -37,7 +37,15 @@ _PERSON = (
 _CHAPTER_TYPES = {"application/json+chapters", "application/json", "text/json"}
 _CLOCK = re.compile(r"^(?:(?P<h>\d+):)?(?P<m>[0-5]?\d):(?P<s>[0-5]?\d(?:\.\d+)?)$")
 # What an rss item adds to a provider item that lacks it.
-_ENRICHED = ("authors", "description_html", "description_text", "transcript_url", "chapters")
+_ENRICHED = (
+    "guid",
+    "provider_ref",
+    "authors",
+    "description_html",
+    "description_text",
+    "transcript_url",
+    "chapters",
+)
 
 
 @dataclass(slots=True)
@@ -92,15 +100,18 @@ def is_safe_url(url: str | None) -> bool:
 
 
 def merge(window: list[EpisodeFacts], page: list[EpisodeFacts]) -> list[EpisodeFacts]:
-    """The provider window, each item enriched by the rss item it matches (guid, enclosure
-    or provider ref; the first owner of a key wins), plus the rss items it lacks."""
+    """Enrich a unique compatible identity match; preserve ambiguous observations for
+    ingest to reject instead of silently discarding their source aliases."""
     merged = list(window)
     owners: dict[str, EpisodeFacts] = {}
     for episode in window:
         for key in _match_keys(episode):
             owners.setdefault(key, episode)
     for episode in page:
-        owner = next((owners[key] for key in _match_keys(episode) if key in owners), None)
+        matches = {id(owners[key]): owners[key] for key in _match_keys(episode) if key in owners}
+        owner = next(iter(matches.values())) if len(matches) == 1 else None
+        if owner is not None and not _compatible_identity(owner, episode):
+            owner = None
         if owner is None:
             merged.append(episode)
             for key in _match_keys(episode):
@@ -109,14 +120,35 @@ def merge(window: list[EpisodeFacts], page: list[EpisodeFacts]) -> list[EpisodeF
         for name in _ENRICHED:
             if not getattr(owner, name):
                 setattr(owner, name, getattr(episode, name))
+        if not is_safe_url(owner.audio_url):
+            owner.audio_url = episode.audio_url if is_safe_url(episode.audio_url) else None
         owner.language = owner.language or episode.language
+        for key in _match_keys(owner):
+            owners.setdefault(key, owner)
     return merged
+
+
+def _compatible_identity(left: EpisodeFacts, right: EpisodeFacts) -> bool:
+    if any(
+        getattr(left, name) and getattr(right, name) and getattr(left, name) != getattr(right, name)
+        for name in ("guid", "provider_ref")
+    ):
+        return False
+    return not (
+        left.audio_url
+        and right.audio_url
+        and is_safe_url(left.audio_url)
+        and is_safe_url(right.audio_url)
+        and normalize_url_for_display(left.audio_url) != normalize_url_for_display(right.audio_url)
+    )
 
 
 def _match_keys(episode: EpisodeFacts) -> list[str]:
     keys = [
         f"guid:{episode.guid.lower()}" if episode.guid else None,
-        f"audio:{episode.audio_url.lower()}" if episode.audio_url else None,
+        f"audio:{episode.audio_url.lower()}"
+        if episode.audio_url and is_safe_url(episode.audio_url)
+        else None,
         f"podcast_index:{episode.provider_ref}" if episode.provider_ref else None,
     ]
     return [key for key in keys if key is not None]

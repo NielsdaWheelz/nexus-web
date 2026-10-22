@@ -21,8 +21,9 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
   const Icon = row.icon;
   const facts = rowFacts(row, desktop);
   const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
-  const namedEvidence = row.item?.preview.body.kind === "named" && row.match
-    && row.match.excerpt.text !== row.item.preview.body.title ? row.match : null;
+  const body = row.item?.preview.body;
+  const bodyTitle = body?.kind === "media" ? body.media_summary.title : body?.kind === "named" ? body.title : null;
+  const namedEvidence = bodyTitle !== null && row.match && row.match.excerpt.text !== bodyTitle ? row.match : null;
   return (
     <>
       <span className={styles.rowIcon} aria-hidden="true">
@@ -30,7 +31,7 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
       </span>
       <div className={styles.rowBody}>
         {row.item ? (
-          <div className={styles.rowLabel} id={row.item.preview.body.kind === "named" ? undefined : excerptId}>
+          <div className={styles.rowLabel} id={row.item.preview.body.kind === "named" || row.item.preview.body.kind === "media" ? undefined : excerptId}>
             <ResourceBody body={row.item.preview.body} match={row.match} />
           </div>
         ) : <span className={styles.rowLabel}>{row.label}</span>}
@@ -87,15 +88,16 @@ export const NEXUS_SOURCE_FAILURES: Record<NexusSource, string> = {
   Direct: "resources couldn’t be searched", Content: "couldn't search inside sources", Reference: "resource lookup failed",
 };
 
-export function NexusSourceFailures({ failures, semanticUnavailable, retry, retrying, returnFocus, announce = true }: {
+export function NexusSourceFailures({ failures, semanticUnavailable, searchUnavailable, retry, retrying, returnFocus, announce = true }: {
   failures: ReadonlySet<NexusSource>;
   semanticUnavailable: boolean;
+  searchUnavailable: boolean;
   retry(source: NexusSource): void;
   retrying: ReadonlySet<NexusSource>;
   returnFocus: () => HTMLElement | null;
   announce?: boolean;
 }) {
-  if (failures.size === 0 && !semanticUnavailable) return null;
+  if (failures.size === 0 && !semanticUnavailable && !searchUnavailable) return null;
   return (
     <div className={styles.failures}>
       {[...failures].map((source) => (
@@ -107,6 +109,10 @@ export function NexusSourceFailures({ failures, semanticUnavailable, retry, retr
           returnFocus={returnFocus}
         />
       ))}
+      {searchUnavailable ? <FeedbackNotice
+        content={{ tone: "Warning", title: "search is unavailable for this input", message: "shorten the search or ask nexus with the full text." }}
+        announcement={announce ? "Polite" : "None"}
+      /> : null}
       {semanticUnavailable ? <FeedbackNotice
         content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }}
         announcement={announce ? "Polite" : "None"}

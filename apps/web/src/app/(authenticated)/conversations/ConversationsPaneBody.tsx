@@ -63,7 +63,7 @@ const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
   label: "new chat",
-  icon: <Plus size={16} aria-hidden="true" />,
+  icon: <Plus size={20} aria-hidden="true" />,
   href: "/conversations/new",
 };
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
@@ -75,7 +75,6 @@ const VIEW_CODEC = {
       decoded.kind === "Valid" ? decoded.view : CANONICAL,
       current,
     ),
-  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
 
 /** The Chats index in one sortable view: filter, load to the end, count. */
@@ -90,7 +89,6 @@ export default function ConversationsPaneBody() {
     key: invalid ? null : `/conversations?${viewQuery}`,
     stale: useChangeStamp("Chats"),
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (item) => item.id,
@@ -231,7 +229,7 @@ export default function ConversationsPaneBody() {
             content={{
               tone: "Neutral",
               title: !filtering
-                ? "No chats yet."
+                ? list.complete ? "no chats yet." : "no chats loaded so far."
                 : list.complete
                   ? "No chats match this filter."
                   : "No matching chat found so far.",
@@ -250,7 +248,7 @@ export default function ConversationsPaneBody() {
             }
           />
         }
-        footer={<CollectionExhaustionNotice list={list} />}
+        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "chat", plural: "chats" }} returnFocus={() => inputRef.current} />}
       />
     </div>
   );

@@ -1,30 +1,29 @@
 "use client";
 
-// The one acquisition owner (browse preview, podcast detail, the Subscribe
-// overlay): a split Add/Subscribe button whose chevron stages named library
-// destinations. One logical command carries one key (a url Add's attempt id): a
-// delivery that may have landed replays it, and confirming that a show replaces
-// filed episodes mints one fresh key for the confirmed command.
+// Podcast subscription and its explicit library destinations. Retry resends the
+// same target and frozen destinations; confirming replacement changes only its
+// explicit replaceEpisodes flag. Media acquisition belongs to the account actions.
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { setDestination } from "@/components/libraries/DestinationChooser";
-import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { apiFetch } from "@/lib/api/client";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { isAbortError } from "@/lib/errors";
 import {
   libraryDestinations,
   type LibraryDestination,
 } from "@/lib/libraries/api";
-import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
   modeledApiError,
   useThrowLater,
@@ -33,22 +32,17 @@ import styles from "./AcquisitionControl.module.css";
 
 export interface AcquisitionCommand {
   readonly namedLibraryIds: readonly string[];
-  readonly idempotencyKey: string;
   /** Confirms that the show replaces episodes a destination files directly. */
   readonly replaceEpisodes: boolean;
 }
 
 export interface AcquisitionSuccess {
   readonly href: string;
-  readonly mediaId?: string;
 }
 
 interface FrozenCommand extends AcquisitionCommand {
   readonly openIntent: OpenIntent;
-  readonly previewPosition: {
-    readonly position_ms: number;
-    readonly duration_ms: number | null;
-  } | null;
+
 }
 
 interface Conflict {
@@ -72,11 +66,7 @@ type Failure = {
 };
 
 export default function AcquisitionControl(input: {
-  readonly kind: "Add" | "Subscribe";
-  /** Subscribe on a followed show only adds it to the staged libraries. */
-  readonly subscribed?: boolean;
-  /** Add from a preview stops that preview's audio and keeps its position. */
-  readonly previewTarget?: string;
+  readonly scopeKey: string;
   readonly commit: (command: AcquisitionCommand) => Promise<AcquisitionSuccess>;
 } & (
   | {
@@ -88,26 +78,46 @@ export default function AcquisitionControl(input: {
       readonly onCommitted: (href: string) => void | Promise<void>;
     }
 )) {
-  const { kind, subscribed = false, previewTarget, commit } = input;
+  const { scopeKey, commit } = input;
   const { ctx } = useActionRuntime();
   const mounted = useRef(false);
   const navigating = useRef(false);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fail = useThrowLater();
-  const feedback = useFeedback();
-  const { stopPreviewAudio } = usePlayerCommands();
   const panelId = useId();
   const chevronRef = useRef<HTMLButtonElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [selected, setSelected] = useState<readonly LibraryDestination[]>([]);
-  const creation = useDestinationCreation(previewTarget ?? panelId);
+  const guard = useWorkGuard();
+  const owner = useResourceDraft<{
+    selected: readonly LibraryDestination[]; destinationCreation: ReturnType<typeof createDestinationCreation>;
+    busy: boolean; frozen: FrozenCommand | null; failure: Failure | null; conflict: Conflict | null; completed: boolean;
+  }>(`Acquisition:${scopeKey}`, () => ({
+    selected: [], destinationCreation: createDestinationCreation(), busy: false, frozen: null, failure: null, conflict: null, completed: false,
+  }));
+  const { selected, destinationCreation, busy, frozen, failure, conflict, completed } = owner.value;
+  const creation = useDestinationCreation(scopeKey, destinationCreation);
   const creating = creation.creating;
-  const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const [frozen, setFrozen] = useState<FrozenCommand | null>(null);
-  const [failure, setFailure] = useState<Failure | null>(null);
-  const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [completed, setCompleted] = useState(false);
+  const setSelected = (change: readonly LibraryDestination[] | ((value: readonly LibraryDestination[]) => readonly LibraryDestination[])) => owner.set(value => ({ ...value,
+    selected: typeof change === "function" ? change(value.selected) : change,
+  }));
+  const setBusy = (busy: boolean) => owner.set(value => ({ ...value, busy }));
+  const setFrozen = (frozen: FrozenCommand | null) => owner.set(value => ({ ...value, frozen }));
+  const setFailure = (failure: Failure | null) => owner.set(value => ({ ...value, failure }));
+  const setConflict = (conflict: Conflict | null) => owner.set(value => ({ ...value, conflict }));
+  const setCompleted = (completed: boolean) => owner.set(value => ({ ...value, completed }));
+  const scope = usePaneVisitWorkScope();
+  usePaneVisitWorkOwner({ id: owner.owner, scope,
+    read: () => ({ changed: false,
+      unconfirmed: owner.read().busy || owner.read().failure?.kind === "DeliveryUnknown" || destinationCreation.readUnconfirmed(),
+      stopsBrowserWork: false,
+    }),
+    subscribe(listener) {
+      const stopOwner = owner.subscribe(listener);
+      const stopCreation = destinationCreation.subscribe(listener);
+      return () => { stopOwner(); stopCreation(); };
+    },
+  });
 
   // Library access changed: keep only still-writable destinations, reopen.
   const reviewDestinations = async (requestId?: string) => {
@@ -116,55 +126,27 @@ export default function AcquisitionControl(input: {
     setReviewing(true);
     try {
       const writable = new Map((await libraryDestinations()).map(library => [library.id, library]));
-      if (!mounted.current || signal.aborted) return;
+      if (signal.aborted) return;
       setSelected((current) =>
         current.flatMap((library) => writable.get(library.id) ?? []),
       );
       setPickerOpen(true);
       setFailure({ kind: "Permission", requestId });
     } catch (error) {
-      if (!mounted.current || signal.aborted) return;
+      if (signal.aborted) return;
       const modeled = modeledApiError(error, fail);
       if (modeled?.code === "E_NETWORK") {
         setPickerOpen(false);
         setFailure({ kind: "PermissionRefresh", requestId: modeled.requestId });
       } else if (modeled !== null) fail({ error: modeled });
     } finally {
-      if (mounted.current && !signal.aborted) setReviewing(false);
-    }
-  };
-
-  /** False when the transfer failed beyond a warning: the pane stays put. */
-  const transferPreviewPosition = async (
-    mediaId: string,
-    position: NonNullable<FrozenCommand["previewPosition"]>,
-  ) => {
-    const signal = ctx.sessionSignal();
-    try {
-      await apiFetch<void>(`/api/media/${mediaId}/preview-position`, {
-        method: "POST",
-        body: JSON.stringify(position),
-      });
-      return !signal.aborted;
-    } catch (error) {
-      if (signal.aborted) return false;
-      const modeled = modeledApiError(error, fail);
-      if (modeled?.code !== "E_NETWORK") {
-        if (modeled !== null) fail({ error: modeled });
-        return false;
-      }
-      feedback.offer({ key: "preview-position", announcement: "Polite", content: {
-          tone: "Warning",
-          title: "Added without preview position",
-          message: "The preview listening position couldn’t be transferred.",
-          requestId: modeled.requestId,
-        } });
-      return true;
+      if (!signal.aborted) setReviewing(false);
     }
   };
 
   const run = async (command: FrozenCommand) => {
-    if (busy || creation.creating) return;
+    if (owner.read().busy || destinationCreation.readUnconfirmed()) return;
+    const signal = ctx.sessionSignal();
     setBusy(true);
     navigating.current = false;
     setFailure(null);
@@ -173,15 +155,8 @@ export default function AcquisitionControl(input: {
     try {
       const acquire = async () => {
         const result = await commit(command);
-        if (ctx.sessionSignal().aborted) return null;
-        const { mediaId } = result;
-        const position = command.previewPosition;
-        if (mediaId !== undefined && position !== null && !(await transferPreviewPosition(mediaId, position))) return null;
-        if (mounted.current) {
-          setSelected([]);
-          setFrozen(null);
-          setCompleted(true);
-        }
+        if (signal.aborted || owner.read().frozen !== command) return null;
+        owner.set(value => ({ ...value, selected: [], frozen: null, busy: false, completed: true }));
         return result;
       };
       const release = () => {
@@ -194,12 +169,12 @@ export default function AcquisitionControl(input: {
         await openAsyncResult({
           ctx, originPaneId: openAfterCommit.originPaneId, intent: command.openIntent,
           originHistory: "replace",
-          beforeOpen: release,
+          onOpened: release,
           create: async () => {
             const result = await acquire();
             return result === null ? null : {
               target: { href: result.href, labelHint: openAfterCommit.labelHint },
-              title: kind === "Add" ? "item added" : "subscribed", openLabel: "open",
+              title: "subscribed", openLabel: "open",
             };
           },
         });
@@ -211,7 +186,7 @@ export default function AcquisitionControl(input: {
         }
       }
     } catch (error) {
-      if (!mounted.current || ctx.sessionSignal().aborted) return;
+      if (signal.aborted || owner.read().frozen !== command) return;
       // A command that may have landed keeps its frozen key for "Retry".
       if (isAbortError(error)) {
         setConflict(null);
@@ -246,41 +221,31 @@ export default function AcquisitionControl(input: {
           fail({ error: modeled });
       }
     } finally {
-      if (mounted.current) setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   };
 
   const freeze = (openIntent: OpenIntent): FrozenCommand => {
-    const stopped =
-      kind === "Add" && previewTarget !== undefined
-        ? stopPreviewAudio(previewTarget)
-        : null;
     return {
       openIntent,
       namedLibraryIds: selected.map((library) => library.id),
-      idempotencyKey: crypto.randomUUID(),
       replaceEpisodes: false,
-      previewPosition:
-        stopped !== null && stopped.positionMs > 0
-          ? {
-              position_ms: Math.floor(stopped.positionMs),
-              duration_ms: stopped.durationMs,
-            }
-          : null,
+
     };
   };
 
-  // Confirming mints one fresh key; retrying that confirmation reuses it.
+  // A confirmation freezes the replacement choice; retry preserves it.
   const confirmReplacement = (openIntent: OpenIntent) => {
     if (conflict === null || frozen === null) return;
     void run(
       frozen.replaceEpisodes
         ? { ...frozen, openIntent: openIntent === "new_pane" ? openIntent : frozen.openIntent }
-        : { ...frozen, openIntent: openIntent === "new_pane" ? openIntent : frozen.openIntent, idempotencyKey: crypto.randomUUID(), replaceEpisodes: true },
+        : { ...frozen, openIntent: openIntent === "new_pane" ? openIntent : frozen.openIntent, replaceEpisodes: true },
     );
   };
 
   const cancelConflict = () => {
+    if (!guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] })) return;
     setConflict(null);
     setFrozen(null);
   };
@@ -295,22 +260,13 @@ export default function AcquisitionControl(input: {
 
   const staged = selected.length;
   const noun = staged === 1 ? "Library" : "Libraries";
-  const action =
-    kind === "Add"
-      ? "Add"
-      : !subscribed
-        ? "Subscribe"
-        : staged > 0
-          ? "Add to Libraries"
-          : "Subscribed";
+  const action = "Subscribe";
   const unknown = failure?.kind === "DeliveryUnknown";
   const label = unknown
     ? `Retry ${action}`
     : staged === 0
       ? action
-      : subscribed
-        ? `Add to ${staged} ${noun}`
-        : `${action} +${staged}`;
+      : `${action} +${staged}`;
   const spoken = unknown ? label : action;
   const unavailable = failure?.kind === "Unavailable";
   const conflictEpisodes =
@@ -328,8 +284,7 @@ export default function AcquisitionControl(input: {
           disabled={
             creating ||
             unavailable ||
-            failure?.kind === "PermissionRefresh" ||
-            (subscribed && staged === 0)
+            failure?.kind === "PermissionRefresh"
           }
           aria-label={
             staged > 0
@@ -377,9 +332,14 @@ export default function AcquisitionControl(input: {
             return true;
           }}
           create={{ available: !busy && frozen === null, pendingNames: creation.pendingNames,
-            onCreate: name => creation.admit({ name, scope: previewTarget ?? panelId,
-              onCreated: destination => setSelected(current => setDestination(current, { destination, included: true })),
-            }) }}
+            onCreate: name => {
+              const signal = ctx.sessionSignal();
+              return creation.admit({ name, scope: scopeKey,
+                onCreated: destination => {
+                  if (!signal.aborted) setSelected(current => setDestination(current, { destination, included: true }));
+                },
+              });
+            } }}
           error={creation.error}
           status={creation.status}
           disabled={busy || frozen !== null}
@@ -411,10 +371,10 @@ export default function AcquisitionControl(input: {
       ) : null}
       <Dialog
         open={conflict !== null}
-        onClose={cancelConflict}
+        onClose={() => { setConflict(null); setFrozen(null); }}
         title={completed ? "Subscribed" : "Replace episode placements?"}
         skipReturnFocus={() => navigating.current || !mounted.current}
-        onDismissRequest={() => (busy ? "blocked" : "accepted")}
+        onDismissRequest={() => guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] }) ? "accepted" : "blocked"}
       >
         {completed ? <p>The podcast was added to your libraries.</p> : <><p>
           Subscribing will replace {conflictEpisodes} directly filed{" "}

@@ -49,14 +49,14 @@ from nexus.services.capabilities import (
     reading_capabilities,
 )
 from nexus.services.consumption import projection
-from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.metadata_operations import metadata_enrichment_views
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
-from nexus.services.playback_source import derive_playback_source
+from nexus.services.playback_source import derive_playback_source, episode_playback_source
 from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.resource_grants import media_grant_path_exists_sql
+from nexus.services.search_recovery import SearchRecoveryFacts, search_recovery
 from nexus.services.source_attempts import (
     SourceRecoveryFacts,
     source_recovery,
@@ -93,7 +93,8 @@ _ROWS_SQL = f"""
            AND dead.payload @> jsonb_build_object('media_id', m.id::text, 'revision', mcis.revision)
          ORDER BY dead.id LIMIT 1) AS dead_index_job_id,
         mts.transcript_state, mts.transcript_coverage, mts.transcript_origin,
-        pls.position_ms, pls.duration_ms AS listened_ms, pe.duration_seconds AS feed_seconds
+        pls.position_ms, pls.duration_ms AS listened_ms, pe.duration_seconds AS feed_seconds,
+        pe.media_id AS episode_media_id
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
     LEFT JOIN LATERAL (
@@ -167,6 +168,15 @@ def _summaries(
             consumption=ConsumptionOut(state=state.state, progress=state.progress),
             duration=duration,
             x_article_content=articles.get(media_id),
+            can_play=episode_playback_source(
+                kind=row.kind,
+                has_episode=row.episode_media_id is not None,
+                external_playback_url=row.external_playback_url,
+                canonical_source_url=row.canonical_source_url,
+                provider=row.provider,
+                provider_id=row.provider_id,
+            )
+            is not None,
         )
     return summaries
 
@@ -442,8 +452,8 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
 def _in_flight(row: Row[Any], status: str, retrieval: str) -> bool:
     """Source work, a requested transcript or a readable media's index is running (I15); an
     episode or video waiting on a transcript nobody requested is not. An unsettled latest
-    attempt is source work whatever the status: a refresh keeps an x article readable, and
-    its end commits the title job the pane follows next."""
+    attempt is source work whatever the status: a refresh keeps a retained publication
+    readable, and its end commits the title job the pane follows next."""
     if status == "extracting":
         return True
     if row.attempt_status in ("accepted", "queued", "running") and not row.repairable:

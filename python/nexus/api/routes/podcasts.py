@@ -84,9 +84,11 @@ def get_subscription_status(
 
 @router.post("/podcasts/subscriptions/{podcast_id}/backfill/retry")
 def retry_subscription_backfill(
-    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+    podcast_id: UUID, body: wire.PodcastBackfillRetryRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[wire.PodcastBackfillRetryOut]:
-    return Data(data=subscriptions.retry_backfill(db, viewer.user_id, podcast_id))
+    return Data(
+        data=subscriptions.retry_backfill(db, viewer.user_id, podcast_id, body.expected_backfill_id)
+    )
 
 
 @router.patch("/podcasts/subscriptions/{podcast_id}/settings")
@@ -116,7 +118,7 @@ def refresh_podcasts(
 
 @router.get("/podcasts/{podcast_id}")
 def get_podcast_detail(
-    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+    podcast_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[wire.PodcastDetailOut]:
     return Data(data=queries.get_podcast_detail(db, viewer.user_id, podcast_id))
 
@@ -148,8 +150,18 @@ def list_podcast_episodes(
     )
 
 
-@router.post("/podcasts/{podcast_id}/episodes/mark-played")
-def mark_podcast_episode_selection_played(
-    podcast_id: UUID, body: wire.PodcastEpisodeSelection, viewer: ViewerDep
-) -> Data[wire.PodcastEpisodeMarkPlayedOut]:
-    return Data(data=episodes.mark_played(viewer.user_id, podcast_id, body.state))
+@router.post("/podcasts/{podcast_id}/episodes/consumption/prepare")
+def prepare_podcast_episode_consumption(
+    podcast_id: UUID,
+    body: wire.PodcastEpisodeSelection,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+) -> Data[wire.PodcastEpisodeConsumptionPreparedOut]:
+    return Data(data=episodes.prepare_consumption(db, viewer.user_id, podcast_id, body.state))
+
+
+@router.put("/podcasts/{podcast_id}/episodes/consumption")
+def set_podcast_episode_consumption(
+    podcast_id: UUID, body: wire.PodcastEpisodeConsumptionRequest, viewer: ViewerDep
+) -> Data[wire.PodcastEpisodeConsumptionOut]:
+    return Data(data=episodes.set_consumption(viewer.user_id, podcast_id, body))

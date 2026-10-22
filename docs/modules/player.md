@@ -34,8 +34,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
 
 1. public writes are serializable under the viewer row lock
    (`services/consumption/__init__.py: viewer_txn`). internal lectern primitives
-   take the viewer lock inside their caller's transaction; tool and podcast
-   append callers use read committed.
+   take the viewer lock inside their caller's transaction; internal append
+   callers use read committed.
 2. every write is absolute and states its retry rule. lectern commands retain
    their captured order revision: an accepted command advances it, so an old
    retry conflicts even when its intent is already satisfied. a fresh matching
@@ -58,7 +58,17 @@ downloads are adjacent, not player state ([offline](offline.md)).
    viewer's row (taking the viewer lock before the media, as teardown does).
 8. A mounted reader or player of a media flushes and pauses its unsaved
    progress before unread, reset and undo of that media, and reads the
-   server's after (`holdProgress`).
+   server's after (`holdProgress`). bulk podcast state writes use the same
+   boundary for their fixed target ids. every started preparation settles;
+   one failure prevents the write, and only successfully prepared holder/id
+   pairs reconcile. fulfillment proves acknowledgment or authoritative
+   supersession. `ProgressPreparationError` leaves pending progress and the
+   reader/player's recovery intact, releasing only the temporary command hold.
+   unresolved reader-position conflicts require the existing choice. successful
+   writes stay acknowledged even if reconciliation needs owner-local recovery.
+   browser/reader owners enforce this contract; native acknowledgment and outage
+   classification gaps remain tracked in [native fence saves](../issues/native-progress-fence-discards-unconfirmed-samples.md)
+   and [native fence availability](../issues/native-progress-fence-unavailable-classification.md).
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
    play next) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own
@@ -85,8 +95,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
   `remove_media_in_txn` answers what an undo needs (`{item_id,
   added_at, after_item_id}`); `restore_in_txn` puts that row back after its
   former predecessor while it is visible, else first;
-  `append_missing_in_txn` and `remove_item_in_txn` serve the assistant and
-  podcast sync in the caller's transaction. all accepted public membership
+  `append_missing_in_txn` and `remove_item_in_txn` serve internal callers in
+  the caller's transaction. all accepted public membership
   commands and explicit internal remove/restore/nonempty-append intent advance
   the viewer's shared sequence revision, including already-satisfied intent.
   strict reorder preserves membership and hidden slots; its precondition is
@@ -187,18 +197,39 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
   reads and Suggestions.
-- `components/collections/LecternAddControl.tsx` — shared additive control for
-  approved reading rows and existing quick-read/suggestion/transcript cohorts.
-  it consumes the action runtime projection without per-row menu reads.
-  pending intent and receipts are account-session-local; unrelated edits remain
-  available after uncertainty. the required recovery condition remains until
-  acknowledgement; account teardown or reload ends it.
+- `components/media/MediaActions.tsx` — the shared icon commands in live media
+  rows and document/episode title headers. `useMediaActions` reads the account
+  action runtime and lectern owner; it requests no per-row menu or descriptor.
+  pending intent and receipts remain account-local; recovery retains its exact
+  command until acknowledgement or account teardown/reload.
+- summaries expose `can_play` exactly when an episode record and nonempty
+  application playback source permit a descriptor. processing/transcript readiness
+  does not gate audio; remote delivery remains the engine's responsibility.
+- `playAudio({mediaId, knownDescriptor})` returns `Installed` or `Superseded`.
+  descriptor resolution, engine installation, resume, pause and dismiss share one
+  ordered lane. obsolete resolution cannot dispatch a load; pause/dismiss applies
+  after an already-dispatched installation. known descriptors support offline use;
+  id-only read failures stay visible.
+  `pendingPlayback` exposes that start intention separately from the observed engine
+  phase. matching row commands and transport keep pause available while installation
+  drains the old source; pause/dismiss withdraw the intention immediately. installation
+  alone never announces audible success.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh
   `GET /api/media/{id}/player` before a play of another media (2 s bound, else
   the descriptor it was given), serialized loads with the latest request
-  winning, remember-rate, keyboard shortcuts.
+  winning, requested playback preferences and keyboard shortcuts. current
+  preferences initialize from each engine's observed snapshot; android installs
+  inherited settings before publishing a source. requested rate and silence
+  choices stay separate from observed engine state; one flight applies the
+  newest pair. queued preferences retain their engine-owned load subject and
+  request generation. replacement fences rate, silence and seek, including
+  same-media reloads and native advance, and retires old work and presentation;
+  temporary native unavailability blocks playback-command admission while
+  retaining the confirmed subject and captured save receipts.
+  `seekTo({positionMs, expectedSubject?})` captures the current subject when
+  omitted and validates it again at engine application. retired seeks do nothing.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
   Server rendering and the first client render start absent. Only the existing
@@ -227,23 +258,113 @@ finish, undo, unread, reset and settle publish `Consumption`.
   outgoing episode after taking its last sample, and its late writes send that. The episode rate
   is sent only after the listener sets one; until then the stored value stands.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusPlayback` (below); a reply missing for 5 s shows "Player
-  unavailable" until the next frame arrives.
-- `components/player/` — the desktop bar, the mobile mini bar and sheet, and
-  `PlayerPanel` (speed, remember for this podcast, pause shortening on Android,
-  chapters).
+  `window.nexusPlayer` (below); an unanswered bounded request shows "Player
+  unavailable" until the next frame arrives. preference commands resolve after
+  application and snapshot publication. expired replies are ignored; live
+  replies cannot replace an intervening confirmed load. real pushes from the
+  current controller remain authoritative. preference admission refuses while
+  unavailable; recovery preserves failed intent for explicit retry.
+- `components/player/` — the persistent desktop/mobile player, loaded-source
+  sheet, desktop playback/chapter pickers and shared presentational fields.
+  the authenticated workspace always renders one stable player slot and footer,
+  including server rendering and initial hydration. `Absent` shows “nothing
+  playing” and a real `/lectern` link using workspace follow/fork activation;
+  it exposes no transport or fabricated duration and never starts audio.
+  `Loaded` retains identity, transport and stop while load-scoped preferences
+  initialize; preference-dependent controls require the current settings subject.
+  `Unavailable` exposes the actual warning and android update link only when
+  required. stop calls the existing dismiss command; confirmed absence returns
+  to idle. closing an overlay preserves playback. the downloaded shelf is a
+  separate composition.
+  normal idle/loaded footprints match: wide desktop is 80px, narrow desktop
+  128px; coarse pointing adds 16px for seeking. the 42rem breakpoint belongs to
+  the player container. equal side tracks center transport in the whole player.
+  enlarged text and substantive failures may grow without clipping controls.
+  the 64px mobile mini adds the existing safe inset and shows artwork, title,
+  subtitle and play/pause in one row, with a decorative progress edge.
+  the mobile drawer orders identity, transport, seek and utilities. its native
+  handle is the only header control. playback and chapters begin closed and
+  are mutually exclusive plain disclosures; opening/closing the sheet, changing
+  subject or changing viewport mode retires them. desktop retains anchored
+  pickers and an interactive footer. only positive saved-time totals appear
+  beneath silence as `approx. time saved on this device`: the existing device
+  estimate, with no episode, precise or cross-device claim. episode up-next
+  lives inside playback; chapter context lives in chapters.
+  preview exposes rate only, with no episode history, chapters or default save.
+  numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
+  work uses control markers; failures expose details and recovery. application
+  gain is unity; volume belongs exclusively to the os/device.
+  pointer scrubbing previews locally and commits once on captured release,
+  including outside the range. cancellation, capture loss, source retirement or
+  sheet closure discards it. keyboard seeks carry the rendered range's subject.
+  mobile motion, occupied space and keyboard/sheet suppression follow the shared
+  [workspace geometry contract](workspace.md#mobile-reader-chrome).
+  source-specific overlays close on absence, unavailability or viewport-mode
+  change. mobile keeps now playing open across loaded-source changes. ordinary
+  dismissal returns to its actual opener; disappearing player controls recover
+  owned focus to the visible idle link, otherwise the active pane landmark,
+  without scrolling or reclaiming unrelated focus. an open mobile sheet owns
+  lost settings-field focus across load-subject changes and preserves surviving
+  controls. source navigation keeps destination focus. one live region outside
+  inert surfaces owns session/status
+  announcements: initial idle is silent, confirmed absence after a known source
+  says “playback stopped”, and unavailability warns once without claiming a stop.
+  last confirmed source kind/identity survive unavailability, so recovery of that
+  source does not announce a new play. settings actions retain their own feedback.
+
+`Engine` and `PlayerSession` expose local
+`readonly supportsSilenceSkipping: boolean`. it is immutable per engine: browser
+false, native true. the session exposes that engine fact, or false before an
+engine exists. it describes capability, not availability or enabled state, and
+belongs to neither `EngineState` nor the native/http wire.
+only `source.kind === "Episode"` is eligible for silence controls. the browser's
+observed silence remains false; a saved android default cannot create an
+inherited application failure. an explicit unsupported on command still refuses
+at the browser engine boundary.
+
+`PlaybackRateEditor` and `SkipSilenceField({checked, onChange, label})` own fields
+and associated help only. callers own capability, application and persistence.
+native playback exposes speed and silence; browser playback exposes speed and
+plain `skip silence · android app only` copy.
+
+remember freezes the applied native rate/silence pair, or the browser's applied
+speed with the baseline's raw android silence default, plus the subscription
+uuid/version. admission requires ready current settings and a readable,
+non-refreshing baseline; unavailability blocks new live remember actions.
+saving does no engine work: no reload, seek, pause, override clearing or listening
+write. its owner outlives picker dismissal; old feedback cannot describe a
+replacement subject. live controls apply immediately; independent podcast
+defaults remain editable while playback is unavailable.
+
+`lib/podcasts/useSubscriptionSettingsSave.ts` owns the shared frozen-command
+receipt and recovery. exact retries resend the full frozen body; eligibility
+compares current speed on browser and both current fields on native. unknown
+outcomes read back the whole raw pair without resending. conflict review requires
+an explicit complete-pair save, even when another writer has converged to that
+pair; a browser reviewed save preserves the reviewed silence default and version.
+an unfollowed or replaced subscription cannot receive the old command.
+acknowledged receipts name the captured command: browser `saved speed: {rate}`,
+native `saved: {rate} · skip silence {on/off}`. later playback or server-read
+changes never rewrite them. current saved defaults are a separate read, with
+silence labeled as an android default; saved reads never overwrite playback.
+the [podcast module](podcast.md) owns saved nullable defaults and their form.
 
 ## The Android bridge
 
-`window.nexusPlayback` carries trusted json frames in the grammar of
+`window.nexusPlayer` carries trusted json frames in the grammar of
 `window.nexusDownloads`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
 `{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
 second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 `preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
 `skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
-`volume{value}`, `shortenPauses{on}` (device default),
-`sessionShortenPauses{key, on|null}` (this session's override), `dismiss{}`.
+`sessionShortenPauses{key, on}` (this load's boolean override),
+`dismiss{}`.
+every keyed op also carries `expected_load_id`; every snapshot has nullable
+`load_id`, mapped to the web session's `playbackSubject`. each install, including
+same-media reload and service restart, gets a fresh id. the service checks both
+key and load id under its load lock immediately before application; mismatch
+answers `Stale` without mutation. transient transport loss preserves identity.
 The object's name is the compatibility identity: an incompatible change renames
 it, and an app without it renders "Update Nexus for Android". There is no
 protocol version or hash.
@@ -267,12 +388,22 @@ screen), listening writes, activity spans in a durable outbox, and natural ends:
 it posts `POST /media/{id}/natural-end` itself with the webview's cookies and,
 on 204, plays the first audio row after the ended one in the `GET /lectern` it
 read before settling, so an episode advances with the webview gone. A downloaded
-episode plays from its `OfflineStore` lease. Pause shortening is
-`skipSilenceEnabled`: this session's override ?? the podcast's mode ?? the
-device default, with the time it saved on this device.
+episode plays from its `OfflineStore` lease. pause shortening is
+`skipSilenceEnabled`: this load's override, else the podcast mode, else off.
+only the approximate time-saved counter remains device-owned. media3 owns native
+processing and its clock; positions, durations, transcript/chapter seeks and
+listening writes stay in original-media time. settings and seeks join the
+existing load lock and publish their actual effect before acknowledging. source
+publication follows the complete install, including initial settings; no
+intermediate snapshot can claim the new occurrence. a terminal recorder write
+advances only its still-attached originating episode; durable restored writes
+settle without advancing a later load. reconnect hello replies cannot overwrite
+an intervening push or a replacement controller/document.
+the media session retains device-volume access and hardware/audio-focus handling;
+application-volume commands and grants are absent.
 
 ## Boundary with podcast sync
 
-Playback never fetches feeds or writes transcripts. Live sync may append
-auto-queue episodes through `lectern.append_missing_in_txn`; backfill never
-enqueues.
+playback never fetches feeds or writes transcripts. following automatically
+acquires episode metadata; filing a show organizes those episodes. neither sync
+nor history appends to the lectern. queue placement remains explicit.

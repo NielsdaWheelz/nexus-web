@@ -1,156 +1,30 @@
-"""Authorization predicates for visibility and access control.
+"""The readable relations: what a viewer may read, each rule spelled once, in SQL.
 
-These predicates are the single source of truth for all visibility logic.
-They are used by routes and services to enforce access control consistently.
+Fragments bind ``:viewer_id``. Point checks take a session and answer a bool; "not found" and
+"not visible" are the same False. Two ORM adapters wrap the highlight rules as ``text`` clauses
+correlated to the unaliased ``highlights`` table.
 
-All functions:
-- Accept an explicit SQLAlchemy Session
-- Return booleans or mappings only (no HTTP exceptions)
-- Must not leak existence: "not found" and "not visible" both return False
-
-Query Semantics:
-- Membership role values: 'admin', 'member' (lowercase strings, not enums)
-- LibraryEntry rows with non-null media_id connect libraries and media
-
-Media Readability Rule (can_read_media / visible_media_ids_cte_sql):
-- A media item is readable through library/grant roots, retained canonical x
-  annotations/evidence, and actual thread/post containment. Tombstones and
-  teardown claims exclude each step of that reachability, including its roots.
-- This is the sole authorization/global-readable relation. It is broader
-  than "My Library": services/library_entries.py:library_media_ids_cte_sql()
-  layers the personal-Default/non-default-library distinction on top of it.
-
-Conversation Visibility (can_read_conversation):
-- Viewer is owner, OR
-- Conversation is library-shared and both viewer+owner are members of a share-target library
-
-Highlight Visibility (can_read_highlight):
-- Viewer can read anchor media (via can_read_media), AND
-- Viewer is its author, shares a non-system library containing the media with
-  its author, or has an incoming or creator grant on that exact highlight. A
-  system library (the Oracle corpus) admits every asker as a member; it grants
-  media reach, never a view of fellow members' highlights.
+Media: library membership, exact grants (on the media or one of its highlights) and the viewer's
+retained x-post evidence are the roots; actual x containment (thread posts, resolved x embeds)
+closes over them. The viewer's tombstones and every teardown intent exclude each step, roots
+included. ``library_entries.library_media_ids_cte_sql`` layers "My Library" on top.
+Highlights: a consistent typed anchor on readable media whose author is the viewer, shares a
+non-system library holding the media with the viewer, or granted it exactly. A system library
+(the Oracle corpus) reaches media, never fellow members' highlights.
+Podcasts: a subscription or a library entry. Contributors: a visible credit or a viewer-owned
+graph edge (pickers: credits only). Conversations: the owner only.
 """
 
 from uuid import UUID
 
-from sqlalchemy import ColumnExpressionArgument, exists, literal, or_, select, text
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import InstrumentedAttribute, Session
+from sqlalchemy import TextClause, text
+from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    Conversation,
-    Fragment,
-    Highlight,
-    HighlightFragmentAnchor,
-    HighlightPdfAnchor,
-    Library,
-    LibraryEntry,
-    Membership,
-)
 from nexus.services import resource_grants
-
-MediaIdExpression = UUID | ColumnExpressionArgument[UUID | None]
-
-
-def _media_membership_path_exists(
-    viewer_user_id: UUID,
-    media_id: MediaIdExpression,
-):
-    """Core exists() expression: a current membership reaches a physical
-    library_entries row for this media in any library the viewer belongs to
-    (default, non-default, or system — no is_default distinction). Shared by
-    :func:`can_read_media` and :func:`can_restore_media` so the one
-    reachability rule cannot drift between its readable and restorable forms.
-    """
-    return exists().where(
-        LibraryEntry.media_id == media_id,
-        LibraryEntry.media_id.is_not(None),
-        LibraryEntry.library_id == Membership.library_id,
-        Membership.user_id == viewer_user_id,
-    )
-
-
-def _media_readability_predicate(
-    viewer_user_id: UUID,
-    media_id: MediaIdExpression,
-    *,
-    include_tearing_down: bool,
-):
-    readable = (
-        text(visible_media_ids_cte_sql(include_tearing_down=include_tearing_down))
-        .bindparams(viewer_id=viewer_user_id)
-        .columns(media_id=PG_UUID(as_uuid=True))
-        .subquery("readable_media")
-    )
-    return select(literal(1)).select_from(readable).where(readable.c.media_id == media_id).exists()
-
-
-def can_read_media(
-    session: Session,
-    viewer_user_id: UUID,
-    media_id: UUID,
-    *,
-    include_tearing_down: bool = False,
-) -> bool:
-    """Check if viewer can read a media item.
-
-    True iff the canonical readable-media relation reaches the media. Library,
-    grant and retained x evidence roots may reach contained canonical posts.
-
-    ``include_tearing_down=True`` drops only the teardown clause (keeping the
-    tombstone exclusion), so a reachable, non-tombstoned target still mid-
-    teardown passes. A write path uses this to reach the target and then raise
-    the specific ``E_MEDIA_DELETING`` for it, instead of the generic 404 the
-    teardown-excluding read surface returns — while an unreachable or tombstoned
-    target still fails here, so the specific error never leaks to a non-member.
-
-    Returns False if media_id does not exist (no existence leak: a
-    non-existent media_id can never match a library_entries row).
-    """
-    result = session.execute(
-        select(
-            _media_readability_predicate(
-                viewer_user_id,
-                media_id,
-                include_tearing_down=include_tearing_down,
-            )
-        )
-    )
-    return bool(result.scalar())
-
-
-def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
-    """Authorize a filing target the way spec S4.3 rule 1 requires: readable OR
-    restorable. Restorable means membership-reachable (including a system
-    library, same reach as :func:`can_read_media`) while ignoring only the
-    viewer's own ``user_media_deletions`` tombstone AND the teardown barrier —
-    a strict superset of ``can_read_media``, so re-filing media the viewer
-    previously deleted is authorized. The more specific media-teardown barrier
-    (``raise_if_media_teardown_pending``) is a separate, later check in the
-    filing command, so reachable-but-tearing-down media raises the more
-    specific ``E_MEDIA_DELETING`` instead of a masked 404 here.
-
-    Returns False if media_id does not exist (no existence leak).
-    """
-    query = select(_media_membership_path_exists(viewer_user_id, media_id))
-    result = session.execute(query)
-    return bool(result.scalar())
 
 
 def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewer_id") -> str:
-    """SQL ``EXISTS`` fragment: the viewer has a non-system membership path to
-    a media id. Parameterizable by ``media_expr`` so both a correlated column
-    form (e.g. ``"m.id"``) and a bound-param form (``":media_id"``) can reuse
-    it; ``viewer_param`` defaults to the conventional ``:viewer_id`` bind name
-    but may be overridden (e.g. a correlated column) by callers with a
-    different viewer binding in scope.
-
-    The fragment's own table aliases are namespaced (``nsref_*``) so a
-    correlated ``media_expr``/``viewer_param`` using a common single-letter
-    alias (e.g. an outer ``media m`` or ``libraries l``) is never shadowed by
-    this EXISTS subquery's own FROM/JOIN aliases.
-    """
+    """EXISTS: a non-system membership reaches the media (aliases ``nsref_*`` never shadow)."""
     return f"""
         EXISTS (
             SELECT 1 FROM library_entries nsref_le
@@ -163,11 +37,7 @@ def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewe
 
 
 def media_containment_edges_sql() -> str:
-    """Actual x reading containment, never source links or projected graph edges.
-
-    Other embed providers keep their existing admission semantics. An unplaced
-    x reference is a link, so it neither authorizes its target nor retains it.
-    """
+    """Actual x containment, never links: an unplaced x reference neither admits nor retains."""
     return """
         SELECT thread_media_id AS parent_media_id, post_media_id AS child_media_id
         FROM x_thread_posts
@@ -181,12 +51,7 @@ def media_containment_edges_sql() -> str:
 
 
 def retained_x_post_roots_sql() -> str:
-    """Independent retained annotations/evidence as (media_id, user_id).
-
-    Only canonical x posts gain this lifetime/access rule. Frozen citations use
-    their captured owner, which survives replacement of a fragment or chunk.
-    Ordinary resource links and incidental containment are never roots.
-    """
+    """(media_id, user_id): x posts a user's highlights, anchors, retrievals or citations keep."""
     return """
         SELECT h.anchor_media_id AS media_id, h.user_id
         FROM highlights h JOIN x_post_sources xp ON xp.media_id = h.anchor_media_id
@@ -219,12 +84,7 @@ def retained_x_post_roots_sql() -> str:
 def contained_media_ids_cte_sql(
     roots_sql: str, *, viewer_param: str | None = None, include_tearing_down: bool = False
 ) -> str:
-    """The roots and their actual contained posts, stopping at excluded media.
-
-    A viewer binding applies tombstones at every step; without it this is the
-    global lifetime relation. UNION terminates incidental cycles. This follows
-    only the two concrete containment relations, never the resource graph.
-    """
+    """The roots and their contained posts; a viewer binding applies its tombstones at each step."""
     eligible = "SELECT m.id FROM media m WHERE TRUE"
     if viewer_param is not None:
         eligible += f""" AND NOT EXISTS (
@@ -249,7 +109,7 @@ def contained_media_ids_cte_sql(
 
 
 def visible_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
-    """One readable relation for point reads, highlights and search; binds :viewer_id."""
+    """The readable media ids."""
     roots = f"""
         SELECT le.media_id FROM library_entries le
         JOIN memberships membership ON membership.library_id = le.library_id
@@ -266,8 +126,26 @@ def visible_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
     )
 
 
+def can_read_media(
+    session: Session, viewer_user_id: UUID, media_id: UUID, *, include_tearing_down: bool = False
+) -> bool:
+    """``include_tearing_down`` keeps the tombstone exclusion but admits media mid-teardown, so a
+    write can raise ``E_MEDIA_DELETING`` for it while a non-reader still sees only 404."""
+    readable = visible_media_ids_cte_sql(include_tearing_down=include_tearing_down)
+    params = {"viewer_id": viewer_user_id, "media_id": media_id}
+    return bool(session.scalar(text(f"SELECT :media_id IN ({readable})"), params))
+
+
+def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
+    """Membership reach alone (system libraries included), ignoring the viewer's tombstone and
+    teardown: a strict superset of ``can_read_media``, so re-filing deleted media is allowed."""
+    sql = """SELECT EXISTS (
+        SELECT 1 FROM library_entries le JOIN memberships m ON m.library_id = le.library_id
+        WHERE le.media_id = :media_id AND m.user_id = :viewer_id)"""
+    return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "media_id": media_id}))
+
+
 def visible_podcast_ids_cte_sql() -> str:
-    """Podcasts visible to a viewer: active subscription OR library membership. Binds :viewer_id."""
     return """
         SELECT ps.podcast_id
         FROM podcast_subscriptions ps
@@ -284,7 +162,6 @@ def visible_podcast_ids_cte_sql() -> str:
 
 
 def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str:
-    """Active-subscription predicate for an outer Podcast row. Binds ``:viewer_id``."""
     return f"""EXISTS (
         SELECT 1
         FROM podcast_subscriptions ps
@@ -294,7 +171,7 @@ def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str
 
 
 def visible_content_credit_rows_sql() -> str:
-    """Contributor-credit rows whose credited content is visible to the viewer. Binds :viewer_id."""
+    """Contributor-credit rows whose credited content is visible."""
     return f"""
         SELECT cc.*
         FROM contributor_credits cc
@@ -305,15 +182,7 @@ def visible_content_credit_rows_sql() -> str:
 
 
 def credited_visible_contributor_ids_cte_sql() -> str:
-    """Contributors with at least one visible credited target. Binds :viewer_id.
-
-    The narrow picker/search predicate (spec 2.8, D-8): used by ``GET
-    /contributors`` search and the search-package contributors retriever, so
-    retained key owners or graph-referenced identities with zero visible credits
-    never surface as eternal "0 works" choices. Detail, works, hydration, and
-    mutation handle-binding keep the broad :func:`visible_contributor_ids_cte_sql`
-    below.
-    """
+    """Pickers and search: contributors with a visible credit, never "0 works" identities."""
     return f"""
         SELECT DISTINCT vcc.contributor_id
         FROM ({visible_content_credit_rows_sql()}) vcc
@@ -321,13 +190,7 @@ def credited_visible_contributor_ids_cte_sql() -> str:
 
 
 def visible_contributor_ids_cte_sql() -> str:
-    """Contributors visible to a viewer: a visible credit OR a viewer-owned graph edge.
-
-    Binds :viewer_id. This is the single definition of contributor visibility; every
-    consumer (directory, search, object refs, detail reads) shares it. The edge lane
-    succeeds the old object-link lane: a contributor the viewer connected (at either
-    endpoint of a ``resource_edges`` row) stays visible with zero visible credits.
-    """
+    """Detail, works and hydration: a visible credit or a viewer-owned edge at either end."""
     return f"""
         SELECT vcc.contributor_id
         FROM ({visible_content_credit_rows_sql()}) vcc
@@ -347,11 +210,6 @@ def visible_contributor_ids_cte_sql() -> str:
 
 
 def visible_conversation_ids_cte_sql() -> str:
-    """Conversation IDs visible to a viewer (binds :viewer_id, returns conversation_id).
-
-    The SQL set-membership twin of :func:`can_read_conversation`; co-located here so the
-    two forms of the same rule cannot drift. A conversation is visible to its owner only.
-    """
     return """
         SELECT c.id AS conversation_id
         FROM conversations c
@@ -360,65 +218,13 @@ def visible_conversation_ids_cte_sql() -> str:
 
 
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
-    """Check if viewer owns the conversation.
-
-    Returns False if conversation_id does not exist (no existence leak).
-    """
-    query = select(
-        exists().where(
-            Conversation.id == conversation_id,
-            Conversation.owner_user_id == viewer_user_id,
-        )
-    )
-    return bool(session.execute(query).scalar())
-
-
-def highlight_library_intersection_exists(
-    viewer_user_id: UUID,
-    author_user_id_expr: UUID | InstrumentedAttribute[UUID],
-    media_id: MediaIdExpression,
-):
-    """Core SQL exists expression for highlight library intersection check.
-
-    Returns an exists() expression checking if viewer and highlight author share
-    membership in at least one non-system library containing the given media.
-
-    Args:
-        viewer_user_id: UUID of the viewer.
-        author_user_id_expr: UUID for point reads, or a column expression
-            like Highlight.user_id for correlated list-query filters.
-        media_id: UUID of the anchor media.
-
-    Returns:
-        An exists() SQL expression usable in .where() or select().
-    """
-    viewer_m = Membership.__table__.alias("hl_viewer_m")
-    author_m = Membership.__table__.alias("hl_author_m")
-    library = Library.__table__.alias("hl_library")
-
-    return (
-        select(literal(1))
-        .select_from(LibraryEntry.__table__)
-        .join(
-            library,
-            (library.c.id == LibraryEntry.__table__.c.library_id) & library.c.system_key.is_(None),
-        )
-        .join(viewer_m, viewer_m.c.library_id == LibraryEntry.__table__.c.library_id)
-        .join(
-            author_m,
-            (author_m.c.library_id == LibraryEntry.__table__.c.library_id)
-            & (author_m.c.user_id == author_user_id_expr),
-        )
-        .where(
-            LibraryEntry.__table__.c.media_id == media_id,
-            viewer_m.c.user_id == viewer_user_id,
-        )
-        .exists()
-    )
+    sql = f"SELECT :conversation_id IN ({visible_conversation_ids_cte_sql()})"
+    params = {"viewer_id": viewer_user_id, "conversation_id": conversation_id}
+    return bool(session.scalar(text(sql), params))
 
 
 def highlight_visibility_sql(highlight_alias: str = "h") -> str:
-    """Text-SQL twin of :func:`highlight_visibility_filter`. Binds :viewer_id."""
+    """The author, library and grant paths; the caller proves the anchor and its media."""
     return f"""(
         {highlight_alias}.user_id = :viewer_id
         OR EXISTS (
@@ -436,7 +242,7 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
 
 
 def highlight_readability_sql(highlight_alias: str = "h") -> str:
-    """Complete text-SQL highlight-readability rule. Binds ``:viewer_id``."""
+    """The whole highlight rule: consistent anchor, readable media, a visibility path."""
     return f"""(
         {highlight_alias}.anchor_media_id IN ({visible_media_ids_cte_sql()})
         AND (
@@ -469,99 +275,21 @@ def highlight_readability_sql(highlight_alias: str = "h") -> str:
     )"""
 
 
-def highlight_visibility_filter(viewer_user_id: UUID, media_id: MediaIdExpression):
-    """SQL filter expression for visible highlights in list queries.
-
-    Evaluates to True when the viewer is the author, shares a non-system library
-    containing the media with the author, or has an exact incoming/creator grant.
-
-    For use in .where() clauses on queries selecting from Highlight.
-    Correlates with Highlight.user_id from the outer query.
-
-    Caller must separately verify viewer can read the anchor media
-    (e.g. via highlight reads).
-    """
-    return or_(
-        Highlight.user_id == viewer_user_id,
-        highlight_library_intersection_exists(
-            viewer_user_id=viewer_user_id,
-            author_user_id_expr=Highlight.user_id,
-            media_id=media_id,
-        ),
-        resource_grants.highlight_grant_path_exists_expr(
-            viewer_user_id,
-            Highlight.id,
-        ),
-    )
+def highlight_visibility_filter(viewer_user_id: UUID) -> TextClause:
+    return text(highlight_visibility_sql("highlights")).bindparams(viewer_id=viewer_user_id)
 
 
-def highlight_readability_filter(viewer_user_id: UUID):
-    """Complete ORM highlight-readability rule correlated to ``Highlight``."""
-    fragment_anchor_exists = exists().where(
-        HighlightFragmentAnchor.highlight_id == Highlight.id,
-    )
-    fragment_anchor_media_mismatch_exists = exists(
-        select(literal(1))
-        .select_from(HighlightFragmentAnchor)
-        .join(Fragment, Fragment.id == HighlightFragmentAnchor.fragment_id)
-        .where(
-            HighlightFragmentAnchor.highlight_id == Highlight.id,
-            Fragment.media_id != Highlight.anchor_media_id,
-        )
-    )
-    pdf_anchor_exists = exists().where(
-        HighlightPdfAnchor.highlight_id == Highlight.id,
-        HighlightPdfAnchor.media_id == Highlight.anchor_media_id,
-    )
-    return (
-        or_(
-            (Highlight.anchor_kind == "fragment_offsets")
-            & fragment_anchor_exists
-            & ~fragment_anchor_media_mismatch_exists,
-            (Highlight.anchor_kind == "pdf_page_geometry") & pdf_anchor_exists,
-        )
-        & _media_readability_predicate(
-            viewer_user_id,
-            Highlight.anchor_media_id,
-            include_tearing_down=False,
-        )
-        & highlight_visibility_filter(
-            viewer_user_id,
-            Highlight.anchor_media_id,
-        )
-    )
+def highlight_readability_filter(viewer_user_id: UUID) -> TextClause:
+    return text(highlight_readability_sql("highlights")).bindparams(viewer_id=viewer_user_id)
 
 
 def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
-    """Check if viewer can read a highlight under visibility rules.
-
-    True iff the typed anchor is valid, the viewer can read its parent media,
-    and the viewer is its author, shares the existing library-intersection path
-    with the author, or has an exact incoming/creator grant.
-
-    Returns False if highlight_id does not exist (no existence leak).
-    Returns False on irreconcilable typed-anchor state.
-
-    Evaluates the complete rule in one statement.
-    """
-    readable = session.scalar(
-        select(
-            exists().where(
-                Highlight.id == highlight_id,
-                highlight_readability_filter(viewer_user_id),
-            )
-        )
-    )
-    return bool(readable)
+    sql = f"""SELECT EXISTS (
+        SELECT 1 FROM highlights h WHERE h.id = :id AND {highlight_readability_sql()})"""
+    return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "id": highlight_id}))
 
 
 def is_library_member(session: Session, viewer_user_id: UUID, library_id: UUID) -> bool:
-    """Check if viewer is a member of a library (any role)."""
-    query = select(
-        exists().where(
-            Membership.library_id == library_id,
-            Membership.user_id == viewer_user_id,
-        )
-    )
-    result = session.execute(query)
-    return bool(result.scalar())
+    sql = """SELECT EXISTS (
+        SELECT 1 FROM memberships WHERE library_id = :id AND user_id = :viewer_id)"""
+    return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "id": library_id}))

@@ -21,6 +21,8 @@ import type {
   WorkspaceSecondarySurfaceIdOf,
 } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { MediaSubject } from "@/lib/media/mediaSummary";
+import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 /** Why a pane command holds its place while the fact deciding it loads. */
@@ -81,12 +83,13 @@ export type PaneCompanionAction = Extract<
 export type PanePrimaryAction = Extract<
   ActionDescriptor,
   { readonly kind: "link" | "command" }
->;
+> & { readonly icon: ReactElement };
 
 export interface PaneChrome {
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly primaryAction?: PanePrimaryAction;
+  readonly mediaActions?: { readonly subject: MediaSubject; readonly knownDescriptor: PlayerDescriptor | null };
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
   readonly resourceRef?: CanonicalResourceRef;

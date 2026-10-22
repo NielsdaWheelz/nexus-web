@@ -159,6 +159,14 @@ also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
+ordinary `ResourceRow` leading controls consume that same geometry. its optional
+passive `leadingVisual` slot occupies a separate column across both text rows,
+aligned at the top; expanded content starts at the text column. omitted visuals
+reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
+`--space-2` gap, `--radius-sm` corners and `--surface-2` background. containment
+preserves the complete publisher image and can letterbox it. existing compact
+title clamping, metadata ellipsis and status placement remain in force.
+
 default targets are 32px, at least 44px with any coarse pointer. consumer classes
 adjust geometry and noninteractive adornments only: mobile chrome/switchboard
 retain 48px and desktop nexus retains its wider shortcut-bearing button.

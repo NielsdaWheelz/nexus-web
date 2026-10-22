@@ -1,4 +1,8 @@
-"""One strict stored-media identity, read state and duration wire."""
+"""One stored-media identity, read state, duration and descriptor eligibility wire.
+
+``can_play`` names an episode's application source, independent of its transcript and
+processing readiness. It promises neither remote delivery nor audible playback.
+"""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -43,6 +47,7 @@ class MediaSummaryOut(BaseModel):
     consumption: ConsumptionOut
     duration: MediaDurationOut | None
     x_article_content: XArticleContent | None
+    can_play: bool
 
 
 class ResolveMediaSummariesIn(BaseModel):

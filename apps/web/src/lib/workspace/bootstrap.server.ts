@@ -5,14 +5,15 @@ import { isApiError, type ApiError } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
 import type { ApiJson } from "@/lib/api/wire";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/urls";
-import { formatLocalDateInTimeZone } from "@/lib/localDate";
+import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { paneSeeds, type Get } from "@/lib/panes/paneResourceLoaders";
 import type { WorkspaceBootstrap } from "@/lib/workspace/bootstrap";
 import { enterWorkspace } from "@/lib/workspace/model";
 import {
-  MAX_WORKSPACE_HREF_LENGTH,
+  normalizeWorkspaceHref,
   parseWorkspaceHref,
+  resolveTodayHref,
 } from "@/lib/workspace/workspaceHref";
 
 /**
@@ -36,19 +37,13 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
     ),
   ]);
   const zone = me.data.calendar_time_zone;
-  // `/` and paths that are not canonical resume; bare /daily is today (L10, L11).
+  // `/` and paths that are not canonical resume. A launcher command belongs to
+  // entry, never to a pane; bare /daily is today.
   const url = parseWorkspaceHref(requestPath);
-  let href: string | null = requestPath;
-  if (
-    !url ||
-    url.pathname === "/" ||
-    `${url.pathname}${url.search}` !== requestPath ||
-    requestPath.length > MAX_WORKSPACE_HREF_LENGTH
-  ) {
-    href = null;
-  } else if (url.pathname === "/daily") {
-    href = `/daily/${formatLocalDateInTimeZone(new Date(), zone)}`;
-  }
+  const canonical = url && url.pathname !== "/" && `${url.pathname}${url.search}` === requestPath
+    ? normalizeWorkspaceHref(parseNexusOpenUrl(url)?.href ?? requestPath)
+    : null;
+  const href = canonical && resolveTodayHref(canonical, zone);
   const { own, most_recent_elsewhere } = sessions.data;
   const initialState = enterWorkspace(own, most_recent_elsewhere, href);
 

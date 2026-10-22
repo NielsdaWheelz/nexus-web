@@ -100,7 +100,7 @@ def query_connections(
             select(Highlight.id)
             .where(
                 Highlight.id == id_,
-                highlight_visibility_filter(viewer_id, Highlight.anchor_media_id),
+                highlight_visibility_filter(viewer_id),
             )
             .correlate(ResourceEdge)
             .exists()

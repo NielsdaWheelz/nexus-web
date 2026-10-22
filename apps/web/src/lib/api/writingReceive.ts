@@ -6,6 +6,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { assertNever } from "@/lib/assertNever";
 import { apiFetch } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -188,6 +189,13 @@ function receiver(accountId: string): Receiver {
             } catch (error) { reportError(error); }
           }
           acknowledgeGraphCommands(ack);
+          const bodies = ack.notes.length > 0 || ack.deleted_refs.some(ref => ref.startsWith("note_block:"));
+          const structure = ack.pages.length > 0 || ack.insertions.length > 0 || ack.removed_link_ids.length > 0 ||
+            ack.lanes.some(lane => lane.lane === "title" || lane.lane === "links") ||
+            ack.deleted_refs.some(ref => ref.startsWith("page:") || ref.startsWith("note_block:"));
+          if (structure && bodies) publishChange("Notes", "NoteBodies");
+          else if (structure) publishChange("Notes");
+          else if (bodies) publishChange("NoteBodies");
           for (const watch of current.watchers) {
             const versions: WritingVersions = {};
             for (const lane of ack.lanes) {

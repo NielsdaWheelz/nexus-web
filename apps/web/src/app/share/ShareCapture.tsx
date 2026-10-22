@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
-import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import {
   apiFetch,
   apiTransportFeedback,
@@ -31,6 +31,7 @@ import { readWriting } from "@/lib/notes/journal";
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
 import { WritingStatus } from "@/components/notes/NoteNotices";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
+import { WorkProvider } from "@/lib/unsavedWork";
 import styles from "./share.module.css";
 
 type Result =
@@ -65,7 +66,11 @@ function networkOnly(error: unknown): FeedbackContent | null {
     : null;
 }
 
-export default function ShareCapture({
+export default function ShareCapture(props: { text: string; isShell: boolean }) {
+  return <WorkProvider><ShareCaptureContent {...props} /></WorkProvider>;
+}
+
+function ShareCaptureContent({
   text,
   isShell,
 }: {
@@ -77,7 +82,8 @@ export default function ShareCapture({
   const [results, setResults] = useState<Result[] | null>(null);
   const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
-  const creation = useDestinationCreation(trimmed);
+  const [destinationCreation] = useState(createDestinationCreation);
+  const creation = useDestinationCreation(trimmed, destinationCreation);
   const creating = creation.creating;
   const [destinations, setDestinations] = useState<
     readonly LibraryDestination[]

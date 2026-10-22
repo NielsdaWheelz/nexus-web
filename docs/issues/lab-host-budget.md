@@ -2,9 +2,10 @@
 
 status: partially implemented · 2026-10-21 · area: disposable verification,
 campaigns, local images. checkout worker images (§2), teardown ownership (§3),
-ordinary host admission (§4), and web reuse with fresh data (§6) are implemented.
-runtime/campaign consolidation, exclusive admission, throttling and other
-operator maintenance are still open.
+ordinary host admission (§4), web reuse with fresh data (§6), and campaign
+consolidation (§1) are implemented. exclusive admission, client throttling and
+calibration, operator maintenance and 8 gib/8 cpu dual-lab acceptance, and the
+full-day 80% write-attribution criterion remain open.
 
 this record is the change's specification. the repository commits no plans, so the
 implementing change moves the contracts below into
@@ -22,52 +23,32 @@ on 2026-10-21, lab runs and one campaign oversubscribed the macbook (64 gib,
 with 30 gib held compressed. docker desktop (24 gib, all cpus) and a campaign
 colima vm (12 gib, 6 cpus) ran side by side. the docker vm wrote 231 gb in 28 h.
 
-the causes are recorded separately:
+remaining work is recorded separately:
 - [lab-host-slots](lab-host-slots.md)
 - [campaign-load-instrument](campaign-load-instrument.md)
-- [campaign-harness-unowned](campaign-harness-unowned.md)
 
 ## target contracts
 
 ### 1. one owned runtime (macbook-capacity d1, d5)
 
-`./scripts/lab` is the only stack implementation. campaigns are repeated lab
-invocations, not a second stack. the copied harness's `engine.sh`, `ports.env`,
-`compose.yml`, `up.sh`, `down.sh`, `cycle.sh` and the c3nt colima profile are
-retired. docker desktop is the only engine, so no docker context or engine
-mounts are needed: compose binds any checkout under `/Users`.
+implemented. [disposable verification](../local-rules/testing-standards.md#disposable-verification)
+owns the single lab runtime, repository browser helpers, native playwright verdicts
+and temporary campaign cases/seeds. campaigns use dedicated checkouts and
+`--repeat-each`; they retain no second stack or verdict wrapper.
 
-the repository owns these, all inside today's "composition, provisioning, seed,
-browser helpers and contracts":
-- the lab runtime, its host slots (§4) and its client throttle (§5).
-- the playwright browser helpers under `apps/web/scripts/lab/`.
-- verdict accounting through playwright's own runner. use `--repeat-each` for
-  repeats. a known intermittent defect is an annotated expected failure that
-  matches its signature; the bespoke `run.mjs` driver is retired.
+the owner chose option (a): provider fakes are retained lab composition through
+`--fake-providers`. [provider composition](../local-rules/testing-standards.md#provider-composition)
+owns its explicit verified https transport, real pinned native hosts, context and
+limitations. the live endpoint/extra-ca settings are supported operator
+configuration, not ambient topology or a scenario-control seam.
 
-these stay temporary cases, per the 2026-09-17 reset:
-- journeys and their seeds. they live in the campaign checkout's ignored
-  `apps/web/.nexus-lab/cases/`, are seeded through the context's `database_url`
-  and admin key, and are deleted after final qualification.
-- a later campaign may copy earlier journeys deliberately. that copies scenario
-  content, never infrastructure.
-
-`nexus-web-campaign-artifacts/<date>/<slice>/` holds only outputs: run reports,
-copied logs, screenshots, decisions. it holds no executable harness.
-
-to compare tips, use one dedicated checkout per tip, each running the lab. host
-slots bound how many run at once.
-
-owner decision required: the campaigns' provider fakes (`fakellm.mjs`,
-`codex_host.py`) have been copied across three campaigns. `LIVE_KEYS`
-(`python/scripts/disposable_runtime.py:53-58`) cannot configure topology, so the
-lab cannot wire a fake provider today. either:
-- (a) amend the reset's retained foundation to admit provider fakes as lab
-  composition (a `--fake-providers` topology flag), or
-- (b) keep fakes as caller-owned processes, with a documented live-config
-  topology key.
-
-recommendation: (a), because the fakes are reused composition, not scenarios.
+the owner released the copied-harness gate; its executable stack/provider/browser
+and case copies, installs and builds are retired. docker desktop is the sole
+engine and the c3nt colima profile is gone (d1/d5). artifact outputs, readmes,
+product/schema snapshots, backups and history remain; `c3rh-pg` and its data are
+retained rehearsal state (d6). current external guidance points to the canonical
+lab/testing contracts and the fixed d2 target (d9). client throttling remains §5
+work, not part of this completed consolidation.
 
 ### 2. checkout worker image (macbook-capacity d8)
 
@@ -145,16 +126,18 @@ ordinary admission is implemented. exclusive acquisition ships with its real
   timing keep wall-clock values, because product debounce timers are not cpu
   throttled. example: `N2.undo-split-keeps-unsaved-text-before-it` waits 300 ms
   inside the 1.5 s save window.
-- calibration, before burners are retired:
+- calibration remains deferred to slice 6, after the operator resize window and
+  owner approval, obtained by asking before calibration or the 20-run repeats:
   - at the base sha, the two
     [notes-redo-of-split-refused](notes-redo-of-split-refused.md) journeys must
     fail at least 5 of 20 under some N in {2, 4, 6, 8}. the burner measurements
     there were 6-10 of 20.
   - record the chosen N in testing-standards.
   - if no N reproduces, client cpu is not the operative slowness. add page
-    latency and recalibrate before removing burners.
+    latency and recalibrate.
 - host cpu burners and host load-average criteria are not instruments. `loaded.sh`
-  and `run.mjs`'s `os.loadavg()` line retire with the harness.
+  and `run.mjs`'s `os.loadavg()` guidance is retired now; the calibrated replacement
+  remains unqualified.
 
 ### 6. evaluated options
 
@@ -175,23 +158,17 @@ ordinary admission is implemented. exclusive acquisition ships with its real
 - template database: rejected. 35 migration files and about 100 mb of setup do
   not justify a cached template's lifecycle and invalidation.
 
-## docs changes
+## canonical contracts
 
-testing-standards "disposable verification" gains a host-budget paragraph:
-- engine: docker desktop only (d1).
-- vm budget: 8 gib, 8 cpus, citing dev-server (d2).
-- slots and throttled exclusivity: §4.
-- worker image retention: §2–§3.
-- load definition: §5.
-
-it also gains a "campaigns" paragraph: dedicated checkouts, lab invocations,
-temporary cases, outputs under `nexus-web-campaign-artifacts`, no copied
-harness. the README's disposable-verification paragraph replaces "startup, image
-caches and retained diagnostics cost local disk" with the exact retained items.
+[testing-standards](../local-rules/testing-standards.md#disposable-verification)
+owns implemented runtime, campaign, provider, cache and retention contracts.
+the readme names the public entrypoints. the remaining exclusive-admission and
+slow-client contracts are §4–§5; applying and qualifying the fixed 8 gib/8 cpu
+target still requires the operator window (d2/d3/d4).
 
 ## superseded guidance (macbook-capacity d9)
 
-these are updated or retired in the implementing change:
+current guidance is retired or updated; historical notes stay historical:
 - nexus claude memory `project_macos_linux_runner_recipe.md`: "the VM defaulted
   to 8 GiB" and "check Docker Desktop memory first" now cite d2's budget.
 - nexus claude memory `project_android_v2_release_state.md:35`: "Docker Desktop
@@ -205,7 +182,7 @@ these are updated or retired in the implementing change:
   - a top-level `nexus-web-campaign-artifacts/README.txt` states that harness
     copies are retired and names the lab and testing-standards as the base.
   - 32 artifact notes mention colima.
-- `2026-10-09/harness-slot.sh` is replaced by §4.
+- the copied `2026-10-09/harness-slot.sh` is removed; §4 owns host admission.
 
 ## from the maintenance window (macbook-capacity d6)
 
@@ -217,7 +194,8 @@ these are updated or retired in the implementing change:
   - `nexus-test-*` and `nexus-pr203-runner-*` volumes;
   - the `restart=unless-stopped` stacks `supabase_*_nexus-simplify-04` and
     `supabase_*_nexus-search-cleanup-20261002`;
-  - `c3rh-pg-data` (6 gb).
+- `c3rh-pg` and `c3rh-pg-data` (6 gb) are retained rehearsal container/data,
+  outside the removal candidates.
 - after the docker resize, two ordinary lab runs must complete concurrently
   end to end at 8 gib and 8 cpus (macbook-capacity d2).
 

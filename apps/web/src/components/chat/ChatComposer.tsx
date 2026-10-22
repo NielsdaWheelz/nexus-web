@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -19,7 +19,6 @@ import GenerationPicker from "./GenerationPicker";
 import QuotedPassage, { type QuoteState } from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
-const subscribeNothing = () => () => {};
 const BLOCKED = {
   HistoryLoading: "Conversation history is loading.",
   HistoryUnavailable: "Conversation history could not be loaded.",
@@ -41,14 +40,13 @@ export default function ChatComposer(props: {
   onRemoveQuote(): void;
   onRetryQuote(): void;
   onRejected(code: RejectionCode): void;
-  initialText: string;
   focusKey: string | null;
   isPaneActive: boolean;
 }) {
   const { target, branch, activeRun: run, inherited } = props.view;
-  const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
+  const { quote, historyReady, focusKey, isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
-  const { draft, setDraft, setText, setSelection, seed, spend } = useChatDraft(props.scope, props.viewId);
+  const { draft, setDraft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
   const { delivery, claim } = usePaneEntryDelivery();
   const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" ? delivery : null;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
@@ -66,10 +64,8 @@ export default function ChatComposer(props: {
     : (incomplete ?? (followed ? { kind: "Selected", selection: followed } : { kind: "Uninitialized" }));
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
-  // Server html cannot know the stored draft, and hydration would replace whatever was
-  // typed into it: the field takes text (and its name) only once the app runs.
-  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
-  const inputReady = hydrated && readerEntry === null;
+  const [ready, setReady] = useState(false);
+  const inputReady = ready && readerEntry === null;
   const mounted = useRef(false);
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
@@ -77,17 +73,15 @@ export default function ChatComposer(props: {
   const [stopping, setStopping] = useState(false);
   useEffect(() => {
     mounted.current = true;
+    setReady(true);
     return () => void (mounted.current = false);
   }, []);
   useLayoutEffect(() => {
-    if (!hydrated || !readerEntry || readerEntry.entry.kind !== "ComposeReaderQuestion") return;
-    if (!claim(readerEntry)) return;
+    if (!readerEntry || readerEntry.entry.kind !== "ComposeReaderQuestion") return;
     // no await: the exact visit's delivery and both draft fields transfer together.
     setDraft({ text: readerEntry.entry.text, selection: readerEntry.entry.selection });
-  }, [hydrated, readerEntry, claim, setDraft]);
-  useEffect(() => {
-    if (initialText) seed(initialText);
-  }, [initialText, seed]);
+    claim(readerEntry);
+  }, [readerEntry, claim, setDraft]);
   useEffect(() => {
     if (!inputReady || !focusKey || focused.current === focusKey) return;
     focused.current = focusKey; // spent even when the pane is inactive

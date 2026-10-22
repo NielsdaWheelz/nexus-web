@@ -325,10 +325,11 @@ function MediaPane({ id }: { readonly id: string }) {
     (ms: number, play: boolean) => {
       if (media?.kind === "video") return setVideoAt(ms);
       if (player.state.kind !== "Loaded" || player.state.source.kind !== "Episode" || player.state.source.descriptor.media_id !== id) return;
-      seekTo(ms);
+      if (player.playbackSubject === null) return;
+      seekTo({ positionMs: ms, expectedSubject: player.playbackSubject });
       if (play) resume();
     },
-    [id, media?.kind, player.state, resume, seekTo],
+    [id, media?.kind, player.state, player.playbackSubject, resume, seekTo],
   );
   const seek = useCallback((ms: number) => cue(ms, true), [cue]);
 

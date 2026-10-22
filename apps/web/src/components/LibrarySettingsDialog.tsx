@@ -4,12 +4,16 @@
 // delete (owner only, confirmed). Deleting a library never deletes media: items
 // filed only there move to the owner's All. Membership lives in the Members tab.
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { FeedbackNotice, FeedbackState, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
+import { isRefusal } from "@/lib/api/client";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
@@ -17,6 +21,16 @@ import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { libraryNameError } from "@/lib/libraries/views";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import styles from "./LibrarySettingsDialog.module.css";
+
+interface SettingsDraft {
+  draft: string | null;
+  baseline: string | null;
+  request: { name: string; rawDraft: string | null; expectedName: string } | null;
+  busy: "Rename" | "Delete" | null;
+  confirming: boolean;
+  deleted: boolean;
+  feedback: FeedbackContent | null;
+}
 
 export default function LibrarySettingsDialog({
   libraryId,
@@ -26,6 +40,7 @@ export default function LibrarySettingsDialog({
   readonly onClose: () => void;
 }) {
   const fail = useThrowLater();
+  const { ctx } = useActionRuntime();
   const contentRef = useRef<HTMLDivElement>(null);
   const workspace = useLatestWorkspace();
   const library = usePaneFreeServerValue({
@@ -34,12 +49,32 @@ export default function LibrarySettingsDialog({
     load: (signal) => getLibrary(libraryId, signal),
   });
   const current = library.status === "ready" ? library.data : null;
-  const [draft, setDraft] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"Rename" | "Delete" | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  // The field follows the stored name until the viewer edits it.
-  useEffect(() => setDraft(null), [current?.name]);
+  const guard = useWorkGuard();
+  const state = useResourceDraft<SettingsDraft>(`LibrarySettings:${libraryId}`, () => ({
+    draft: null,
+    baseline: null,
+    request: null,
+    busy: null,
+    confirming: false,
+    deleted: false,
+    feedback: null,
+  }), value => ({
+    changed: value.draft !== null && value.draft !== value.baseline,
+    unconfirmed: value.request !== null || value.busy === "Delete",
+    stopsBrowserWork: false,
+  }));
+  const { draft, baseline, busy, confirming, feedback, deleted } = state.value;
+  const setBusy = (busy: "Rename" | "Delete" | null) => state.set(value => ({ ...value, busy }));
+  const setFeedback = (feedback: FeedbackContent | null) => state.set(value => ({ ...value, feedback }));
+  const setConfirming = (confirming: boolean) => state.set(value => ({ ...value, confirming }));
+  const { read: readSettings, set: writeSettings } = state;
+  useLayoutEffect(() => {
+    if (current === null) return;
+    const value = readSettings();
+    if (value.request === null && (value.draft === null || value.draft === value.baseline))
+      writeSettings({ ...value, draft: current.name, baseline: current.name });
+  }, [current, readSettings, writeSettings]);
+  const requestDismiss = () => guard.confirmLoss({ scopes: [], ownerIds: [state.owner] }) ? "accepted" as const : "blocked" as const;
 
   if (current === null) {
     const failure =
@@ -47,7 +82,9 @@ export default function LibrarySettingsDialog({
         ? libraryErrorFeedback(library.error, "Library settings couldn’t be loaded", throwDefect)
         : null;
     return (
-      <Dialog open onClose={onClose} title="Library settings">
+      <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
+        {draft !== null ? <><Input aria-label="unsaved library name" value={draft} readOnly />
+          <p>this library is unavailable. your unsaved name remains available to copy.</p></> : null}
         {failure ? (
           <FeedbackNotice
             content={failure}
@@ -65,58 +102,71 @@ export default function LibrarySettingsDialog({
   const name = (draft ?? current.name).trim();
   const invalid = libraryNameError(name);
   const rename = async () => {
-    setBusy("Rename");
-    setFeedback(null);
+    const value = state.read();
+    const signal = ctx.sessionSignal();
+    const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline };
+    state.set({ ...value, request, busy: "Rename", feedback: null });
     try {
-      await renameLibrary(libraryId, name, current.name);
+      const saved = await renameLibrary(libraryId, request.name, request.expectedName);
+      if (signal.aborted) return;
+      state.set(latest => ({ ...latest, request: null, busy: null, baseline: saved.name,
+        draft: latest.draft === request.rawDraft ? saved.name : latest.draft }));
     } catch (error) {
-      setFeedback(libraryErrorFeedback(error, "Library name wasn’t saved", fail));
+      if (signal.aborted) return;
+      state.set(latest => ({ ...latest, busy: null,
+        request: isRefusal(error) && value.request === null ? null : request,
+        feedback: libraryErrorFeedback(error, "Library name wasn’t saved", fail) }));
       library.refetch();
-    } finally {
-      setBusy(null);
     }
   };
   const remove = async () => {
+    const signal = ctx.sessionSignal();
     setBusy("Delete");
     setFeedback(null);
     try {
       await deleteLibrary(libraryId);
+      if (signal.aborted) return;
       settleDeletedResourcePanes({
         workspace: workspace(),
         deletedRef: `library:${libraryId}`,
         fallbackHref: "/libraries",
       });
-      onClose();
+      state.set(value => ({ ...value, busy: null, deleted: true,
+        feedback: { tone: "Warning", title: "this library was deleted", message: "your unsaved name remains available to copy." } }));
+      if (state.read().draft === state.read().baseline && state.read().request === null) onClose();
     } catch (error) {
+      if (signal.aborted) return;
       setFeedback(libraryErrorFeedback(error, "Library couldn’t be deleted", fail));
       setBusy(null);
     }
   };
 
   return (
-    <Dialog open onClose={onClose} title="Library settings">
+    <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
       <div className={styles.sections} ref={contentRef} tabIndex={-1}>
         {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
         <section className={styles.section}>
           <label htmlFor={`library-name-${libraryId}`}>Library name</label>
+          {baseline !== current.name && draft !== baseline ? <p>current library name: {current.name}</p> : null}
           <div className={styles.row}>
             <Input
               id={`library-name-${libraryId}`}
               value={draft ?? current.name}
+              readOnly={deleted}
               disabled={!current.can_manage || busy !== null}
               aria-invalid={invalid !== null || undefined}
               aria-describedby={invalid ? `library-name-error-${libraryId}` : undefined}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => state.set(value => ({ ...value, draft: event.target.value }))}
             />
-            {current.can_manage ? (
+            {current.can_manage && !deleted ? (
               <Button
                 variant="secondary"
                 size="sm"
                 loading={busy === "Rename"}
-                disabled={invalid !== null || name === current.name || busy !== null}
+                disabled={invalid !== null || state.value.request === null && name === baseline || busy !== null}
                 onClick={() => void rename()}
               >
-                Save
+                {state.value.request !== null ? "retry same request" : baseline !== current.name ? "save my name" : "Save"}
               </Button>
             ) : null}
           </div>
@@ -124,7 +174,7 @@ export default function LibrarySettingsDialog({
             <FieldFeedback id={`library-name-error-${libraryId}`} content={{ tone: "Warning", title: invalid }} />
           ) : null}
         </section>
-        {current.can_delete ? (
+        {current.can_delete && !deleted ? (
           <section className={styles.danger}>
             <h3>Delete library</h3>
             <p>

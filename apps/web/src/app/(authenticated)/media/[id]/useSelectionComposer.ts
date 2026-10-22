@@ -33,7 +33,7 @@ import { OutlineSessionContext, ResourceBranch } from "@/components/resources/Re
 import { nudgeWrites } from "@/lib/notes/writes";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
-import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitIdentity, usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { AnnotationStore } from "./annotations";
 import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type SelectionDrafts } from "./selectionDrafts";
@@ -95,7 +95,15 @@ export function useSelectionComposer(input: {
   const retained = usePaneVisitData(VISIT_DRAFTS, () => holder.current);
   const [store] = useState(() => retained ?? createSelectionDrafts());
   holder.current = store;
-  const retain = usePaneVisitDataWriter(VISIT_DRAFTS);
+  const workScope = usePaneVisitWorkScope();
+  usePaneVisitWorkOwner({
+    id: `${usePaneVisitIdentity()}:selection-drafts`, scope: workScope, subscribe: store.subscribe,
+    read: () => ({
+      changed: false,
+      unconfirmed: store.getSnapshot().some(entry => entry.chatAttempt?.kind === "Preparing"),
+      stopsBrowserWork: false,
+    }),
+  });
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const writing = useSyncExternalStore(subscribeWriting, readWriting, readWriting);
   const reselecting = useRef<string | null>(null);
@@ -505,8 +513,7 @@ export function useSelectionComposer(input: {
         issue: { kind: "Deleted", message: "this highlight was deleted. your words are kept; select a passage to save them again." },
         publication: null, load: "Ready", status: null }));
     }
-    retain(store);
-  }, [retain, show, store]);
+  }, [show, store]);
 
   const submit = (command: Command, continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>) => {
     const source = current.current, entry = source && get(source.draftId);
@@ -619,7 +626,6 @@ export function useSelectionComposer(input: {
       }
     };
     const completion = run();
-    retain(store);
     return completion;
   };
 
@@ -782,7 +788,7 @@ export function useSelectionComposer(input: {
     };
     try {
       await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: openIntent, disposition: "Fork", mayOpen: owns,
-        beforeOpen: () => { retain(store); if (current.current?.id === source.id) show(null); }, create: execute });
+        onOpened: () => { if (current.current?.id === source.id && get(entry.id)?.revision === entry.revision) show(null); }, create: execute });
     } catch (error) {
       if (ctx.sessionSignal().aborted) return;
       store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", message: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
@@ -793,7 +799,6 @@ export function useSelectionComposer(input: {
     finally {
       store.update(entry.id, value => value.chatAttempt?.kind === "Preparing" && value.chatAttempt.runId === runId ? { ...value, chatAttempt: null } : value);
     }
-    retain(store);
   };
   const refreshChat = async () => {
     const entry = current.current && get(current.current.draftId);
@@ -827,7 +832,7 @@ export function useSelectionComposer(input: {
     try {
       await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: state.command.openIntent, disposition: "Fork",
         mayOpen: () => activeRef.current && current.current?.id === source.id && current.current.ownsFocus && get(entry.id)?.revision === entry.revision,
-        beforeOpen: () => { retain(store); if (current.current?.id === source.id) show(null); },
+        onOpened: () => { if (current.current?.id === source.id && get(entry.id)?.revision === entry.revision) show(null); },
         create: async () => chatOutcome(entry, await attempt.owner.retry(), attempt.destination) });
     } catch (error) { onError(error, "Chat retry didn’t finish"); }
   };
@@ -863,7 +868,7 @@ export function useSelectionComposer(input: {
       (saved.base === null || saved.conflict !== null || saved.base.value.kind !== "body" || saved.value.kind !== "body" ||
         !sameBody(parseBody(saved.base.value.body_pm_json), parseBody(saved.value.body_pm_json)))),
     restore(id: string) { const saved = readDraft(id); if (saved) restore(saved, true); },
-    reselect() { if (draft && !draft.operation) { reselecting.current = draft.id; show(null); retain(store); reader.focusSource(); } },
+    reselect() { if (draft && !draft.operation) { reselecting.current = draft.id; show(null); reader.focusSource(); } },
     pickerOpen: draft !== null && pickerDraftId === draft.id,
     chooseChat, closePicker: restoreEditor,
     chooseDestination(conversation: Pick<ConversationListItem, "id" | "title">) {
@@ -917,7 +922,7 @@ export function useSelectionComposer(input: {
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
       const returnFocus = current.current?.ownsFocus;
-      show(null); setPickerDraftId(null); retain(store);
+      show(null); setPickerDraftId(null);
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
     },
     edit(edit: NoteEdit) {

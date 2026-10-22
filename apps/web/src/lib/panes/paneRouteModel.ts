@@ -349,12 +349,6 @@ export function getPaneRouteIcon(href: string): LucideIcon {
   return resolvePaneRouteModel(href).icon;
 }
 
-/** Same resource identity; false when either href names no resource. */
-export function hasSamePaneResource(left: string, right: string): boolean {
-  const key = resolvePaneRouteModel(left).resourceKey;
-  return key !== null && key === resolvePaneRouteModel(right).resourceKey;
-}
-
 /** Arrival selectors do not make another view; material query filters still do. */
 export function resolveWorkspaceActivationRouteId(href: string): string {
   const route = resolvePaneRouteModel(href);

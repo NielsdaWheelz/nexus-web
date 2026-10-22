@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiErrorCopy } from "@/components/dossier/dossierCopy";
-import { isApiError } from "@/lib/api/client";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { isApiError, isRefusal } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -24,9 +25,7 @@ export interface Dossier {
   /** The last command's error, shown near its control without moving focus. */
   readonly error: string | null;
   /** Generate and regenerate. */
-  generate(instruction: string | null): void;
-  /** A new build with the last unsuccessful build's instruction. */
-  retry(): void;
+  generate(instruction: string | null, id: string): Promise<"accepted" | "refused" | "unconfirmed">;
   cancel(): void;
   reload(): void;
 }
@@ -40,6 +39,7 @@ const LOADING: Head = { kind: "Loading" };
  * so a stream that keeps failing cannot spin.
  */
 export function useDossier(target: DossierTarget): Dossier {
+  const { ctx } = useActionRuntime();
   const key =
     target.kind === "Subject"
       ? `${target.scheme}/${target.handle}`
@@ -122,26 +122,30 @@ export function useDossier(target: DossierTarget): Dossier {
     kind: "generate" | "cancel",
     command: () => Promise<unknown>,
   ) => {
+    const signal = ctx.sessionSignal();
     setBusy(kind);
     setError(null);
-    command()
+    return command()
+      .then(() => "accepted" as const)
       .catch((failure: unknown) => {
-        if (handleUnauthenticatedApiError(failure)) return;
+        if (signal.aborted || handleUnauthenticatedApiError(failure)) return "refused" as const;
         // Canceling a build that has already ended is what the user wanted.
         if (
           !isApiError(failure) ||
           failure.code !== "E_DOSSIER_BUILD_NOT_ACTIVE"
         )
           setError(apiErrorCopy(failure));
+        return isRefusal(failure) ? "refused" as const : "unconfirmed" as const;
       })
       .finally(() => {
+        if (signal.aborted) return;
         setBusy(null);
         reload();
       });
   };
-  const generate = (instruction: string | null) =>
+  const generate = (instruction: string | null, id: string) =>
     run("generate", () =>
-      createDossierBuild(targetRef.current, instruction, crypto.randomUUID()),
+      createDossierBuild(targetRef.current, instruction, id),
     );
 
   return {
@@ -149,12 +153,6 @@ export function useDossier(target: DossierTarget): Dossier {
     busy,
     error,
     generate,
-    retry() {
-      const failure = ready?.last_failure;
-      generate(
-        failure != null ? failure.instruction : null,
-      );
-    },
     cancel() {
       if (watched) run("cancel", () => cancelDossierBuild(watched));
     },

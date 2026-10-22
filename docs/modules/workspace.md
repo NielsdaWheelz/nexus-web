@@ -35,8 +35,12 @@ python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),
 [service](../../python/nexus/services/workspace_sessions.py)): structure and
 bounds (at least one pane, no pane-count cap, back + forward ≤ 12 per pane,
-≤ 48 history in all, ids ≤ 64, hrefs `^/` and not `//`, ≤ 4096, title hints ≤ 512
-unicode code points), unique pane and visit ids, an active pane that
+≤ 48 history in all, ids ≤ 64, title hints ≤ 512 unicode code points), canonical
+hrefs (≤ 4096 printable ascii characters, `/` and never `//` first, a path before
+`?`/`#` with no `\` and no dot segment: `.`, `..` or their `%2e` forms; the
+web's normalized `pathname+search+hash` always passes and anything that passes
+restores without re-parsing elsewhere; launcher history,
+`POST /me/nexus-selections`, refuses a target path that fails the same rule), unique pane and visit ids, an active pane that
 is visible, and an inspector surface inside its group. the web has no decoder:
 its state type is the generated `Schema<"WorkspaceState-Output">`. only a missing
 row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
@@ -48,7 +52,10 @@ which inspector group a route offers is the web's rule, applied on every write.
 `WorkspaceState` or null; elsewhere is the same user's newest other-device row
 (`updated_at DESC, id DESC`). `PUT /me/workspace-session` takes a
 `WorkspaceState` body and answers 204 (last write wins); a model violation is
-400 `E_INVALID_REQUEST`. the device is `X-Nexus-Device`, which only the bff and
+400 `E_INVALID_REQUEST`. the same transaction keeps the user's newest 10 rows
+(`updated_at DESC, id DESC`) and deletes the rest: a device whose row was pruned
+resumes the newest other device's workspace, as a new device does. retry rule:
+the body is the absolute state and the prune is idempotent. the device is `X-Nexus-Device`, which only the bff and
 `callFastAPI` stamp from the server-owned httpOnly `nx_device` cookie, so a
 client cannot name one; without it the api answers 400.
 
@@ -58,7 +65,8 @@ deadline (all required: a failure is the workspace error region, never a
 fabricated default that could autosave over an unread session). `enterWorkspace`
 picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
-today in the account zone; any other path reuses the pane on its resource and
+today in the account zone (as it is in a pane: the store's target activation and
+navigation resolve it too; it is never stored); any other path reuses the pane on its resource and
 material view (keeping its visit id, width and inspector) or is appended without
 evicting another pane. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
@@ -79,16 +87,17 @@ containment without retry. only a missing stored row is null; invalid state retu
 
 `WorkspaceEntry` captures the first successful initializer for one verified viewer.
 a modeled later data reread failure retains the exact shell/store/reader/seeds and
-publishes "workspace update wasn’t confirmed" with one guarded `router.refresh()`
-action. success clears the notice without replacing live state; its focused action
+publishes "workspace update not confirmed" with one guarded `router.refresh()`
+action, "try again". success clears the notice without replacing live state; its focused action
 hands focus to the current pane before removal. viewer change discards the subtree.
 identity-gate failure still uses manual session recovery. local room selection
 writes its browser cookie without an authenticated request or refresh.
 
 launcher `?nexus=…` commands are one-shot entry input, never pane identity.
-`nexus/urlIntent.ts` supplies one strict parser; `enterWorkspace` strips accepted
-commands from incoming and restored current/history hrefs. stored data never
-dispatches a command. the client captures once, strips browser history, then
+`nexus/urlIntent.ts` supplies one strict parser; the server entry strips an
+accepted command from the incoming request path. restored states are used as
+stored: python validated them, and the web never writes a command or a seed
+query into an href, so stored data never dispatches a command. the client captures once, strips browser history, then
 delivers through the existing receiver only after viewport hydration.
 
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
@@ -96,9 +105,11 @@ saves 1 s after the state last changed identity; the initial state counts as
 unsaved, so every page load saves once. one request is in flight; a newer state
 requested meanwhile is sent when it settles (keepalive if any request asked), and
 a success acknowledges exactly the state it sent. pagehide and hidden flush with
-keepalive (best effort for states over the browser's 64 KiB keepalive budget).
-network, upstream, upstream-timeout and auth-dependency failures publish one
-persistent "Workspace save wasn’t confirmed" notice with Retry; 401 goes to
+keepalive while the body fits the browser's 64 KiB keepalive budget, else as an
+ordinary request, which lands when the page only hides: a larger state loses a
+change made in the 1 s before an unload. network, upstream, upstream-timeout and
+auth-dependency failures publish one persistent "workspace changes not
+confirmed" notice with "retry save" (a stale build: "reload app"); 401 goes to
 login; anything else is a defect thrown into the workspace boundary.
 
 the address bar names the active pane. the store projects it with next's patched
@@ -107,8 +118,10 @@ action or refresh cannot revert it. next installs that patch in a passive effect
 that runs after the first commit's layout effects; the first projection then
 writes the entry directly and projects again on the next frame. a location hash
 (cold load, `hashchange`, `popstate`) is folded into the active pane only when
-the location's path and search equal the pane's; an entry for another path
-(browser Back onto a fragment entry) is re-projected to the active pane.
+the location's path and search equal the pane's, an empty hash included (Back
+from a fragment entry to the bare path clears the pane's hash); an entry for
+another path (browser Back onto a fragment entry) is re-projected to the active
+pane.
 
 ## Layout Modes
 
@@ -273,7 +286,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, primaryAction, query, menuActions,
+`usePaneChrome` (`{ header, navigation, primaryAction, mediaActions, query, menuActions,
 resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -298,7 +311,8 @@ override.
 `PaneShell` owns the refresh descriptor, mobile top-edge pull gesture, progress,
 and announcement; both activation paths invoke the same fenced operation. The
 pane owner resolves only after its canonical first page is installed. Only the
-six explicitly supported finite standard-scroll panes publish it. Refresh never
+eight explicitly supported finite standard-scroll panes publish it (authors,
+chats, lectern, libraries, library, notes, podcasts, podcast). Refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
@@ -356,6 +370,12 @@ focus ownership before hiding; repair to the enabled input before paint, or
 existing pane chrome/landmark if the input is disabled. retain focus already
 transferred outside.
 
+`usePaneFilterRows` captures its committed source and query in the existing
+per-visit memento. pane back/forward restores that query before list and scroll
+restoration; a fresh visit starts empty, and a query applies only to its captured
+source. this memory lasts only while the visit remains reachable and never
+enters browser storage.
+
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
 desktop input escape clears nonempty text; mobile find escape clears/collapses.
@@ -390,24 +410,24 @@ descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
 order, and danger-last come from the server's verbs, read when the menu opens,
 so the pane menu includes `Open`. Pane bodies never build resource action
-arrays. The mobile bar renders the active pane's menu outside that pane, so the
-pane publishes `onDefect` with its chrome: a defect while loading still breaks
+arrays. Both header projections render inside the pane, so a menu defect breaks
 only that pane.
 
 A delete settles panes after the command succeeds: the active pane on the
-deleted ref adopts its collection and other panes on it close. A failed or lost
+deleted ref adopts its collection and other panes on it close; they are not
+offered in recently closed, which holds closes only. A failed or lost
 response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
-`primaryAction` is one existing link or command descriptor. the shared shell
-renders its full label in the controls band below identity, after reader navigation
-and before query controls at every width. it stays outside query-specific keyed
-or hidden subtrees; narrow controls wrap. the mobile bar does not duplicate it.
-chats publish `new chat`, libraries `new library`, an individual library its
-existing `add content`, and podcasts `browse`. promoted existing commands remain
-in More; `Libraries.Create` exists only as the principal task, independent of
-list loading, filtering and invalid views. native anchors retain modified-click
-behavior; commands receive their actual invoking button.
+`primaryAction` is one link or command descriptor with a required decorative
+icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
+ghost button or native anchor, accessible name, tooltip, projected state and
+disabled explanation. chats publish `new chat`, libraries `new library`, an
+individual library `add content`, and podcasts `browse podcasts`, each with a
+20px plus. existing menu entries reuse those descriptors; `Libraries.Create`
+exists only as the primary action, independent of list loading, filtering and
+invalid views. native anchors retain modified-click behavior; commands receive
+their actual invoking button. query controls contain no primary action.
 
 libraries creation is a pane-owned dialog. its immutable id/name survives
 uncertainty in visit memory; close relinquishes automatic opening without
@@ -416,10 +436,13 @@ later completion offers explicit open. pane back restores filter/sort/position.
 `usePaneVisitDataWriter` records or clears the attempt synchronously against the
 latest committed visit key before navigation can unmount the body.
 
-Desktop and mobile primary headers keep stable Back and Forward positions,
-render exactly one **More** trigger when contextual commands exist, followed by
-the optional typed companion action. the principal task belongs in the controls
-band below this identity bar. Search/Return, Refresh, route Share,
+desktop and mobile headers order back/forward, identity, optional primary action,
+the shared media action group when published,
+optional passive subscription status, exactly one more trigger when contextual
+commands exist, and the optional typed companion action. identity yields width;
+controls retain whole targets. at primary-pane widths up to 479px, media headers
+put history/identity above media actions/more/inspector. other headers retain one
+line. search/return, refresh, route share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -428,19 +451,27 @@ Owner separation never creates a second trigger.
 the overflow control uses `OverflowMenuButton`: 32px desktop, at least 44px with a
 coarse pointer, and 48px in the mobile bar. its glyph and open/disabled/focus
 paint belong to the [visual system](visual-system.md#overflow-buttons).
-headers own only placement and the decorative status marker. the menu retains
-its existing commands, composition, refs and focus policy.
+for overflow, headers own only placement and the decorative status marker. the
+menu retains its existing commands, composition, refs and focus policy.
 
-Every primary identity projection uses one 60px track. The mobile safe area is
-additive.
+every primary header starts with `--pane-chrome-header-height`. narrow desktop
+media headers add a 32px action row, or 44px with a coarse pointer, through their
+own ancestor `primaryPane` query. mobile media routes reserve the extra 48px row
+before data loads through local `--effective-pane-header-height`; both fixed header
+and pane padding consume it, with the safe area additive. hiding reader chrome
+preserves that reservation. refinement-room measurement observes the inner
+`primaryPane` content rectangle. the content row explicitly occupies grid row two,
+the declared fill row; mobile's out-of-flow chrome leaves row one empty instead of
+letting loading content determine the scrollport height. primary, media and inspector controls share local
+ghost-button density: 32px
+desktop, 44px with any coarse pointer, 48px mobile, in both axes.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
 state. both headers render its decorative 20px glyph with the stable accessible
-name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
-local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
-mobile keeps its 48px bar button. its open state is visually distinct and
+name `Inspector`. both projections use the shared icon-only ghost `Button` and
+header density. its open state is visually distinct and
 announced through `aria-expanded`; `aria-controls` names the mounted region
 while open. the shared text-only `Tooltip` shows the projected
 `Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard
@@ -466,6 +497,11 @@ panes never write it. the
 route-scoped error boundary wraps the whole `PaneShell` (runtime, chrome, body
 and Companion), so one pane failure cannot replace its siblings or the
 workspace; it reserves the primary width, or the full canvas when maximized.
+it resets on every new visit (`paneId:visitId:routeKey`), so Back retries. a
+failed pane with history offers "go back" (after "reload app" for a module
+load failure; a stale build offers only its reload), which asks the loss guard
+like any Back and then focuses the pane's chrome (desktop) or landmark (phone).
+on a phone a failed pane shows no top bar.
 
 Activation from the strip or the adjacent-pane keys focuses the pane chrome
 (desktop) or landmark (mobile); on mobile a newly active pane takes focus into
@@ -485,7 +521,7 @@ focus. strip management retains strip focus; its contract lives in
 ### mobile reader chrome
 
 `lib/mobileShell/chrome.tsx` owns one visibility target for the hosted reader's
-top bar, active pane controls and nexus button. `useMobileChromeSurface` registers
+top bar, active pane controls, player footer and nexus button. `useMobileChromeSurface` registers
 those roots; the controller alone writes `inert`,
 `data-mobile-chrome-visibility` (`Shown`/`Hidden`) and
 `data-mobile-chrome-motion` (`Animated`/`Instant`). `lib/mobileShell/chrome.css`
@@ -494,7 +530,18 @@ each surface supplies its travel direction. hiding makes the
 roots inert immediately and defers `visibility:hidden` until the fade ends;
 showing restores interactivity immediately. reversal starts at the current
 visual values. reduced motion and command focus reveal instantly. content
-geometry, padding, scroll offsets and the nexus bottom wrapper stay fixed.
+geometry, padding, scroll offsets, the player slot and nexus bottom wrapper stay
+fixed. the player registers its moving inner footer; its normal-flow outer slot
+stays untransformed and measured through every runtime state and reader retreat.
+chrome alone owns the footer's inertness; local keyboard/sheet suppression owns
+the outer slot. desktop anchored player pickers leave the footer interactive.
+the player drawer uses the shared sheet's native handle button; playback and
+chapters are mutually exclusive inline regions inside its existing body.
+`MobileSheet` accepts either `handleLabel` or `renderHeader`, never both.
+its captured header drag uses sticky 8px tap slop and a 96px downward dismissal
+threshold. moved/cancelled gestures suppress only their own click; every exit
+uses the same dismissal guard. default title/close and custom headers retain
+their existing behavior.
 
 the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
 media pane binds `registerReaderScrollport`. the newest mobile registration
@@ -526,10 +573,13 @@ reader controls”, with `aria-expanded`; `Held` disables hide. it stays visuall
 clipped until keyboard focus, when it shows the full label above the bar inside
 the safe insets. accessibility navigation can discover it in either state.
 
-`MobilePaneChrome` (the active pane's header, navigation, companion, actions and
-resource ref) is an external store slot: the mounted `PaneShell` publishes
-with `usePublishMobilePaneChrome`, and `MobilePaneBar` reads it with
-`useMobilePaneChrome`. publication does not change visibility.
+the phone's top bar is the active pane's own header: `PaneShell` renders
+`SurfaceHeader` in its `Mobile` projection (back, forward, identity, More,
+Inspector, after the recovery button) as the pane section's child before
+`.primaryPane`, whose inline-size container would otherwise become the fixed
+bar's containing block. nothing publishes chrome out of a pane, so the bar's
+links, defects and focus stay with that pane; its More trigger carries
+`data-pane-chrome-focus`.
 
 ## Companion
 
@@ -611,9 +661,15 @@ revision ref.
 Browse is a standard section pane at `/browse`; Preview is a standard resource
 pane at `/browse/preview`. Both use `PaneShell` as their vertical scroll owner.
 The Browse visit identity is the exact normalized `q`, `kind`, `source`, and
-`sort` query. Its route-owned memento captures the committed section pages and
-cursors together with focus and scroll, so Back restores the accepted snapshot
-without refanning provider requests.
+`sort` query. each kind/source section uses the shared server list with its own
+stable pane-visit key. external candidate identity is its top-level sealed target,
+which survives resolution into an owned resource; nexus candidates use their
+resource identity. accepted pages publish immediately, then continue in
+source order while the pane is active and the document visible. one provider
+failure stops only its section and retains its rows. the parent aggregates loaded
+counts and section status. its route-owned memento captures committed pages and
+cursors with focus and scroll, so back restores the accepted snapshot; unfinished
+sections resume when eligible.
 
 Preview identity is its sealed discovery target. It re-resolves provider truth,
 publishes a matching-visit title hint and a source credit plus an
@@ -625,7 +681,7 @@ owned pane after any eligible one-shot position transfer; failure leaves Preview
 and its staged destination choices intact.
 
 browse publishes its submitted query and inline facets as stationary query controls. its form
-retains draft/commit semantics; the body owns requests and section continuation.
+retains draft/commit semantics; the shared list owns section continuation.
 preview keeps its resource controls and publishes no query capability.
 
 ## Target Activation
@@ -690,6 +746,20 @@ nothing expires otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
 
+`ComposeChat {text}` and `ComposePage {title}` are transient authored entries.
+their hrefs are query-free `/conversations/new` and `/pages/new`; authored seeds
+never enter saved workspace state, title hints or browser history. the launcher
+supplies the exact destination draft owner to the loss decision, using the pure
+target planner and the feature's owner-id helper. refusal preserves source and
+destination. the store registers accepted pending seeds in visit memory before
+source dismissal. retained-history travel and lazy loading keep that ownership;
+the recipient adopts and registers the value before claiming its exact delivery.
+replacement protects both pending delivery and existing input. there is no old
+query-seed reader or persisted recovery path.
+page delivery replaces only the title; it retains body, editor identities and
+live requests. its title owner and body/request owner read the same draft cell,
+so changing a title never discards an attachment or warns about preserved prose.
+
 a fork copies only the selected source pane's reader view memento, not pending
 commands or domain drafts. new arrival takes precedence over a source-valid
 visit memento, which takes precedence over the shared durable reading cursor.
@@ -708,8 +778,7 @@ never the write.
 `readForNavigation` returns `Aborted` for account departure, admitting no feedback;
 otherwise it returns the read value and whether it still owns attention. callers
 act on that result immediately, without another await. read errors propagate;
-the helper always removes its input listeners. source-tour request supersession
-and explicit leave remain with the tour owner.
+the helper always removes its input listeners.
 superseded success offers its exact result. that action captures a fresh origin
 and intent; ordinary offered open follows. result offers are session-local.
 targets, surfaces and entries travel through one workspace commit; the workspace
@@ -783,7 +852,36 @@ activation. restore reinserts at the clamped former index, visible and active,
 keeping its inspector while the route still offers its group. reload clears the
 stack. minimize preserves one stored-visible pane and uses the same right/left
 selection order. close and minimize return the committed pane/visit selection
-so callers need not repeat that policy.
+so callers need not repeat that policy; close returns null when refused.
+
+## unsaved work
+
+`lib/unsavedWork.tsx` owns one account-scoped memory registry. feature owners
+supply `id`, lifetime scope, live risk read and subscription; the registry holds
+no text or request bytes. risk separates changed input, unconfirmed requests and
+unfinished browser work. existing content compares against its acknowledged or
+loaded value; new input compares against canonical empty. rich-only content and
+deletion to empty count; search and model choice alone do not.
+
+workspace commands build and trim a prospective state, compute lost pane/visit
+owners, then ask one synchronous browser-native confirmation. only approval may
+capture mementos, retire owners, deliver entries, commit, dismiss the source or
+move focus. activation returns `Cancelled`; navigate/back/forward return
+`committed | unchanged | cancelled`. cancelled gestures are consumed. retained
+history and mobile remounts keep owners and do not prompt. recently closed panes
+restore navigation without discarded authored input.
+
+the same registry conditionally installs `beforeunload` and answers the android
+shell's cancelable `nexus:request-exit` event. false or suppressed confirmation
+refuses loss. browser-owned unload text and controls are intentional. memory can
+still be lost to process death or tab discard; nothing promises local durability.
+canonical deletion is applied independently: refusal of later pane removal keeps
+unavailable changed input copyable and cannot undo the deletion.
+
+elective signout asks before purge/session mutation, makes the document inert
+while pending, then arms a one-shot immediately before form submission. the first
+unload consumes it; observable failure or `pageshow` restores protection.
+forced account teardown remains unconditional and fences old callbacks.
 
 ## Mobile Viewport And Bottom Geometry
 
@@ -798,8 +896,8 @@ that does not resolve reads as 0.
 `MobileViewportProvider` (`lib/mobileShell/viewport.tsx`) owns two registration
 kinds. Id-keyed bottom surfaces register through
 `registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
-Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
-unavailable notice, and the in-flow workspace feedback slot (registered by its
+Nexus wrapper while the switchboard is closed, the player's stable normal-flow
+outer slot (idle, loaded or unavailable), and the in-flow workspace feedback slot (registered by its
 presentation host). The active mobile pane body registers through
 `registerContentSurface(element)`; mobile renders one pane, so there is one.
 Every cleanup is idempotent, removes the element-local variable and recomputes
@@ -808,9 +906,10 @@ registered element. `useKeyboardReport` (`lib/ui/useKeyboardInset.ts`) reports a
 full-screen task's keyboard inset as a token stack: the newest report wins and
 releasing it restores the one before. `useRootTextEntryFocused()` recognizes a
 focused text-entry target outside modal layers; while it holds, the mounted
-MiniPlayer is hidden/inert and its `"Player"` bottom surface is unregistered;
+player slot is hidden/inert and its `"Player"` bottom surface is unregistered;
 playback continues through system controls. No keyboard inset is reported for
-root text entry.
+root text entry. the expanded player sheet likewise releases the slot and its
+registration; closing it restores both. reader chrome hiding retains both.
 
 Geometry resolves in one ordered measurement pass, because each rectangle can
 only be measured after the write it depends on. The pass resolves the Nexus
@@ -826,7 +925,7 @@ and top-level `visualViewport` resize/scroll share one animation-frame-coalesced
 pass. The `globals.css` defaults equal the empty-registry result, so nothing
 measures before the first registration.
 
-The MiniPlayer stays normal flow. It is a bottom surface that only places
+The player slot stays normal flow. It is a bottom surface that only places
 Nexus and is never added to content clearance: its flow layout already shortens
 every surface above it, and the Nexus rectangle resting on it carries the whole
 protected band, so the Player is counted exactly once.
@@ -929,8 +1028,9 @@ A reader Highlight quote launches chat through a pane-local intent hash
 hash parameters (never ambient `window.location`). Before the send commits the
 hash is reload/navigation safe and excluded from pane identity.
 
-ordinary reader-to-chat and source activation use `Follow`; shifted activation
-uses `Fork`, creating one adjacent pane even when the destination is open.
+reader-to-chat from a selection forks by default (`openAsyncResult`'s
+`disposition: "Fork"`), creating one adjacent pane even when the destination is
+open; source activation uses `Follow`, and shifted activation `Fork`.
 on a successful run the feature
 route-`replace`s to consume the provisional history entry, so Back cannot
 rehydrate a completed intent.

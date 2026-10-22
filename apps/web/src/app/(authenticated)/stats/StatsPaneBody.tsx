@@ -11,7 +11,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import Input from "@/components/ui/Input";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
@@ -466,6 +466,7 @@ function Sessions(props: {
   onExclude: (row: Session) => void;
 }) {
   const { sessions, correcting } = props;
+  const section = useRef<HTMLDivElement>(null);
   const exclude = (row: Session) =>
     row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu
@@ -488,34 +489,30 @@ function Sessions(props: {
       description="Server-derived sessions; time is clipped to this range."
       scope={props.data.activity}
     >
-      <Table
-        head={["Session", "Active time", "Movement"]}
-        rows={sessions.items.map((row) => [
-          sessionKey(row),
-          <SessionCell
-            key="session"
-            title={<WorkLink mediaId={row.media_id} title={row.title} />}
-            row={row}
-            action={exclude(row)}
-          />,
-          duration(row.active_ms),
-          movement(row.forward_word_position, row.forward_media_position_ms),
-        ])}
-      />
-      {sessions.failure !== null ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: sessions.failure.op === "More" ? "more sessions couldn’t load" : sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
-          announcement="Polite"
-          actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
+      <div ref={section} tabIndex={-1} role="group" aria-label="sessions">
+        <Table
+          head={["Session", "Active time", "Movement"]}
+          rows={sessions.items.map((row) => [
+            sessionKey(row),
+            <SessionCell
+              key="session"
+              title={<WorkLink mediaId={row.media_id} title={row.title} />}
+              row={row}
+              action={exclude(row)}
+            />,
+            duration(row.active_ms),
+            movement(row.forward_word_position, row.forward_media_position_ms),
+          ])}
         />
-      ) : (
-        <LoadMoreFooter
-          hasMore={sessions.current && !sessions.complete}
-          loading={sessions.running === "More"}
-          onLoadMore={sessions.more}
-          label="Load more sessions"
-        />
-      )}
+        {sessions.failure !== null && sessions.failure.op !== "More" ? (
+          <FeedbackNotice
+            content={{ tone: "Warning", title: sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
+            announcement="Polite"
+            actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
+          />
+        ) : null}
+        <CollectionExhaustionNotice list={sessions} unit={{ singular: "session", plural: "sessions" }} returnFocus={() => section.current} />
+      </div>
     </Section>
   );
 }
@@ -881,8 +878,7 @@ export default function StatsPaneBody() {
     key: query === null ? null : `/consumption/sessions?${query}`,
     stale,
     pageSize: 50,
-    drain: false,
-    active: isActive,
+    active: isActive && view.view !== "year" && stats.status === "ready" && stats.data.activity.totals.active_ms > 0,
     visit: SESSIONS,
     id: sessionKey,
     fetchPage: async (cursor, limit, signal) => {
