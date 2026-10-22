@@ -59,13 +59,12 @@ static gate or application edits during an invocation. see `./scripts/lab --help
 the lab builds or reuses the canonical web production package, including its
 public assets, then serves a private standalone runtime without hot reload.
 build constants match the server's public key, exact loopback origin and source
-sha; each server receives a fresh closed runtime environment. readiness establishes service health and
-identity; the driver owns assertions and deadlines. exit zero alone proves only
+sha; each server receives a fresh closed runtime environment. readiness establishes
+service health and identity; the driver owns assertions and deadlines. exit zero alone proves only
 what that driver actually checked. teardown removes generated worker images with
 `down --rmi local`. cleanup checks the host-wide `nexus-lab-*` image namespace;
 any remaining image makes an otherwise successful run exit 125 and retains its
-private recovery inputs. current checkout runs create no per-run images; old
-tags and images from older still-running labs fail this check until removed.
+private recovery inputs. current checkout runs create no per-run images.
 
 auth teardown and recorded recovery share `python/scripts/lab_auth_cleanup.py`:
 list exact `com.supabase.cli.project=<auth project>` containers in all states,
