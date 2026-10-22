@@ -41,6 +41,9 @@ X_API_AUTHOR_THREAD_MAX_POSTS=1000
 
 # OpenAI remains the transcript-embedding credential.
 OPENAI_API_KEY=<openai-api-key>
+# Optional verified provider gateway origins and additional public CA roots.
+# PROVIDER_ENDPOINT_OVERRIDES='{"openai":"https://gateway.example.net"}'
+# PROVIDER_CA_PEM="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 
 # Provider generation is backend-only. The configured provider list is closed
 # and every listed provider must have exactly its dedicated credential.

@@ -52,6 +52,8 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
     )
     from provider_runtime.errors import CredentialMissing
 
+    from nexus.provider_http import provider_ssl_context
+
     inputs = tuple(str(text or "").strip() for text in texts)
     if not inputs:
         return []
@@ -66,8 +68,14 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
     )
 
     async def embed() -> list[list[float]]:
-        async with httpx.AsyncClient(trust_env=False) as client:
-            runtime = ProviderRuntime(Credentials(openai=credential.key), http_client=client)
+        async with httpx.AsyncClient(
+            trust_env=False, verify=provider_ssl_context(settings.provider_ca_pem)
+        ) as client:
+            runtime = ProviderRuntime(
+                Credentials(openai=credential.key),
+                http_client=client,
+                endpoint_overrides=settings.provider_endpoint_overrides,
+            )
             response = await runtime.embed(call, credential=credential)
         vectors = [[float(value) for value in vector] for vector in response.embeddings]
         if len(vectors) != len(inputs) or any(

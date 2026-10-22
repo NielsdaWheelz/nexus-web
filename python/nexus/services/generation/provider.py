@@ -108,7 +108,11 @@ def build_provider_runtime(settings: Settings, client: httpx.AsyncClient) -> Pro
         provider: cast(Any, settings.generation_api_key(provider)).get_secret_value()
         for provider in configured
     }
-    return ProviderRuntime(Credentials(**credentials), http_client=client)
+    return ProviderRuntime(
+        Credentials(**credentials),
+        http_client=client,
+        endpoint_overrides=settings.provider_endpoint_overrides,
+    )
 
 
 async def run_provider(

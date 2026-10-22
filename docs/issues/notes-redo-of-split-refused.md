@@ -66,5 +66,7 @@ instead of applied.
 resolved when: both journeys pass a 20-run repeat under the calibrated client cpu throttle
 ([lab-host-budget](lab-host-budget.md) §5) and their `xfail` goes. calibration first proves the
 throttle reproduces this failure on the base sha (at least 5 of 20). until that instrument
-lands, the operative check remains the earlier form: `REPEAT=20`, prefixes
-`notes/N2.undo-redo-across notes/N2.undo-split`, load average above 10.
+is calibrated, there is no replacement load acceptance. host burners and load-average
+thresholds are retired; the measurements above remain historical evidence.
+calibration and the 20-run repeats remain deferred to slice 6, after the operator
+resize window. ask for owner approval before running them.

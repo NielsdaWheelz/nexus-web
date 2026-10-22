@@ -1,19 +1,10 @@
 // temporary cases consume only the runtime's published context. playwright owns
 // its artifact subdirectory; each case receives a fresh authenticated context.
-import { readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { defineConfig } from "@playwright/test";
+import { readLabContext } from "./context";
 
-const contextPath = process.env.NEXUS_LAB_CONTEXT;
-if (!contextPath || !isAbsolute(contextPath))
-  throw new Error("playwright requires an absolute nexus_lab_context path");
-// justify-type-assertion: the runtime publishes this private same-system context only after
-// readiness and browser bootstrap; the runtime owns the complete context schema.
-const context = JSON.parse(readFileSync(contextPath, "utf8")) as {
-  web_origin: string;
-  browser_state_file: string;
-  artifacts_dir: string;
-};
+const context = readLabContext();
 
 export default defineConfig({
   testDir: resolve(__dirname, "../../.nexus-lab/cases"),
