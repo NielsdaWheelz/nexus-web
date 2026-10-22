@@ -228,13 +228,13 @@ export function useSelectionComposer(input: {
       }));
     }
   }, [drafts, store, writing]);
-  const keep = (entry: ComposerDraft, referenceBase?: NoteEdit["referenceBase"]) => {
+  const keep = (entry: ComposerDraft, editBase?: NoteEdit["editBase"]) => {
     const revision = entry.revision;
     store.update(entry.id, value => ({ ...value, status: "saving…" }));
     void journalFor(entry).then(async handle => {
       const saved = readDraft(handle.draft_id);
       if (!saved) throw new Error("the passage draft is no longer open");
-      await checkpoint(handle, saved.revision, { kind: "body", body_pm_json: entry.body.body_pm_json }, entry.selection, null, null, referenceBase?.consumed_reference ?? null);
+      await checkpoint(handle, saved.revision, { kind: "body", body_pm_json: entry.body.body_pm_json }, entry.selection, null, null, editBase?.consumed_reference ?? null);
       store.update(entry.id, value => value.revision === revision ? { ...value, status: "draft saved on this device" } : value);
     }).catch(() => store.update(entry.id, value => ({ ...value, status: null,
       issue: { kind: "Failed", message: "recent changes are only in this tab. keep it open or download your writing." } })));
@@ -924,7 +924,7 @@ export function useSelectionComposer(input: {
       if (draft) store.update(draft.id, (entry) => ({ ...entry, body: edit.after, revision: entry.revision + 1,
         selection: edit.selectionAfter, history: recordNoteBodyEdit(entry.history, edit), status: null }));
       const changed = draft && get(draft.id);
-      if (changed) keep(changed, edit.referenceBase);
+      if (changed) keep(changed, edit.editBase);
     },
     selection(selection: NoteEdit["selectionAfter"]) { if (draft) store.update(draft.id, (entry) => ({ ...entry, selection })); },
     historyBoundary() { if (draft) store.update(draft.id, (entry) => ({ ...entry, history: { ...entry.history, group: entry.history.group + 1 } })); },

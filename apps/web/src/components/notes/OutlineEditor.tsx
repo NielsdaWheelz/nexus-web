@@ -1,7 +1,7 @@
 "use client";
 
 // Route chrome and page/day publication surround the shared outline surface.
-import { useCallback, useEffect, useId, useMemo, useSyncExternalStore, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { readWriting, subscribeWriting } from "@/lib/notes/journal";
 import { Plus } from "lucide-react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
@@ -17,7 +17,7 @@ import { OutlineSessionScope } from "@/components/resources/ResourceOutlineList"
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { Row } from "@/lib/notes/outline";
-import { flushText, readText, useText } from "@/lib/notes/texts";
+import { flushText, readText, useText, type TextEditBase } from "@/lib/notes/texts";
 import type { Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import {
@@ -166,7 +166,7 @@ export default function OutlineEditor({
       >
         <div className={styles.masthead}>
           {source.content.kind === "page" ? (
-            <PageTitle outline={outline} textRef={source.item.ref} filtering={filtering} titleRef={titleRef} />
+            <PageTitle key={source.item.ref} outline={outline} textRef={source.item.ref} filtering={filtering} titleRef={titleRef} />
           ) : (
             <CanonicalNoteEditor
               session={session}
@@ -266,14 +266,40 @@ function PageTitle({ outline, textRef, filtering, titleRef }: {
 }) {
   const text = useText(textRef);
   const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
+  const composing = useRef<TextEditBase | null>(null);
+  const [preedit, setPreedit] = useState<string | null>(null);
+  const editable = !paused && text?.ready === true && !filtering && outline.session.activeReference === null;
+  const commitTitle = (value: string, editBase?: TextEditBase) => {
+    setPreedit(null);
+    if (editable && !readWriting().paused && readText(textRef)?.value !== value) outline.setTitle(value, editBase);
+  };
   return <>
     <input ref={titleRef} className={styles.title} aria-label="Page title" maxLength={200}
-      value={typeof text?.value === "string" ? text.value : ""}
-      readOnly={paused || text?.ready !== true || filtering || outline.session.activeReference !== null}
-      onBlur={() => flushText(textRef)}
-      onChange={event => { if (!readWriting().paused && text?.ready) outline.setTitle(event.currentTarget.value); }}
+      value={preedit ?? (typeof text?.value === "string" ? text.value : "")}
+      readOnly={!editable}
+      onBlur={() => { if (composing.current === null) flushText(textRef); }}
+      onCompositionStart={event => {
+        if (!editable || readWriting().paused) return;
+        composing.current = { value: event.currentTarget.value, acknowledged: readText(textRef)?.acked ?? null, consumed_reference: null };
+        setPreedit(event.currentTarget.value);
+      }}
+      onCompositionEnd={event => {
+        const input = event.currentTarget;
+        const before = composing.current;
+        window.setTimeout(() => {
+          if (!input.isConnected || composing.current !== before) return;
+          composing.current = null;
+          if (input.readOnly || readWriting().paused || input.value === before?.value) setPreedit(null);
+          else commitTitle(input.value, before ?? undefined);
+        }, 0);
+      }}
+      onChange={event => {
+        if (!editable || readWriting().paused) return;
+        if (composing.current !== null || (event.nativeEvent instanceof InputEvent && event.nativeEvent.isComposing)) setPreedit(event.currentTarget.value);
+        else commitTitle(event.currentTarget.value);
+      }}
       onKeyDown={event => {
-        if (readWriting().paused || !text?.ready || event.key !== "Enter" || event.shiftKey || event.repeat || event.nativeEvent.isComposing || filtering || outline.session.activeReference !== null) return;
+        if (readWriting().paused || !text?.ready || composing.current !== null || event.key !== "Enter" || event.shiftKey || event.repeat || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || filtering || outline.session.activeReference !== null) return;
         event.preventDefault();
         const row = outline.rows[0];
         if (row) outline.session.focusRow(row.key, "end", row.link.target.content.kind === "note" ? "text" : "reference");

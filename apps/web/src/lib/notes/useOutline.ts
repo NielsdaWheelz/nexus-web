@@ -496,16 +496,16 @@ export function useOutline(input: {
           }
         : { kind: "resource" as const, ref: owner };
     },
-    setTitle(title: string) {
+    setTitle(title: string, editBase?: store.TextEditBase) {
       if (root === null || readWriting().paused) return;
       if (input.creation && !creationPublished) {
-        store.editText(root, title);
+        store.editText(root, title, editBase);
         const publication = pagePublication(input.creation);
         store.setCreator(root, publication);
         store.setCreator(model.noteRef(input.creation.note_id), publication);
         return;
       }
-      store.editText(root, title);
+      store.editText(root, title, editBase);
       if (latent && proposed) showDraft(proposed);
     },
   };

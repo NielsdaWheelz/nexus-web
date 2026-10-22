@@ -222,7 +222,6 @@ let releaseObserver: LockRelease | null = null;
 let runtimeId: string | null = null;
 let releaseSignOut: LockRelease | null = null;
 let releaseExclusive: LockRelease | null = null;
-let verifyAccount: (() => Promise<string | null>) | null = null;
 let attempt: AbortController | null = null;
 let attemptFinished: Promise<void> = Promise.resolve();
 let signOutReview: { choice: "sync" | "download" | "discard"; fingerprint: string } | null = null;
@@ -863,7 +862,6 @@ async function startRuntime(account_id: string, authenticatedAccount: () => Prom
   await stopRuntime();
   if (request_id !== lifecycleRequest) throw new WritingDecisionError("writing startup was superseded");
   state = { ...state, account_id, paused: true, storage_error: null };
-  verifyAccount = authenticatedAccount;
   const starting = epoch;
   let authenticated = false;
   let ownLease: LockRelease | null = null;
@@ -918,17 +916,12 @@ async function stopRuntime(): Promise<void> {
   terminalResults.clear(); consumingResults.clear(); publishedResults.clear();
   admittedObservers.clear(); lastExport = null;
   cleanBranches.clear(); cleaningBranches.clear(); branchReady.clear();
-  verifyAccount = null;
   state = { account_id: null, drafts: [], outbox: [], incompatible: [], storage_error: null, paused: true, persistent: null };
   publish();
 }
 export function pauseWriting(): void {
   lifecycleRequest += 1;
   admissionStopped = true; state = { ...state, paused: true }; attempt?.abort(); publish();
-}
-export async function resumeWriting(): Promise<void> {
-  if (verifyAccount === null || await verifyAccount() !== state.account_id) return;
-  admissionStopped = false; state = { ...state, paused: false }; publish();
 }
 function ownsDraft(handle: DraftHandle): boolean {
   return handles.get(handle.draft_id) === handle && (releases.has(handle.draft_id) || branchReady.has(handle.draft_id));

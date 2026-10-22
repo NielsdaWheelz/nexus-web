@@ -19,7 +19,7 @@ import { bodyHasContent, emptyBody, parseBody, sameBody, type NoteBody } from ".
 import { fetchNote } from "./api";
 import {
   admitWriting, adoptDraftRead, captureLane, checkpoint, claimDraft, creationDependency, discardDraft, draftDependency, draftIsCleanSeed, draftIsDurable, expediteDraft,
-  observeWritingIntent, openDraft, openFreshDraft, readDraft, readWriting, resolveDraftConflict, snapshotDraft,
+  observeWritingIntent, openDraft, openFreshDraft, readDraft, readWriting, releaseDraft, resolveDraftConflict, snapshotDraft,
   stageDraft, subscribeDraft, subscribeWriting, subscribeWritingAcknowledgements, subscribeWritingBindings,
   updateDraftContext,
   type AuthoredSnapshot, type ConflictShown, type DraftBase, type DraftContext, type DraftHandle, type DraftShown,
@@ -31,9 +31,9 @@ import { nudgeWrites } from "./writes";
 
 export type TextValue = NoteBody | string;
 interface Saved { readonly value: TextValue; readonly version: number }
-export interface ReferenceBase {
-  readonly value: NoteBody;
-  readonly acknowledged: { readonly value: NoteBody; readonly version: number } | null;
+export interface TextEditBase {
+  readonly value: TextValue;
+  readonly acknowledged: Saved | null;
   readonly consumed_reference: ReferenceConsumption | null;
 }
 export type TextWritingState = "saving" | "local_syncing" | "local_offline" | "synced" | "uncertain" | "memory_only" | "draft" | "blocked";
@@ -333,7 +333,7 @@ function persist(ref: string, explicit: boolean, consumed_reference: ReferenceCo
       rememberBranch(ref, handle);
       const pageRef = intent.kind === "page" ? `page:${intent.request.id}` : intent.kind === "insert_note" && intent.request.source.kind === "daily_page" ? `page:${intent.request.source.page_id}` : null;
       const authored = pageRef !== null && texts.has(pageRef)
-        ? snapshotText(pageRef).then(title => [snapshot, title]) : [snapshot];
+        ? (intent.kind === "page" ? snapshotPageTitle(intent) : snapshotText(pageRef)).then(title => [snapshot, title]) : [snapshot];
       const admitted = admitWriting(intent, authored, consumed_reference);
       update(ref, { creationIntent: entry(ref).creationIntent || entry(ref).acked === null });
       await admitted.durable;
@@ -344,20 +344,44 @@ function persist(ref: string, explicit: boolean, consumed_reference: ReferenceCo
   })().catch(() => { if (textEntry(ref)?.opening === current.opening) update(ref, { failure: {}, writingState: "memory_only", durable: false }); })
     .finally(() => { if (textEntry(ref)?.opening === current.opening) { update(ref, { pending: Math.max(0, entry(ref).pending - 1) }); refreshState(ref); } });
 }
-export function editText(ref: string, value: TextValue, referenceBase?: ReferenceBase, selection: DraftSelection = null): void {
+export function editText(ref: string, value: TextValue, editBase?: TextEditBase, selection: DraftSelection = null): void {
   const current = entry(ref);
   if (current.handle === null || readWriting().paused) throw new Error("the local authoring branch is not ready for editing");
   let conflict = current.conflict;
   let acked = current.acked;
-  if (referenceBase) {
-    const original = referenceBase.acknowledged;
+  let released: DraftHandle | null = null;
+  if (editBase) {
+    let original = editBase.acknowledged;
+    // Exact current desired content needs no write and authorizes no other work.
+    if (current.acked !== null && same(value, current.acked.value)) original = current.acked;
+    // A pending edit can be acknowledged while the next composition remains
+    // local. Only its exact desired fact may advance the captured authority;
+    // a later canonical read alone cannot do so.
+    if (current.acked !== null && same(current.acked.value, editBase.value)) {
+      const accepted = current.acked;
+      const lane = typeof value === "string" ? "title" : "body";
+      const from = original?.version ?? 1;
+      if (readDraft(current.handle.draft_id)?.results.some(result => result.ack.absolute_versions.some(fact =>
+        fact.kind === "desired" && fact.ref === canonicalTextRef(ref) && fact.lane === lane && fact.from_version === from && fact.version === accepted.version))) original = accepted;
+    }
     const changed = current.acked !== null && (original === null || current.acked.version !== original.version || !same(current.acked.value, original.value));
-    if (!same(current.value, referenceBase.value) && !same(current.value, value) && dirty(current)) conflict = { origin: "local", value: current.value };
+    if (!same(current.value, editBase.value) && !same(current.value, value) && dirty(current)) conflict = { origin: "local", value: current.value };
     else if (changed && current.acked) conflict = { origin: "server", ...current.acked };
     acked = original;
   }
+  // The clean owner may have adopted a foreign value during local preedit. A
+  // fresh authored branch preserves its captured base without rewriting that
+  // confirmed row. The editor and resource keep their existing identities.
+  if (editBase && current.conflict === null && conflict?.origin === "server" && !dirty(current) && current.pending === 0 && current.failure === null && readWriting().storage_error === null &&
+    !readWriting().outbox.some(row => row.authored.some(item => item.draft_id === current.handle!.draft_id))) {
+    const handle = openFreshDraft(context(canonicalTextRef(ref), value, null), valueOf(value), acked === null ? null : { value: valueOf(acked.value), version: acked.version });
+    released = current.handle;
+    update(ref, { handle, opening: Promise.resolve(handle), creator: null, creationIntent: false, awaitingCreator: false });
+    subscribeDraft(handle.draft_id, () => receiveDraft(ref, handle));
+  }
   update(ref, { value, acked, conflict, selection, localRevision: current.localRevision + 1,
-    awaitingCreator: current.acked === null && current.creator === null && typeof value !== "string" && bodyHasContent(value) }); persist(ref, false, referenceBase?.consumed_reference ?? null);
+    awaitingCreator: current.acked === null && current.creator === null && typeof value !== "string" && bodyHasContent(value) }); persist(ref, false, editBase?.consumed_reference ?? null);
+  if (released !== null) void releaseDraft(released).catch(reportError);
 }
 export function replaceText(ref: string, value: TextValue): void {
   if (entry(ref).handle === null || readWriting().paused) throw new Error("the local authoring branch is not ready for editing");
@@ -376,6 +400,14 @@ export async function snapshotText(ref: string): Promise<AuthoredSnapshot> {
   stageDraft(handle, value, current.selection);
   rememberBranch(ref, handle);
   return snapshotDraft(handle);
+}
+/** Publication owns the default title; its carried snapshot must name that value. */
+export function snapshotPageTitle(publication: Extract<Publication, { kind: "page" }>): Promise<AuthoredSnapshot> {
+  const ref = `page:${publication.request.id}`;
+  const current = entry(ref);
+  if (current.acked === null && typeof current.value === "string" && !current.value.trim() && current.value !== publication.request.title)
+    carryText(ref, publication.request.title);
+  return snapshotText(ref);
 }
 export function textDraft(ref: string): DraftHandle | null { return textEntry(ref)?.handle ?? null; }
 export async function restoreTextDraft(ref: string, id: string): Promise<boolean> {
@@ -446,7 +478,8 @@ export function materializeText({ ref, body }: { ref: string; body: NoteBody }):
   carryText(ref, body);
   const publication = publicationWithBody(current.creator, body);
   const pageRef = publication.kind === "page" ? `page:${publication.request.id}` : publication.kind === "insert_note" && publication.request.source.kind === "daily_page" ? `page:${publication.request.source.page_id}` : null;
-  const authored = snapshotText(ref).then(async snapshot => pageRef !== null && textEntry(pageRef) ? [snapshot, await snapshotText(pageRef)] : [snapshot]);
+  const title = pageRef !== null && textEntry(pageRef) ? publication.kind === "page" ? snapshotPageTitle(publication) : snapshotText(pageRef) : null;
+  const authored = title === null ? snapshotText(ref).then(snapshot => [snapshot]) : Promise.all([snapshotText(ref), title]);
   const admitted = admitWriting(publication, authored);
   update(ref, { creationIntent: true });
   return admitted;

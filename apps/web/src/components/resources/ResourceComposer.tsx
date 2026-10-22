@@ -161,12 +161,12 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
     if (currentSaved && !composing.current) onSaved?.();
   }, [base, canonical, currentSaved, onSaved]);
 
-  const checkpointBody = (value: ComposerDraft, referenceBase?: NoteEdit["referenceBase"]) => {
+  const checkpointBody = (value: ComposerDraft, editBase?: NoteEdit["editBase"]) => {
     draft.set(current => ({ ...current, localCommits: current.localCommits + 1, failure: null }));
     void journalFor(value).then(async opened => {
       const saved = readDraft(opened.draft_id);
       if (!saved) throw new Error("the item draft is no longer open");
-      await checkpoint(opened, saved.revision, { kind: "body", body_pm_json: value.body.body_pm_json }, value.selection, null, null, referenceBase?.consumed_reference ?? null);
+      await checkpoint(opened, saved.revision, { kind: "body", body_pm_json: value.body.body_pm_json }, value.selection, null, null, editBase?.consumed_reference ?? null);
     }).catch(() => draft.set(current => ({ ...current,
       failure: "recent changes are only in this tab. keep it open or download your writing." })))
       .finally(() => draft.set(current => ({ ...current, localCommits: Math.max(0, current.localCommits - 1) })));
@@ -174,7 +174,7 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
   const edit = (change: NoteEdit) => {
     draft.set(value => ({ ...value, body: change.after, selection: change.selectionAfter,
       history: recordNoteBodyEdit(value.history, change), focus: null, revision: value.revision + 1 }));
-    checkpointBody(draft.read(), change.referenceBase);
+    checkpointBody(draft.read(), change.editBase);
   };
   const save = async () => {
     const submitted = draft.read();

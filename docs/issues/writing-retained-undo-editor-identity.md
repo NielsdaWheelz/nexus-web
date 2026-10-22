@@ -21,6 +21,20 @@ empty occurrence uses its resource key so zooming still resets it. canonical
 reference/query authority remains current through the existing handler refs.
 each focus serial is consumed once per view. awaiting live qualification.
 
+run17 (`ad7815f03`, `20261021-170114-42049dd78ecb`) still disconnects the
+original child in both variants. the edge occurrence and parent remain stable;
+the successor now reaches canonical storage without a false conflict, and a
+different canonical body still refuses its write. the remaining replacement
+owner is unproven. the next temporary case records actual ancestor removals and
+body-mode changes; do not patch another guessed lifetime dependency.
+
+lab17 (`ad7815f03`, `20261021-170114-42049dd78ecb`) still disconnects the child
+in both variants. its fresh-link occurrence key remains unchanged and the parent
+remains connected. journal delivery, rich successor preservation and the genuine
+historical-mismatch refusal now pass. the remaining ancestor/body-mode handoff
+is not localized; the next temporary case captures passive ancestor identities
+and removal/addition records without changing the acceptance assertions.
+
 resolved when a real held-remove → undo → rich successor → acknowledgement
 journey retains the same child editor, focus, native selection and session
 history while adopting the canonical note. preserve real navigation resets.

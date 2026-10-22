@@ -59,6 +59,7 @@ export default function CanonicalNoteEditor({
         occurrenceKey={occurrence.key}
         containingNoteRef={text.acked === null ? null : occurrence.noteRef}
         body={body}
+        editBase={{ value: body, acknowledged: text.acked, consumed_reference: null }}
         revision={text.revision}
         editable={canEdit}
         label={label.startsWith("edit note:") ? `edit note: ${body.body_text.split("\n")[0] || "note"}` : label}

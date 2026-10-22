@@ -7,7 +7,7 @@ import type { Schema } from "@/lib/api/wire";
 import { ApiError } from "@/lib/api/client";
 import type { OutlinePosition } from "@/lib/notes/outline";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
-import { readText, type ReferenceBase } from "@/lib/notes/texts";
+import { readText, type TextEditBase } from "@/lib/notes/texts";
 import { admitWriting, captureLane, checkpoint, claimDraft, openDraft, openFreshDraft, readDraft, readWriting, releaseDraft, subscribeDraft, resetDraftSeed, updateDraftContext, stageDraft, type AuthoredSnapshot, type DraftContext, type DraftHandle, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/journal";
 import type { ResourceItem } from "@/lib/resources/items";
 import {
@@ -44,7 +44,7 @@ type State = {
   message: string | null;
   raw: string;
   base: NoteBody;
-  referenceBase: ReferenceBase | null;
+  editBase: TextEditBase | null;
   host: ReferenceInputHost;
   selected: string | null;
   selectionQuery: string;
@@ -150,7 +150,7 @@ export function useReferenceInput(
       const acknowledged = saved.base?.value.kind === "body" && typeof saved.base.version === "number"
         ? { value: parseBody(saved.base.value.body_pm_json), version: saved.base.version } : null;
       draft.set(value => ({ ...value, ready: true, state: { raw, base: body,
-        context, host, referenceBase: host.textRef ? { value: body, acknowledged, consumed_reference: null } : null,
+        context, host, editBase: host.textRef ? { value: body, acknowledged, consumed_reference: null } : null,
         message: null, selected: null, selectionQuery: "" } }));
     };
     if (fresh !== null) adopt(fresh);
@@ -292,7 +292,7 @@ export function useReferenceInput(
           context, message: null,
           raw: "@",
           base,
-          referenceBase: host.textRef
+          editBase: host.textRef
             ? {
                 value: base,
                 consumed_reference: null,

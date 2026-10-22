@@ -72,6 +72,9 @@ reach the generated bundles. each build pays the full compilation cost.
   episode's https enclosure and the signed storage url a reading copy names;
   it accepts no renderer-supplied URL,
   path, headers, credentials, or filesystem location.
+  the same listener accepts hosted-origin-only writing recovery exports.
+  `MainActivity` owns the system document picker; `offline/WritingExport.kt`
+  writes only that picked document, accepting no renderer-supplied path or uri.
 - `apps/android/app/src/main/java/.../ShareActivity.kt` owns the
   system-share-sheet capture entry: the `ACTION_SEND` intent filter and the
   `nexus-share://` scheme it intercepts to hand off to MainActivity.

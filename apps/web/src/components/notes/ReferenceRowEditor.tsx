@@ -74,6 +74,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const compositionBase = useRef<string | null>(null);
   const inserting = useRef(false);
   const focusedSerial = useRef<number | null>(null);
   const latest = useRef(props);
@@ -154,6 +155,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   useLayoutEffect(() => {
     const element = host.current;
     if (!element) return;
+    compositionBase.current = null;
     const initial =
       referenceRef.current.getState()?.raw ?? draftRef.current.read().text;
     const doc = documentWith(initial);
@@ -431,14 +433,19 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
           latest.current.history.boundary();
           return false;
         },
-        compositionstart() {
+        compositionstart(current) {
+          compositionBase.current ??= current.state.doc.firstChild!.textContent;
           latest.current.history.boundary();
           return false;
         },
         compositionend(current) {
           window.setTimeout(() => {
-            if (current.isDestroyed || current.composing || !latest.current.editable || readWriting().paused) return;
+            if (current.isDestroyed || current.composing) return;
+            const before = compositionBase.current; compositionBase.current = null;
+            if (!latest.current.editable || readWriting().paused) return;
             const text = current.state.doc.firstChild!.textContent;
+            if (text === before) return;
+            draftRef.current.set(previous => ({ ...previous, text, failure: null }));
             if (referenceRef.current.getState()) {
               referenceRef.current.edit(text);
               if (!text.startsWith("@")) handlers.current.literal(current);
@@ -454,13 +461,13 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         const state = view.state.apply(transaction);
         view.updateState(state);
         if (!transaction.docChanged) return;
+        if (view.composing || compositionBase.current !== null) return;
         const text = state.doc.firstChild!.textContent;
         draftRef.current.set((previous) => ({
           ...previous,
           text,
           failure: null,
         }));
-        if (view.composing) return;
         const input = referenceRef.current;
         const intent = input.getState();
         if (intent) {
@@ -485,7 +492,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
     const view = viewRef.current;
     if (!view) return;
     view.setProps({});
-    if (view.composing) return;
+    if (view.composing || compositionBase.current !== null) return;
     const raw = reference.state?.raw;
     if (raw !== undefined && view.state.doc.firstChild!.textContent !== raw) {
       const doc = documentWith(raw);

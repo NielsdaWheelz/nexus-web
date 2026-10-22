@@ -7,7 +7,6 @@
  * Presentation listeners run after the acknowledgement transaction and cannot
  * govern delivery, settlement or retries.
  */
-import { useSyncExternalStore } from "react";
 import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -19,7 +18,6 @@ import {
   type WritingIntent, type WritingPosition, type WritingAck,
 } from "./journal";
 
-export type WriteStatus = "idle" | "saving" | "retrying";
 const REQUEST_DEADLINE_MS = 30_000;
 const RETRY_MIN_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
@@ -34,8 +32,6 @@ const REJECTIONS = new Set([
 ]);
 let running = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
-let status: WriteStatus = "idle";
-const listeners = new Set<() => void>();
 
 export function isWriteRejection(error: unknown): boolean {
   return error instanceof WritingDecisionError ||
@@ -100,13 +96,6 @@ function freeze(intent: WritingIntent): Extract<Dispatch, { kind: "sealed" }> {
   }
   return { kind: "sealed", method, path, body_json: body === null ? null : JSON.stringify(body), wire_revision: WIRE_REVISION };
 }
-function publish(next: WriteStatus): void {
-  if (status === next) return;
-  status = next;
-  for (const listener of listeners) {
-    try { listener(); } catch (error) { reportError(error); }
-  }
-}
 function head(): OutboxRow | null {
   for (const row of readWriting().outbox) {
     if (row.blocked === null || row.uncertain) return row;
@@ -138,7 +127,6 @@ async function attempt(row: OutboxRow, signal: AbortSignal): Promise<void> {
   if (row.dispatch.wire_revision !== WIRE_REVISION) {
     await parkWriting(row, { code: "E_WIRE_MISMATCH", request_id: null, current: null }, false); return;
   }
-  publish("saving");
   const deadline = new AbortController();
   const abort = () => deadline.abort();
   if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
@@ -162,7 +150,7 @@ async function attempt(row: OutboxRow, signal: AbortSignal): Promise<void> {
       const delay = Math.max(retryAfter, RETRY_MIN_MS, Math.round(backoff * (0.5 + Math.random() * 0.5)));
       await updateOutbox({ ...row, uncertain: true, retry_at: Date.now() + delay });
     } else await parkWriting(row, failure, false);
-    publish("retrying"); return;
+    return;
   } finally { clearTimeout(timeout); signal.removeEventListener("abort", abort); }
   await settleWriting(row, ack);
 }
@@ -174,7 +162,7 @@ async function pump(signingOut = false): Promise<void> {
       const state = readWriting();
       const next = head();
       if ((!signingOut && state.paused) || state.storage_error !== null || state.incompatible.length > 0 || next === null) break;
-      if (next.blocked !== null || (typeof navigator !== "undefined" && !navigator.onLine)) { publish("retrying"); break; }
+      if (next.blocked !== null || (typeof navigator !== "undefined" && !navigator.onLine)) break;
       const delay = signingOut ? 0 : delayFor(next);
       if (delay > 0) break;
       let advanced = false;
@@ -190,7 +178,6 @@ async function pump(signingOut = false): Promise<void> {
   } catch (error) { failWritingStorage(error); }
   finally {
     running = false;
-    if (head() === null) publish("idle");
     const next = head();
     if (!signingOut && next !== null && next.blocked === null && delayFor(next) > 0 && !readWriting().paused)
       timer = setTimeout(nudgeWrites, delayFor(next));
@@ -202,10 +189,6 @@ export function nudgeWrites(): void {
 }
 export async function syncForSignOut(token: WritingRuntimeToken): Promise<void> {
   assertWritingRuntimeToken(token); await pump(true); assertWritingRuntimeToken(token);
-}
-export function writesPending(): boolean { return readWriting().outbox.length > 0; }
-export function useWriteStatus(): WriteStatus {
-  return useSyncExternalStore(listener => { listeners.add(listener); return () => void listeners.delete(listener); }, () => status, () => "idle");
 }
 subscribeWriting(nudgeWrites);
 if (typeof window !== "undefined") {

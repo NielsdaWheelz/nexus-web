@@ -21,6 +21,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { readWriting, subscribeWriting } from "@/lib/notes/journal";
+import type { TextEditBase } from "@/lib/notes/texts";
 import { createPortal } from "react-dom";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import {
@@ -77,6 +78,7 @@ import {
   hrefFromInput,
   noteBodySchema as schema,
   inspectionDecorations,
+  sameBody,
   type NoteBody,
 } from "@/lib/notes/noteBody";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/useOutlineSession";
@@ -109,6 +111,7 @@ export interface NoteEditorProps {
   /** The acknowledged note identity; drafts supply null. */
   containingNoteRef: string | null;
   body: NoteBody;
+  editBase?: TextEditBase | null;
   revision: number;
   editable: boolean;
   label: string;
@@ -209,6 +212,8 @@ export default function NoteEditor(props: NoteEditorProps) {
   const compositionBase = useRef<{
     body: NoteBody;
     selection: { anchor: number; head: number };
+    reference: boolean;
+    editBase: TextEditBase | null;
   } | null>(null);
   const completedReference = useRef({
     key: reference.owner,
@@ -246,9 +251,9 @@ export default function NoteEditor(props: NoteEditorProps) {
       selectionBefore: { anchor: 1, head: 1 },
       selectionAfter: selection,
       source: "input",
-      referenceBase: {
+      editBase: {
         value: intent.base,
-        acknowledged: intent.referenceBase?.acknowledged ?? null,
+        acknowledged: intent.editBase?.acknowledged ?? null,
         consumed_reference: consumed,
       },
     });
@@ -691,15 +696,12 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
         compositionstart(current) {
           const block = current.state.doc.firstChild;
-          if (
-            latest.current.reference &&
-            !literalSuppressed.current &&
-            referenceRef.current.getState() === null &&
-            block?.type === schema.nodes.paragraph &&
-            block.content.size === 0
-          )
+          if (block && compositionBase.current === null)
             compositionBase.current = {
               body: bodyFromNode(block),
+              editBase: latest.current.editBase ?? null,
+              reference: Boolean(latest.current.reference) && !literalSuppressed.current &&
+                referenceRef.current.getState() === null && block.type === schema.nodes.paragraph && block.content.size === 0,
               selection: {
                 anchor: current.state.selection.anchor,
                 head: current.state.selection.head,
@@ -714,26 +716,37 @@ export default function NoteEditor(props: NoteEditorProps) {
             if (current.isDestroyed || current.composing) return;
             const original = compositionBase.current;
             compositionBase.current = null;
+            if (!latest.current.editable || readWriting().paused) return;
             if (original) {
               const block = current.state.doc.firstChild!;
+              const committed = bodyFromNode(block);
+              if (referenceRef.current.getState() !== null) {
+                const raw = current.state.doc.textBetween(0, current.state.doc.content.size, "\n", "\n");
+                referenceRef.current.edit(raw);
+                if (!raw.startsWith("@")) literal(current);
+                return;
+              }
               if (
+                original.reference &&
                 block.type === schema.nodes.paragraph &&
                 block.textContent === "@" &&
                 block.childCount === 1 &&
                 block.firstChild?.isText
               )
                 referenceRef.current.begin(original.body);
-              else
+              else if (!sameBody(original.body, committed))
                 latest.current.onEdit({
                   before: original.body,
-                  after: bodyFromNode(block),
+                  after: committed,
                   source: "composition",
+                  ...(original.editBase ? { editBase: original.editBase } : {}),
                   selectionBefore: original.selection,
                   selectionAfter: {
                     anchor: current.state.selection.anchor,
                     head: current.state.selection.head,
                   },
                 });
+              else replaceDoc(current, docFromBody(latest.current.body));
               return;
             }
             if (referenceRef.current.getState() !== null) return;
@@ -897,7 +910,7 @@ export default function NoteEditor(props: NoteEditorProps) {
                 ? "composition"
                 : "input");
           const intent = referenceRef.current.getState();
-          if (intent !== null) {
+          if (intent !== null && compositionBase.current === null) {
             const raw = after.doc.textBetween(
               0,
               after.doc.content.size,
@@ -928,7 +941,7 @@ export default function NoteEditor(props: NoteEditorProps) {
             literalSuppressed.current = false;
         } else if (!before.selection.eq(after.selection))
           latest.current.history?.boundary();
-        if (!before.selection.eq(after.selection))
+        if (compositionBase.current === null && !before.selection.eq(after.selection))
           latest.current.onSelectionChange?.({
             anchor: after.selection.anchor,
             head: after.selection.head,
@@ -949,7 +962,7 @@ export default function NoteEditor(props: NoteEditorProps) {
 
   useLayoutEffect(() => {
     const view = viewRef.current;
-    if (!view || view.composing || referenceRef.current.getState() !== null)
+    if (!view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
       return;
     replaceDoc(view, docFromBody(props.body));
   }, [props.body, props.revision]);

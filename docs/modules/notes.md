@@ -17,7 +17,7 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `POST /notes/pages {id, title, initial_item}` → 201 `WritingAck` | same owner: current identity facts, including retirement; another owner's id: 409 |
 | `DELETE /notes/pages/{id}` → `WritingAck` | idempotent; the page's notes stay |
 | `GET /notes/daily/{date}` → `{local_date, materialized, outline}` | read; writes nothing |
-| `POST /notes/daily/{date}/captures {note_id, link_id, text}` → `WritingAck` | an existing own note must still have its live placement on this date; otherwise 409 |
+| `POST /notes/daily/{date}/captures {note_id, link_id, text}` → `WritingAck` | recognized identities retain their accepted source and retirement; retries never append into a replacement day |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, insertion_source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
 | `POST /resource-graph/commands {commands}` → `WritingAck` | atomic; exact unlink retries converge |
@@ -59,8 +59,8 @@ duplicate ids use the strictest annotation requirement. one transaction removes
 all or none and acknowledges exact removals and changed lanes. the flush-only
 `resource_graph.links.unlink_in_txn` owns removal; only user unlink checks/detaches
 relationship annotations. machine unlink preserves parallel user annotations.
-[structural batch replay](../issues/outline-command-batches-not-retry-safe.md) remains
-separate from preserving unlink.
+body writes cannot target a note removed or consumed by the same batch; admission
+rejects the combination before effects.
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
@@ -153,7 +153,9 @@ write. enter creates a blank note; committed prose seeds that note and hands foc
 to the canonical editor. the explicit continuation names its parent and position:
 ordinary occurrences insert siblings; source-aligned reader roots insert children.
 descendants resume ordinary sibling behavior.
-composition remains local until committed. reference search inserts a sibling
+every composing transaction stays editor-local until commitment; the final rich
+body and selection then checkpoint together. acknowledgement projection waits
+for that composition boundary. reference search inserts a sibling
 link through the existing input controller, never retargeting the current edge.
 acceptance follows the returned occurrence once its editor is rendered, only
 while the submitting editor still owns focus. the next enter continues after it.
@@ -192,6 +194,11 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   acknowledgements adopt confirmed bases without replacing newer input. exact
   per-ref subscriptions keep an unrelated outline out of the keystroke path.
   rich conflicts retain base/local/saved values for an explicit decision.
+  composition carries its starting value and acknowledged version. only an exact
+  owned desired-value receipt can advance that authority; a read cannot. a newer
+  saved value during a clean owner's composition creates a fresh authored branch
+  at commitment, preserving the original rich base and current saved comparison.
+  the resource and editor remain the same. missing causal proof requires review.
 - `journal`: one indexeddb database per account; `drafts` and ordered `outbox`
   stores, with strict transaction durability. persist only authored branches,
   exact bases/context, pending requests and their still-needed causal results.

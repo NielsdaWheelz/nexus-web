@@ -781,7 +781,7 @@ export type Selection =
     }
   | null;
 export interface NoteEdit {
-  referenceBase?: store.ReferenceBase;
+  editBase?: store.TextEditBase;
   before: NoteBody;
   after: NoteBody;
   selectionBefore: {
@@ -2192,7 +2192,8 @@ export function useOutlineSession({
         store.setCreator(creator.noteRef, null);
         const pending: PendingRecord = { key, ref: item.ref, edgeId: linkId, sourceRef: pageRef, item, body: null, position: { after: null, expected_links_version: 1 }, acknowledged: false, generation: null };
         pendingOccurrences.set(linkId, pending);
-        const admitted = admitWriting({ kind: "page", request: { ...request, title: typeof title === "string" && title.trim() ? title : "untitled", initial_item: { kind: "resource", link_id: linkId, target: action.target } } }, Promise.all([store.snapshotText(pageRef), ...(action.authored ? [action.authored] : [])]).then(parts => parts.flat()));
+        const firstPage: Extract<Publication, { kind: "page" }> = { kind: "page", request: { ...request, title: typeof title === "string" && title.trim() ? title : "untitled", initial_item: { kind: "resource", link_id: linkId, target: action.target } } };
+        const admitted = admitWriting(firstPage, Promise.all([store.snapshotPageTitle(firstPage), ...(action.authored ? [action.authored] : [])]).then(parts => parts.flat()));
         pending.proof = { intent_id: admitted.intent_id, draft_id: handle?.draft_id ?? null, requested_link_id: linkId, source_ref: pageRef, version: 1 };
         actions.set(prior => prior.filter(item => item !== action));
         publish();
@@ -2731,7 +2732,7 @@ export function useOutlineSession({
         };
       }
       boundaryNext.current = edit.source !== "input";
-      store.editText(ref, edit.after, edit.referenceBase, edit.selectionAfter);
+      store.editText(ref, edit.after, edit.editBase, edit.selectionAfter);
     },
     splitNote({
       occurrence,
