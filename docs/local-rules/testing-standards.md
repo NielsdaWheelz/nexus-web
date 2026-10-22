@@ -60,7 +60,11 @@ public assets, then serves its standalone entry without hot reload. build and
 server use the same closed environment, exact loopback origin and source sha;
 this adds one production build per run. readiness establishes service health and
 identity; the driver owns assertions and deadlines. exit zero alone proves only
-what that driver actually checked.
+what that driver actually checked. teardown removes generated worker images with
+`down --rmi local`. cleanup checks the host-wide `nexus-lab-*` image namespace;
+any remaining image makes an otherwise successful run exit 125 and retains its
+private recovery inputs. old tags and images from other running labs also fail
+this check until checkout worker image reuse replaces per-run builds.
 
 write temporary integration/live cases for the intended behavior, observe red,
 implement at the owning layer, reach green, review adversarially, refactor and
