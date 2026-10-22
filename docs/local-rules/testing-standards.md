@@ -97,9 +97,8 @@ application/device reset across repeats: a fresh browser context does not reset
 the database.
 
 docker desktop is the sole lab engine (dev-server
-`docs/macbook-capacity-plan.md`, d1). d2 fixes the target at 8 gib and 8 cpus,
-with two concurrent ordinary lab invocations completing end to end as
-acceptance. host cpu burners and host load-average thresholds are retired;
+`docs/macbook-capacity-plan.md`, d1). d2 fixes the target at 8 gib and 8 cpus;
+a lab that fails for memory is the evidence to raise it. host cpu burners and host load-average thresholds are retired;
 historical burner results do not qualify client throttling. ask for owner
 approval before calibration or the 20-run repeats.
 
