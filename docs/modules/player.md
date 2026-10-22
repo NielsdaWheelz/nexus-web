@@ -66,6 +66,9 @@ downloads are adjacent, not player state ([offline](offline.md)).
    reader/player's recovery intact, releasing only the temporary command hold.
    unresolved reader-position conflicts require the existing choice. successful
    writes stay acknowledged even if reconciliation needs owner-local recovery.
+   browser/reader owners enforce this contract; native acknowledgment and outage
+   classification gaps remain tracked in [native fence saves](../issues/native-progress-fence-discards-unconfirmed-samples.md)
+   and [native fence availability](../issues/native-progress-fence-unavailable-classification.md).
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
    play next) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own

@@ -4,10 +4,13 @@ problem: host slots use nonblocking polling without admission order. a newly
 started lab can acquire a released slot before an invocation already waiting;
 repeated arrivals can consume its 1800-second admission budget.
 
-evidence: `python/scripts/disposable_runtime.py:475-506` tries both locks every
+evidence: `python/scripts/disposable_runtime.py:475-506` at `947da8171` tries both locks every
 0.2 seconds. podcast run `20261021-213452-879ea6bd80e0` waited while slot two
 changed from `20261021-212931-9e223d5956e3` to the later
 `20261021-213756-7a4adfde3b93`. no podcast services had started at 21:39 local.
+the same ordering issue recurred with main `61d2d1540` provisioning: waiter
+`20261021-224346-46a7bc7863ad` remained queued while slot two admitted later run
+`20261021-224559-b3152dad36d1`.
 
 impact: bounded host load is preserved, but concurrent qualification can be
 delayed by newer work. this podcast change does not alter lab admission.
