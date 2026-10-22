@@ -40,7 +40,7 @@ index/outline separates collection/search/context browsing from outline editing
 across notes outline, note bodies/editor, notes pages/index, resource items/actions,
 resource graph, wire schemas, libraries/collections, search pane, chat, reader
 connections, workspace and visual primitives. against integrated main `2ae785ba6`,
-authored runtime changes by -1,960 lines (2,051 added, 4,011 deleted), including new files and excluding
+authored runtime changes by -1,961 lines (2,049 added, 4,010 deleted), including new files and excluding
 generated wire, migration and docs. it deletes reference-token editors, branch
 focus/zoom, internal outline dragging, link-note paths and index outline sessions.
 these are scoped feature changes; earlier area totals retain their stated bases.

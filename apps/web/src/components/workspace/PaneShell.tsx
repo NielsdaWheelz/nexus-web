@@ -208,8 +208,7 @@ function PaneView({
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
   const [commandsBottom, setCommandsBottom] = useState(0);
-  const outlineCommands = isActive && !blockedOutline() ? state.outlineCommands : null;
-  function blockedOutline() { return hasActiveInteractionOwner(); }
+  const outlineCommands = isActive && !hasActiveInteractionOwner() ? state.outlineCommands : null;
   useLayoutEffect(() => {
     if (!outlineCommands || !isMobile) {setCommandsBottom(0); return;}
     const measure = () => {

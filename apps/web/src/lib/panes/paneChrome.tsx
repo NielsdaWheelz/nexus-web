@@ -177,7 +177,7 @@ export function createPaneChromeStore(): PaneChromeStore {
 
 export const PaneChromeContext = createContext<PaneChromeStore | null>(null);
 
-function usePublish<K extends "chrome" | "companion" | "layout" | "outlineCommands">(
+function usePublish<K extends "chrome" | "companion" | "layout">(
   key: K,
   value: PaneChromeState[K],
 ): void {
