@@ -269,7 +269,7 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   }), [retryTitles]);
 
   const status = read.key === requestKey ? read.status : "Loading";
-  const forVisit = (visit: PaneVisit): PanePresentation => {
+  const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
     if (route.labelMode === "static") return { title: route.defaultLabel, detail: null, status: "Ready" };
     const kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
@@ -307,7 +307,15 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
     };
     if (live) return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
     return { title: named ?? `untitled ${kind}`, detail: canonical ? metadata(canonical, kind) : kind, status: "Ready" };
-  };
+  }, [read.facts, retained, dailyRefs, status]);
+  const resourceRefForVisit = useCallback((visit: PaneVisit): string | null => {
+    const route = resolvePaneRouteModel(visit.href);
+    const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;
+    return canonical?.resource_ref ?? (route.locator?.kind === "resource_ref" ? route.locator.ref : null);
+  }, [read.facts, retained]);
+  // local titles notify consumers directly; context tracks canonical presentation state.
+  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles }),
+    [forVisit, resourceRefForVisit, retryTitles]);
 
   useEffect(() => {
     for (const pane of state.panes) {
@@ -322,11 +330,7 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   }, [state.panes, read.facts, retained, textRevision, dailyRefs, setVisitTitleHint]);
 
   return (
-    <Context value={{ forVisit, retryTitles, resourceRefForVisit(visit) {
-      const route = resolvePaneRouteModel(visit.href);
-      const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;
-      return canonical?.resource_ref ?? (route.locator?.kind === "resource_ref" ? route.locator.ref : null);
-    } }}>
+    <Context value={value}>
       {requestKey !== null ? (
         <TitleReadBoundary key={requestKey} requestKey={requestKey} failed={failed}>
           <TitleRead requestKey={requestKey} locators={locators} watches={watches} publish={publish} />
@@ -339,6 +343,11 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
 
 export function useWorkspacePresentations(): Presentations {
   const value = useContext(Context);
-  if (!value) throw new Error("workspace presentations require their account provider");
-  return value;
+  const revision = useTextTitleRevision();
+  const presentations = useMemo(() => {
+    void revision;
+    return value === null ? null : { ...value };
+  }, [value, revision]);
+  if (!presentations) throw new Error("workspace presentations require their account provider");
+  return presentations;
 }
