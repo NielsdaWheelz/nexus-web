@@ -2,8 +2,9 @@
 
 status: partially implemented · 2026-10-21 · area: disposable verification,
 campaigns, local images. checkout worker images (§2), teardown ownership (§3),
-and ordinary host admission (§4) are implemented. runtime/campaign consolidation,
-exclusive admission, throttling, web build reuse and operator maintenance remain.
+ordinary host admission (§4), and web reuse with fresh data (§6) are implemented.
+runtime/campaign consolidation, exclusive admission, throttling and other
+operator maintenance are still open.
 
 this record is the change's specification. the repository commits no plans, so the
 implementing change moves the contracts below into
@@ -22,8 +23,6 @@ with 30 gib held compressed. docker desktop (24 gib, all cpus) and a campaign
 colima vm (12 gib, 6 cpus) ran side by side. the docker vm wrote 231 gb in 28 h.
 
 the causes are recorded separately:
-- [lab-worker-image-leak](lab-worker-image-leak.md)
-- [lab-web-build-per-run](lab-web-build-per-run.md)
 - [lab-host-slots](lab-host-slots.md)
 - [campaign-load-instrument](campaign-load-instrument.md)
 - [campaign-harness-unowned](campaign-harness-unowned.md)
@@ -104,10 +103,11 @@ only:
 ### 3. teardown owns its images (macbook-capacity d8)
 
 implemented. with §2, runs create no per-run images. the lab's cleanup verification
-(`disposable_runtime.py:935-953`) adds images to the containers, volumes and
-networks it already checks: `docker image ls -q --filter reference='nexus-lab-*'`
-must be empty, or cleanup fails with 125. normal and recorded recovery
-teardown use `down --rmi local`. existing tags still require operator maintenance.
+checks images alongside containers, volumes and networks:
+`docker image ls -q --filter reference='nexus-lab-*'` must be empty, or cleanup
+fails with 125. normal and recorded recovery teardown use `down --rmi local`.
+the old per-run tags have been removed after operator approval and verification
+of container references.
 
 ### 4. host-wide slots (macbook-capacity d3)
 
@@ -158,16 +158,16 @@ ordinary admission is implemented. exclusive acquisition ships with its real
 
 ### 6. evaluated options
 
-- reuse `.next` per sha: recommended second, after §2. derive ports from the slot
+- reuse `.next` per sha: implemented. derive ports from the slot
   index (checked free), keep the publishable key stable per checkout under
   `.nexus-local/`, and reuse the build when sha, clean `apps/web`, slot and key
   match. data stays fresh; only topology repeats.
-  - this replaces testing-standards' "one production build per run".
   - runtime-injected public config would change production config to serve a
     test, which is a test-only seam. rejected.
-  - see [lab-web-build-per-run](lab-web-build-per-run.md).
+  - [reusable web package and fresh data](../local-rules/testing-standards.md#reusable-web-package-and-fresh-data)
+    owns the cache, runtime filesystem and invalidation contracts.
 - lab postgres on tmpfs with `fsync=off`, `synchronous_commit=off` and
-  `full_page_writes=off`: yes, a small win.
+  `full_page_writes=off`: implemented.
   - it lives in a lab-only compose override that drops the named volume with
     `volumes: !reset []`.
   - it saves about 55-85 mb of writes per run and costs that much vm memory.
@@ -209,8 +209,9 @@ these are updated or retired in the implementing change:
 
 ## from the maintenance window (macbook-capacity d6)
 
-- operator-confirmed removal of existing `nexus-lab-*` worker image tags
-  (160 at 2026-10-21 17:05) that no container references.
+- old `nexus-lab-*` worker image tags have been removed after operator approval
+  and verification that no container referenced them. current teardown enforces
+  an empty per-run image namespace.
 - candidate nexus-owned leftovers for the operator's confirmed list. preserve
   anything unconfirmed, per [dev-server-lab-build-headroom](dev-server-lab-build-headroom.md):
   - `nexus-test-*` and `nexus-pr203-runner-*` volumes;

@@ -94,8 +94,10 @@ its ordinary health probe. its host/account remain caller-owned; the runtime
 neither copies credentials nor stops that host. the interactive worker's temporary
 directory and heartbeat belong to the run. the background worker stays in linux.
 model success is a separate qualification. dependency-hash checkout worker images,
-builder caches and private diagnostics remain on disk; runs create no per-run
-images. credentials and sessions are removed
+builder caches, the completed web package, its marker, a checkout public auth
+key and private diagnostics remain on disk; runs create no per-run images.
+clean web source reuses the package at the same sha, slot and public key; each
+run gets fresh data and a private writable standalone tree. credentials and sessions are removed
 after successful cleanup. caller cases survive until their author deletes them
 after red/green/refactor and final qualification.
 hard interruption may require exact scoped recovery from the private recovery note.
