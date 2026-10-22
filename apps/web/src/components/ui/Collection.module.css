@@ -91,15 +91,17 @@
   outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
+.row[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
+
+.row[data-tone="danger"] { color: var(--danger); }
+.row[data-tone="accent"] { color: var(--accent); }
+
 .row[aria-disabled="true"] {
   color: var(--ink-muted);
   cursor: default;
 }
 
-.row[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
-
-.row[data-tone="danger"] { color: var(--danger); }
-.row[data-tone="accent"] { color: var(--accent); }
+.row[aria-disabled="true"][aria-current="true"] { background: transparent; }
 
 .content {
   display: flex;
@@ -126,6 +128,7 @@
 }
 
 .row[data-selected="true"] .adornment { color: var(--accent); }
+.row[aria-disabled="true"] .adornment { color: var(--ink-muted); }
 
 @media (any-pointer: coarse) {
   .compactViewport,
@@ -141,8 +144,10 @@
 @media (forced-colors: active) {
   .surface { border-color: CanvasText; background: Canvas; color: CanvasText; box-shadow: none; }
   .row[data-active="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
-  .row[aria-disabled="true"], .detail { color: GrayText; }
   .row[data-selected="true"] .adornment { color: Highlight; }
+  .row[aria-disabled="true"],
+  .row[aria-disabled="true"] .adornment,
+  .detail { color: GrayText; }
 }
 
 @media (prefers-reduced-motion: reduce) {
