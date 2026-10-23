@@ -1,7 +1,8 @@
 // One reader instance: it loads the publication and the cursor together,
 // restores once a surface is attached, owns reading mode and the cursor sync,
 // and keeps the viewport and placement from one surface measurement. A plain
-// object; React reads it through subscribe/getState.
+// object; React reads it through subscribe/getState. Explicit navigation and
+// reading announce intent before work; automatic restore and reflow remain local.
 import {
   clampZoom,
   locatorAt,
@@ -19,6 +20,8 @@ import {
 import {
   createNavigator,
   type NavOutcome,
+  type NavigationFailure,
+  type NavSnapshot,
   type NavState,
   type Positioner,
 } from "./navigator";
@@ -41,7 +44,7 @@ export interface ReaderEntry {
 export interface ReaderViewSnapshot {
   readonly identity: string;
   readonly placement: Placement;
-  readonly navigation: NavState;
+  readonly navigation: NavSnapshot;
 }
 export interface ReaderOptions {
   readonly source: ReaderSource;
@@ -93,11 +96,13 @@ export interface Reader {
   captureView(): ReaderViewSnapshot | null;
   restoreView(snapshot: ReaderViewSnapshot, signal?: AbortSignal): Promise<NavOutcome>;
   inspect(input: {
-    readonly target: ReaderTarget;
+    readonly target: ReaderTarget | ((signal: AbortSignal) => ReaderTarget | null | Promise<ReaderTarget | null>);
     readonly signal?: AbortSignal;
   }): Promise<NavOutcome>;
   returnToSpot(): Promise<NavOutcome>;
   continueHere(): void;
+  dismissNavigationFailure(expected: NavigationFailure): void;
+  retireNavigationAttempt(): void;
   resolveHandoff(choice: "Canonical" | "Device"): Promise<void>;
   retrySave(): void;
   retryLoad(): void;
@@ -119,6 +124,8 @@ export interface SurfaceHandle extends Positioner {
   measurePassage(passage: Passage): PassageGeometry | null;
   measureBounds(): DOMRect | null;
   focusSource(): void;
+  /** A newer intent retires geometry queued before the navigator admitted work. */
+  retireReflow(): void;
   setZoom?(zoom: number | null): void;
 }
 export interface ReaderRuntime extends Reader {
@@ -187,6 +194,12 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   let inputCount = 0;
   let isAway = false;
 
+  const navigate = (signal: AbortSignal | null = null) => {
+    inputCount += 1;
+    surface?.retireReflow();
+    options.host?.onIntent?.({ kind: "Navigate", signal });
+  };
+
   const set = (patch: Partial<ReaderState>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
@@ -235,6 +248,11 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       },
     });
 
+  function retireNavigationAttempt() {
+    surface?.retireReflow();
+    navigator.retireNavigationAttempt();
+  }
+
   async function applySnapshot(snapshot: CursorSnapshot) {
     input = { at: -Infinity, direction: "none" };
     const doc = ready();
@@ -243,10 +261,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       snapshot.state === "Positioned"
         ? targetOfLocator(doc.doc, snapshot.locator)
         : { kind: "edge", edge: "start" };
-    if (target) await navigator.apply(target);
+    if (target) await navigator.apply(target, "Restore");
   }
 
-  async function load() {
+  async function load({ recoverPosition }: { recoverPosition: boolean }) {
     loading?.abort();
     const controller = new AbortController();
     loading = controller;
@@ -276,7 +294,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
           ? { ...current.doc, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
           : { ...current.doc, title: doc.title }
         : doc;
-      if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
+      if (current?.doc.identity === doc.identity && (!recoverPosition || sync?.state().kind !== "LoadFailed")) {
         // Body identity fixes text coordinates; chapter navigation is replaceable.
         // Keep measured coordinates, held origin and unsaved progress intact.
         set({ document: { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailure: null } });
@@ -287,8 +305,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         : initialView;
       if (controller.signal.aborted) return;
       if (previous) {
-        navigator.cancel();
-        navigator.invalidateOrigin(doc.identity);
+        if (previous.identity !== doc.identity) {
+          retireNavigationAttempt();
+          navigator.invalidateOrigin(doc.identity);
+        }
         input = { at: -Infinity, direction: "none" };
       }
       restore = {
@@ -342,9 +362,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (fresh) await navigator.enter(fresh, saved);
       else if (visit?.identity === doc.doc.identity)
         await navigator.restore(visit.placement, visit.navigation);
-      else if (savedTarget) await navigator.apply(savedTarget);
+      else if (savedTarget) await navigator.apply(savedTarget, "Restore");
       else if (saved) set({ savedSpotUnavailable: true });
-      else if (options.entry.cold) await navigator.apply(options.entry.cold);
+      else if (options.entry.cold) await navigator.apply(options.entry.cold, "Open");
     }
     // A title reread keeps this restoration; a different publication retires it.
     if (ready()?.doc.identity === doc.doc.identity) set({ restored: true });
@@ -375,20 +395,23 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         surface.focusSource();
     },
     captureView() {
-      const placement = surface?.capture() ?? null;
+      const placement = state.placement;
       const identity = ready()?.doc.identity;
+      const { mode, origin, originUnavailable } = navigator.state();
       return state.restored && placement && identity && placement.identity === identity
-        ? { identity, placement, navigation: navigator.state() }
+        ? { identity, placement, navigation: { mode, origin, originUnavailable } }
         : null;
     },
     restoreView(snapshot, signal) {
-      if (snapshot.identity !== ready()?.doc.identity)
-        return Promise.resolve({ kind: "Unavailable", reason: "SourceChanged" });
+      if (signal?.aborted) return Promise.resolve({ kind: "Cancelled" });
+      const { mode, origin, originUnavailable } = navigator.state();
       input = { at: -Infinity, direction: "none" };
-      return navigator.restore(snapshot.placement, snapshot.navigation, signal);
+      // A foreign placement fails at the surface without installing its mode or origin.
+      return navigator.restore(snapshot.placement, snapshot.identity === ready()?.doc.identity
+        ? snapshot.navigation : { mode, origin, originUnavailable }, signal);
     },
     mount() {
-      void load();
+      void load({ recoverPosition: false });
       return () => {
         loading?.abort();
         navigator.cancel();
@@ -443,6 +466,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       );
     },
     input(direction) {
+      surface?.retireReflow();
+      options.host?.onIntent?.({ kind: "Read" });
       input = { at: performance.now(), direction };
       inputCount += 1;
       isAway = false;
@@ -460,21 +485,34 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         input = previous;
       return outcome;
     },
-    seek: () => navigator.seek(),
+    seek() {
+      navigate();
+      return navigator.seek();
+    },
     away(flush) {
       isAway = true;
       if (flush) void sync?.flush(true);
     },
-    inspect: (input) => navigator.inspect(input),
-    returnToSpot: () => navigator.returnToSpot(),
+    inspect(input) {
+      if (input.signal?.aborted) return Promise.resolve({ kind: "Cancelled" });
+      navigate(input.signal ?? null);
+      return navigator.inspect(input);
+    },
+    returnToSpot() {
+      navigate();
+      return navigator.returnToSpot();
+    },
     continueHere() {
+      navigate();
       const placement = navigator.continueHere();
       const adopted = placement && locator(placement);
       if (adopted && !ready()?.refreshing) sync?.report(adopted, { adoptUnresolved: true });
     },
+    dismissNavigationFailure: (expected) => navigator.dismissNavigationFailure(expected),
+    retireNavigationAttempt,
     resolveHandoff: async (choice) => sync?.resolve(choice),
     retrySave: () => sync?.retry(),
-    retryLoad: () => { if (loading === null) void load(); },
+    retryLoad: () => { if (loading === null) void load({ recoverPosition: true }); },
     revalidate() {
       void sync?.revalidate().finally(() => {
         isAway = false;
@@ -485,7 +523,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         if (expectedGeneration !== null && generation <= expectedGeneration) return;
         expectedGeneration = generation;
       }
-      void load();
+      void load({ recoverPosition: false });
     },
     async prepareProgressFence() {
       input = { at: -Infinity, direction: "none" };
@@ -497,16 +535,19 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (sync?.state().kind === "Ready") void applySnapshot(snapshot);
     },
     setZoom(zoom) {
+      surface?.retireReflow();
+      options.host?.onIntent?.({ kind: "Read" });
+      inputCount += 1;
       navigator.cancel();
       surface?.setZoom?.(zoom === null ? null : clampZoom(zoom));
     },
     readFrom(point) {
+      navigate();
       const doc = ready();
       if (!doc) return;
       // Not genuine input: the viewport, wherever it is, must not overwrite this point.
       input = { at: -Infinity, direction: "none" };
-      inputCount += 1;
-      navigator.continueHere();
+      navigator.readFrom();
       sync?.report(
         locatorAt(doc.doc, doc.structure, point, {
           terminal: false,

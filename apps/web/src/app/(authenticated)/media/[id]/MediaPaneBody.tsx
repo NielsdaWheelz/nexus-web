@@ -17,7 +17,8 @@ import {
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiFetch, type ApiError } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isStaleBuild, STALE_BUILD_FEEDBACK, type ApiError } from "@/lib/api/client";
+import { assertNever } from "@/lib/assertNever";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -30,6 +31,7 @@ import {
   type Inspection,
   type Reader,
 } from "@/lib/documentReader/DocumentReader";
+import type { ReaderOptions } from "@/lib/documentReader/runtime";
 import { useFind } from "@/lib/find/useFind";
 import { holdProgress } from "@/lib/consumption/state";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -152,6 +154,10 @@ function MediaPane({ id }: { readonly id: string }) {
   const { playAudio } = usePlayerCommands();
   const showNotes = useShowNotesVisit();
   const root = useRef<HTMLDivElement>(null);
+  const returnFocus = useCallback(
+    () => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current,
+    [],
+  );
 
   // ---- the media record ----
   const record = usePaneFreeServerValue({
@@ -185,16 +191,17 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- the reader ----
   const readerRef = useRef<Reader | null>(null);
+  const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
   const navigationRuntime = useRef(runtime);
   navigationRuntime.current = runtime;
-  const [navigationFailure, setNavigationFailure] = useState<string | null>(null);
+  const [forkFailure, setForkFailure] = useState<{ readonly title: string } | null>(null);
   const savedView = useReaderVisit(readerRef);
   const entry = useMemo(() => ({ fresh: null, cold: null, view: savedView }), [savedView]);
   const chrome = useMobileChrome();
   const viewport = useMobileViewport();
   const reader = useDocumentReader(
     id,
-    useMemo(
+    useMemo<ReaderOptions>(
       () => ({
         source: hostedSource(id),
         progress: hostedProgress(id),
@@ -203,13 +210,19 @@ function MediaPane({ id }: { readonly id: string }) {
           const releaseChrome = chrome.registerReaderScrollport(element);
           const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
           return () => { releaseChrome(); releaseViewport(); };
+        }, onIntent: (intent) => {
+          arrivalRef.current?.supersede({
+            preserveSignal: intent.kind === "Navigate" ? intent.signal : null,
+            retireFailure: intent.kind === "Navigate",
+          });
+          if (intent.kind === "Navigate") setForkFailure(null);
         }, navigation: {
           href: (destination: ReaderDestination) => readerDestinationHref(id, destination),
           activate: (destination: ReaderDestination, intent: OpenIntent, onDefault: () => void) => {
-            setNavigationFailure(null);
+            setForkFailure(null);
             if (intent === "default") return onDefault();
             const href = readerDestinationHref(id, destination);
-            if (href === null) return setNavigationFailure("location unavailable");
+            if (href === null) return setForkFailure({ title: "couldn’t open that location" });
             navigationRuntime.current.activateTarget({ target: { href }, disposition: { kind: "Fork" } });
           },
         } },
@@ -222,6 +235,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const restored = useReaderState(reader, (s) => s.restored);
   const navigationMode = useReaderState(reader, (s) => s.navigation.mode);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
+  useEffect(() => { setForkFailure(null); }, [doc?.identity, runtime.visitId]);
   const articleEmbeds = doc?.kind === "text"
     ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
     : [];
@@ -376,12 +390,17 @@ function MediaPane({ id }: { readonly id: string }) {
   const arrival = useSourceArrival({
     ready: restored || (media !== null && !readable),
     sourceIdentity: doc?.identity ?? null,
+    onAttempt: () => {
+      reader.retireNavigationAttempt();
+      setForkFailure(null);
+    },
     apply: async (result, context) => {
+      if (context.signal.aborted) return "Cancelled";
       if (result.kind === "reader_destination") {
-        if (!doc) return false;
+        if (!doc) return "Unavailable";
         const { destination } = result;
         if (destination.target.kind === "evidence_item") {
-          if (context.restored) return true;
+          if (context.restored) return "Applied";
           latestOpenRequest.current?.onResolved(null);
           pendingEvidenceArrival.current = context.signal;
           try {
@@ -394,25 +413,33 @@ function MediaPane({ id }: { readonly id: string }) {
               context.signal.addEventListener("abort", abort, { once: true });
               if (context.signal.aborted) abort(); else check();
             });
-            if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity || context.signal.aborted) return false;
+            if (context.signal.aborted) return "Cancelled";
+            if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity) return "Unavailable";
             const itemId = destination.target.item_id;
-            if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return false;
+            if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return "Unavailable";
             const delivered = requestEvidence(itemId, context);
             requestSecondarySurface("resource-connections");
-            return await delivered;
+            const applied = await delivered;
+            return context.signal.aborted ? "Cancelled" : applied ? "Applied" : "Unavailable";
           } finally {
             if (pendingEvidenceArrival.current === context.signal) pendingEvidenceArrival.current = null;
           }
         }
         const target = destinationTarget(destination, reader);
-        if (!target) return false;
+        if (!target) return "Unavailable";
         if (!context.restored) {
           const outcome = await reader.inspect({ target, signal: context.signal });
-          if (outcome.kind !== "Arrived" && outcome.kind !== "Unchanged") return false;
+          switch (outcome.kind) {
+            case "Unavailable": return "FailureHandled";
+            case "Cancelled": return "Cancelled";
+            case "Arrived":
+            case "Unchanged": break;
+            default: assertNever(outcome);
+          }
         }
-        if (context.signal.aborted) return false;
+        if (context.signal.aborted) return "Cancelled";
         if (context.mayFocus()) reader.focusSource();
-        return true;
+        return "Applied";
       }
       const source = result.source;
       if (source.location.kind === "resource") {
@@ -420,43 +447,55 @@ function MediaPane({ id }: { readonly id: string }) {
           if (doc) reader.focusSource();
           else if (root.current) { root.current.tabIndex = -1; root.current.focus({ preventScroll: true }); }
         }
-        return true;
+        return "Applied";
       }
-      if (!doc || source.location.kind !== "located") return false;
+      if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity } = source.location;
-      if (source_identity !== doc.identity) return false;
+      if (source_identity !== doc.identity) return "Unavailable";
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
         const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
-        if (!unit || locator.end_offset > unit.length) return false;
+        if (!unit || locator.end_offset > unit.length) return "Unavailable";
         if (locator.text_quote_selector) {
           // Same quote identity as text_quote.py; a relocation retains its original words.
           const normalized = (value: string) => value.normalize("NFC")
             .replace(/[\p{White_Space}\u001c-\u001f]+/gu, " ").replace(/^ | $/g, "");
           const selected = Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("");
-          if (normalized(selected) !== normalized(locator.text_quote_selector.exact)) return false;
+          if (normalized(selected) !== normalized(locator.text_quote_selector.exact)) return "Unavailable";
         }
       }
       if (locator.type === "transcript_time_range" && doc.kind === "text" && locator.text_quote_selector) {
         const actual = doc.units.filter((unit) => unit.time && unit.time.endMs > locator.t_start_ms && unit.time.startMs < locator.t_end_ms).map((unit) => unit.text).join("\n");
-        if (actual !== locator.text_quote_selector.exact) return false;
+        if (actual !== locator.text_quote_selector.exact) return "Unavailable";
       }
       const target = targetOfLocator(locator, doc);
       const paint = inspectionOfLocator(locator, doc, precision);
-      if (!target || !paint) return false;
+      if (!target || !paint) return "Unavailable";
       if (!context.restored) {
         const outcome = await reader.inspect({ target, signal: context.signal });
-        if (outcome.kind !== "Arrived" && outcome.kind !== "Unchanged") return false;
+        switch (outcome.kind) {
+          case "Unavailable": return "FailureHandled";
+          case "Cancelled": return "Cancelled";
+          case "Arrived":
+          case "Unchanged": break;
+          default: assertNever(outcome);
+        }
       }
       const current = reader.getState().document;
-      if (context.signal.aborted || current.status !== "ready" || current.doc.identity !== source_identity) return false;
+      if (context.signal.aborted) return "Cancelled";
+      if (current.status !== "ready" || current.doc.identity !== source_identity) return "Unavailable";
       setInspection({ ...paint, activationId: context.activationId });
       context.signal.addEventListener("abort", () => {
         setInspection((current) => current?.activationId === context.activationId ? null : current);
       }, { once: true });
       if (context.mayFocus()) reader.focusSource();
-      return true;
+      return "Applied";
     },
   });
+  arrivalRef.current = arrival;
+  const [staleBuild, setStaleBuild] = useState(false);
+  useLayoutEffect(() => {
+    if (isStaleBuild(arrival.failure?.error)) setStaleBuild(true);
+  }, [arrival.failure]);
   const { clear: clearArrival } = arrival;
   useEffect(() => {
     if (inspection && navigationMode === "Reading") clearArrival();
@@ -589,6 +628,16 @@ function MediaPane({ id }: { readonly id: string }) {
     capabilities: { can_retry: media.capabilities?.can_retry === true },
     sourceUrl: media.canonical_source_url,
   });
+  const failure = arrival.failure;
+  const arrivalNotice = staleBuild || isStaleBuild(failure?.error)
+    ? <FeedbackNotice content={STALE_BUILD_FEEDBACK} announcement={paneActive ? "Polite" : "None"} returnFocus={returnFocus} />
+    : failure ? <FeedbackNotice
+      content={(failure.error && apiTransportFeedback(failure.error, failure.title)) ?? { tone: "Warning", title: failure.title }}
+      occurrence={failure}
+      onDismiss={() => arrival.dismissFailure(failure)}
+      announcement={paneActive ? "Polite" : "None"}
+      returnFocus={returnFocus}
+    /> : null;
   const transcriptChrome = transcript ? (
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader}
       notesOpen={showNotes.open} onNotesOpen={showNotes.change} transcriptReaderKey={snapshot?.transcript_reader_key ?? null} />
@@ -602,7 +651,7 @@ function MediaPane({ id }: { readonly id: string }) {
     return (
       <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
-          {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
+          {arrivalNotice}
           {transcriptChrome}
           {captureHint}
           {transcript ? (
@@ -660,7 +709,7 @@ function MediaPane({ id }: { readonly id: string }) {
           if (kind !== "activate") return;
           if (intent !== "new_pane") return openEvidence(key);
           const destination = apparatusDestination(key);
-          if (!destination) return setNavigationFailure("location unavailable");
+          if (!destination) return setForkFailure({ title: "couldn’t open that location" });
           reader.navigation!.activate(destination, intent, () => openEvidence(key));
         }}
         apparatusDestination={apparatusDestination}
@@ -672,8 +721,14 @@ function MediaPane({ id }: { readonly id: string }) {
         }}
         before={
           <>
-            {navigationFailure ? <FeedbackNotice content={{ tone: "Warning", title: navigationFailure }} announcement="Polite" /> : null}
-            {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
+            {forkFailure ? <FeedbackNotice
+              content={{ tone: "Warning", title: forkFailure.title }}
+              occurrence={forkFailure}
+              onDismiss={() => setForkFailure((current) => current === forkFailure ? null : current)}
+              announcement={paneActive ? "Polite" : "None"}
+              returnFocus={returnFocus}
+            /> : null}
+            {arrivalNotice}
             {inspection && inspection.precision !== "exact" ? <FeedbackStatus content={{ tone: "Neutral", title: inspection.precision === "time" ? "timed passage" : "approximate source location" }} announcement={paneActive ? "Polite" : "None"} /> : null}
             {media.provider === "x" && media.processing_status === "failed" ? <FeedbackNotice
               content={{ tone: "Warning", title: media.last_error_code === "E_X_IDENTITY_CONFLICT"

@@ -20,6 +20,13 @@ first finish the admitted no-input reopen observation without discarding the
 test copy or pending position. identify the responsible navigation transition
 before changing code. preserve the old-copy refusal evidence separately.
 
+2026-10-23: `a668a1f71` repairs shared failure acknowledgement, distinguishes
+layout preservation from opening, and defers unmeasurable pane reflow. desktop
+hide/show and current downloaded text/pdf readers were qualified. this establishes
+a separate desktop producer and repairs feedback ownership; it does not establish
+the original installed old-copy swipe trigger. that copy and its pending position
+were outside this change.
+
 resolved when the cause is established and ordinary offline reading and
 no-input reopening retain the intended passage without a spurious failure;
 record the actual consumer result and remove this ticket if corrected.

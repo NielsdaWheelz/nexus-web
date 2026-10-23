@@ -623,10 +623,10 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
     ready: resourceRef !== null,
     sourceIdentity: resourceRef,
     apply: async (target, context) => {
-      if (target.kind !== "source" || target.source.location.kind !== "resource") return false;
+      if (target.kind !== "source" || target.source.location.kind !== "resource") return "Unavailable";
       if (context.mayFocus()) paneRef.current?.focus({ preventScroll: true });
-      return true;
+      return "Applied";
     },
   });
-  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement="Polite" /> : null;
+  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
 }

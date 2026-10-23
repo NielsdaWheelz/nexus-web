@@ -87,8 +87,13 @@ applying the same receipt admission; other work or a modal still suppresses it.
 late hook withdrawal cannot remove a newer occurrence. no scheduling or replay is
 needed to bridge command settlement and react presentation cleanup.
 
-only changed short facts enter separate live regions. inactive panes stay
-silent. actions stay mounted and focusable while busy, with guarded activation;
+only short facts enter separate live regions. local `FeedbackNotice` owners may
+supply an occurrence and exact-occurrence dismissal; other recovery surfaces
+retain their existing contract. controls remain mounted; local announcement
+identity does not replace workspace action identity. replacing a local occurrence
+keeps the live region empty for a rendered frame before publishing even identical
+text; supersession cancels its captured frames. inactive panes stay silent.
+actions stay mounted and focusable while busy, with guarded activation;
 successful removal returns to an explicit owner destination, then the shell.
 `FeedbackScope` supplies a pane's focus destination and announcement permission
 without a new state owner. disabled reasons remain visible. compact targets are

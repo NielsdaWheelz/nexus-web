@@ -157,8 +157,9 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
     return reader.subscribe(() => {
       // Viewport notifications already carry the surface's measured placement.
       const { restored, placement, navigation } = reader.getState();
+      const { mode, origin, originUnavailable } = navigation;
       if (restored && placement)
-        write({ identity: placement.identity, placement, navigation });
+        write({ identity: placement.identity, placement, navigation: { mode, origin, originUnavailable } });
     });
   }, [reader, write]);
   useLayoutEffect(() => {

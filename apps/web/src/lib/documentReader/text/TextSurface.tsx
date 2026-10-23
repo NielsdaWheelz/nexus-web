@@ -87,7 +87,7 @@ export default function TextSurface({
       selecting.current || viewRef.current.activePassage?.identity === doc.identity,
     );
   }, [doc.identity, runtime]);
-  const geometryChanged = useScrollport(scrollport, runtime, measure, { placement, change: () => measure("Geometry") }, scrollIndicator, feedback);
+  const { geometryChanged, retireReflow } = useScrollport(scrollport, runtime, measure, { placement, change: () => measure("Geometry") }, scrollIndicator, feedback);
   const selectionInput = useReaderSelection(scrollport, {
     identity,
     textSelector: "[data-reader-text]",
@@ -113,6 +113,7 @@ export default function TextSurface({
     finder.current = find;
     const handle: SurfaceHandle = {
       identity,
+      retireReflow,
       find: find.source,
       measurePassage(passage) {
         return passage.identity === identity && passage.anchor.kind === "text"
@@ -178,7 +179,7 @@ export default function TextSurface({
       painter.current = null;
       finder.current = null;
     };
-  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged]);
+  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged, retireReflow]);
 
   useLayoutEffect(() => {
     if (finder.current) runtime.updateFind(finder.current.update(doc, structure));

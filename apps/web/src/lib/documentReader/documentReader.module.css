@@ -183,8 +183,9 @@
   line-height: var(--reader-line-height, var(--leading-normal));
 }
 
-/* Off-screen units skip rendering at their estimated height. */
+/* Preserve auto's containment when positioning temporarily forces a unit visible. */
 .unit {
+  contain: layout style paint;
   content-visibility: auto;
   margin-bottom: var(--space-6);
 }

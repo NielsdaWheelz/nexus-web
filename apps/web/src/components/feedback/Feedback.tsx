@@ -47,6 +47,10 @@ export interface FeedbackProps {
   disclosure?: "Anchored";
   returnFocus?: () => HTMLElement | null;
 }
+export type FeedbackNoticeProps = FeedbackProps & {
+  occurrence?: object;
+  onDismiss?: () => void;
+};
 export type WorkspaceNotice = FeedbackProps;
 export interface WorkspaceCondition extends WorkspaceNotice {
   priority: "Write" | "Action" | "Status";
@@ -208,8 +212,8 @@ function WorkspaceFeedback({ signals, fallbackFocus }: {
 export function FeedbackStatus(props: FeedbackProps) {
   return <Signal {...props} className={styles.status} />;
 }
-export function FeedbackNotice(props: FeedbackProps) {
-  return <Signal {...props} className={styles.notice} />;
+export function FeedbackNotice({ occurrence, ...props }: FeedbackNoticeProps) {
+  return <Signal {...props} announcementOccurrence={occurrence} className={styles.notice} />;
 }
 export function FeedbackState(props: FeedbackProps) {
   return <Signal {...props} className={styles.state} surfaceState />;
@@ -223,7 +227,7 @@ export function FieldFeedback({ id, content }: { id: string; content: FeedbackCo
 
 function Signal({
   content, announcement, actions, disclosure, returnFocus, className,
-  onDismiss, extraDetails, more = 0, workspace = false, surfaceState = false, occurrence, onExpanded,
+  onDismiss, extraDetails, more = 0, workspace = false, surfaceState = false, occurrence, announcementOccurrence, onExpanded,
 }: FeedbackProps & {
   className: string;
   onDismiss?: () => void;
@@ -232,6 +236,7 @@ function Signal({
   workspace?: boolean;
   surfaceState?: boolean;
   occurrence?: object;
+  announcementOccurrence?: object;
   onExpanded?: (open: boolean) => void;
 }) {
   const scope = useContext(Scope);
@@ -337,7 +342,7 @@ function Signal({
       onDismiss={() => changeExpanded(false)}
       skipReturnFocus={() => navigated.current}
     >{body}</FloatingActionSurface> : <div id={id} hidden={!open}>{body}</div>}
-    <Announcement text={content.title} level={scope?.active === false ? "None" : announcement} />
+    <Announcement text={content.title} level={scope?.active === false ? "None" : announcement} occurrence={announcementOccurrence} />
   </article>;
 }
 
@@ -407,18 +412,34 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
 }
 
 /** Only the short fact is live; controls and disclosure never enter the live region. */
-function Announcement({ text, level, deferred = false }: {
-  text: string; level: FeedbackAnnouncement; deferred?: boolean;
+function Announcement({ text, level, deferred = false, occurrence }: {
+  text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object;
 }) {
-  const [spoken, setSpoken] = useState("");
-  useEffect(() => { if (!deferred) setSpoken(level === "None" ? "" : text); }, [text, level, deferred]);
+  // A new local occurrence keeps the live region empty for a rendered frame.
+  const [spoken, setSpoken] = useState<{ text: string; occurrence?: object }>({ text: "" });
+  useEffect(() => {
+    if (deferred) return;
+    const next = { text: level === "None" ? "" : text, occurrence };
+    if (occurrence === undefined || level === "None") {
+      setSpoken(next);
+      return;
+    }
+    let publication: number | null = null;
+    const empty = requestAnimationFrame(() => {
+      publication = requestAnimationFrame(() => setSpoken(next));
+    });
+    return () => {
+      cancelAnimationFrame(empty);
+      if (publication !== null) cancelAnimationFrame(publication);
+    };
+  }, [text, level, deferred, occurrence]);
   if (level === "None") return null;
   return <span
     className="sr-only"
     role={level === "Assertive" ? "alert" : "status"}
     aria-live={deferred ? "off" : level === "Assertive" ? "assertive" : "polite"}
     aria-atomic="true"
-  >{spoken}</span>;
+  >{occurrence !== undefined && spoken.occurrence !== occurrence ? "" : spoken.text}</span>;
 }
 
 function Diagnostics({ requestId }: { requestId: string }) {
