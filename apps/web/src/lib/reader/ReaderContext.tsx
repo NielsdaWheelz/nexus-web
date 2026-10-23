@@ -67,7 +67,7 @@ export function ReaderProvider({
   const send = useCallback(async () => {
     window.clearTimeout(timer.current);
     const patch = unsent.current;
-    if (!remoteReady() || !live.current || sending.current || Object.keys(patch).length === 0) return;
+    if (!live.current || sending.current || Object.keys(patch).length === 0) return;
     unsent.current = {};
     sending.current = true;
     setBusy(true);
