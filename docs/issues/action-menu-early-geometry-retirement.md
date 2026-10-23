@@ -1,9 +1,20 @@
 # initial action menu geometry retirement
 
-a freshly opened library header menu can retire before its first command, while restored panes finish rendering. this preserves the menu's immutable-geometry guard but forces an immediate reopen during ordinary use.
+a newly opened library menu has retired before its first command while restored
+panes finish rendering. the shared-controls lab focused `Delete Library`, then
+`Library settings…`; enter announced “actions changed. reopen to see current
+options.” no command ran. the changing rectangle was not isolated.
 
-observed in the real shared-controls lab: keyboard opening focused `Delete Library`, then `Library settings…`; enter closed the menu and announced `actions changed. reopen to see current options.` no command ran. `ActionMenu.tsx` snapshots geometry at publication and refuses later changes in `stable()`/`invalidate()`. the exact changing rectangle remains unisolated; fonts and surrounding pane layout are candidates, not established causes.
+android hosted pdf also refused `Download for offline` with that warning in
+run `20261022-171732-f4a5245e1f3d`, source `93f116efb`. fonts, surrounding layout
+and initial focus remain unproved candidates for these historical observations.
 
-also observed on android's hosted pdf reader in lab `20261022-171732-f4a5245e1f3d` at source `93f116efb`: opening `more actions for Support-vector networks` immediately retired the dialog with the same warning, before `Download for offline` could be selected. this is not limited to library menus.
+an independently measured mobile-sheet animation mismatch was fixed in
+`379006891`: layout offsets replace subtraction of compositor transform samples.
+the installed epub/account journey now accepts its first downloads command.
+this does not establish the cause or resolution of the historical cases above.
 
-reproduce with several restored panes, navigate to a newly created empty library, and immediately open its header menu with arrow-up, arrow-up, enter. inspect native rectangle measurements around publication and activation. resolution requires identifying the movement and showing that a settled menu accepts its first command without relaxing geometry or meaning guards.
+reproduce the library case with restored panes: open a new empty library's
+header menu, arrow-up twice, then enter. measure publication and activation
+rectangles. resolved when these historical first-command cases pass without
+relaxing meaning or geometry guards.

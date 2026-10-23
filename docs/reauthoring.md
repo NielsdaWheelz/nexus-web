@@ -8,6 +8,27 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+offline startup at `1eb22203b` against main `df13a48e5` adds 2,001 authored runtime lines
+(3,126 added, 1,125 deleted). installed delivery and one native device binding
+replace network-selected startup, hosted-root recovery, webview-state restoration,
+identity-binding hellos, main-document handoff installation and account settings
+server actions. existing writing, playback and download owners remain in place.
+these feature deltas retain earlier area counts and aggregate bases:
+
+| touched ownership | net authored lines |
+| --- | ---: |
+| android shell/auth/share | +663 |
+| android offline | +50 |
+| android playback | +85 |
+| web installed entry/device session | +618 |
+| web workspace/host | +83 |
+| web auth/account | +262 |
+| web transport/collections | +107 |
+| web feature consumers | +133 |
+| web player/offline; python wire edge | 0 |
+
+packaging, scripts, generated types, binary icons and docs are outside this count.
+
 compact actions against `55becda39`: +95 authored runtime lines (437 added,
 342 deleted). workspace/header/collection composition -9, visual row geometry -6,
 resource actions/index +16, media controls/adapter +43, imports -46, metadata

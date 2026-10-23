@@ -9,9 +9,9 @@ apply to this installed baseline.
 remaining installed-release journeys are `NOT_RUN`: sign-out purge/account
 switch, cold packaged reading, interrupted transfer resume, task-manager stop,
 and hosted/device position conflict resolution. an empty-shelf smoke check does
-not qualify them. cold start and pdf opening also have existing defect records:
-[hosted-error recovery](android-offline-cold-start-keeps-hosted-error.md) and
-[offline pdf opening](offline-pdf-reader-open-failure.md).
+not qualify them. the startup cutover's physical acceptance belongs to
+[offline startup release](release-offline-startup.md); [offline pdf
+opening](offline-pdf-reader-open-failure.md) remains a separate defect.
 
 resolve after these journeys pass or receive an explicit owner disposition.
 record proof in the release pr; [offline](../modules/offline.md) owns the contracts.

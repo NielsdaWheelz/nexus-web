@@ -34,7 +34,9 @@ reading committed state. a kill can lose unacknowledged navigation.
 absent, or an explicit local-state error. auth/api/public documents retain their
 network routes. downloaded documents stay on the shelf's isolated origin.
 response policy comes from the shared security owner; local documents receive
-fresh nonces.
+fresh nonces. browser-supplied owned-origin referrers distinguish incoming app
+subresources before the page-start callback; outgoing shelf requests remain
+isolated during that transition.
 
 `nexusApp` uses existing exact-origin, main-frame, document-scoped web messages.
 hello observes session state. fixed operations check/sign in/sign out, manage

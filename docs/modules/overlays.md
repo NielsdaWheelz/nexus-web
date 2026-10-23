@@ -163,6 +163,11 @@ and a modal closing as another opens in the same commit keeps the entry (one
 sync per commit). with no modal open there is no entry: page menus, floating
 surfaces and previews never own Back.
 
+`overlayOwnsHistoryTraversal` exposes ownership without exposing marker state.
+the workspace checks it during capture-phase popstate and intermediate
+hashchange; internal modal cleanup must not become pane navigation. ownership
+ends after the destination address is restored.
+
 menu preparation and desktop menus opt into retirement on real browser
 navigation. the kernel classifies that traversal and closes them without
 returning focus. its own traversal after the last modal closes is cleanup,
@@ -290,8 +295,9 @@ sections, labels, targets, reasons, controls or unsolicited layout close with on
 announcement; a fresh activation is required. same-geometry availability and
 handlers remain live. capture checks precede custom/native activation, including
 shifted and auxiliary links. list scrolling and header drag are deliberate movement.
-compensated target geometry is compared at 1/64 css px precision so compositor
-rounding during sheet entry/drag does not count as layout change. viewport facts
+mobile sheets measure layout position within their fixed backdrop, independently
+of entry/drag translation. fractional dimensions and row geometry retain their
+1/64 css px comparison; compositor position samples are not subtracted. viewport facts
 remain exact and are checked at publication and activation, before deferred resize
 delivery can permit a stale press. viewport changes retire pending or published
 invocations. `onOpenChange` reports
