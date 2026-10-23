@@ -15,9 +15,10 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
+import java.util.UUID
 
 /**
- * `window.nexusAudioSession` on the hosted origin: the web's json request frames go to
+ * `window.nexusQueueSession` on the hosted origin: the web's json request frames go to
  * the playback service as one custom command, its replies come back with the
  * request's id, and its snapshot pushes reach the document that said hello. The
  * object name is the compatibility identity; frames are trusted and parsed by
@@ -28,15 +29,18 @@ internal class PlayerBridge(
     private val webView: WebView,
     private val controller: () -> MediaController?,
 ) {
-    private val framing = OwnedOriginWebMessage(webView, "nexusAudioSession", BuildConfig.NEXUS_BASE_URL, ::onMessage)
+    private val framing = OwnedOriginWebMessage(webView, "nexusQueueSession", BuildConfig.NEXUS_BASE_URL, ::onMessage)
     private var subscriber: JavaScriptReplyProxy? = null
     private var hello: String? = null // the document's hello frame, re-sent to a restarted service
     private var latest: String? = null
     private var foreground = true
+    private var documentId = UUID.randomUUID().toString()
 
     fun install(): Boolean = framing.install()
 
     fun onPageStarted() {
+        request(JSONObject().put("op", "document_detach").put("document_id", documentId).toString()) { }
+        documentId = UUID.randomUUID().toString()
         framing.onDocumentStarted()
         subscriber = null
         hello = null
@@ -88,15 +92,22 @@ internal class PlayerBridge(
                 message.replyProxy.postMessage(reply.put("id", frame?.opt("id") ?: JSONObject.NULL).toString())
             }
         }
+        if (frame != null) frame.put("document_id", documentId)
         when {
+            frame != null && frame.optString("op").startsWith("queue_") && message.data.toByteArray(Charsets.UTF_8).size > PlaybackStore.MESSAGE_BYTES -> answer(failure("Limit"))
             frame == null || !frame.has("op") -> answer(failure("Invalid"))
             frame.getString("op") == "hello" -> {
                 subscriber = message.replyProxy
-                hello = message.data
-                request(message.data, answer)
+                hello = frame.toString()
+                request(frame.toString(), answer)
             }
             subscriber == null -> answer(failure("NotConnected"))
-            else -> request(message.data, answer)
+            frame.getString("op") == "unbind" -> {
+                // A stopped account must not be resurrected by controller reconnection.
+                hello = null
+                request(frame.toString(), answer)
+            }
+            else -> request(frame.toString(), answer)
         }
     }
 

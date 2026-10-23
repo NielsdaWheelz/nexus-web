@@ -33,11 +33,14 @@ import {
   useLecternCommands,
   useLecternOrder,
 } from "@/lib/lectern/lectern";
-import type { LecternItem } from "@/lib/lectern/api";
+import { filterFields, ordered, selectLectern } from "@/lib/lectern/select";
+import { PlaybackSourceContext, type PlaybackSource } from "@/lib/actions/playbackSource";
+import type { QueueSource } from "@/lib/player/queue";
+import { ApiError } from "@/lib/api/client";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
+import { paneFilterText } from "@/lib/panes/paneFilterText";
 import {
   matchesPaneFilterQuery,
   paneFilterRowsStatusVisible,
@@ -61,41 +64,6 @@ const SORTS = [
   { value: "title_asc", label: "Title A–Z" },
   { value: "title_desc", label: "Title Z–A" },
 ];
-
-// Code-unit order, never localeCompare: collation depends on the runtime's ICU data.
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const titleKey = (item: LecternItem) =>
-  item.media_summary.title.trim().normalize("NFC").toLowerCase();
-
-/** The rendered order; the media id breaks remaining ties. */
-function ordered(
-  items: readonly LecternItem[],
-  sort: string,
-): readonly LecternItem[] {
-  if (sort === "") return items;
-  const sign = sort.endsWith("_asc") ? 1 : -1;
-  const id = (a: LecternItem, b: LecternItem) =>
-    compare(a.media_summary.media_id, b.media_summary.media_id);
-  return [...items].sort((a, b) =>
-    sort.startsWith("added")
-      ? sign * (Date.parse(a.added_at) - Date.parse(b.added_at)) || id(a, b)
-      : sign * compare(titleKey(a), titleKey(b)) ||
-        sign * compare(a.media_summary.title, b.media_summary.title) ||
-        id(a, b),
-  );
-}
-
-/** Title, contributors and, for an episode, its show. */
-function filterFields(item: LecternItem): string[] {
-  const fields = [...mediaListFilterFields(item.media_summary)];
-  const { activation } = item;
-  if (
-    activation.kind === "FooterAudio" &&
-    activation.descriptor.subtitle !== null
-  )
-    fields.push(activation.descriptor.subtitle);
-  return fields;
-}
 
 /** Modeled failures become notices; anything else is a defect for the boundary. */
 function failure(error: unknown, title: string): FeedbackContent {
@@ -159,7 +127,18 @@ export default function LecternPaneBody() {
   const query = filterRows.query.trim();
   const visible = sort === "" && query === ""
     ? projectOrder(shown, (item) => item.media_summary.media_id, order)
-    : shown.filter((item) => matchesPaneFilterQuery(query, filterFields(item)));
+    : selectLectern(items, valid ? sort : "", query);
+  const capture: PlaybackSource = async selected => {
+    if (!valid || lectern.status !== "ready" || lectern.error !== null || lectern.refreshing || order.state.pending !== null)
+      throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current lectern before starting this queue");
+    const media_ids = visible
+      .filter(item => item.media_summary.media_kind === "podcast_episode" && item.media_summary.can_play)
+      .map(item => item.media_summary.media_id);
+    if (!media_ids.includes(selected)) throw new ApiError(409, "E_RESOURCE_CONFLICT", "no playable episodes in this view");
+    const sourceSort = (["added_asc", "added_desc", "title_asc", "title_desc"] as const).find(value => value === sort) ?? null;
+    const source: QueueSource = { kind: "Lectern", label: "lectern", query: paneFilterText(query), sort: sourceSort };
+    return { media_ids, source };
+  };
   const ordering = presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
     complete: lectern.status === "ready" });
@@ -256,6 +235,7 @@ export default function LecternPaneBody() {
           />
         )}
         {valid ? (
+          <PlaybackSourceContext.Provider value={capture}>
           <CollectionView
             returnScope="Lectern.Items"
             ariaLabel="On the lectern"
@@ -308,6 +288,7 @@ export default function LecternPaneBody() {
             rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
             order={ordering}
           />
+          </PlaybackSourceContext.Provider>
         ) : null}
       </section>
       <QuickReadsSection isActive={isActive} />

@@ -26,6 +26,8 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { PlaybackSourceContext, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
+import { ApiError } from "@/lib/api/client";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, useThrowLater, type Visit } from "@/lib/api/serverState";
@@ -412,6 +414,15 @@ function LibraryPane({ id }: { readonly id: string }) {
       ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
       : null;
 
+  const capture: PlaybackSource = selected_media_id => {
+    if (!list.current || order.state.pending !== null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current library before starting this queue");
+    const sourceSort = (["title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"] as const).find(value => value === sort) ?? null;
+    const entry_type = (["web_article", "epub", "pdf", "video", "podcast_episode"] as const).find(value => value === type) ?? null;
+    const sourceProjection = (["unfiled", "in_progress"] as const).find(value => value === projection) ?? null;
+    return capturePlaybackSource({ source: { kind: "Library", library_id: id, query: text,
+      sort: sourceSort, entry_type, projection: sourceProjection, completion: hideFinished ? "unfinished" : null }, selected_media_id });
+  };
+
   return (
     <PaneSurface
       state={
@@ -448,6 +459,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       }
     >
       <LibraryPodcastsSection library={library} active={active} />
+      <PlaybackSourceContext.Provider value={capture}>
       <CollectionView
         returnScope="Library.Entries"
         rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry),
@@ -471,6 +483,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         surface={false}
         order={ordering}
       />
+      </PlaybackSourceContext.Provider>
       <SuggestionsSection
           destination={suggestionDestination}
           suggestions={suggestions}

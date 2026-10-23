@@ -2,6 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { usePlaybackSource, type PlaybackSource } from "./playbackSource";
 import { projectResourceActions, type ResourceActions } from "@/lib/actions/project";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import { apiFetch } from "@/lib/api/client";
@@ -12,7 +13,7 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 type ReadState =
   | null
   | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal }
-  | { readonly kind: "Ready"; readonly ref: string; readonly request: AbortSignal; readonly facts: ResourceActions }
+  | { readonly kind: "Ready"; readonly ref: string; readonly request: AbortSignal; readonly facts: ResourceActions; readonly source: PlaybackSource | null }
   | { readonly kind: "Failed"; readonly ref: string; readonly request: AbortSignal; readonly feedback: FeedbackContent };
 
 /**
@@ -22,6 +23,7 @@ type ReadState =
  */
 export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void) {
   const { ctx, run } = useActionRuntime();
+  const source = usePlaybackSource();
   const pane = usePaneRuntime();
   const busy = useBusyActionIds(ref);
   const throwHere = useThrowLater();
@@ -55,14 +57,14 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
       { signal: controller.signal, cache: "no-store" },
     ).then((response) => {
       if (flight.current !== attempt || subject.current !== ref || request.aborted) return;
-      setLoad({ kind: "Ready", ref, request, facts: response.data });
+      setLoad({ kind: "Ready", ref, request, facts: response.data, source });
     }, (error: unknown) => {
       if (flight.current !== attempt || subject.current !== ref || request.aborted) return;
       if (modeledApiError(error, fail.current)) setLoad({
         kind: "Failed", ref, request, feedback: { tone: "Warning", title: "actions couldn’t load" },
       });
     });
-  }, [ref]);
+  }, [ref, source]);
 
   useLayoutEffect(() => () => {
     if (flight.current?.ref === ref) flight.current.cancel();
@@ -72,7 +74,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
   return {
     prepare,
     state: state?.kind === "Ready" ? {
-      ...state, options: projectResourceActions(state.facts, ctx, busy, run, pane?.paneId),
+      ...state, options: projectResourceActions(state.facts, ctx, busy, run, pane?.paneId ?? null, state.source),
     } : state,
   };
 }

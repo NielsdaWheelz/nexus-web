@@ -2,33 +2,29 @@
 
 ## Scope
 
-The player owns three independent concepts and three synchronizations between
-them.
+the player composes four independent owners:
 
-- **Lectern** — the viewer's ordered list of intentions: ensure, place, remove, order.
-- **Consumption state** — where the viewer stands with a media: an explicit
-  override register (`finished` / `unread` / none, with a revision every write
-  advances and never reuses), else positive podcast listening position means
-  in progress, else reader engagement, else unread; plus the first-completion
-  fact and the listening position under its reset epoch.
-- **Audio session** — what one device is playing, owned by exactly one engine
-  per device: an `<audio>` element in the browser, the media3 service in the
-  Android shell.
+- the lectern owns intended consumption and its explicit membership/order.
+- consumption owns progress, reset fences, the versioned finished/unread
+  override and first-completion facts.
+- a device queue owns a saved occurrence sequence and cursor, captured once
+  from an explicit source view. editing it never edits that source.
+- one engine owns actual audio and each load's identity: an audio element in
+  the browser, the media3 service on android.
 
-The synchronizations: **done** (finish + leave the Lectern, then open the next
-readable row), **natural end** (fenced finish + leave the Lectern, then play
-the next audio row; settled by whichever engine heard the end) and **resume**
-(the server decides where a play starts; the client asks it at play time). One
-successor rule, on the client (`lecternNext`): the first row of the wanted
-activation after the media's row, from the head when it has none; a media off
-the Lectern stops at its end. The server owns the "finished means start over"
-rule.
+reader completion can select the next readable lectern row. audio previous,
+next and natural end follow the device queue. `lecternNext` serves readers
+only. natural completion records the real terminal sample, marks played and
+removes lectern intent regardless of playback origin. every activation resolves
+current consumption authority; finished media starts over. external previews
+pause and preserve the queue, then end without advancing or resuming it.
 
-**quick reads** and **suggestions** sit beside the
-Lectern without owning queue state. Browse owns discovery and Preview; the
-[podcast module](podcast.md) owns acquisition and sync. Observed activity and
-Stats are [Consumption Activity](consumption-activity.md). Android offline
-downloads are adjacent, not player state ([offline](offline.md)).
+[playback sessions](playback-sessions.md) owns queue schemas, source capture,
+conditional browser persistence, retry postconditions and account cleanup.
+quick reads and suggestions own no playback sequence. browse owns previews;
+[podcasts](podcast.md) owns acquisition and sync;
+[consumption activity](consumption-activity.md) owns observed activity/stats;
+[offline](offline.md) owns downloaded files and their leases.
 
 ## Invariants
 
@@ -48,11 +44,15 @@ downloads are adjacent, not player state ([offline](offline.md)).
    (the next revision, back in the prior status, the fact gone) succeeds.
 4. Listening writes are fenced by `reset_epoch` alone: last writer wins within
    an epoch, a reset wins across epochs. Unread, reset and undo bump the epoch.
-5. A natural end is fenced on the override revision the device last saw and
-   the reset epoch of its terminal sample; a resend that already landed (the
-   next revision, finished, the same epoch) succeeds.
-6. One audio owner per device: the Android shell plays natively (or shows
-   "Update Nexus for Android"), everything else plays in the browser.
+5. a natural end is fenced on the captured override revision and terminal
+   sample's reset epoch. retry succeeds only at the next finished revision,
+   the same epoch and absent lectern membership. later unread, reset or re-add
+   wins. browser terminal completion and queue advancement commit together;
+   native stores its terminal record and next cursor atomically, then delivers
+   consumption through the recorder.
+6. one audio owner per device: android's service owns native playback; one
+   account-scoped exclusive web lock owns browser audio and queue writes.
+   restoration is paused. unsupported browser coordination is unavailable.
 7. A Lectern holds at most 2000 rows, hidden ones included; media teardown
    removes every consumption row of the media, and Remove from Nexus removes the
    viewer's row (taking the viewer lock before the media, as teardown does).
@@ -70,7 +70,7 @@ downloads are adjacent, not player state ([offline](offline.md)).
    classification gaps remain tracked in [native fence saves](../issues/native-progress-fence-discards-unconfirmed-samples.md)
    and [native fence availability](../issues/native-progress-fence-unavailable-classification.md).
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
-   play next) in admission order, one per media, each sent at the floor its
+   place) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own
    acknowledgement); a move only on an idle lane at the exact revision on
    screen. A lost answer blocks the lane until "check" or a read past its
@@ -105,7 +105,9 @@ downloads are adjacent, not player state ([offline](offline.md)).
   `reader_engagement_states` and `consumption_completion_facts`: the player
   read, the reader cursor composition, listening and preview writes, finish,
   undo, unread, reset, the natural-end settle, the podcast batch state and
-  media teardown.
+  media teardown. `settle_natural_end_in_txn` composes completion/removal with
+  browser cursor persistence; `natural_end_is_settled` inspects the full retry
+  postcondition without reapplying it.
 - `listening.py` — sole DML owner of `podcast_listening_states` (position,
   duration, nullable episode rate, reset epoch, `last_engaged_at`). A write is
   `UPDATE … WHERE reset_epoch = :epoch`, else an insert when the epoch is 0;
@@ -116,7 +118,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
   states (`Unread | InProgress | Finished`), engagement recency and anchors,
   `player_descriptors`. A descriptor's `position_ms` is 0 when the episode is
   finished by override; `playback_rate` is the episode rate ?? the
-  subscription default ?? 1; `podcast_id` is present iff the viewer subscribes.
+  viewer/show default ?? 1; `podcast_id` is present when independent playback
+  settings exist, whether or not the viewer still subscribes.
 - `reader_cursor.py`, `activity.py`, `stats.py` — see
   [reader-implementation.md](reader-implementation.md) and
   [consumption-activity.md](consumption-activity.md).
@@ -141,7 +144,9 @@ GET    /lectern/suggestions, /lectern/quick-reads   (suggestions)
 
 `api/routes/consumption.py` owns the Lectern, its suggestions and the
 read-state writes; `api/routes/playback.py` the player read, the listening
-write and the preview hand-off (both registered before the `media` router).
+write, preview hand-off and queue snapshot/session routes (both registered
+before the `media` router). queue wire and persistence contracts live in
+[playback sessions](playback-sessions.md).
 
 a null placement ensures membership without moving a present row. the 200
 acknowledgement advances the revision; every retry keeps the original revision,
@@ -186,8 +191,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   written media until a read reaches their revision; only Ensure
   acknowledgements accept suggestions. Before the first read, and after a
   membership write's conflict until a read passes it, writes say "lectern is
-  not ready · load lectern". `lecternNext` is the successor rule. `lib/lectern/api.ts` is the
-  transport.
+  not ready · load lectern". `lecternNext` serves reader navigation only;
+  `lib/lectern/api.ts` is the transport.
 - `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the
   reader and player join. `ResourceActionsProvider` owns the consumption
@@ -205,26 +210,29 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - summaries expose `can_play` exactly when an episode record and nonempty
   application playback source permit a descriptor. processing/transcript readiness
   does not gate audio; remote delivery remains the engine's responsibility.
-- `playAudio({mediaId, knownDescriptor, positionMs})` returns `Applied` or `Superseded`.
-  null resumes; a number starts at that exact source time. a live matching episode
-  uses acknowledged in-place `seekAndPlay`; another, absent or ended source requires
-  fresh authority and overrides only its position. timed starts never use a stale
-  descriptor after an unanswered read. applied means accepted with play requested,
-  not audible or durably saved.
-  descriptor resolution, engine installation, resume, pause and dismiss share one
-  ordered lane. obsolete resolution cannot dispatch a load; pause/dismiss applies
-  after an already-dispatched installation. known descriptors support offline use;
-  id-only read failures stay visible.
-  `pendingPlayback` exposes that start intention separately from the observed engine
-  phase. matching row commands and transport keep pause available while installation
-  drains the old source; pause/dismiss withdraw the intention immediately. installation
-  alone never announces audible success.
+- `playAudio({mediaId, knownDescriptor, positionMs, source, recapture})` returns
+  `Applied` or `Superseded` and receives explicit source context. ordinary play matching the current media preserves queue
+  edits and pauses/resumes that occurrence; explicit recapture prepares a new
+  source snapshot. list owners capture the complete matching source; detail,
+  search and suggestion starts create singleton queues. preparation resolves
+  before replacement; cancellation before commit preserves the prior queue.
+  a sent commit must settle. known descriptors permit outage/offline playback;
+  authoritative refusal cannot fall back to them. `pendingPlayback` exposes
+  admitted intent separately from observed audio, and pause retires pending
+  activation immediately. `positionMs: null` resumes; a number starts at that exact
+  source time. timed play on the live current occurrence seeks in place, preserves
+  its load subject and queue edits, and acknowledges play requested, not audibility.
+  another, absent or ended source requires fresh authority before a timed start;
+  unanswered authority never substitutes a retained descriptor. its selected
+  occurrence installs with the requested time before play is acknowledged.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
-  state/timeline context split, device history (previous restarts after 3 s,
-  else pops back; next pops forward, else the next Lectern audio row), the fresh
-  `GET /api/media/{id}/player` before a play of another media (2 s bound, else
-  the descriptor it was given), serialized loads with the latest request
-  winning, requested playback preferences and keyboard shortcuts. current
+  state/timeline context split, occurrence commands, serialized loads with
+  latest-intent checks, playback preferences and keyboard shortcuts. previous
+  restarts after three seconds or selects the preceding occurrence; exhausted
+  previous selects the last occurrence paused. next, natural end and up next
+  share one sequence/cursor. manual next preserves play/pause intent without
+  implying completion. stale replies cannot select another occurrence of the
+  same media. current
   preferences initialize from each engine's observed snapshot; android installs
   inherited settings before publishing a source. requested rate and silence
   choices stay separate from observed engine state; one flight applies the
@@ -241,29 +249,41 @@ finish, undo, unread, reset and settle publish `Consumption`.
   client initialization effect can observe a missing Android bridge and report
   `UpdateRequired`; native response timeouts report `NotResponding`, cleared by
   the next frame. The server cannot infer bridge failure from its own environment.
-- Both engines resume alike. While the device holds a listening sample the
-  server may not have ("news": playing, seeking, a write in flight or failed)
-  a play resumes in place. Otherwise it asks `GET /media/{id}/player` (2 s;
-  unanswered, the page's descriptor stands in when it knows a newer reset
-  epoch, else the session itself). An answer that moved the session (another
-  position or epoch, or the session ended) is loaded, so a paused episode
-  picks up another device's position or reset and the replay of an ended one
-  starts at 0 under the fence the end left; otherwise the session resumes in
-  place under the answer's override revision. The same holds for the OS
-  controls: the Media Session in the browser, the notification and media
-  buttons on Android.
-- `lib/player/browserEngine.ts` — the `<audio>` engine: listening writes (one
-  flight, newest sample; at once on pause, seek and rate; every 15 s while
-  playing; `keepalive` on pagehide only with news), the activity observer, the
-  Media Session and the natural-end settle (retried on network or 5xx; on 204
-  it plays the next audio row it read from the Lectern before settling, from
-  the position a fresh `GET /media/{id}/player` reports, 2 s bound, else the
-  Lectern's copy).
-  Only the attached episode samples the shared element: a load detaches the
-  outgoing episode after taking its last sample, and its late writes send that. The episode rate
-  is sent only after the listener sets one; until then the stored value stands.
+- `lib/player/queue.ts` owns pure occurrence edits and the shared command
+  contracts. append/insert mint one occurrence per deliberate invocation and
+  retry its id; move/remove/select name occurrences, never media ids or indexes.
+  only upcoming rows can move/remove, except explicit failed-current recovery.
+  selection, previous and next preserve history without wrapping. stop retains
+  the queue; clear persists empty state under a new identity. replacement/clear
+  offer one memory-owned restore, paused under a new identity; later edits,
+  selection, account change or reload retire it. `QueueCommandError` identifies
+  modeled refusals across persistence, coordination, native and action callers;
+  these keep the workspace mounted with recovery feedback. channel replies
+  preserve this distinction; arbitrary faults remain defects.
+- `lib/player/browserSession.ts` owns absolute conditional browser writes.
+  unknown outcomes freeze the exact request and block later mutations. terminal
+  recovery resends through the joint consumption/queue postcondition. pause or
+  seek retires automatic activation; an already-sent write settles before a
+  newer retained cursor is persisted.
+- `lib/player/browserOwnership.ts` owns the exclusive account web lock and
+  narrow broadcast channel. passive tabs mirror state and forward non-play
+  commands. explicit play resolves its source, requests cooperative release,
+  pauses old audio and drains writes before acquiring/reading paused state.
+  transfer never steals a lock; a five-second timeout prevents late autoplay.
+  uncertain persistence prevents release. opening/observing a tab never
+  acquires ownership merely because another tab is playing.
+- `lib/player/browserEngine.ts` owns the audio element, listening writes,
+  activity observer, media session and real terminal sampling. listening is one
+  flight with the newest sample: pause, seek/rate and the fifteen-second cadence
+  checkpoint through consumption; pagehide uses keepalive only with new facts.
+  terminal samples go to the runtime's durable queue lane. successful completion
+  grants no automatic activation after a newer pause/seek/start. the engine has
+  no lectern successor or descriptor history. only its attached episode samples
+  the shared element; outgoing writes retain their own captured sample/fences.
+  an internal resume/retry reload binds its new load subject to the same current
+  queue occurrence, never merely to another occurrence of the same media.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusAudioSession` (below); an unanswered bounded request shows "Player
+  `window.nexusQueueSession` (below); an unanswered bounded request shows "Player
   unavailable" until the next frame arrives. preference commands resolve after
   application and snapshot publication. expired replies are ignored; live
   replies cannot replace an intervening confirmed load. real pushes from the
@@ -272,14 +292,13 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
   sheet, desktop playback/chapter pickers and shared presentational fields.
   the authenticated workspace always renders one stable player slot and footer,
-  including server rendering and initial hydration. `Absent` shows “nothing
-  playing” and a real `/lectern` link using workspace follow/fork activation;
-  it exposes no transport or fabricated duration and never starts audio.
+  including server rendering and initial hydration. a retained stopped queue
+  remains reachable with resume/up next even when the engine is absent.
+  exhausted and empty queues are distinct; restoration never starts audio.
   `Loaded` retains identity, transport and stop while load-scoped preferences
   initialize; preference-dependent controls require the current settings subject.
   `Unavailable` exposes the actual warning and android update link only when
-  required. stop calls the existing dismiss command; confirmed absence returns
-  to idle. closing an overlay preserves playback. the downloaded shelf is a
+  required. stop unloads and retains sequence/cursor; clear remains distinct. closing an overlay preserves playback. the downloaded shelf is a
   separate composition.
   normal idle/loaded footprints match: wide desktop is 80px, narrow desktop
   128px; coarse pointing adds 16px for seeking. the 42rem breakpoint belongs to
@@ -295,7 +314,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   beneath silence as `approx. time saved on this device`: the existing device
   estimate, with no episode, precise or cross-device claim. episode up-next
   lives inside playback; chapter context lives in chapters.
-  preview exposes rate only, with no episode history, chapters or default save.
+  preview exposes rate only, with no queue advancement, chapters or default save.
   numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
   work uses control markers; failures expose details and recovery. application
   gain is unity; volume belongs exclusively to the os/device.
@@ -333,94 +352,103 @@ native playback exposes speed and silence; browser playback exposes speed and
 plain `skip silence · android app only` copy.
 
 remember freezes the applied native rate/silence pair, or the browser's applied
-speed with the baseline's raw android silence default, plus the subscription
-uuid/version. admission requires ready current settings and a readable,
+speed with the baseline's raw android silence default, plus the playback-settings
+uuid/version. an absent settings row uses a new client uuid and version zero.
+admission requires ready current settings and a readable,
 non-refreshing baseline; unavailability blocks new live remember actions.
 saving does no engine work: no reload, seek, pause, override clearing or listening
 write. its owner outlives picker dismissal; old feedback cannot describe a
 replacement subject. live controls apply immediately; independent podcast
 defaults remain editable while playback is unavailable.
 
-`lib/podcasts/useSubscriptionSettingsSave.ts` owns the shared frozen-command
+`lib/podcasts/usePodcastSettingsSave.tsx` owns the shared frozen-command
 receipt and recovery. exact retries resend the full frozen body; eligibility
 compares current speed on browser and both current fields on native. unknown
 outcomes read back the whole raw pair without resending. conflict review requires
 an explicit complete-pair save, even when another writer has converged to that
 pair; a browser reviewed save preserves the reviewed silence default and version.
-an unfollowed or replaced subscription cannot receive the old command.
+settings belong to the viewer/show independently of subscriptions; stopping
+delivery preserves them. another settings identity cannot receive the old command.
 acknowledged receipts name the captured command: browser `saved speed: {rate}`,
 native `saved: {rate} · skip silence {on/off}`. later playback or server-read
 changes never rewrite them. current saved defaults are a separate read, with
 silence labeled as an android default; saved reads never overwrite playback.
 the [podcast module](podcast.md) owns saved nullable defaults and their form.
 
-## The Android bridge
+## android ownership and bridge
 
-`window.nexusAudioSession` carries trusted json frames in the grammar of
-`window.nexusDownloads`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
-`{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
-second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
-`preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
-an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
-`skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
-`sessionShortenPauses{key, on}` (this load's boolean override),
-`dismiss{}`, `cancelPlayback{}`, `seekAndPlay{key, position_ms}`.
-every keyed op also carries `expected_load_id`; every snapshot has nullable
-`load_id`, mapped to the web session's `playbackSubject`. each install, including
-same-media reload and service restart, gets a fresh id. the service checks both
-key and load id under its load lock immediately before application; mismatch
-answers `Stale` without mutation. transient transport loss preserves identity.
+`NexusPlaybackService` owns the queue, audio, listening and os transport without
+requiring a webview. `PlaybackStore` owns one atomic envelope per account:
+queue/revision, the recorder's pending position/end lane, known descriptors and
+current occurrence checkpoint. activity outbox and downloaded-file leases keep
+their existing owners. native does not replicate a server queue. process
+recreation restores paused; reconnecting a webview to a live service preserves
+its authority and current playback.
 
-every web playback entrance supersedes unresolved work; its descriptor read is
-aborted. dispatched operations drain in order. playback actions allow replacement
-intents through the existing action runtime. native commands and operating-system
-controls use their existing owner and load lock; there is no global order between
-undispatched web requests and independent system controls. a natural-end write may
-settle after a newer intent; only its original still-current continuation may advance.
+`window.nexusQueueSession` carries the existing request/result/pushed-snapshot grammar.
+keyed audio controls retain `expected_load_id`; every installation, including
+same-media replacement, gets a fresh nullable `load_id` exposed as the web's
+`playbackSubject`. source identity and load identity fence different things.
+queue commands carry queue identity, captured revision and occurrence ids.
+replies acknowledge atomic save; desired-state retries are inert. every bridge
+operation remains within its message bound; backend, web and android ship as one
+wire cutover. `nexusQueueSession` rejects both the released `nexusPlayback`
+object and the intermediate `nexusAudioSession` contract, which has no queue
+operations. no alias or protocol fallback exists.
 
-private native snapshots also carry process-monotone `snapshot_id`; the web adapter
-strips it before publishing engine state. older snapshots cannot regress the clock,
-even while their delayed preference acknowledgements resolve. the uuid `load_id`
-remains the sole playback subject; in-place seeking preserves it.
-The object's name is the compatibility identity: an incompatible change renames
-it, and an app without it renders "Update Nexus for Android". There is no
-protocol version or hash.
+`seekAndPlay{key, expected_load_id, position_ms}` applies an acknowledged in-place
+seek and play request. queue selection carries nullable `position_ms` so a timed
+start installs its fresh descriptor and requested position together. playback,
+pause and os controls share native load ordering; dispatch captures the current
+activation generation before work waits for that lock. a newer intent prevents
+an older continuation from starting audio, without losing a valid terminal fact.
+private snapshots carry process-monotone `snapshot_id`; the web adapter strips it
+before publication and rejects older clocks/preferences. uuid `load_id` remains
+the sole engine subject; seeking in place preserves it.
 
-`position` is the accepted `{positionMs, resetEpoch,
-consumptionOverrideRevision}` tuple above.
+queue transfer uses memory-only `queue_begin`/`queue_chunk` staging, followed by
+`queue_commit` or `queue_cancel`. chunks/pages carry at most 100 entries and
+queue messages at most 32 kib. staging binds to the actual controller/document
+generation; disconnect retires uncommitted input. commit checks completeness and
+captured revision, saves the whole queue paused, then separate fresh intent may
+activate it. `queue_read` returns a compact header; revision-bound `queue_page`
+reads entries without whole-queue snapshots or binder-sized messages. unknown
+commit reconciles its saved identity and remains paused until fresh play.
+large descriptor chapters use bounded transfer/pages rather than bloating routine
+source snapshots. `PlayerBridge` remains the sole owned-origin transport.
 
-Every snapshot requires `consumptionRevision`. It advances after an acknowledged
-listening write so hosted list summaries refresh from accepted facts. Pending
-samples do not advance it. Backend, web and Android ship together for this cutover.
+natural end atomically stores the recorder's terminal fact and next cursor
+before advancing. recorder delivery invokes consumption's natural-end owner
+later; reconciliation never advances a second time. prepared downloaded episodes
+can continue without network/webview. preparation intersects queued ids with
+ready audio files, fetches current descriptors at most four at a time and keeps
+real reset/override fences. replacement/account change cancels obsolete work.
+activation refreshes online; authoritative refusal retires retained authority.
+missing file/descriptor stops visibly. recorder facts update retained resume data,
+including acknowledged samples for offline use. fresh online authority wins unless
+the recorder holds a newer or pending local fact. repeated unfinished media resumes
+that position; completed media starts over. cold restoration uses its checkpoint
+only under matching reset epoch and override revision. authoritative reconciliation
+retires the affected media's retained authority without moving another occurrence.
 
-unread/reset/undo preparation drains the loaded episode's recorder before
-sending the write. a preparation timeout refuses that unsent write through
-existing transport feedback. reconciliation drains again before reading
-authority, even after a timed-out preparation; a failed read retains the
-workspace and saving gate. retry reads only, and separate play/seek resumes
-activity after reconciliation.
+explicit sign-out/account switch unbinds before download purge or cookie change:
+cancel preparation/starts, pause, checkpoint, suspend recorder delivery and clear
+active account. its saved envelope remains account scoped. ordinary document
+port detach does none of this. a failed stop/checkpoint uses existing sign-out
+retry/cancel feedback and never restarts audio.
 
-The native service owns ExoPlayer and the media session (notification and lock
-screen), listening writes, activity spans in a durable outbox, and natural ends:
-it posts `POST /media/{id}/natural-end` itself with the webview's cookies and,
-on 204, plays the first audio row after the ended one in the `GET /lectern` it
-read before settling, so an episode advances with the webview gone. A downloaded
-episode plays from its `OfflineStore` lease. pause shortening is
-`skipSilenceEnabled`: this load's override, else the podcast mode, else off.
-only the approximate time-saved counter remains device-owned. media3 owns native
-processing and its clock; positions, durations, transcript/chapter seeks and
-listening writes stay in original-media time. settings and seeks join the
-existing load lock and publish their actual effect before acknowledging. source
-publication follows the complete install, including initial settings; no
-intermediate snapshot can claim the new occurrence. a terminal recorder write
-advances only its still-attached originating episode; durable restored writes
-settle without advancing a later load. reconnect hello replies cannot overwrite
-an intervening push or a replacement controller/document.
-the media session retains device-volume access and hardware/audio-focus handling;
-application-volume commands and grants are absent.
+unread/reset/undo preparation drains the loaded recorder before the write;
+reconciliation drains before reading fresh authority, even after timeout.
+unavailability retains the saving gate. each acknowledged listening write
+advances `consumptionRevision` so hosted summaries refresh from accepted facts.
+media3 owns native processing and clock; positions, transcript/chapter seeks and
+listening samples remain in original-media time. pause shortening uses the
+load's explicit override, then podcast default, then off. os/device volume stays
+outside the application command surface.
 
 ## Boundary with podcast sync
 
-playback never fetches feeds or writes transcripts. following automatically
-acquires episode metadata; filing a show organizes those episodes. neither sync
-nor history appends to the lectern. queue placement remains explicit.
+playback never fetches feeds or writes transcripts. library-owned subscriptions
+deliver physical episode memberships; finite imports acquire history into their
+destination. their separate library section does not enter queue capture.
+neither delivery nor history appends to the lectern. queue placement remains explicit.

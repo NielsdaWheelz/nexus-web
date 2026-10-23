@@ -17,7 +17,13 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.collection_page import CollectionQuery, parse_collection_query
 from nexus.schemas.library import LibraryEntriesPageOut, LibraryMediaEntryOut, LibraryOrderOut
 from nexus.services import libraries
-from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
+from nexus.services.collection_keyset import (
+    Direction,
+    KeysetValueKind,
+    SortKey,
+    keyset_page,
+    order_by_sql,
+)
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import primary_creator_rows_sql
 from nexus.services.library_entries import library_media_rows_sql, unfiled_media_ids_sql
@@ -68,6 +74,18 @@ def parse_entries_query(items: Sequence[tuple[str, str]]) -> tuple[EntryView, Co
     ):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported library view")
     return view, query
+
+
+def _plan(view: EntryView, *, is_default: bool) -> tuple[SortKey, ...]:
+    own_order = (
+        SortKey("added_at", "desc", KeysetValueKind.DateTime)
+        if is_default
+        else SortKey("position", "asc", KeysetValueKind.Int)
+    )
+    return (
+        *(_SORTS[view.sort] if view.sort else (own_order,)),
+        SortKey("media_id", "desc", KeysetValueKind.Uuid),
+    )
 
 
 def get_library_order(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOrderOut:
@@ -148,11 +166,6 @@ def list_library_entries(
     library = libraries.access(db, viewer_id, library_id, lock=False)
     if view.projection == "unfiled" and not library.is_default:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unfiled is a view of All")
-    own_order = (
-        SortKey("added_at", "desc", KeysetValueKind.DateTime)
-        if library.is_default
-        else SortKey("position", "asc", KeysetValueKind.Int)
-    )
     order_revision = (
         str(library.order_revision)
         if library.mutable and all(value is None for value in asdict(view).values())
@@ -167,10 +180,7 @@ def list_library_entries(
             "view": asdict(view),
             "order_revision": order_revision,
         },
-        plan=(
-            *(_SORTS[view.sort] if view.sort else (own_order,)),
-            SortKey("media_id", "desc", KeysetValueKind.Uuid),
-        ),
+        plan=_plan(view, is_default=library.is_default),
         cursor=cursor,
         limit=limit,
         params={"viewer_id": viewer_id, "library_id": library_id, "entry_type": view.entry_type},
@@ -203,3 +213,30 @@ def count_default_root_inventory(db: Session, *, viewer_id: UUID, library_id: UU
         text(f"SELECT count(*) FROM ({library_media_rows_sql()}) members"),
         {"viewer_id": viewer_id, "library_id": library_id},
     ).scalar_one()
+
+
+def playback_source_ids(
+    db: Session, viewer_id: UUID, library_id: UUID, view: EntryView
+) -> tuple[str, list[UUID]]:
+    """Complete logical view in listing order, under the caller's read snapshot.
+
+    Only physical media memberships participate; subscription rules never expand.
+    The playback owner applies audio eligibility and text matching afterward.
+    """
+    library = libraries.access(db, viewer_id, library_id, lock=False)
+    if view.projection == "unfiled" and not library.is_default:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unfiled is a view of All")
+    plan = _plan(view, is_default=library.is_default)
+    sql = _page_sql(
+        view, is_default=library.is_default, keyset="", order=order_by_sql(plan, alias="facts")
+    )
+    rows = db.execute(
+        text(sql),
+        {
+            "viewer_id": viewer_id,
+            "library_id": library_id,
+            "entry_type": view.entry_type,
+            "limit": None,
+        },
+    )
+    return "All" if library.is_default else library.name, [row.media_id for row in rows]

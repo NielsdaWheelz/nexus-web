@@ -2,7 +2,7 @@
 
 /**
  * The browser's audio engine: one `<audio>` element, the episode's listening writer, its
- * activity observer, the media session and the natural-end settle.
+ * activity observer, the media session and terminal listening capture.
  *
  * Listening writes are fenced by the reset epoch alone, so they are idempotent samples: one
  * flight at a time carrying the newest sample, at once on pause, seek and rate, every 15 s while
@@ -14,14 +14,16 @@
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
  * (another device may have moved or reset it) and an unload writes nothing.
- * The device that hears an end settles it and, once the settle lands, plays the Lectern's next
- * audio row (`deps.next`, read before the settle) from where the server says it stands.
+ * Natural end reports its real terminal sample to the queue command owner. The engine never
+ * chooses a successor; durable queue advancement precedes the next load.
  * Each installation/reload owns a fresh playback subject. A seek validates that occurrence
- * immediately before changing the element; deferred metadata work keeps the load generation.
+ * immediately before changing the element; deferred metadata work keeps the load generation
+ * and applies the latest seek target, so an explicit seek outranks the initial resume point.
+ * An explicit installation time overrides the outgoing episode's newer resume sample.
  */
 
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
-import { apiFetch, ApiError, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, ApiError, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -47,23 +49,16 @@ type ListeningIn = Schema<"ListeningIn">;
 type ListeningPosition = Schema<"ListeningPositionOut">;
 
 export interface BrowserEngineDeps {
-  settle(
-    mediaId: string,
-    body: Schema<"NaturalEndIn">,
-  ): Promise<"Settled" | "Superseded" | "Gone">;
-  /** The audio row after this media's Lectern row; null when it has none. */
-  next(mediaId: string): PlayerDescriptor | null;
+  terminal(input: { readonly mediaId: string; readonly subject: string; readonly advance: boolean; readonly body: Promise<Schema<"NaturalEndIn">> }): Promise<void>;
   /** The server's descriptor now; null when it does not answer in time. */
   fresh(mediaId: string): Promise<PlayerDescriptor | null>;
   deviceClass(): ActivityObservation["deviceClass"];
   commands(): PlayerCommands | null;
-  advance(descriptor: PlayerDescriptor): void;
   onFailure(error: unknown): void;
 }
 
 const WRITE_EVERY_MS = 15_000;
 const LAST_WRITE_BOUND_MS = 2_000;
-const SETTLE_RETRY_MS = [2_000, 5_000, 15_000, 60_000];
 const ERRORS: Record<number, string> = {
   1: "Playback was interrupted.",
   2: "Network error. Check your connection.",
@@ -95,9 +90,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   let state: EngineState = IDLE_ENGINE_STATE;
   let episode: Episode | null = null;
   let generation = 0; // a load or dismiss retires everything the previous source started
+  let metadataPositionMs = 0;
+  let pendingSeek: (() => void) | null = null;
+  let advanceAllowed = false;
   let asked = 0; // the latest play or pause: a resume awaiting the server yields to a newer one
   let positionStateAt = 0;
-  let pendingSeek: (() => void) | null = null;
 
   const set = (patch: Partial<EngineState>) => {
     state = { ...state, ...patch };
@@ -205,6 +202,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     target.active = false;
     if (target !== episode) return;
     audio.pause();
+    metadataPositionMs = positionMs;
     audio.currentTime = positionMs / 1000;
     set({ synced: true, positionMs });
   };
@@ -243,52 +241,14 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     current.observer?.observe(observation(eligible));
 
   // ---- natural end ----
-  const settle = async (current: Episode, mine: number) => {
-    const mediaId = current.descriptor.media_id;
-    const next = deps.next(mediaId);
-    const playback = asked;
-    // Keep the event's epoch even while its own prior heartbeat settles. That acknowledgement
-    // may have completed the episode; an intervening unread/reset still supersedes this end.
-    const terminalListening = listening(current);
+  const terminalBody = async (current: Episode, terminalListening: ListeningIn): Promise<Schema<"NaturalEndIn">> => {
     await current.writing;
     if (!state.synced) {
-      const fresh = await deps.fresh(mediaId);
+      const fresh = await deps.fresh(current.descriptor.media_id);
       if (fresh?.reset_epoch === terminalListening.expected_reset_epoch)
         current.overrideRevision = fresh.consumption_override_revision;
     }
-    const body = {
-      terminal_listening: terminalListening,
-      expected_override_revision: current.overrideRevision,
-    };
-    // A resend that already landed answers Settled too (the server recognises it).
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        const outcome = await deps.settle(mediaId, body);
-        if (mine !== generation) return;
-        set({ synced: true });
-        if (outcome !== "Settled" || next === null || playback !== asked) return;
-        // The Lectern's copy of the row is as old as its last read: the server decides where
-        // the next episode starts, as for any other play.
-        deps.advance(next);
-        return;
-      } catch (error) {
-        if (handleUnauthenticatedApiError(error) || mine !== generation) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        const status = isApiError(error) ? error.status : 0;
-        if (
-          (status !== 0 && status < 500) ||
-          attempt >= SETTLE_RETRY_MS.length
-        ) {
-          console.warn("natural_end_settle_failed", { status });
-          return;
-        }
-        set({ synced: false });
-        await new Promise((resolve) =>
-          setTimeout(resolve, SETTLE_RETRY_MS[attempt]),
-        );
-        if (mine !== generation) return;
-      }
-    }
+    return { terminal_listening: terminalListening, expected_override_revision: current.overrideRevision };
   };
 
   // ---- media session ----
@@ -307,7 +267,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         details.seekTime !== undefined &&
         deps.commands()?.seekTo({ positionMs: details.seekTime * 1000 }),
     ],
-    ["stop", () => deps.commands()?.dismiss()],
+    ["stop", () => deps.commands()?.stop()],
   ];
   const showSession = () => {
     if (!session) return;
@@ -411,10 +371,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       if (current === null) return;
       observe(current, false);
       current.queued = null; // the settle carries the terminal sample
-      void settle(current, generation).catch(deps.onFailure);
+      const subject = state.playbackSubject;
+      if (subject !== null) void deps.terminal({ mediaId: current.descriptor.media_id, subject, advance: advanceAllowed,
+        body: terminalBody(current, listening(current)) }).catch(error => { set({ synced: false }); deps.onFailure(error); });
     },
     error: () =>
       set({
+        playbackFailed: true,
         error:
           ERRORS[audio.error?.code ?? 0] ?? "Playback failed. Please retry.",
       }),
@@ -448,10 +411,13 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
 
   const seekOnceLoaded = (positionMs: number) => {
     if (pendingSeek !== null) audio.removeEventListener("loadedmetadata", pendingSeek);
+    metadataPositionMs = positionMs;
     const mine = generation;
     const apply = () => {
+      if (mine !== generation) return;
       pendingSeek = null;
-      if (mine === generation) audio.currentTime = Math.min(positionMs, durationMs() || Infinity) / 1000;
+      const duration = durationMs();
+      audio.currentTime = (duration > 0 ? Math.min(metadataPositionMs, duration) : metadataPositionMs) / 1000;
     };
     pendingSeek = apply;
     audio.addEventListener("loadedmetadata", apply, { once: true });
@@ -463,26 +429,31 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     rate: number,
     positionMs: number,
     next: Episode | null,
+    play: boolean,
   ) => {
     const mine = ++generation;
     asked += 1;
+    advanceAllowed = false;
+    const admission = asked;
     set({ playbackSubject: null });
     await closeEpisode();
-    if (mine !== generation) return null;
+    if (mine !== generation || admission !== asked) return null;
     episode = next;
+    advanceAllowed = play;
     audio.src = url;
     audio.defaultPlaybackRate = rate;
     audio.playbackRate = rate;
     seekOnceLoaded(positionMs);
     set({
       error: null,
+      playbackFailed: false,
       synced: true,
       positionMs,
       durationMs: 0,
       bufferedMs: 0,
       rate,
     });
-    void audio.play().catch(() => sync());
+    if (play) void audio.play().catch(() => sync());
     return mine;
   };
 
@@ -493,7 +464,15 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async load(descriptor) {
+    queue: null,
+    async load(descriptor, play, requestedPositionMs) {
+      const outgoing = episode;
+      if (outgoing?.descriptor.media_id === descriptor.media_id && outgoing.resetEpoch === descriptor.reset_epoch && news(outgoing)) {
+        const local = listening(outgoing);
+        descriptor = { ...descriptor, position_ms: local.position_ms,
+          playback_rate: local.episode_playback_rate ?? descriptor.playback_rate };
+      }
+      if (requestedPositionMs !== null) descriptor = { ...descriptor, position_ms: requestedPositionMs };
       const {
         stream_url: streamUrl,
         playback_rate: playbackRate,
@@ -513,8 +492,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         fenced: false,
         active: false,
       };
-      const mine = await start(streamUrl, playbackRate, positionMs, next);
+      const mine = await start(streamUrl, playbackRate, positionMs, next, play);
       if (mine === null || mine !== generation) return;
+      if (outgoing?.descriptor.media_id === mediaId && outgoing.resetEpoch === next.resetEpoch &&
+          (outgoing.overrideRevision ?? 0) > (next.overrideRevision ?? 0)) next.overrideRevision = outgoing.overrideRevision;
       next.observer = registerActivityObserver(
         mediaId,
         "Listening",
@@ -524,7 +505,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       showSession();
     },
     async preview(descriptor: PreviewAudioDescriptor) {
-      const mine = await start(descriptor.audioUrl, 1, 0, null);
+      const mine = await start(descriptor.audioUrl, 1, 0, null, true);
       if (mine === null || mine !== generation) return;
       set({ source: { kind: "Preview", descriptor }, playbackSubject: crypto.randomUUID() });
       showSession();
@@ -538,13 +519,14 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           : "listening progress synchronized. press play to resume.");
       }
       const mine = ++asked;
+      advanceAllowed = true;
       if (state.source === null)
         throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
       if (state.error !== null) {
         // Explicit retry may resume a refused sample; never replace it with a fresh read.
         if (current !== null && current.queued !== null) current.stopped = false;
         generation += 1;
-        set({ playbackSubject: crypto.randomUUID(), error: null });
+        set({ playbackSubject: crypto.randomUUID(), error: null, playbackFailed: false });
         audio.load();
         seekOnceLoaded(state.positionMs);
       } else if (current !== null && !news(current)) {
@@ -553,7 +535,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         const best = fresh ?? (given && given.reset_epoch > current.resetEpoch ? given : null);
         if (best !== null && (audio.ended || best.reset_epoch !== current.resetEpoch ||
             best.position_ms !== ms(audio.currentTime))) {
-          await engine.load(best);
+          await engine.load(best, true, null);
           return;
         }
         if (best !== null) current.overrideRevision = best.consumption_override_revision;
@@ -561,6 +543,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       void audio.play().catch(() => sync());
     },
     async pause() {
+      advanceAllowed = false;
       asked += 1;
       audio.pause();
     },
@@ -574,23 +557,23 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       if (state.error !== null)
         throw new ApiError(409, "E_PLAYBACK_REFUSED", "playback failed. retry in the player, then choose this time again.");
       asked += 1;
+      advanceAllowed = true;
       current.active = true;
-      if (audio.readyState === 0) seekOnceLoaded(positionMs);
-      else audio.currentTime = Math.min(positionMs, durationMs() || Infinity) / 1000;
+      metadataPositionMs = Math.min(positionMs, durationMs() || Infinity);
+      if (audio.readyState === 0) seekOnceLoaded(metadataPositionMs);
+      audio.currentTime = metadataPositionMs / 1000;
       void audio.play().catch(() => sync());
       sync();
     },
     seekTo({ positionMs, expectedSubject }) {
       const subject = expectedSubject ?? state.playbackSubject;
       if (subject === null || subject !== state.playbackSubject || episode?.fenced) return;
+      advanceAllowed = !audio.paused;
       asked += 1;
       if (episode) episode.active = true;
       const duration = durationMs();
-      audio.currentTime =
-        Math.max(
-          0,
-          duration > 0 ? Math.min(positionMs, duration) : positionMs,
-        ) / 1000;
+      metadataPositionMs = Math.max(0, duration > 0 ? Math.min(positionMs, duration) : positionMs);
+      audio.currentTime = metadataPositionMs / 1000;
       sync();
     },
     skipBy: (deltaMs) => engine.seekTo({ positionMs: ms(audio.currentTime) + deltaMs }),
@@ -637,7 +620,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     },
     async dismiss() {
       const mine = ++generation;
-      asked += 1;
       set({ playbackSubject: null });
       await closeEpisode();
       if (mine !== generation) return;
@@ -649,7 +631,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       showSession();
     },
     close() {
-      onPageHide();
       generation += 1;
       asked += 1;
       if (pendingSeek !== null) audio.removeEventListener("loadedmetadata", pendingSeek);
@@ -659,6 +640,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       for (const [name, handler] of Object.entries(events))
         audio.removeEventListener(name, handler);
       episode?.observer?.close();
+      if (episode !== null) { episode.queued = null; episode.stopped = true; }
+      episode = null;
       audio.pause();
       audio.remove();
       listeners.clear();

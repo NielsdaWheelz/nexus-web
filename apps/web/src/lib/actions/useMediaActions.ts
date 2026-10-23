@@ -2,6 +2,7 @@
 
 /** Shared media commands read the account runtime, never the lazy resource menu. */
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
+import { usePlaybackSource } from "./playbackSource";
 import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
 import { compareRevision } from "@/lib/collections/order";
 import { ApiError, requestWithDeadline } from "@/lib/api/client";
@@ -23,6 +24,7 @@ export interface MediaAction {
 
 export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDescriptor | null): readonly MediaAction[] {
   const { ctx, run } = useActionRuntime();
+  const source = usePlaybackSource();
   const placement = useLibraryPlacementController();
   const operation = subject.kind === "External" ? ctx.mediaContinuations.forSubject(subject.target) : null;
   // A completed acquisition provides canonical identity for this sealed target.
@@ -65,7 +67,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const updateRequired = state.kind === "Unavailable" && state.reason === "UpdateRequired";
     const label = `${verb}: ${title}`;
     if (mediaId !== null && !loadedPreview) {
-      const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, ctx, run });
+      const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, playbackSource: source, ctx, run });
       actions.push({ id: "Playback", label: `${projected.label}: ${title}`, glyph: projected.glyph, busy: false,
         disabled: projected.disabled === true || !available,
         disabledReason: projected.disabledReason ?? (available ? null : "audio unavailable"),

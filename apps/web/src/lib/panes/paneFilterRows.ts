@@ -1,5 +1,6 @@
 "use client";
 
+import { paneFilterText } from "./paneFilterText";
 import { useCallback, useMemo, useState } from "react";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneChrome";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
@@ -109,11 +110,11 @@ export function matchesPaneFilterQuery(
   query: string,
   fields: readonly string[],
 ): boolean {
-  const needle = query.trim().normalize("NFC").toLowerCase();
+  const needle = paneFilterText(query.trim());
   return (
     needle.length === 0 ||
     fields.some((field) =>
-      field.normalize("NFC").toLowerCase().includes(needle),
+      paneFilterText(field).includes(needle),
     )
   );
 }

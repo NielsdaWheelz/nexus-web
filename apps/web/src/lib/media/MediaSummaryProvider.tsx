@@ -35,6 +35,7 @@ import type { MediaSummary } from "./mediaSummary";
 
 interface Entry {
   summary: MediaSummary | null;
+  resolved: boolean;
   error: ApiError | null;
   retained: number;
   stale: boolean;
@@ -112,6 +113,7 @@ function createStore() {
         if (orderingFacts(entry.summary) !== orderingFacts(summary))
           queryRevision += 1;
         entry.summary = summary;
+        entry.resolved = true;
         entry.error = null;
       }
     } catch (error) {
@@ -166,19 +168,18 @@ function createStore() {
     },
     revision: () => revision,
     queryRevision: () => queryRevision,
-    retain(seeds: readonly MediaSummary[]) {
-      const ids = [...new Set(seeds.map((seed) => seed.media_id))];
-      for (const seed of seeds) {
-        if (!entries.has(seed.media_id))
-          entries.set(seed.media_id, {
-            summary: seed,
-            error: null,
-            retained: 0,
-            stale: true,
-            resolving: false,
-          });
+    retain({ ids, seeds }: { ids: readonly string[]; seeds: readonly MediaSummary[] }) {
+      const supplied = new Map(seeds.map(seed => [seed.media_id, seed]));
+      for (const id of ids) {
+        if (!entries.has(id)) {
+          const summary = supplied.get(id) ?? null;
+          entries.set(id, { summary, resolved: summary !== null, error: null, retained: 0, stale: true, resolving: false });
+        }
+        const entry = entries.get(id)!;
+        const seed = supplied.get(id);
+        if (!entry.resolved && seed !== undefined) { entry.summary = seed; entry.resolved = true; }
+        entry.retained += 1;
       }
-      for (const id of ids) entries.get(id)!.retained += 1;
       invalidate(ids);
       return () => {
         for (const id of ids) {
@@ -187,6 +188,11 @@ function createStore() {
           if (entry.retained === 0) entries.delete(id);
         }
       };
+    },
+    get: (id: string) => entries.get(id)?.summary ?? null,
+    pending: (id: string) => {
+      const entry = entries.get(id);
+      return entry === undefined || !entry.resolved && entry.error === null;
     },
     resolve: (seed: MediaSummary): MediaSummary | null => {
       const entry = entries.get(seed.media_id);
@@ -261,7 +267,7 @@ export function useMediaSummaries(seeds: readonly MediaSummary[]) {
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
   useEffect(() => {
-    if (key) return store.retain(seedsRef.current);
+    if (key) return store.retain({ ids: key.split(","), seeds: seedsRef.current });
   }, [store, key]);
   const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
@@ -275,6 +281,19 @@ export function useMediaSummaries(seeds: readonly MediaSummary[]) {
       queryRevision: store.queryRevision(),
     };
   }, [store, revision, key, retry]);
+}
+
+/** Identity-only consumers retain the same summary owner without inventing seeds. */
+export function useMediaSummaryIds(mediaIds: readonly string[]) {
+  const store = useStore();
+  const key = [...new Set(mediaIds)].sort().join(",");
+  useSyncExternalStore(key ? store.subscribe : () => () => {}, key ? store.revision : () => 0, () => 0);
+  useEffect(() => {
+    if (key) return store.retain({ ids: key.split(","), seeds: [] });
+  }, [store, key]);
+  const ids = key === "" ? [] : key.split(",");
+  return { resolve: store.get, pending: store.pending, error: store.error(ids),
+    retry: () => store.retry(ids), retrying: store.retrying(ids) };
 }
 
 export function useMediaQueryRevision(): number {

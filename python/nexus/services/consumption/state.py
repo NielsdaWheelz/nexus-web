@@ -225,29 +225,53 @@ def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn)
     that already landed (the next revision, finished, same epoch) succeeds."""
 
     def run(db: Session) -> None:
-        _episode(db, viewer_id, media_id)
-        current = _override(db, viewer_id, media_id)
-        expected = body.expected_override_revision
-        changed = False
-        if (current.revision if current else None) == expected and listening.write(
-            db, viewer_id=viewer_id, media_id=media_id, sample=body.terminal_listening
-        ):
-            _finish(db, viewer_id, media_id, current)
-            lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
-            changed = True
-        elif not (
-            current is not None
-            and current.status == "finished"
-            and current.revision == (expected or 0) + 1
-            and _position(db, viewer_id, media_id).reset_epoch
-            == body.terminal_listening.expected_reset_epoch
-        ):
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The natural end was superseded")
-        if changed:
-            record_input_change(db)
+        settle_natural_end_in_txn(db, viewer_id, media_id, body)
         db.commit()
 
     viewer_txn("settle_natural_end", viewer_id, run)
+
+
+def natural_end_is_settled(
+    db: Session, viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn
+) -> bool:
+    """Inspect the full retry postcondition under the caller's viewer lock."""
+    current = _override(db, viewer_id, media_id)
+    return (
+        current is not None
+        and current.status == "finished"
+        and current.revision == (body.expected_override_revision or 0) + 1
+        and _position(db, viewer_id, media_id).reset_epoch
+        == body.terminal_listening.expected_reset_epoch
+        and not db.scalar(
+            text(
+                f"SELECT EXISTS (SELECT 1 FROM ({lectern.membership_rows_sql()}) members "
+                "WHERE media_id = :media_id)"
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+    )
+
+
+def settle_natural_end_in_txn(
+    db: Session, viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn
+) -> None:
+    """Complete and leave lectern atomically in the caller's viewer-locked transaction.
+
+    A landed retry only inspects the joint postcondition. Later reset, unread or
+    lectern re-add refuses; no retry may erase a newer consumption decision.
+    """
+    _episode(db, viewer_id, media_id)
+    current = _override(db, viewer_id, media_id)
+    if (
+        current.revision if current else None
+    ) == body.expected_override_revision and listening.write(
+        db, viewer_id=viewer_id, media_id=media_id, sample=body.terminal_listening
+    ):
+        _finish(db, viewer_id, media_id, current)
+        lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+        record_input_change(db)
+    elif not natural_end_is_settled(db, viewer_id, media_id, body):
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The natural end was superseded")
 
 
 def set_episode_states_in_txn(

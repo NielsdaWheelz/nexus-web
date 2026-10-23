@@ -204,6 +204,7 @@ SimpleActionKind = Literal[
     "Share",
     "Chat",
     "PlayNext",
+    "AddToQueue",
     "DownloadOriginal",
     "EditAuthors",
     "ResetProgress",

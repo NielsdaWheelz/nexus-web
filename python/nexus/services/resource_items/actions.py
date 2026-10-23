@@ -130,6 +130,7 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
     if media_id in descriptors:
         actions.append(PlaybackAction(blocked=None, player_descriptor=descriptors[media_id]))
         actions.append(_simple("PlayNext"))
+        actions.append(_simple("AddToQueue"))
     if media.has_file:
         actions.append(_simple("DownloadOriginal"))
     # Each obligation's own offer is actionable; a creator's stays discoverable but blocked.

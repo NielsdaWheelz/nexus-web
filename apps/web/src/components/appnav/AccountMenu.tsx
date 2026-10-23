@@ -22,6 +22,7 @@ import {
   type WritingRuntimeToken,
 } from "@/lib/notes/journal";
 import { nudgeWrites, syncForSignOut } from "@/lib/notes/writes";
+import { unbindNativePlayer } from "@/lib/player/nativeEngine";
 import { offlineAvailable, offlineCall } from "@/lib/offline/bridge";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -47,8 +48,8 @@ const UNRESOLVED = "some writing still needs a decision. download it, discard it
 
 /**
  * The tab's one deliberate sign-out, above every account menu: unsynced writing is
- * synced, downloaded or explicitly discarded first; then Android's offline data,
- * the journal and the session end, in that order. One runtime token, captured
+ * synced, downloaded or explicitly discarded first; then Android playback is
+ * paused/checkpointed/unbound before downloads, writing and cookies are removed. One runtime token, captured
  * before the first await, binds every journal call of the flow: a stale token is
  * refused and changes nothing. The journal holds sign-out exclusivity from the
  * first check until cancellation, failure or the document leaving; `ready`
@@ -91,12 +92,14 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       await restore(token, "nothing was removed. your session is still open.");
     }
   };
-  // Android's offline reading copies go first: they can be downloaded again. The
-  // journal's writing cannot, so it is purged only after them, then the session.
+  // Native playback must stop and release its account before downloads or cookies disappear.
   const leave = async (token: WritingRuntimeToken) => {
-    let message = "offline data couldn’t be fully removed. your writing stays on this device and your session is still open.";
+    let message = "playback couldn’t stop or save its position. your session is still open. retry sign out.";
+    const offlineMessage = "offline data couldn’t be fully removed. your writing stays on this device and your session is still open.";
     try {
       const completed = await guardedSignOut(async () => {
+        await unbindNativePlayer();
+        message = offlineMessage;
         if (offlineAvailable) await offlineCall("purge");
         message = offlineAvailable
           ? "offline data was removed, but writing on this device couldn’t be. it stays here and your session is still open."

@@ -48,13 +48,11 @@ import {
   writeLecternItem,
   type Lectern,
   type LecternItem,
-  type Placement,
 } from "./api";
 
 export type LecternOutcome = "Acknowledged" | "Unconfirmed" | "Superseded";
 export type LecternIntent =
   | { readonly kind: "Ensure" }
-  | { readonly kind: "Place"; readonly placement: Placement }
   | { readonly kind: "Remove" };
 export const LECTERN_INTENT_COPY = {
   Ensure: { verb: "adding", check: "check add", message: "it may already be on lectern." },
@@ -62,11 +60,6 @@ export const LECTERN_INTENT_COPY = {
     verb: "removing",
     check: "check removal",
     message: "it may already have been removed from lectern.",
-  },
-  Place: {
-    verb: "placing",
-    check: "check placement",
-    message: "its position on lectern may already have changed.",
   },
 } as const;
 export interface LecternPending {
@@ -94,7 +87,6 @@ export interface LecternCommands {
   readonly receipts: ReadonlyMap<string, LecternReceipt>;
   readonly ensure: (input: Input) => Promise<LecternOutcome>;
   readonly remove: (input: Input) => Promise<LecternOutcome>;
-  readonly place: (input: Input & { readonly placement: Placement }) => Promise<LecternOutcome>;
 }
 interface Request extends Input {
   readonly intent: LecternIntent;
@@ -122,12 +114,6 @@ interface Context {
   readonly order: CollectionOrder;
 }
 const LecternContext = createContext<Context | null>(null);
-const intentKey = (intent: LecternIntent) =>
-  intent.kind !== "Place"
-    ? intent.kind
-    : intent.placement.kind === "First"
-      ? "Place:First"
-      : `Place:After:${intent.placement.media_id}`;
 const newer = (a: OrderRevision | null, b: OrderRevision | null) =>
   a === null || (b !== null && compareRevision(b, a) > 0) ? b : a;
 const past = (read: OrderRevision | null, revision: OrderRevision) =>
@@ -199,7 +185,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
             intent:
               intent.kind === "Remove"
                 ? intent
-                : { kind: "Place", placement: intent.kind === "Ensure" ? null : intent.placement },
+                : { kind: "Place", placement: null },
             expectedRevision: expected,
           },
           signal,
@@ -265,7 +251,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     if (alive.signal.aborted) return Promise.resolve("Superseded");
     const previous = lane.requests.get(input.mediaId);
     if (previous !== undefined)
-      return intentKey(previous.intent) === intentKey(intent)
+      return previous.intent.kind === intent.kind
         ? check(previous)
         : Promise.resolve("Superseded");
     if (revision === null) {
@@ -381,7 +367,6 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         receipts: new Map(lane.receipts),
         ensure: (input) => submit(input, { kind: "Ensure" }),
         remove: (input) => submit(input, { kind: "Remove" }),
-        place: (input) => submit(input, { kind: "Place", placement: input.placement }),
       },
       order: {
         state: {
@@ -473,7 +458,7 @@ function LecternRecovery({
             {
               label: copy.check,
               busy: request.phase === "Checking",
-              commandKey: `${mediaId}:${intentKey(request.intent)}`,
+              commandKey: `${mediaId}:${request.intent.kind}`,
               onClick: () => void request.check().catch((error: unknown) => fail({ error })),
             },
           ],

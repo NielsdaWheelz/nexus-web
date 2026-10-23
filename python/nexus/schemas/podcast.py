@@ -18,6 +18,7 @@ from nexus.services.sealed_handles import DiscoveryTargetHandle
 _CLOSED = ConfigDict(extra="forbid")
 
 EpisodeState = Literal["all", "unplayed", "in_progress", "played"]
+EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
 
 
 class PodcastDiscoveryCommitTarget(BaseModel):
