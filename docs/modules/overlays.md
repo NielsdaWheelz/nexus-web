@@ -343,9 +343,10 @@ z-indices.
 
 ## browser floor
 
-chromium 110+, firefox 121+ (esr 128), safari 16+ and the android system
-webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
-`:focus-visible` and `visualViewport`.
+chromium 110+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
+`findLast`/`toReversed`, `:focus-visible` and `visualViewport`. the native android
+shell requires system webview 144+ for its edge-to-edge safe-area and keyboard
+viewport contract; the android os version alone does not establish that floor.
 
 ## verification
 

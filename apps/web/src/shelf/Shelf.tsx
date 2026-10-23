@@ -3,6 +3,7 @@
 // copy opens here in ShelfReader; everything else is a row with its actions.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import {
   offlineCall,
@@ -20,6 +21,7 @@ interface Confirmation {
   readonly title: string;
   readonly body: string;
   readonly action: string;
+  readonly tone: "danger" | null;
   readonly run: () => void;
 }
 
@@ -156,6 +158,7 @@ export default function Shelf() {
       title: "Remove downloaded copy?",
       body: "Its position saved on this device has not reached Nexus and will be lost.",
       action: "Remove copy and position",
+      tone: "danger",
       run: removeNow,
     });
   };
@@ -165,13 +168,13 @@ export default function Shelf() {
       <div className={styles.dialogBody}>
         <p>{confirmation.body}</p>
         <div className={styles.actions}>
-          <button type="button" className={styles.action} onClick={() => {
+          <Button emphasis="strong" tone={confirmation.tone ?? undefined} onClick={() => {
             setConfirmation(null);
             confirmation.run();
-          }}>{confirmation.action}</button>
-          <button type="button" className={styles.quietAction} onClick={() => setConfirmation(null)}>
+          }}>{confirmation.action}</Button>
+          <Button onClick={() => setConfirmation(null)}>
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </Dialog>
@@ -196,7 +199,7 @@ export default function Shelf() {
     return (
       <main className={`${styles.shell} ${styles.readerShell}`}>
         <header className={styles.readerHeader}>
-          <button type="button" className={styles.quietAction} onClick={closeCopy}>Downloads</button>
+          <Button onClick={closeCopy}>Downloads</Button>
           <div>
             <h1 title={opened.title}>{opened.title}</h1>
             <p>{statusCopy(opened, snapshot)}</p>
@@ -230,20 +233,18 @@ export default function Shelf() {
               </div>
               <div className={styles.rowActions}>
                 {item.state === "Ready" && isReading(item) ? (
-                  <button type="button" className={styles.action} aria-label={`Open ${item.title}`}
-                    onClick={() => openCopy(item.mediaId)}>Open</button>
+                  <Button aria-label={`Open ${item.title}`}
+                    onClick={() => openCopy(item.mediaId)}>Open</Button>
                 ) : null}
                 {item.state === "Queued" || item.state === "Downloading" ? (
-                  <button type="button" className={styles.quietAction}
-                    onClick={() => run("cancel", { mediaId: item.mediaId })}>Cancel</button>
+                  <Button onClick={() => run("cancel", { mediaId: item.mediaId })}>Cancel</Button>
                 ) : null}
                 {item.state === "Failed" ? (
-                  <button type="button" className={styles.action}
-                    onClick={() => run("retry", { mediaId: item.mediaId })}>Retry</button>
+                  <Button onClick={() => run("retry", { mediaId: item.mediaId })}>Retry</Button>
                 ) : null}
                 {item.state === "Ready" || item.state === "Failed" ? (
-                  <button type="button" className={styles.quietAction} aria-label={`Remove ${item.title}`}
-                    onClick={() => remove(item)}>Remove</button>
+                  <Button tone="danger" aria-label={`Remove ${item.title}`}
+                    onClick={() => remove(item)}>Remove</Button>
                 ) : null}
               </div>
             </li>
@@ -261,9 +262,9 @@ export default function Shelf() {
       <header className={styles.hero}>
         <p className={`${styles.label} ${styles.eyebrow}`}>Nexus</p>
         <h1>Downloads</h1>
-        <button type="button" className={styles.quietAction} onClick={() => run("openHosted", { path: "/" })}>
+        <Button onClick={() => run("openHosted", { path: "/" })}>
           Back to Nexus
-        </button>
+        </Button>
       </header>
       {alert}
       {snapshot.authRequired ? (
@@ -288,6 +289,7 @@ export default function Shelf() {
                 title: "Allow all downloads over mobile data?",
                 body: "This releases every download waiting for Wi-Fi.",
                 action: "Allow mobile data",
+                tone: null,
                 run: () => run("policy", { value: "AnyConnected" }),
               });
             }}

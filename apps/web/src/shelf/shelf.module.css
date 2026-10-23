@@ -146,34 +146,6 @@ body {
   justify-content: flex-end;
 }
 
-/* Text-forward actions: a ruled word, not a filled pill. */
-.action,
-.quietAction {
-  min-height: var(--size-xl);
-  padding: 0;
-  border: 0;
-  border-bottom: var(--stroke-hairline) solid currentcolor;
-  background: none;
-  font-family: inherit;
-  font-size: var(--text-sm);
-  letter-spacing: var(--tracking-wide);
-}
-
-.action {
-  color: var(--accent);
-}
-
-.quietAction {
-  color: var(--ink-faint);
-}
-
-.quietAction:hover {
-  color: var(--ink);
-}
-
-
-
-
 .dialogBody p {
   margin: 0 0 var(--space-5);
   color: var(--ink-muted);

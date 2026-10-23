@@ -3,6 +3,7 @@
 // port keeps the position on the device through the bridge, which syncs it.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import {
   Contents,
@@ -172,32 +173,28 @@ export default function ShelfReader({
       ) : null}
       {progress === "ContentChanged" && !continued ? (
         <div className={styles.actions} aria-label="Changed source">
-          <button
-            type="button"
-            className={styles.action}
+          <Button
+            emphasis="strong"
             onClick={() => setContinued(true)}
           >
             Continue reading
-          </button>
-          <button
-            type="button"
-            className={styles.quietAction}
+          </Button>
+          <Button
+            tone="danger"
             onClick={onRemove}
           >
             Remove downloaded copy
-          </button>
+          </Button>
         </div>
       ) : null}
       {text && text.toc.length > 0 ? (
         <div className={`${styles.actions} ${styles.readerActions}`}>
-          <button
-            type="button"
-            className={styles.action}
+          <Button
             aria-expanded={contents}
             onClick={() => setContents(!contents)}
           >
             Contents
-          </button>
+          </Button>
         </div>
       ) : null}
       {contents ? (
