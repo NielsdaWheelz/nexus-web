@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useId, useImperativeHandle, useRef, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, List, RotateCcw, X } from "lucide-react";
+import { ChevronDown, ChevronUp, RotateCcw, TextSearch, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -108,7 +108,8 @@ const FindBar = forwardRef<
           },
         }}
         options={find ? {
-          label: "Options",
+          label: "Find options",
+          iconOnly: true,
           activeCount: chips.length,
           content: (
             <fieldset className={styles.options}>
@@ -145,13 +146,13 @@ const FindBar = forwardRef<
             <Button iconOnly aria-label="Previous match" tooltip={{ text: "Previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<ChevronUp size={15} aria-hidden="true" />} />
             <Button iconOnly aria-label="Next match" tooltip={{ text: "Next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<ChevronDown size={15} aria-hidden="true" />} />
           </div>
-          <Button disabled={count === 0} icon={<List size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>
-            Results
-          </Button>
           {find?.result.kind === "Failed" ? <Button onClick={() => {
             inputRef.current?.focus({ preventScroll: true });
             find.retry();
           }}>Retry</Button> : null}
+        </>}
+        trailingActions={<>
+          <Button iconOnly aria-label="Show search results" disabled={count === 0} icon={<TextSearch size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)} />
           {find?.returnable ? (
             <Button iconOnly aria-label="Return to reading position" onClick={() => {
               inputRef.current?.focus({ preventScroll: true });
