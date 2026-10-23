@@ -4,8 +4,27 @@ podcasts own canonical shows/episodes, per-library automatic delivery, finite
 history imports, source traversal and independent playback defaults. library
 entries are physical media memberships; shows have no entry and never hide their
 episodes. all aggregates member-library subscriptions once per show and is the
-parent command scope. contextless admission targets the existing default library
-without a destination picker. named admission affects that destination only.
+parent command scope. subscribe adds available episodes and ongoing delivery to
+one destination; contextless subscribe uses the existing default library. finite
+import chooses that personal destination or one writable named library and never
+changes subscriptions.
+
+the show pane's libraries card contains named subscription destinations, including
+read-only rows. its shared title links navigate; inline removal unsubscribes only
+that library and keeps episodes. the card's library icon chooses a named
+subscription destination. the header's shared rss action subscribes personally or
+unsubscribes everywhere from loaded aggregate facts. the default destination is
+excluded only from card rows, never from subscription state. library changes
+invalidate these names immediately within the tab.
+
+import and destructive cleanup are separate menu commands. cleanup chooses one
+named affected library or everywhere, including while subscribed and for
+episode-only destinations. changing scope remounts the review and reads fresh
+guards; it never slices an aggregate preview. all four intents use fixed dialogs,
+the existing account command owner and retained uncertainty recovery. canonical
+admission reads the exact library/show relationship; the default section's
+aggregate cannot establish personal membership. destination choice writes
+nothing. progress/retry/cancel remain available without subscription rows.
 
 ## owners and contracts
 
@@ -37,8 +56,8 @@ marks every unfinished destination import processed before deleting. workspace
 removal also covers pending destinations without entries. fresh explicit import
 can restore an episode; background work never clears viewer suppression.
 
-named stop chooses keep or removal of all show episodes there, including manual
-placements; removal preserves personal retention. all stop cascades to affected
+named unsubscribe keeps episodes; separate cleanup removes all show episodes
+there, including manual placements, and preserves personal retention. all stop cascades to affected
 non-system member libraries and own default, with confirmation. all/remove deletes
 all selected placements/actor lectern items and sets visibility markers while
 preserving highlights, notes, attachments, grants, listening history and settings.

@@ -40,6 +40,7 @@ import {
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "../browse.module.css";
 
@@ -149,6 +150,11 @@ export default function BrowsePreviewPaneBody() {
         : null;
   usePreviewTitleHint(target, preview?.title);
   usePaneChrome({
+    menuActions: preview?.kind === "Podcast" && owned === null ? [{
+      kind: "command", id: "ImportPodcastEpisodes", label: ACTION_CATALOG.ImportPodcastEpisodes.label,
+      icon: <ACTION_CATALOG.ImportPodcastEpisodes.icon size={16} aria-hidden="true" />,
+      onSelect: () => ctx.overlays.open({ kind: "ImportPodcastEpisodes", target: { kind: "Discovery", target: preview.target }, title: preview.title }),
+    }] : undefined,
     header:
       failure !== null
         ? { kind: "Resource", resource: { status: "Failed" } }
@@ -202,7 +208,7 @@ export default function BrowsePreviewPaneBody() {
     );
   }
 
-  const acquisition = preview.kind === "Podcast" ? <Button emphasis="strong" aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "AddPodcast", target: { kind: "Discovery", target: preview.target }, title: preview.title, libraryId })}>add podcast…</Button> : null;
+  const acquisition = preview.kind === "Podcast" ? <Button emphasis="strong" aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Discovery", target: preview.target }, title: preview.title, libraryId })}>subscribe…</Button> : null;
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =

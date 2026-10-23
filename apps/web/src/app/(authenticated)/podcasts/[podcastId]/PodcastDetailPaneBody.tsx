@@ -6,11 +6,16 @@
 // command to the account owner. Observation stops outside the visible pane.
 
 import { useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Minus } from "lucide-react";
 import { PlaybackSourceContext, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { CollectionRowView } from "@/lib/collections/types";
+import { libraryDisplayName } from "@/lib/collections/presenters/library";
+import { projectPodcastSubscriptionAction } from "@/lib/actions/project";
+import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -139,7 +144,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const detailId = useId();
   const detailsButton = useRef<HTMLButtonElement>(null);
   const detailPanel = useRef<HTMLDivElement>(null);
-  const { ctx } = useActionRuntime();
+  const { ctx, run } = useActionRuntime();
+  const librariesCard = useRef<HTMLElement>(null);
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const consumption = useChangeStamp("Consumption");
@@ -149,12 +155,20 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const queryRevision = useMediaQueryRevision();
   const head = useServerValue<PodcastDetail>({
     key: `podcast-head:${podcastId}`,
-    stale: `${useChangeStamp("Podcasts")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`,
+    stale: `${useChangeStamp("Podcasts", "Libraries")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`,
     visit: HEAD,
     load: signal => getPodcastDetail(podcastId, signal),
   });
   const ready = head.status === "ready" ? head : null;
   const destinations = ready?.data.destinations ?? [];
+  const namedDestinations = destinations.filter(destination => !destination.is_default);
+  const libraryRows: CollectionRowView[] = namedDestinations.map(destination => ({
+    id: destination.library_id, kind: "library",
+    primary: { kind: "link", href: `/libraries/${destination.library_id}`, paneLabelHint: libraryDisplayName(destination) },
+    title: { text: libraryDisplayName(destination) }, contributors: [], publicationDate: null,
+    context: null, activity: null, exceptionalStatus: null,
+    resourceRef: canonicalResourceRef({ scheme: "library", id: destination.library_id }), selected: false,
+  }));
   const following = destinations.length > 0;
   const history = ready?.data.imports ?? [];
   const recurring = ready?.data.recurring;
@@ -379,6 +393,10 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   });
   usePaneChrome({
     menuActions: bulkActions,
+    primaryAction: ready !== null && podcast !== undefined ? projectPodcastSubscriptionAction({
+      podcastId, title: podcast.title, subscribed: following,
+      blocked: ready.error !== null ? "TemporarilyUnavailable" : null, ctx, run,
+    }) : undefined,
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
       following
@@ -453,15 +471,30 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
           />
         ) : null}
-        {ready && podcast ? <PaneSection title="automatic additions">
-          {destinations.length > 0 ? <ul>{destinations.map(destination => <li key={destination.library_id}>
-            <a href={`/libraries/${destination.library_id}`}>{destination.is_default ? "all" : destination.name}</a>
-            {!destination.is_default ? <Button onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId, title: podcast.title, libraryId: destination.library_id, episodes: "keep" })}>stop adding…</Button> : null}
-          </li>)}</ul> : <p>no ongoing subscription.</p>}
-          <Button onClick={() => ctx.overlays.open({ kind: "AddPodcast", target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title, libraryId: params.get("library_id") })}>add podcast…</Button>
-          <PodcastDestinationPicker podcastId={podcastId} title={podcast.title} />
-          {following ? <Button onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId, title: podcast.title, libraryId: null, episodes: "keep" })}>stop everywhere…</Button>
-            : ready.data.episode_counts.available_count > 0 ? <Button tone="danger" onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId, title: podcast.title, libraryId: null, episodes: "remove", removeOnly: true })}>remove episodes everywhere…</Button> : null}
+        {ready && podcast ? <PaneSection ref={librariesCard} title="libraries" aria-label="libraries" tabIndex={-1}
+          actions={<PodcastDestinationPicker podcastId={podcastId} title={podcast.title} />}>
+          <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
+            rows={libraryRows}
+            rowControls={Object.fromEntries(namedDestinations.map((destination, index) => {
+              const label = `remove from library: ${libraryDisplayName(destination)}`;
+              const reason = !destination.can_add_content ? "a library admin must remove this subscription." : null;
+              return [destination.library_id, <Button key={destination.library_id} iconOnly icon={<Minus size={16} aria-hidden="true" />}
+                aria-label={label} aria-haspopup="dialog" aria-disabled={reason !== null || undefined}
+                tooltip={{ text: reason ?? label }}
+                onClick={() => {
+                  if (reason !== null) return;
+                  const after = namedDestinations.slice(index + 1).map(item => item.library_id);
+                  const paneId = librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+                  ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title: podcast.title, libraryId: destination.library_id,
+                    successFocus: () => after.map(id => findPaneCollectionRowFocusTarget(paneId, id)).find(target => target !== null)
+                      ?? librariesCard.current?.querySelector<HTMLButtonElement>("header button")
+                      ?? findPaneLandmarkFocusTarget(paneId),
+                  });
+                }} />];
+            }))}
+            empty={<p>choose a library to receive new episodes.</p>} />
+        </PaneSection> : null}
+        {ready && podcast && (history.length > 0 || recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps) ? <PaneSection title="episode imports">
           {recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps ? <FeedbackNotice content={{ tone: "Warning", title: "the last check could not load all available episodes.", message: "nexus will try again automatically." }} announcement="Polite" actions={[{ label: "check again", onClick: checkAgain, busy: command.running !== null }]} /> : null}
           {history.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={podcast.title} following={destinations.some(destination => destination.library_id === operation.library_id)} />)}
         </PaneSection> : null}

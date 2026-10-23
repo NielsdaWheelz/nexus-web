@@ -15,6 +15,7 @@ export type PodcastRow = Schema<"PodcastListItemOut">;
 export type PodcastEpisodeRow = Schema<"PodcastEpisodeListItemOut">;
 export type PodcastImport = Schema<"PodcastImportOut">;
 export type PodcastSection = Schema<"LibraryPodcastsOut">;
+export type LibraryPodcast = Schema<"LibraryPodcastOut">;
 export type PodcastSettings = Schema<"PodcastPlaybackSettingsOut">;
 export type PodcastTarget = Schema<"PodcastImportCreateRequest">["target"];
 export type PodcastAdmission = Schema<"PodcastAdmissionOut">;
@@ -59,6 +60,11 @@ export async function getDefaultPodcastLibrary(signal: AbortSignal): Promise<str
 
 export async function getLibraryPodcasts(libraryId: string, signal: AbortSignal): Promise<PodcastSection> {
   return (await apiFetch<ApiJson<"/libraries/{library_id}/podcasts", "get">>(`/api/libraries/${libraryId}/podcasts`, { signal })).data;
+}
+
+/** Exact selected relationship; the default section is an aggregate, not membership. */
+export async function getLibraryPodcast(libraryId: string, podcastId: string, signal: AbortSignal): Promise<LibraryPodcast> {
+  return (await apiFetch<ApiJson<"/libraries/{library_id}/podcasts/{podcast_id}", "get">>(`/api/libraries/${libraryId}/podcasts/${podcastId}`, { signal })).data;
 }
 
 export async function getPodcastImport(libraryId: string, importId: string, signal: AbortSignal): Promise<PodcastImport> {
