@@ -14,6 +14,18 @@
   min-width: 0;
 }
 
+.slot[data-reader-composition="true"] {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.slot[data-reader-composition="true"] > .surface {
+  pointer-events: auto;
+}
+
 .slot[hidden] {
   display: none;
 }

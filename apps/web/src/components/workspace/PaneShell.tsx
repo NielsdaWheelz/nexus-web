@@ -2,7 +2,9 @@
 
 import { RotateCcw, Search, Share2 } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -74,6 +76,9 @@ import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
+
+/** One route-owned composition, derived by the workspace before its body mounts. */
+export const MobileReaderCompositionContext = createContext(false);
 
 interface PaneShellProps {
   readonly pane: WorkspacePane;
@@ -204,6 +209,8 @@ function PaneView({
   };
   const mobileChrome = useMobileChrome();
   const mobileViewport = useMobileViewport();
+  const readerComposition = useContext(MobileReaderCompositionContext);
+  useLayoutEffect(() => mobileViewport.refreshGeometry(), [mobileViewport, readerComposition, isMobile, isActive]);
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
@@ -223,6 +230,7 @@ function PaneView({
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
   const primaryPaneRef = useRef<HTMLDivElement>(null);
+  const controlsFrameRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const scrollportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -397,6 +405,12 @@ function PaneView({
   );
   useMobileChromeSurface(chromeRef, isActive && isMobile && hasVisibleControls);
   useMobileChromeHold(isActive && isMobile && findVisible);
+  useLayoutEffect(() => {
+    const frame = controlsFrameRef.current;
+    const surface = chromeRef.current;
+    if (!isActive || !isMobile || !frame || !surface) return;
+    return mobileViewport.registerTopSurface("Controls", frame, surface);
+  }, [isActive, isMobile, mobileViewport]);
   // the active mobile body is the surface readers and lists take clearance from.
   useLayoutEffect(() => {
     const element = scrollportRef.current;
@@ -416,9 +430,11 @@ function PaneView({
     const refinements = controls.querySelector<HTMLElement>(
       "[data-pane-query-refinements]",
     );
-    const baseHeight =
-      controlsHeight - (refinements?.getBoundingClientRect().height ?? 0);
-    const topClearance = isMobile ? readMobileCssLength("var(--space-2)") : 0;
+    const refinementsHeight = refinements?.getBoundingClientRect().height ?? 0;
+    const baseHeight = controlsHeight - refinementsHeight;
+    const topEnvelope = isMobile && scrollportRef.current
+      ? Number.parseFloat(getComputedStyle(scrollportRef.current).getPropertyValue("--mobile-pane-content-offset")) || 0
+      : baseHeight;
     const bottomClearance = isMobile
       ? Math.max(
           0,
@@ -430,15 +446,12 @@ function PaneView({
       : 0;
     const room = Math.max(
       0,
-      paneBox.height - topClearance - bottomClearance - baseHeight,
+      paneBox.height - topEnvelope - bottomClearance
+        + (isMobile ? refinementsHeight : 0),
     );
     pane.style.setProperty(
       "--pane-query-refinements-max-height",
       `min(16rem, ${room / 2}px)`,
-    );
-    pane.style.setProperty(
-      "--mobile-pane-chrome-height",
-      `${isMobile ? controlsHeight : 0}px`,
     );
   }, [isMobile, keyboardBottomInsetPx]);
   useLayoutEffect(measureControls, [measureControls]);
@@ -485,6 +498,7 @@ function PaneView({
       data-pane-focus-landmark="true"
       data-active={isActive}
       data-mobile={isMobile}
+      data-reader-composition={readerComposition || undefined}
       data-maximized={isMaximized || undefined}
       tabIndex={-1}
       onClickCapture={activateAnchor}
@@ -500,48 +514,50 @@ function PaneView({
         className={styles.primaryPane}
         style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >
-        <div
-          ref={chromeRef}
-          className={styles.chrome}
-          data-pane-chrome-focus={isMobile ? undefined : "true"}
-          tabIndex={-1}
-        >
-          {isMobile ? null : surfaceHeader}
-          {body?.navigation ? (
-            <div
-              className={styles.controlRow}
-              role="group"
-              aria-label={body.navigation.label}
-            >
-              {body.navigation.content}
-            </div>
-          ) : null}
-          {query ? (
-            <div
-              className={styles.controlRow}
-              hidden={query.kind === "Find" && !findVisible}
-            >
+        <div ref={controlsFrameRef} className={styles.chromeFrame}>
+          <div
+            ref={chromeRef}
+            className={styles.chrome}
+            data-pane-chrome-focus={isMobile ? undefined : "true"}
+            tabIndex={-1}
+          >
+            {isMobile ? null : surfaceHeader}
+            {body?.navigation ? (
               <div
-                key={source}
-                id={rowId}
-                className={styles.queryControls}
-                hidden={query.kind === "Find" && !findVisible}
-                onFocusCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
-                onClickCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                className={styles.controlRow}
+                role="group"
+                aria-label={body.navigation.label}
               >
-                {query.kind === "Find" ? (
-                  <FindBar
-                    ref={inputRef}
-                    find={find}
-                    onClear={clearFind}
-                    onClose={isMobile ? closeFind : undefined}
-                    resultsExpanded={state.results?.expanded ?? false}
-                    onShowResults={controller.showResults}
-                  />
-                ) : query.content}
+                {body.navigation.content}
               </div>
-            </div>
-          ) : null}
+            ) : null}
+            {query ? (
+              <div
+                className={styles.controlRow}
+                hidden={query.kind === "Find" && !findVisible}
+              >
+                <div
+                  key={source}
+                  id={rowId}
+                  className={styles.queryControls}
+                  hidden={query.kind === "Find" && !findVisible}
+                  onFocusCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                  onClickCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                >
+                  {query.kind === "Find" ? (
+                    <FindBar
+                      ref={inputRef}
+                      find={find}
+                      onClear={clearFind}
+                      onClose={isMobile ? closeFind : undefined}
+                      resultsExpanded={state.results?.expanded ?? false}
+                      onShowResults={controller.showResults}
+                    />
+                  ) : query.content}
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
         <div
           className={styles.primaryContentRow}

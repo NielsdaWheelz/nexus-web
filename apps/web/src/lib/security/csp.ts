@@ -62,11 +62,11 @@ function serialize(
   return policy.join("; ");
 }
 
-// connect: the presigned storage origin (the api is reached only through the
-// bff).
+// the validated storage origins serve presigned fetches and media; the api is
+// reached only through the bff.
 export const appCsp = (
   request: PolicyRequest & { readonly connect: readonly string[] },
-) => serialize(APP, request, { "connect-src": request.connect });
+) => serialize(APP, request, { "connect-src": request.connect, "media-src": request.connect });
 
 export const publicReaderCsp = (request: PolicyRequest) =>
   serialize(PUBLIC_READER, request);

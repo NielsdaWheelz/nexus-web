@@ -321,7 +321,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   pointer scrubbing previews locally and commits once on captured release,
   including outside the range. cancellation, capture loss, source retirement or
   sheet closure discards it. keyboard seeks carry the rendered range's subject.
-  mobile motion, occupied space and keyboard/sheet suppression follow the shared
+  mobile motion, reader overlay composition, ordinary-pane flow and
+  keyboard/sheet suppression follow the shared
   [workspace geometry contract](workspace.md#mobile-reader-chrome).
   source-specific overlays close on absence, unavailability or viewport-mode
   change. mobile keeps now playing open across loaded-source changes. ordinary

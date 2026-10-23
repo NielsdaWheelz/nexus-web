@@ -39,12 +39,14 @@ export default function TextSurface({
   structure,
   view,
   scrollIndicator,
+  feedback,
 }: {
   readonly runtime: ReaderRuntime;
   readonly doc: TextDocument;
   readonly structure: Structure;
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
+  readonly feedback: RefObject<HTMLDivElement | null>;
 }) {
   const { identity, format, units, length, ranges } = doc;
   const inputs = useRef({ doc, structure });
@@ -72,11 +74,11 @@ export default function TextSurface({
   const density =
     (profile.font_size_px * profile.line_height) / profile.column_width_ch;
 
-  const measure = useCallback(() => {
+  const measure = useCallback((cause: "Observation" | "Geometry") => {
     const capture = geometry.current?.capture();
     if (!capture) return;
     placement.current = { ...capture.placement, identity: doc.identity };
-    runtime.viewport(capture.viewport, capture.placement);
+    runtime.viewport(capture.viewport, capture.placement, cause, null);
     if (finder.current) runtime.updateFind(finder.current.update(inputs.current.doc, inputs.current.structure));
     const { primary } = capture.viewport;
     painter.current?.focus(
@@ -85,7 +87,7 @@ export default function TextSurface({
       selecting.current || viewRef.current.activePassage?.identity === doc.identity,
     );
   }, [doc.identity, runtime]);
-  useScrollport(scrollport, runtime, measure, scrollIndicator);
+  const geometryChanged = useScrollport(scrollport, runtime, measure, { placement, change: () => measure("Geometry") }, scrollIndicator, feedback);
   const selectionInput = useReaderSelection(scrollport, {
     identity,
     textSelector: "[data-reader-text]",
@@ -96,7 +98,7 @@ export default function TextSurface({
     onSelecting(inside) {
       if (inside === selecting.current) return;
       selecting.current = inside;
-      measure();
+      measure("Geometry");
     },
   });
 
@@ -162,13 +164,11 @@ export default function TextSurface({
     // Width, typography, images, realised units and host chrome all change
     // geometry. The same navigator fence owns every resulting adjustment;
     // an active jump retains its target and later genuine input cancels it.
-    const observer = new ResizeObserver(() => {
-      void runtime.reflow({ placement: placement.current, change: measure });
-    });
+    const observer = new ResizeObserver(() => geometryChanged("Layout"));
     observer.observe(port);
     observer.observe(column.current!);
     if (lead.current) observer.observe(lead.current);
-    measure();
+    measure("Geometry");
     return () => {
       detach();
       observer.disconnect();
@@ -178,14 +178,14 @@ export default function TextSurface({
       painter.current = null;
       finder.current = null;
     };
-  }, [identity, format, units, length, ranges, measure, runtime, embeds]);
+  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged]);
 
   useLayoutEffect(() => {
     if (finder.current) runtime.updateFind(finder.current.update(doc, structure));
   }, [doc, structure, runtime]);
 
   useLayoutEffect(() => painter.current?.paint(decorations, activePassage, view.inspection), [decorations, activePassage, view.inspection]);
-  useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
+  useLayoutEffect(() => measure("Geometry"), [measure, profile.focus_mode, activePassage]);
 
   // Per-unit dom work once a unit nears the viewport (public: token-authorised images).
   useEffect(() => {

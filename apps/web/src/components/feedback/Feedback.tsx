@@ -139,7 +139,7 @@ function WorkspaceFeedback({ signals, fallbackFocus }: {
   const [element, setElement] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (!element) return;
-    const unregister = viewport.registerBottomSurface("Feedback", element);
+    const unregister = viewport.registerBottomSurface("Feedback", element, null);
     return () => {
       unregister();
       signals.hold("Pointer", false);

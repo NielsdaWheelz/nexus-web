@@ -232,7 +232,7 @@ repeat across spine documents). document embeds render as cards portalled into
 their placeholders inside a `data-document-embed-ui` wrapper, outside the
 canonical text. the public reader hydrates token-authorised images per unit as
 units near the viewport. the surface retains its last measured placement before
-a resize observer reports layout changes. width, typography, host chrome and
+a resize observer reports layout changes. width, typography, endpoint extent and
 realised-unit changes use the internal navigator `reflow({placement, change})`
 operation. the latest completed explicit stable target remains its geometry
 anchor until genuine reading input, another navigation/seek/continue or source
@@ -248,6 +248,8 @@ synchronously; writes within the existing 2px tolerance are skipped, so a resize
 below the passage cannot begin chasing native inertia. unchanged reflow preserves
 earlier genuine input while newer input or authority always wins; actual
 corrections retain the progress fence.
+input arriving before a queued layout frame retires its cached placement;
+the required layout work still runs without restoring over that newer input.
 
 canonical cursors reuse collected spans when whole-string nfc is identical
 and token boundaries still match codepoints. normalization-changing input
@@ -540,9 +542,16 @@ constituent publications; embeds keep their separate projection.
 ## around the reader
 
 - **mobile chrome.** the host's `ReaderHost.scrollport` registers the surface's
-  scroll element with the mobile chrome (`lib/mobileShell/chrome.tsx`), which
-  owns tap-driven visibility. scrolling and programmatic positioning do not
-  change that target. see [workspace.md](workspace.md#mobile-reader-chrome).
+  scroll element with chrome and viewport owners. chrome owns tap-driven
+  visibility; viewport publishes stable endpoint extent and current occlusion.
+  `scrollport.ts` reads one bounds snapshot, independent of ordinary padding.
+  capture/navigation retain the shown reading line while visible ranges,
+  selection and popovers use current bounds. geometry-only measurement uses
+  explicit `Geometry` cause: programmatic intent, no progress/adoption/completion
+  or navigation. actual layout changes use the existing reflow fence with the
+  cached pre-change placement; occlusion changes never reflow. one independent
+  measured status stack protects return/adopt/retry controls. scrolling and
+  programmatic positioning do not change the visibility target. see [workspace.md](workspace.md#mobile-reader-chrome).
 - **consumption activity.** reading time accrues only while the pane is active,
   visible and focused, after genuine input within five minutes; reading viewports
   add the document fraction and word ordinal. inspection counts time only. see

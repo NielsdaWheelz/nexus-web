@@ -51,8 +51,9 @@ export interface ReaderProgressPort {
 
 export interface ReaderHost {
   readonly navigation: ReaderNavigationPort | null;
-  /** The mounted reader element; the host binds mobile chrome input. */
-  scrollport?(element: HTMLElement): (() => void) | undefined;
+  /** The host binds input and reports shell geometry after publishing local insets. */
+  readonly scrollport: ((element: HTMLElement,
+    geometryChanged: (reason: "Occlusion" | "Layout") => void) => () => void) | null;
 }
 
 export interface ReaderNavigationPort {

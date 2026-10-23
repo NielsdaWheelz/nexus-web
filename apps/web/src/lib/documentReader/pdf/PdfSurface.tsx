@@ -6,6 +6,7 @@
 // last placement; a host's range read that fails later ends the open with
 // Retry. Marks are page-space quads drawn under the text layer. That layer's
 // focusability belongs to reading; its interactive descendants own their clicks.
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
@@ -30,7 +31,7 @@ import type { ReaderDestination } from "../location";
 import { activateReaderDestination } from "../navigation";
 import type { PdfState, ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
-import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
+import { measureScrollport, readScrollport, nextFrame, useScrollport } from "../scrollport";
 import { createPdfFind } from "./find";
 import { pageSize, quadContains, quadRects, rangeQuads, toPage } from "./geometry";
 import { loadPdfJs, PDF_ASSETS } from "./pdfjs";
@@ -111,22 +112,21 @@ function pageView(viewer: PDFViewer | undefined, page: number) {
 const chosenZoom = (viewer: PDFViewer) =>
   viewer.currentScaleValue === "page-width" ? null : viewer.currentScale;
 
-const readingLine = (port: HTMLElement) =>
-  port.getBoundingClientRect().top +
-  (Number.parseFloat(getComputedStyle(port).scrollPaddingTop) || 0);
-
 export default function PdfSurface({
   runtime,
   doc,
   view,
   scrollIndicator,
+  feedback,
 }: {
   readonly runtime: ReaderRuntime;
   readonly doc: PdfDocument;
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
+  readonly feedback: RefObject<HTMLDivElement | null>;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  const cachedPlacement = useRef<Placement | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const live = useRef<Live | null>(null);
   const destinations = useRef(new WeakMap<HTMLAnchorElement, ReaderDestination | null>());
@@ -175,8 +175,9 @@ export default function PdfSurface({
     const viewer = live.current?.viewer;
     const port = container.current;
     if (!viewer || !port || viewer.pagesCount === 0) return null;
-    const bounds = port.getBoundingClientRect();
-    const line = readingLine(port);
+    const snapshot = readScrollport(port);
+    if (!snapshot) return null;
+    const { bounds, readingLine: line } = snapshot;
     let primary: { page: number; y: number } | null = null;
     let first: number | null = null;
     let last = 0;
@@ -247,19 +248,28 @@ export default function PdfSurface({
     };
   }, []);
 
-  const measure = useCallback(() => {
+  const measure = useCallback((cause: "Observation" | "Geometry") => {
     const measured = capture();
     if (!measured) return;
     const state = pdfState(measured.placement.point.page);
     if (!state) return;
     const { placement, band, atEnd } = measured;
+    cachedPlacement.current = { ...placement, identity: doc.identity };
     runtime.viewport(
       { primary: placement.point, start: band[0], end: band[1], atEnd },
       placement,
+      cause,
       state,
     );
-  }, [capture, pdfState, runtime]);
-  useScrollport(container, runtime, measure, scrollIndicator);
+  }, [capture, doc.identity, pdfState, runtime]);
+  const geometryChanged = useScrollport(container, runtime, measure, {
+    placement: cachedPlacement,
+    change() {
+      const viewer = live.current?.viewer;
+      if (viewer?.currentScaleValue === "page-width") viewer.currentScaleValue = "page-width";
+      measure("Geometry");
+    },
+  }, scrollIndicator, feedback);
 
   const paint = useCallback(
     (page: number) => {
@@ -377,6 +387,9 @@ export default function PdfSurface({
         // Only the pdf's own links are links; url-like text stays text.
         enableAutoLinking: false,
       });
+      eventBus.on("textlayerrendered", ({ pageNumber }: { pageNumber: number }) => {
+        pageView(viewer, pageNumber)?.div.querySelector(".textLayer")?.setAttribute("data-reader-input-boundary", "");
+      });
       links.setViewer(viewer);
       let pdf: PDFDocumentProxy;
       let sourceView: PdfSourceView = { zoom: null, left: 0, top: 0 };
@@ -476,18 +489,15 @@ export default function PdfSurface({
       if (signal.aborted) return;
       viewer.currentScaleValue = "page-width";
       // Fitted stays fitted when the pane resizes (pdf.js refits only on assignment).
-      refit = new ResizeObserver(() => {
-        if (viewer.currentScaleValue === "page-width")
-          scaleTo(viewer, "page-width");
-      });
+      refit = new ResizeObserver(() => geometryChanged("Layout"));
       refit.observe(container.current!);
-      eventBus.on("pagechanging", () => { refreshLinks(); requestAnimationFrame(measure); });
+      eventBus.on("pagechanging", () => { refreshLinks(); requestAnimationFrame(() => measure("Geometry")); });
       eventBus.on("pagerendered", ({ pageNumber }: { pageNumber: number }) =>
         paint(pageNumber),
       );
       eventBus.on("scalechanging", () => requestAnimationFrame(() => {
         refreshLinks();
-        measure();
+        measure("Geometry");
         for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
       }));
       live.current = { viewer, pdf };
@@ -497,7 +507,7 @@ export default function PdfSurface({
         ...handle,
         find: find.attach(viewer, pdf, key),
       });
-      measure();
+      measure("Geometry");
     }
 
     async function settle(
@@ -558,10 +568,9 @@ export default function PdfSurface({
           ? pageView(viewer, at.page)?.div.getBoundingClientRect()
           : null;
       if (!rect || at?.kind !== "pdf") return null;
-      const want =
-        "offsetPx" in to
-          ? readingLine(port) + to.offsetPx
-          : readingLine(port);
+      const snapshot = readScrollport(port);
+      if (!snapshot) return null;
+      const want = snapshot.readingLine + ("offsetPx" in to ? to.offsetPx : 0);
       return rect.top + at.y * rect.height - want;
     }
 
@@ -713,13 +722,13 @@ export default function PdfSurface({
       live.current = null;
       void task?.destroy();
     };
-  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime]);
+  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged]);
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {
     // pdf.js makes the text layer focusable; only controls inside it own text clicks.
-    const boundary = event.target instanceof Element
-      ? event.target.closest(".textLayer") ?? event.currentTarget : event.currentTarget;
+    const reading = event.target instanceof Element ? event.target.closest("[data-reader-input-boundary]") : null;
+    const boundary = reading && event.currentTarget.contains(reading) ? reading : event.currentTarget;
     if (kind === "activate" && (
       event.defaultPrevented || event.button !== 0 || event.altKey ||
       event.ctrlKey || event.metaKey || event.shiftKey ||
@@ -775,7 +784,7 @@ export default function PdfSurface({
 
   return (
     <div className={styles.pdfFrame}>
-      {locationUnavailable ? <FeedbackNotice content={{ tone: "Danger", title: "location unavailable" }} announcement={view.announcement ?? "Polite"} /> : null}
+      {locationUnavailable && feedback.current ? createPortal(<FeedbackNotice content={{ tone: "Danger", title: "location unavailable" }} announcement={view.announcement ?? "Polite"} />, feedback.current) : null}
       {position ? <p
         className={styles.live}
         role={view.announcement === "None" ? undefined : "status"}
@@ -785,12 +794,12 @@ export default function PdfSurface({
         Page {position.page} of {position.pages}
       </p> : null}
       {status.kind === "Opening" ? (
-        <div className={styles.feedback}>
+        <div className={`${styles.feedback} ${styles.readerState}`}>
           <FeedbackState content={{ tone: "Neutral", title: "opening pdf…" }} announcement={view.announcement ?? "Polite"} />
         </div>
       ) : null}
       {status.kind === "Failed" ? (
-        <div className={styles.feedback}>
+        <div className={`${styles.feedback} ${styles.readerState}`}>
           <FeedbackState
             content={{ tone: "Danger", title: "couldn’t open this pdf" }}
             announcement={view.announcement ?? "Polite"}

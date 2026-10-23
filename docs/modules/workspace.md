@@ -455,14 +455,18 @@ paint belong to the [visual system](visual-system.md#overflow-buttons).
 for overflow, headers own only placement and the decorative status marker. the
 menu retains its existing commands, composition, refs and focus policy.
 
-every primary header uses `--pane-chrome-header-height`, including while media
-facts load. fixed mobile header and pane padding add the safe area to that same
-base height; routes reserve no additional action row. hiding reader chrome
-preserves that reservation. refinement-room measurement observes the inner
-`primaryPane` content rectangle. the content row explicitly occupies grid row two,
-the declared fill row; mobile's out-of-flow chrome leaves row one empty instead of
-letting loading content determine the scrollport height. primary, media and inspector controls use shared-control geometry: 32px
-desktop, 44px with any coarse pointer, 48px mobile, in both axes.
+every primary header starts with `--pane-chrome-header-height`; compact media
+commands move into overflow instead of adding an action row. desktop, coarse-pointer
+and mobile controls retain 32px, 44px and 48px shared-control targets. mobile
+headers can grow naturally. the viewport owner measures their stationary frames
+and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
+publishes their shown envelope in each content surface. routes reserve no extra
+media action row. hidden reader chrome follows the measured overlay contract,
+not a permanent header reservation. refinement-room measurement consumes that
+result. the content row explicitly occupies grid row two, the declared fill row,
+so loading content cannot determine scrollport height. reader composition is
+selected from the active route before publication loading; mounting a reader
+does not change layout.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
@@ -527,10 +531,12 @@ owns interpolation: `--duration-base`, `--ease-snap`, an 8px retreat and opacity
 each surface supplies its travel direction. hiding makes the
 roots inert immediately and defers `visibility:hidden` until the fade ends;
 showing restores interactivity immediately. reversal starts at the current
-visual values. reduced motion and command focus reveal instantly. content
-geometry, padding, scroll offsets, the player slot and nexus bottom wrapper stay
-fixed. the player registers its moving inner footer; its normal-flow outer slot
-stays untransformed and measured through every runtime state and reader retreat.
+visual values. reduced motion and command focus reveal instantly. the hosted mobile reader uses a stable canvas inside platform protection. header,
+controls, player and nexus occupy overlays; hiding removes their paint and input
+without changing document extent or position. stationary frames supply shown
+geometry independently of animated visibility. ordinary panes retain their flow
+composition. the player registers its moving inner footer and stable outer frame
+through every runtime state and reader retreat.
 chrome alone owns the footer's inertness; local keyboard/sheet suppression owns
 the outer slot. desktop anchored player pickers leave the footer interactive.
 the player drawer uses the shared sheet's native handle button; playback and
@@ -542,7 +548,9 @@ uses the same dismissal guard. default title/close and custom headers retain
 their existing behavior.
 
 the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
-media pane binds `registerReaderScrollport`. the newest mobile registration
+media pane composes chrome and viewport `registerReaderScrollport` capabilities.
+the viewport registry gates local reader geometry by the active route-owned
+`data-reader-composition` marker, including breakpoint and active-pane changes. the newest mobile registration
 accepts taps; desktop has no driver. fresh reader entry, tab return and viewport
 breakpoint changes start shown. scrolling, reflow and same-mounted reader
 navigation preserve the target. a new chrome surface inherits it immediately.
@@ -551,7 +559,10 @@ reader disposal restores the surrounding shell.
 `readerTap.ts` admits a trusted, primary, unmodified completed pointer sequence
 and its native click, within 8 css px. selection and overlay ownership are
 sampled before light-dismiss; interactive targets and consumed clicks retain
-their actions. semantic handlers finish before the toggle decision. browser
+their actions. reader-owned focusable reading surfaces mark
+`data-reader-input-boundary`; the bounded interactive-target check still excludes
+their links and controls. pdf text layers retain native keyboard focus.
+semantic handlers finish before the toggle decision. browser
 momentum-stop suppression, pan, pinch and context menus produce no toggle.
 completed presses await their own pointer's native click, even when later
 presses arrive first. cancellation retires only its pointer; unmatched numeric
@@ -883,59 +894,49 @@ forced account teardown remains unconditional and fences old callbacks.
 
 ## Mobile Viewport And Bottom Geometry
 
-the shell main clears the fixed mobile top bar; pane offsets clear only their own controls.
+`globals.css` alone adapts platform insets to `--viewport-safe-{top,right,bottom,left}`.
+`readMobileCssLength` resolves those tokens to css pixels. the route owner derives
+mobile reader composition from the active route's `returnKind === "Reader"`;
+the pane and global player consume the same value. reader composition excludes
+platform protection once and overlays shell controls. ordinary panes reserve the
+measured `--mobile-header-height` and retain a normal-flow player.
 
-`globals.css` is the sole raw platform-inset adapter. It maps WebView's four
-CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`, and
-`readMobileCssLength` (in `lib/mobileShell/viewport.tsx`) resolves one of those
-published tokens to CSS pixels when JavaScript needs a number; an expression
-that does not resolve reads as 0.
+`MobileViewportProvider` owns top surfaces (`Header`, `Controls`), bottom surfaces
+(`Nexus`, `Player`, `Feedback`), pane content and hosted reader scrollports. each
+shell registration supplies a stationary frame and nullable animated surface;
+null means independent feedback. the frame determines shown endpoint extent,
+while computed visibility determines current obstruction. the one border-box
+resize observer and coalesced viewport/transition pass own invalidation.
 
-`MobileViewportProvider` (`lib/mobileShell/viewport.tsx`) owns two registration
-kinds. Id-keyed bottom surfaces register through
-`registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
-Nexus wrapper while the switchboard is closed, the player's stable normal-flow
-outer slot (idle, loaded or unavailable), and the in-flow workspace feedback slot (registered by its
-presentation host). The active mobile pane body registers through
-`registerContentSurface(element)`; mobile renders one pane, so there is one.
-Every cleanup is idempotent, removes the element-local variable and recomputes
-immediately; one lazily created `ResizeObserver` (border box) watches every
-registered element. `useKeyboardReport` (`lib/ui/useKeyboardInset.ts`) reports an active sheet's or
-full-screen task's keyboard inset as a token stack: the newest report wins and
-releasing it restores the one before. `useRootTextEntryFocused()` recognizes a
-focused text-entry target outside modal layers; while it holds, the mounted
-player slot is hidden/inert and its `"Player"` bottom surface is unregistered;
-playback continues through system controls. No keyboard inset is reported for
-root text entry. the expanded player sheet likewise releases the slot and its
-registration; closing it restores both. reader chrome hiding retains both.
+one ordered pass derives `--mobile-canvas-safe-bottom`, the remaining platform
+protection after in-flow feedback,
+measures the header, places controls and nexus, publishes local content clearance,
+then publishes reader endpoint extent and current occlusion. overlapping
+rectangles form a conservative full-width envelope; their heights are never
+summed. already-spent flow space is not deducted twice. nexus placement uses
+shown frames and stays fixed on tap; `--mobile-content-bottom-clearance` and its
+subscribers report current visible obstruction. the chrome controller refreshes
+geometry synchronously after visibility writes and before holds/focus return.
+fade-out retains conservative bounds until computed visibility is hidden;
+reduced motion needs no transition event.
 
-Geometry resolves in one ordered measurement pass, because each rectangle can
-only be measured after the write it depends on. The pass resolves the Nexus
-bottom offset from the safe bottom and the Player and Feedback rectangles and
-writes root `--mobile-nexus-bottom-offset`; then measures the placed Nexus
-wrapper and writes root `--mobile-content-bottom-clearance` — the maximum of
-safe bottom, the Nexus band, and the newest overlay keyboard inset — alongside
-root `--mobile-overlay-keyboard-inset`; then projects that protected band into
-each registered content surface's local bottom coordinate and writes an
-element-local `--mobile-content-bottom-clearance` on that element. Every
-registration and release measures at once; observed resizes, `window.resize`
-and top-level `visualViewport` resize/scroll share one animation-frame-coalesced
-pass. The `globals.css` defaults equal the empty-registry result, so nothing
-measures before the first registration.
+reader scrollports receive `--reader-content-inset-top/bottom` for real scrollable
+endpoint extent and `--reader-occlusion-top/bottom` for current obstruction.
+the first pair stays fixed on hide/show. the second releases hidden surfaces.
+registration measures immediately; release or loss of active mobile composition
+removes all local values. desktop,
+public and downloaded readers retain their own spacing. geometry callbacks report
+`Layout` for endpoint/dimension changes and otherwise `Occlusion`; layout wins
+when both change. reader-local feedback adds its measured height outside hidden
+roots and follows current shell obstruction without changing endpoint extent.
 
-The player slot stays normal flow. It is a bottom surface that only places
-Nexus and is never added to content clearance: its flow layout already shortens
-every surface above it, and the Nexus rectangle resting on it carries the whole
-protected band, so the Player is counted exactly once.
-
-The fixed Nexus wrapper consumes root `--mobile-nexus-bottom-offset` plus its
-gap. Terminal scroll content consumes `--mobile-content-bottom-clearance` from
-its nearest owner: full-window consumers inherit the root value, while every
-scroll owner nested inside an active mobile pane body — reader document
-viewport, PDF viewer, chat surface, and standard pane bodies — inherits the
-element-local value published on `PaneShell`'s registered `.body`, with no
-per-consumer subtraction. Components do not read raw safe-area values or
-independently recalculate platform, Player, Nexus, focus, or keyboard geometry.
+keyboard reporting retains its existing stack owner: the newest sheet/task
+report wins, and release restores the prior report. focused root text entry and
+the expanded player sheet suppress and unregister the outer player frame;
+playback continues. hiding reader controls retains its registration. ordinary
+pane scrollports consume their nearest content clearance; readers consume their
+explicit endpoint/occlusion contract. consumers never recalculate shell or
+platform geometry independently.
 
 The Android shell remains edge-to-edge. `MainActivity` enables the platform
 edge-to-edge policy before creation, keeps the WebView at full window bounds,
