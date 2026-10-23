@@ -156,8 +156,12 @@ export function useScrollport(
     };
     invalidate.current = (reason) => {
       if (syncFeedback()) reason = "Layout";
-      // Capture once before a later observation can replace the pre-change passage.
-      if (pending?.reason !== "Layout") pending = { reason, placement: layoutRef.current.placement.current };
+      // The active positioner owns its target; a mid-move measurement cannot
+      // become a later layout request. Otherwise retain the pre-change passage.
+      if (pending?.reason !== "Layout") pending = {
+        reason,
+        placement: runtime.getState().navigation.positioning ? null : layoutRef.current.placement.current,
+      };
       schedule();
     };
     const release = runtime.host?.scrollport?.(port, geometryChanged);

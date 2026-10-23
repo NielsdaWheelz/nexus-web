@@ -253,7 +253,7 @@ canonical text. the public reader hydrates token-authorised images per unit as
 units near the viewport. the surface retains its last measured placement before
 a resize observer reports layout changes. width, typography, endpoint extent and
 realised-unit changes use the internal navigator `reflow({placement, change})`
-operation. the latest completed explicit stable target remains its geometry
+operation. the latest completed navigation or restoration target remains its geometry
 anchor until genuine reading input, another navigation/seek/continue or source
 replacement. without one, reflow preserves the measured passage. initial short
 content does not imply following the end. reflow keeps mode/origin and saves
@@ -272,6 +272,8 @@ explicit reading/navigation and source retirement also retire the surface's
 queued placement through `SurfaceHandle.retireReflow`; required layout work still
 runs without restoring over newer intent. an unmeasurable retained pane keeps
 queued geometry until its existing resize observer reports usable bounds.
+mid-positioning measurements cannot become later queued targets. completed pdf
+commands retain their measured placement, so layout never replays a mutable command.
 
 canonical cursors reuse collected spans when whole-string nfc is identical
 and token boundaries still match codepoints. normalization-changing input

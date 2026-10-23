@@ -206,14 +206,14 @@ export function createNavigator(
           : { kind: "Unavailable", reason: "PositioningFailed" };
       if (
         to !== null && request === req && !req.controller.signal.aborted &&
-        req.kind !== "reflow" &&
+        (req.kind !== "reflow" || req.operation === "Restore") &&
         (outcome.kind === "Arrived" || outcome.kind === "Unchanged")
       ) {
-        // PDF commands can focus or depend on mutable viewer state;
-        // reflow uses their measured placement.
+        // Keep the completed intent through late layout. PDF commands may
+        // focus or depend on mutable viewer state; retain their placement.
         reflowTarget =
           "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdf")
-            ? null
+            ? handle?.capture() ?? null
             : to;
       }
       return await settle(req, req.controller.signal.aborted ? { kind: "Cancelled" } : outcome);
