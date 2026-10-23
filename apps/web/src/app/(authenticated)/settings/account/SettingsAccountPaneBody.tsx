@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ComponentProps, type FormEvent } from "react";
+import { useState, type ComponentProps, type FormEvent } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -19,8 +19,8 @@ import {
   type Visit,
 } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
-import { useWorkGuard } from "@/lib/unsavedWork";
-import { usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import {
   definePaneVisitDataKey,
@@ -80,20 +80,22 @@ function ProfileForm(props: {
   readonly submit: string;
   readonly save: (value: string) => Promise<Outcome>;
 }) {
-  const guard = useWorkGuard();
-  const pane = usePaneRuntime();
-  const ownerId = useId();
-  const [draft, setDraft] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const current = props.current;
+  const draft = useResourceDraft<{ text: string | null; pending: boolean }>(
+    `Settings.Account.${props.title}`,
+    () => ({ text: null, pending: false }),
+    value => ({
+      changed: value.text !== null && (props.normalize ?? String)(value.text.trim()) !== current,
+      unconfirmed: value.pending,
+      stopsBrowserWork: false,
+    }),
+  );
+  const setDraft = (text: string | null) => draft.set(value => ({ ...value, text }));
+  const setPending = (pending: boolean) => draft.set(value => ({ ...value, pending }));
+  const { pending } = draft.value;
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const value = draft ?? props.current ?? "";
+  const value = draft.value.text ?? current ?? "";
   const next = (props.normalize ?? String)(value.trim());
-  useEffect(() => guard.register({
-    id: `settings-field:${ownerId}`,
-    scope: pane ? { kind: "visit", visitId: pane.visitId, routeKey: pane.routeKey } : { kind: "account" },
-    read: () => ({ changed: draft !== null && next !== props.current, unconfirmed: pending, stopsBrowserWork: false }),
-    subscribe: () => () => {},
-  }), [guard, ownerId, pane, draft, next, props.current, pending]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPending(true);

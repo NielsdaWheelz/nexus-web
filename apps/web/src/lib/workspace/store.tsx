@@ -691,13 +691,13 @@ function createWorkspaceStore(
       };
       if (installedApp) {
         const href = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-        if (href !== "/") commands.navigatePane(data.state.active_primary_pane_id, href);
+        if (href !== "/") commands.activateWorkspaceTarget({ originPaneId: data.state.active_primary_pane_id, target: { href }, disposition: { kind: "Follow" } });
       } else foldHash();
       mounted = true;
       project(true);
       const navigate = (event: Event) => {
         const href = normalizeWorkspaceHref((event as CustomEvent<{ href: string }>).detail.href);
-        if (href) commands.navigatePane(data.state.active_primary_pane_id, href);
+        if (href) commands.activateWorkspaceTarget({ originPaneId: data.state.active_primary_pane_id, target: { href }, disposition: { kind: "Follow" } });
       };
       window.addEventListener("nexus:navigate", navigate);
       window.addEventListener("hashchange", foldHash);

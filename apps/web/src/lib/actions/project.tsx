@@ -1,3 +1,4 @@
+import { installedApp } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -592,8 +593,9 @@ export function projectResourceActions(
     const pending = ctx.admissions.pending(kind, id);
     if (pending === null) return null;
     if (isStaleBuild(pending.error)) {
-      return make(actionId, null, () => window.location.reload(), {
-        state: { label: "reload app", icon: ACTION_CATALOG.RefreshSource.icon },
+      return make(actionId, null, () => { if (!installedApp) window.location.reload(); }, {
+        state: { label: installedApp ? "update nexus" : "reload app", icon: ACTION_CATALOG.RefreshSource.icon },
+        disabledReason: installedApp ? "install the current nexus apk, then reopen the app." : undefined,
         tracked: false,
       });
     }

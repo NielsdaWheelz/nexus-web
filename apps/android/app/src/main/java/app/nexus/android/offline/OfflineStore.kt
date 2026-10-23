@@ -134,8 +134,8 @@ internal class OfflineStore private constructor(private val filesDir: File) {
 
     fun bind(accountId: UUID) {
         synchronized(lock) {
-            authRequired = false
             require(account == null || account == accountId) { "sign out before changing the download namespace" }
+            authRequired = false
             if (account == null) {
                 account = accountId
                 persist()

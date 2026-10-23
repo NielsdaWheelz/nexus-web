@@ -204,6 +204,8 @@ export default function OracleLandingPaneBody() {
             )
           )}
 
+          {/* Shared pane anchors are handled by the containing host. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a className={styles.skyLink} href="/atlas?layer=readings">
             ✦ View as a sky
           </a>

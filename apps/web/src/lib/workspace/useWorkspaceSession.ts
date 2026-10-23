@@ -46,7 +46,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     priority: "Write",
     content: notice.content,
     announcement: "Polite",
-    actions: notice.stale && installedApp ? [] : [{
+    actions: notice.stale && installedApp ? undefined : [{
       label: notice.stale ? "reload app" : "retry save",
       busy: notice.busy,
       onClick: notice.stale ? () => window.location.reload() : notice.retry,

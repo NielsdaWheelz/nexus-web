@@ -14,7 +14,7 @@ import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
-import { useWritingReady } from "@/lib/notes/readiness";
+import { useWritingState } from "@/lib/notes/readiness";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { FeedbackState } from "@/components/feedback/Feedback";
 import { checkSession } from "@/lib/native/admission";
@@ -46,12 +46,14 @@ const PaneContent = memo(function PaneContent(props: {
   readonly isPresented: boolean;
 }) {
   const admission = useRemoteAdmission();
-  const writingReady = useWritingReady();
+  const writingState = useWritingState();
+  const writingReady = writingState === "ready";
   const local = props.routeId === "unsupported" || ["settings", "settingsAppearance", "settingsReader", "settingsKeybindings"].includes(props.routeId);
   const canAdmit = writingReady && (local || admission === "Ready");
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
+  if (!admitted && writingState === "failed") return <FeedbackState content={{ tone: "Warning", title: "writing couldn’t start" }} announcement="Polite" />;
   if (!admitted && !writingReady) return <PaneLoadingState label="opening writing…" announcement="Polite" />;
   if (!admitted && !canAdmit) return <FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} />;
   if (props.routeId !== "unsupported") return renderPane(props.routeId);

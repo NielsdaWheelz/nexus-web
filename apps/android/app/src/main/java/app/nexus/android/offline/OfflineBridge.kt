@@ -190,7 +190,7 @@ internal class OfflineBridge(
         val op = request.getString("op")
         if (op == "exportStart") {
             val account = UUID.fromString(request.getString("account_id"))
-            if (account != store.account) {
+            if (account != DeviceSession.get(context).accountId() || account != store.account) {
                 reply(failure("AuthorizationRequired"))
                 return
             }
@@ -268,7 +268,8 @@ internal class OfflineBridge(
     }
 
     private fun currentExport(session: ExportSession): Boolean =
-        exportSession === session && session.account == store.account &&
+        exportSession === session && session.account == DeviceSession.get(context).accountId() &&
+            session.account == store.account &&
             session.generation == framing.currentDocumentGeneration()
 
     private fun failure(code: String): JSONObject = JSONObject().put("ok", false).put("error", code)

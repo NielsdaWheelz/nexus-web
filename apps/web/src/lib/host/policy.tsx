@@ -12,9 +12,9 @@ export interface HostPolicy {
   recover(): void;
   project(href: string, replace?: boolean): void;
 }
-function OriginalImage({ fill, priority, unoptimized: _unoptimized, style, ...props }: HostImageProps) {
+function OriginalImage({ alt, fill, priority, unoptimized: _unoptimized, style, ...props }: HostImageProps) {
   // eslint-disable-next-line @next/next/no-img-element
-  return <img {...props} loading={priority ? "eager" : props.loading ?? "lazy"} style={fill ? { position: "absolute", width: "100%", height: "100%", inset: 0, ...style } : style} />;
+  return <img {...props} alt={alt} loading={priority ? "eager" : props.loading ?? "lazy"} style={fill ? { position: "absolute", width: "100%", height: "100%", inset: 0, ...style } : style} />;
 }
 export const installedHostPolicy: HostPolicy = {
   Image: OriginalImage,

@@ -1,4 +1,6 @@
 "use client";
 import { createContext, useContext } from "react";
-export const WritingReadyContext = createContext(false);
-export const useWritingReady = () => useContext(WritingReadyContext);
+import type { WritingRuntime } from "./useWritingRuntime";
+export const WritingReadyContext = createContext<WritingRuntime["state"]>("starting");
+export const useWritingState = () => useContext(WritingReadyContext);
+export const useWritingReady = () => useWritingState() === "ready";

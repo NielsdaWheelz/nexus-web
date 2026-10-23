@@ -61,7 +61,7 @@ export function ReaderProvider({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   useEffect(() => {
-    if (!sending.current) setProfile(current => Object.keys(unsent.current).length === 0 ? initialProfile : { ...initialProfile, ...unsent.current });
+    if (!sending.current) setProfile(Object.keys(unsent.current).length === 0 ? initialProfile : { ...initialProfile, ...unsent.current });
   }, [initialProfile]);
 
   const send = useCallback(async () => {

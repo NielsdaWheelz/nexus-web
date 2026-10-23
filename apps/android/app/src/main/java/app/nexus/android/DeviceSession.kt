@@ -79,7 +79,7 @@ internal class DeviceSession private constructor(private val context: Context) {
     private var refreshAt: Long? = null
     @Volatile private var foreground = false
     @Volatile private var playbackActive = false
-    private var attempt: Attempt? = null
+    @Volatile private var attempt: Attempt? = null
     private var upload: Upload? = null
     private var playbackStop: (suspend () -> Unit)? = null
     private val renew = Runnable { scope.launch { checkSession() } }

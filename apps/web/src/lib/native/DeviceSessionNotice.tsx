@@ -27,7 +27,7 @@ export function DeviceSessionNotice() {
     priority: "Status", content, announcement: "Polite",
     actions: wrong ? [{ label: "retry", busy, onClick: signIn }, { label: "cancel", onClick: () => setResult(null) }]
       : admission === "SignInRequired" ? [{ label: "sign in", busy, onClick: signIn }]
-      : admission === "Unavailable" || result === "Failed" ? [{ label: "try again", onClick: () => { setResult(null); void sessionCheck().catch(() => setResult("Failed")); } }] : [],
+      : admission === "Unavailable" || result === "Failed" ? [{ label: "try again", onClick: () => { setResult(null); void sessionCheck().catch(() => setResult("Failed")); } }] : undefined,
   } : null);
   return null;
 }

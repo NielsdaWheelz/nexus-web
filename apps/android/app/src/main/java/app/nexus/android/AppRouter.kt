@@ -21,7 +21,7 @@ import java.security.SecureRandom
 internal class AppRouter(private val context: Context, private val session: DeviceSession) {
     private val origin = OwnedOrigin(BuildConfig.NEXUS_BASE_URL)
     private val base = Uri.parse(BuildConfig.NEXUS_BASE_URL)
-    private val assets = WebViewAssetLoader.Builder().setDomain(base.host!!)
+    private val assets = WebViewAssetLoader.Builder().setDomain(base.host!!.lowercase())
         .setHttpAllowed(base.scheme == "http")
         .addPathHandler("/_nexus/app/", WebViewAssetLoader.PathHandler { path ->
             WebViewAssetLoader.AssetsPathHandler(context).handle("app/$path")
@@ -62,7 +62,9 @@ internal class AppRouter(private val context: Context, private val session: Devi
                 return response(404, "Not Found", "text/plain", ByteArray(0))
             }
             if (request.method != "GET") return response(405, "Method Not Allowed", "text/plain", ByteArray(0))
-            return assets.shouldInterceptRequest(uri)?.takeIf { it.data != null }?.apply {
+            // AndroidX matches authority literally, including ports. Origin admission
+            // above has already checked the effective port; only asset lookup is canonicalized.
+            return assets.shouldInterceptRequest(uri.buildUpon().authority(base.host!!.lowercase()).build())?.takeIf { it.data != null }?.apply {
                 responseHeaders = (responseHeaders ?: emptyMap()) + mapOf("Cache-Control" to "public, max-age=31536000, immutable", "X-Content-Type-Options" to "nosniff")
             } ?: response(404, "Not Found", "text/plain", ByteArray(0))
         }

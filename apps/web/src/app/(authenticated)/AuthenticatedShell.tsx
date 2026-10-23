@@ -287,7 +287,7 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     content: { tone: "Danger", title: "writing couldn’t start.", message: "your workspace is open. retry to open its writing." },
     actions: [{ label: "try again", onClick: runtime.retry, busy: runtime.state === "retrying" }],
   } : null);
-  return <WritingReadyContext value={runtime.state === "ready"}>{children}</WritingReadyContext>;
+  return <WritingReadyContext value={runtime.state}>{children}</WritingReadyContext>;
 }
 
 function ChatWorkOwners() {

@@ -9,6 +9,7 @@ import collection from "@/components/ui/Collection.module.css";
 import type { ControlAppearance } from "@/components/ui/control";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
+import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
 import { sessionSignOut } from "@/lib/native/client";
 import { useGuardedSignOut, useWorkGuard } from "@/lib/unsavedWork";
@@ -127,7 +128,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       if (!(error instanceof WritingDecisionError)) reportError(error);
-      await restore(token, message);
+      await restore(token, installedApp && isApiError(error) && error.code === "E_LOCAL_CLEANUP" ? `${message} ${error.message}` : message);
     }
   };
   const decide = async (token: WritingRuntimeToken, result: SignOutResult, note: string | null) => {

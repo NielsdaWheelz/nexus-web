@@ -12,8 +12,9 @@ audio or a reading copy), each fetched by **one user-initiated data-transfer
 job** into **one directory**, recorded in **one json state file**, exposed to
 web code through **one bridge** (`window.nexusDownloads`), and shown in **one
 screen**, the shelf. the shelf is the Downloads screen whether or not there is
-a network. the hosted app only enqueues, reflects item state in its resource
-menus, opens the shelf and purges on sign-out. a reading copy is a zip of the
+a network. the ordinary workspace enqueues, reflects item state in its resource
+menus and opens the shelf after the work guard. the [device session](device-startup.md)
+owns account binding, offline startup and explicit sign-out cleanup. a reading copy is a zip of the
 **reader document** the signed-in reader reads (`GET /media/{id}/reader`), so
 the shelf renders it with the same reader (`lib/documentReader`). the server
 owns one route and one optional field.
@@ -22,7 +23,7 @@ owns one route and one optional field.
 
 | part | where | does |
 |---|---|---|
-| store | `apps/android/.../offline/OfflineStore.kt` | `files/offline/state.json` + `files/offline/items/{mediaId}/`; items, positions, leases, account binding, wipe |
+| store | `apps/android/.../offline/OfflineStore.kt` | `files/offline/state.json` + `files/offline/items/{mediaId}/`; items, positions, leases, account namespace, purge |
 | jobs | `offline/OfflineJobService.kt`, `Transfers.kt`, `PositionSync.kt` | one UIDT transfer job (both kinds, network per policy) and one persisted sync job |
 | bridge | `offline/OfflineBridge.kt` ⇄ `apps/web/src/lib/offline/bridge.ts` | `window.nexusDownloads` on the hosted and shelf origins |
 | router | `offline/ShelfRouter.kt` | serves `https://appassets.androidplatform.net/shelf/**`; 404s every other subresource while the shelf is the main document |
@@ -54,8 +55,8 @@ lease (`store.open`) and plays `file://`, else streams.
   without credentials, unzips into staging (zip-slip guard, CRC, drained
   length), reads
   `GET /api/media/{id}/reader-state` as its baseline, and publishes by rename.
-- **read offline.** cold start without a validated network, the "could not
-  connect" terminal and the account menu's *Downloads* all load the shelf.
+- **read offline.** the installed ordinary workspace starts without a network.
+  the account menu's guarded *Downloads* action opens the isolated shelf.
   *Open* takes a lease; `ShelfReader` reads `/shelf/copies/{id}/reader.json`
   (pdf: `document.pdf`, ranged), rewrites epub `/api/media/{id}/assets/`
   to `/shelf/copies/{id}/assets/` and mounts the whole document in the shared
@@ -75,17 +76,13 @@ lease (`store.open`) and plays `file://`, else streams.
   reading the same document online never yields a false conflict, while an
   open copy keeps the revision its reader started from (its next save still
   meets a remote move as a conflict).
-- **identity.** `hello {accountId}` from the hosted page binds the store; a
-  different account wipes everything first. deliberate sign-out resolves writing
-  under its account locks, then asks the common work guard about unreviewed
-  ephemeral work. approval makes the document inert while native `purge` precedes
-  journal purge and the normal `POST /auth/signout`. native purge failure preserves
-  the journal; cancellation or observable failure restores editing and protection.
-  approval suppresses only the corresponding unload warning. without the bridge
-  (desktop, android < 14) the
-  download action is disabled *Not supported on this device*, there is no
-  *Downloads* entry. writing sign-out still resolves its browser journal before
-  the session post.
+- **identity.** `DeviceSession` initializes every activity/job/service before
+  account data is exposed. hello subscribes without binding or clearing auth
+  failure. an existing namespace is preserved until matching provisioning;
+  switching accounts requires explicit sign-out. the common writing/work guards
+  resolve actual loss before native checkpoint, durable sign-out and purge.
+  desktop retains the hosted sign-out flow. download availability still follows
+  its android capability, separately from installed startup's api-26 minimum.
 
 ## contracts
 
@@ -96,7 +93,7 @@ content-row anatomy. the shelf owns confirmations, copy leases and focus.
 frames). request `{id, op, ...args}`; reply `{id, ok: true, ...}` or
 `{id, ok: false, error}`; push `{snapshot}` to the document that last said
 hello, always before the reply to the op that caused it (download progress
-throttled to 500 ms). ops: `hello {accountId?}` → `{snapshot}`; `enqueue
+throttled to 500 ms). ops: `hello` → `{snapshot}`; `enqueue
 {mediaId, kind, title, url?}` (`Storage`, `Unsupported`); `cancel`, `retry`,
 `remove`, `open`, `close {mediaId}` (`NotFound`); `save {mediaId, locator, baseRevision, expectedReaderGeneration, adoptUnresolved}`
 after fsync; `resolve {mediaId, choice: Canonical|Device}`; `policy {value}`;
@@ -185,8 +182,8 @@ equal it, else 409 `E_READER_CONTENT_CHANGED`.
 ## invariants
 
 - I1 nothing of a previous account is listed, opened, played or synced:
-  binding wipes first (by rename, swept at start), and `me()` precedes all
-  authenticated remote work.
+  the root device session admits the namespace before use; explicit sign-out
+  retires effects and finishes purge before another account is exposed.
 - I3, I5 `Ready` only after a complete, sniffed or CRC-checked body; staging is
   renamed into place and deleted at start.
 - I4, I7 a file in use is leased; remove defers to `Removing`; a page start

@@ -1,5 +1,6 @@
 "use client";
 
+import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isApiError, isSameSystemApiDefect, isStaleBuild, type ApiError, type ApiPath } from "@/lib/api/client";
 import { useServerSeed } from "@/lib/api/serverState";
@@ -143,9 +144,9 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
 
     function failed(error: unknown, area: "Read" | "Observation", input?: SuggestionRefresh) {
       if (isAbortError(error) || controller.signal.aborted) return;
-      if (handleUnauthenticatedApiError(error)) return withdraw();
+      if (handleUnauthenticatedApiError(error) && !installedApp) return withdraw();
       if (isApiError(error) && !isSameSystemApiDefect(error) && (error.status === 403 || error.status === 404)) return withdraw();
-      if (isStaleBuild(error)) return setDefect({ error });
+      if (isStaleBuild(error) && !installedApp) return setDefect({ error });
       if (isApiError(error) && !isSameSystemApiDefect(error)) {
         commit((value) => input
           ? { ...value, admissionError: { input, error } }
@@ -331,6 +332,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     }
 
     function automaticRefresh() {
+      if (!remoteReady()) return;
       attemptedAdvice = adviceKey();
       void sendRefresh({ kind: "EnsureFresh" }, controller.signal).catch((error: unknown) => {
         // justify-ignore-error: inactivity cancels this browser attempt, not admitted work.
@@ -348,7 +350,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       if (timer !== null) clearTimeout(timer);
       timer = null;
       const state = current.current.state;
-      if (controller.signal.aborted || admitting !== null || current.current.admissionError !== null || state === null || attemptedAdvice === adviceKey()) return;
+      if (!remoteReady() || controller.signal.aborted || admitting !== null || current.current.admissionError !== null || state === null || attemptedAdvice === adviceKey()) return;
       const advice = state.automatic_refresh;
       switch (advice.kind) {
         case "Stopped": return;
@@ -383,6 +385,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           installState(event.state);
           commit((value) => ({ ...value, observationError: null, observationInterrupted: false }));
         },
+        onSuspended: error => { if (session === observationSession) failed(error, "Observation"); },
         onError: (error) => {
           if (session === observationSession) failed(error, "Observation");
         },

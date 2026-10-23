@@ -123,7 +123,7 @@ export function isStaleBuild(error: unknown): error is ApiError & { readonly cod
   return isApiError(error) && error.code === "E_WIRE_MISMATCH";
 }
 
-/** The update is the whole fact, whatever failed; its only action reloads the page. */
+/** Hosted delivery reloads; installed delivery requires an APK update and retains work. */
 export const STALE_BUILD_FEEDBACK: FeedbackContent = {
   tone: "Warning",
   title: installedApp ? "update nexus to reconnect" : "Nexus was updated. Reload this page to continue.",

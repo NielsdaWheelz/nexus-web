@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
+import Button from "@/components/ui/Button";
 import { FeedbackState } from "@/components/feedback/Feedback";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { DeviceWorkspaceContext } from "./workspaceContext";
@@ -101,9 +102,11 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
     announcement="Polite"
     actions={cleanupFailed ? [{ label: "retry sign out", busy: signingIn, onClick: clearDevice }]
       : failure ? [{ label: "retry", onClick: () => void read() }]
-      : startup === undefined ? []
-      : wrong ? [{ label: "retry", busy: signingIn, onClick: signIn }, { label: "cancel", onClick: () => setSignInResult(null) }, { label: "sign out on this device", busy: signingIn, onClick: clearDevice }]
+      : startup === undefined ? undefined
+      : wrong ? [{ label: "retry", busy: signingIn, onClick: signIn }, { label: "cancel", onClick: () => setSignInResult(null) }]
       : [{ label: "sign in", busy: signingIn, onClick: signIn }]}
-  /></main>;
+  />
+    {wrong ? <Button tone="danger" aria-busy={signingIn || undefined} onClick={clearDevice}>sign out on this device</Button> : null}
+  </main>;
 }
 

@@ -455,6 +455,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         {retained ? <Button onClick={commands.resume} disabled={queue.phase !== "Ready" || queue.header?.current_entry_id === null}>resume</Button> : null}
         {openQueue}
         <Tooltip text="open lectern" triggerRef={idleRef} renderTrigger={help => (
+          // Shared player navigation uses its existing workspace gesture handler.
+          // eslint-disable-next-line @next/next/no-html-link-for-pages
           <a {...help} href="/lectern" className={buttonClassName({ size: "comfortable", iconOnly: true })}
             aria-label="open lectern" data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>
             <Icon.ListMusic size={20} aria-hidden="true" />

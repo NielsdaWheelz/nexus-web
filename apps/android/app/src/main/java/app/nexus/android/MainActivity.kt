@@ -205,6 +205,17 @@ class MainActivity : AppCompatActivity() {
                 playerBridge.onPageStarted()
             }
 
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?,
+            ) {
+                if (request == null || !appRouter.isOwned(request.url) ||
+                    request.url.path?.startsWith("/_nexus/") == true) return
+                if (errorResponse?.statusCode in setOf(401, 426) &&
+                    deviceSession.remoteAdmission in setOf("Ready", "Unavailable")) deviceSession.requestCheck()
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?,
@@ -627,7 +638,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun openBrowser(uri: Uri) {
         val target = if (isOwnedUrl(uri) && (uri.path?.startsWith("/account/") == true)) {
-            uri.buildUpon().appendQueryParameter("expected_account_id", deviceSession.accountId()?.toString()).build()
+            uri.buildUpon().clearQuery().apply {
+                for (name in uri.queryParameterNames) {
+                    if (name != "expected_account_id") for (value in uri.getQueryParameters(name)) appendQueryParameter(name, value)
+                }
+                deviceSession.accountId()?.let { appendQueryParameter("expected_account_id", it.toString()) }
+            }.build()
         } else uri
         openExternalUrl(target)
     }

@@ -2,6 +2,7 @@
 
 // Fixed native operations only. The bridge is current-document and main-frame
 // scoped by Android. Requests never carry an account identity or credentials.
+import { isRecord } from "@/lib/validation";
 import { ApiError, readResponse, WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { SettingsIdentity, EmailChangeResult, IdentityDeleteResult } from "@/lib/account/settingsWire";
@@ -11,18 +12,45 @@ import { bindSessionCheck, publishAdmission } from "./admission";
 
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: unknown }) => void) | null };
 type Reply = { id: number; ok: true } & Record<string, unknown>;
-type Frame = Reply | { id: number; ok: false; error: { code: string; message: string; status?: number } } | { kind: "session_changed"; remote_admission: RemoteAdmission };
 const port = typeof window === "undefined" ? undefined : (window as Window & { nexusApp?: Port }).nexusApp;
 let nextId = 1;
 const waiting = new Map<number, { resolve: (reply: Reply) => void; reject: (error: Error) => void }>();
+function invalidReply(): ApiError {
+  return new ApiError(500, "E_INVALID_RESPONSE", "invalid native app reply");
+}
+function readAdmission(value: unknown): RemoteAdmission {
+  switch (value) {
+    case "Checking": case "Ready": case "Unavailable": case "SignInRequired": case "UpdateRequired": return value;
+    default: throw invalidReply();
+  }
+}
 if (port) port.onmessage = ({ data }) => {
-  const frame = JSON.parse(data as string) as Frame;
-  if ("kind" in frame) return publishAdmission(frame.remote_admission);
-  const pending = waiting.get(frame.id);
-  if (!pending) return;
-  waiting.delete(frame.id);
-  if (frame.ok) pending.resolve(frame);
-  else pending.reject(new ApiError(frame.error.status ?? 0, frame.error.code, frame.error.message));
+  try {
+    const frame: unknown = JSON.parse(typeof data === "string" ? data : "");
+    if (!isRecord(frame)) throw invalidReply();
+    if ("kind" in frame) {
+      if (frame.kind !== "session_changed") throw invalidReply();
+      publishAdmission(readAdmission(frame.remote_admission));
+      return;
+    }
+    if (typeof frame.id !== "number" || !Number.isSafeInteger(frame.id) || frame.id < 1 || typeof frame.ok !== "boolean") throw invalidReply();
+    const pending = waiting.get(frame.id);
+    if (!frame.ok) {
+      const error = frame.error;
+      if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string" || typeof error.status !== "number" || !Number.isInteger(error.status)) throw invalidReply();
+      waiting.delete(frame.id);
+      pending?.reject(new ApiError(error.status, error.code, error.message));
+      return;
+    }
+    waiting.delete(frame.id);
+    if (pending) pending.resolve({ ...frame, id: frame.id, ok: true });
+  } catch (error) {
+    const failure = error instanceof ApiError ? error : invalidReply();
+    for (const pending of waiting.values()) pending.reject(failure);
+    waiting.clear();
+    publishAdmission("Unavailable");
+    reportError(failure);
+  }
 };
 function call(op: string, input: Record<string, unknown> = {}): Promise<Reply> {
   if (!port) return Promise.reject(new Error("native app bridge unavailable"));
@@ -46,22 +74,27 @@ export async function readDeviceStartup(): Promise<DeviceStartup | null> {
 }
 export async function hello(): Promise<void> {
   const reply = await call("hello");
-  publishAdmission(reply.remote_admission as RemoteAdmission);
+  publishAdmission(readAdmission(reply.remote_admission));
 }
 let checking: Promise<void> | null = null;
 export function sessionCheck(): Promise<void> {
   if (checking) return checking;
-  checking = call("session_check").then(reply => { publishAdmission(reply.remote_admission as RemoteAdmission); }).finally(() => { checking = null; });
+  checking = call("session_check").then(reply => { publishAdmission(readAdmission(reply.remote_admission)); }).finally(() => { checking = null; });
   return checking;
 }
 bindSessionCheck(() => sessionCheck().catch(() => publishAdmission("Unavailable")));
-/** Settings refresh must follow any check that began before the server edit. */
+/** The first check drains any pre-edit native foreground/job check; the second
+ * starts after the confirmed edit and acknowledges its durable local settings. */
 export async function refreshDeviceSettings(): Promise<void> {
-  if (checking) await checking;
+  await sessionCheck();
   await sessionCheck();
 }
 export async function sessionSignIn(): Promise<SignInResult> {
-  return (await call("session_sign_in")).result as SignInResult;
+  const { result } = await call("session_sign_in");
+  switch (result) {
+    case "Restored": case "Cancelled": case "DifferentAccount": case "Failed": return result;
+    default: throw invalidReply();
+  }
 }
 export async function sessionSignOut(): Promise<void> { await call("session_sign_out"); }
 export async function accountEmailChange(email: string): Promise<{ data: EmailChangeResult }> {
@@ -81,11 +114,14 @@ export async function accountIdentityDelete(identity_id: string): Promise<{ data
 export async function saveDeviceWorkspace(state: WorkspaceState, expected_revision: string): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(state));
   const { write_id } = await call("workspace_begin", { expected_revision, byte_count: bytes.length });
+  if (typeof write_id !== "string" || write_id.length === 0) throw invalidReply();
   for (let offset = 0; offset < bytes.length; offset += 24 * 1024) {
     const chunk = bytes.subarray(offset, offset + 24 * 1024);
     const base64 = btoa(String.fromCharCode(...chunk));
     const reply = await call("workspace_chunk", { write_id, offset, base64 });
     if (reply.next_offset !== offset + chunk.length) throw new Error("native workspace offset mismatch");
   }
-  return (await call("workspace_commit", { write_id })).workspace_revision as string;
+  const { workspace_revision } = await call("workspace_commit", { write_id });
+  if (typeof workspace_revision !== "string" || !/^(0|[1-9][0-9]*)$/.test(workspace_revision)) throw invalidReply();
+  return workspace_revision;
 }

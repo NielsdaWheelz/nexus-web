@@ -162,7 +162,7 @@ class OfflineJobService : JobService() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, getString(R.string.downloads_channel_name), NotificationManager.IMPORTANCE_LOW),
             )
-            setNotification(params, NOTIFICATION_ID, notification(), JOB_END_NOTIFICATION_POLICY_REMOVE)
+            setNotification(params, NOTIFICATION_ID, notification(showAccount = false), JOB_END_NOTIFICATION_POLICY_REMOVE)
         }
         val job = scope.launch {
             val device = DeviceSession.get(this@OfflineJobService)
@@ -249,8 +249,8 @@ class OfflineJobService : JobService() {
         }
     }
 
-    private fun notification(): Notification {
-        val items = store.snapshot().getJSONArray("items")
+    private fun notification(showAccount: Boolean = true): Notification {
+        val items = if (showAccount) store.snapshot().getJSONArray("items") else org.json.JSONArray()
         val item = (0 until items.length()).map(items::getJSONObject).firstOrNull { it.getString("state") == "Downloading" }
         val received = item?.getLong("received") ?: 0
         val total = item?.optLong("total") ?: 0

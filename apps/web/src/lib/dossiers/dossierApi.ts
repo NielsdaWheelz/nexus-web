@@ -88,6 +88,7 @@ export function watchDossierBuild(
   buildHandle: string,
   onState: (build: DossierBuild) => void,
   onLost: () => void,
+  onSuspended: (error: Error) => void,
 ): () => void {
   return openStream<DossierBuild, DossierBuild>({
     path: `/api/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
@@ -99,5 +100,6 @@ export function watchDossierBuild(
     isTerminal: (build) => build.status !== "Active",
     onEvent: onState,
     onError: onLost,
+    onSuspended,
   });
 }

@@ -48,7 +48,7 @@ internal class ShelfRouter(context: Context, private val store: OfflineStore) {
             return serve(file, range)
         }
         // the asset loader answers a missing asset with a null body
-        return assets.shouldInterceptRequest(url)?.takeIf { it.data != null } ?: notFound()
+        return assets.shouldInterceptRequest(url.buildUpon().authority(SHELF_HOST).build())?.takeIf { it.data != null } ?: notFound()
     }
 
     private fun serve(file: File, range: String?): WebResourceResponse {
