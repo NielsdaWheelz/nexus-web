@@ -9,6 +9,8 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackActions, type FeedbackContextValue } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { apiTransportFeedback } from "@/lib/api/client";
+import { useWritingRefresh } from "@/lib/api/writingReceive";
 import { noteBodySchema, parseBody } from "@/lib/notes/noteBody";
 import {
   admitWriting,
@@ -352,6 +354,18 @@ const TEXT_STATUS: Record<Exclude<TextWritingState, "blocked">, { tone: "Neutral
   memory_only: { tone: "Warning", title: "recent changes are only in this tab.", message: "keep it open or download your writing." },
   uncertain: { tone: "Warning", title: "couldn’t confirm this change.", message: "your draft is kept." },
 };
+
+/** a failed receive read stays beside its text, independently of delivery status. */
+export function WritingRefreshNotice({ textRef, kind }: { textRef: string; kind: "note" | "title" }) {
+  const { error, retry } = useWritingRefresh(textRef);
+  if (error === null) return null;
+  const title = `this ${kind} couldn’t refresh.`;
+  return <FeedbackNotice
+    content={{ ...(apiTransportFeedback(error, title) ?? { tone: "Warning", title }), requestId: error.requestId }}
+    announcement="Polite"
+    actions={[{ label: "try again", onClick: retry }]}
+  />;
+}
 
 /**
  * Quiet delivery status. With a text ref: that text's latest revision in this tab;

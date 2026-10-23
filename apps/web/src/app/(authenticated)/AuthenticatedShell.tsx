@@ -28,6 +28,7 @@ import ResourceActionsProvider, { ResourceActionDefect } from "@/lib/actions/Res
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import { useWritingReceive } from "@/lib/api/writingReceive";
+import { apiTransportFeedback } from "@/lib/api/client";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
@@ -239,6 +240,7 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
   const runtime = useWritingRuntime(accountId);
   const latest = useLatestWorkspace();
   const receive = useWritingReceive(accountId);
+  const { connection, probe_failure, probing } = receive.snapshot;
   const feedback = useFeedback();
   const [storage, parked, old] = useSyncExternalStore(subscribeWriting, writingAttention, () => "::").split(":");
   const download: FeedbackAction = { label: "download writing", onClick: () => downloadWriting(feedback, accountId) };
@@ -276,11 +278,31 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     announcement: "Polite",
     actions: [download, { label: "reload app", onClick: () => window.location.reload() }],
   });
-  useWorkspaceCondition("writing-receive", receive.error === null ? null : {
-    priority: "Status",
-    content: { tone: "Warning", title: "updates from other tabs and devices are paused." },
+  useWorkspaceCondition("writing-receive", connection.failure !== null ? {
+    priority: "Action",
+    content: {
+      ...(apiTransportFeedback(connection.failure, "live updates are unavailable.") ?? {
+        tone: "Warning", title: "live updates are unavailable.", message: "changes made elsewhere may not appear here.",
+      }),
+      requestId: connection.failure.requestId,
+    },
     announcement: "Polite",
-    actions: [{ label: "reconnect", onClick: receive.retry }],
+    actions: [{ label: "retry live updates", onClick: receive.reconnect, busy: connection.phase === "connecting" || connection.phase === "recovering" }],
+  } : connection.phase === "recovering" ? {
+    priority: "Status",
+    content: { tone: "Neutral", title: "reconnecting live updates…" },
+    announcement: "None",
+  } : null);
+  useWorkspaceCondition("writing-probe", probe_failure === null ? null : {
+    priority: "Action",
+    content: {
+      ...(apiTransportFeedback(probe_failure, "some open content couldn’t refresh.") ?? {
+        tone: "Warning", title: "some open content couldn’t refresh.",
+      }),
+      requestId: probe_failure.requestId,
+    },
+    announcement: "Polite",
+    actions: [{ label: "try again", onClick: receive.retryProbe, busy: probing }],
   });
   useWorkspaceCondition("writing-startup", runtime.state === "failed" || runtime.state === "retrying" ? {
     priority: "Write", announcement: "Polite",
