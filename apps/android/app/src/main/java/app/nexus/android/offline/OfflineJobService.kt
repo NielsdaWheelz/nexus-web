@@ -16,6 +16,7 @@ import android.text.format.Formatter
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import app.nexus.android.MainActivity
+import app.nexus.android.DeviceSession
 import app.nexus.android.NexusOriginClient
 import app.nexus.android.R
 import kotlinx.coroutines.CoroutineScope
@@ -122,6 +123,24 @@ internal object OfflineJobs {
 
 /** Only ever scheduled on android 14+ (UIDT). */
 class OfflineJobService : JobService() {
+    companion object {
+        @Volatile private var current: OfflineJobService? = null
+        suspend fun stopForSignOut(context: Context) {
+            val scheduler = context.getSystemService(JobScheduler::class.java)
+            scheduler.cancel(TRANSFER_JOB_ID)
+            scheduler.cancel(SYNC_JOB_ID)
+            val service = current ?: return
+            val running = service.runs.values.toList()
+            running.forEach { (job, http) -> job.cancel(); http.dispatcher.cancelAll() }
+            running.forEach { (job, _) -> job.join() }
+            service.runs.clear()
+        }
+    }
+    override fun onCreate() {
+        super.onCreate()
+        current = this
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val runs = ConcurrentHashMap<Int, Pair<Job, OkHttpClient>>()
     private val store by lazy { OfflineStore.get(this) }
@@ -143,9 +162,23 @@ class OfflineJobService : JobService() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, getString(R.string.downloads_channel_name), NotificationManager.IMPORTANCE_LOW),
             )
-            setNotification(params, NOTIFICATION_ID, notification(), JOB_END_NOTIFICATION_POLICY_REMOVE)
+            setNotification(params, NOTIFICATION_ID, notification(showAccount = false), JOB_END_NOTIFICATION_POLICY_REMOVE)
         }
         val job = scope.launch {
+            val device = DeviceSession.get(this@OfflineJobService)
+            try {
+                device.initialize()
+                device.checkSession()
+            } catch (_: IOException) {
+                OfflineJobs.ended(params)
+                jobFinished(params, false)
+                return@launch
+            }
+            if (!device.remotelyAdmitted() || device.accountId() != store.account) {
+                OfflineJobs.ended(params)
+                jobFinished(params, false)
+                return@launch
+            }
             val reschedule = if (transfer) {
                 drain(params, http, origin)
             } else {
@@ -171,6 +204,7 @@ class OfflineJobService : JobService() {
     }
 
     override fun onDestroy() {
+        if (current === this) current = null
         scope.cancel()
         super.onDestroy()
     }
@@ -215,8 +249,8 @@ class OfflineJobService : JobService() {
         }
     }
 
-    private fun notification(): Notification {
-        val items = store.snapshot().getJSONArray("items")
+    private fun notification(showAccount: Boolean = true): Notification {
+        val items = if (showAccount) store.snapshot().getJSONArray("items") else org.json.JSONArray()
         val item = (0 until items.length()).map(items::getJSONObject).firstOrNull { it.getString("state") == "Downloading" }
         val received = item?.getLong("received") ?: 0
         val total = item?.optLong("total") ?: 0

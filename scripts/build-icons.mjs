@@ -1,8 +1,9 @@
 // Single-source-of-truth icon pipeline. Reads the master asterism SVG and
 // regenerates every derived icon: Android adaptive launcher foreground +
 // monochrome (vector XML, 108dp), Android notification icon (vector XML,
-// 24dp), Android launcher colors, the Google Play Console 512x512 PNG, and
-// the browser extension PNGs at 16/32/48/128 px. Pure Node, no native deps.
+// 24dp), Android launcher colors, the browser favicon, the Google Play Console
+// 512x512 PNG, and the browser extension PNGs at 16/32/48/128 px.
+// Pure Node, no native deps.
 //
 //   node scripts/build-icons.mjs
 //   make build-icons
@@ -295,6 +296,18 @@ writeText(
   makeBrandSvg(masterDots, FG_GOLD),
 );
 writeText("apps/web/src/app/icon.svg", makeFaviconSvg(masterDots));
+// One 32px PNG image in the ICO directory; Next serves this metadata asset publicly.
+const favicon = renderAsterismPng({ size: 32, masterDots, fg: FG_GOLD, bg: BG_DARK });
+const faviconHeader = Buffer.alloc(22);
+faviconHeader.writeUInt16LE(1, 2); // ICO image type
+faviconHeader.writeUInt16LE(1, 4); // image count
+faviconHeader.writeUInt8(32, 6); // width
+faviconHeader.writeUInt8(32, 7); // height
+faviconHeader.writeUInt16LE(1, 10); // color planes
+faviconHeader.writeUInt16LE(32, 12); // bits per pixel
+faviconHeader.writeUInt32LE(favicon.length, 14);
+faviconHeader.writeUInt32LE(faviconHeader.length, 18);
+writeBin("apps/web/src/app/favicon.ico", Buffer.concat([faviconHeader, favicon]));
 writeText("apps/web/src/lib/brand.ts", makeBrandTs(masterDots));
 writeText("apps/web/src/app/brand.css", makeBrandCss());
 

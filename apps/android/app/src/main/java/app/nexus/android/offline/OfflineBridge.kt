@@ -6,6 +6,7 @@ import android.util.Base64
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import app.nexus.android.BuildConfig
+import app.nexus.android.DeviceSession
 import app.nexus.android.webkit.OwnedOriginWebMessage
 import app.nexus.android.webkit.OwnedWebMessage
 import app.nexus.android.webkit.OwnedOrigin
@@ -109,9 +110,10 @@ internal class OfflineBridge(
     }
 
     private fun dispatch(request: JSONObject, replyProxy: JavaScriptReplyProxy): JSONObject {
+        val session = DeviceSession.get(context)
+        if (session.accountId() == null || session.accountId() != store.account) return failure("NotConnected")
         when (request.getString("op")) {
             "hello" -> {
-                request.string("accountId")?.let { store.bind(UUID.fromString(it)) }
                 subscriber = replyProxy
                 OfflineJobs.scheduleSync(context, 0)
                 return JSONObject().put("ok", true).put("snapshot", store.snapshot())
@@ -188,7 +190,7 @@ internal class OfflineBridge(
         val op = request.getString("op")
         if (op == "exportStart") {
             val account = UUID.fromString(request.getString("account_id"))
-            if (account != store.account) {
+            if (account != DeviceSession.get(context).accountId() || account != store.account) {
                 reply(failure("AuthorizationRequired"))
                 return
             }
@@ -266,7 +268,8 @@ internal class OfflineBridge(
     }
 
     private fun currentExport(session: ExportSession): Boolean =
-        exportSession === session && session.account == store.account &&
+        exportSession === session && session.account == DeviceSession.get(context).accountId() &&
+            session.account == store.account &&
             session.generation == framing.currentDocumentGeneration()
 
     private fun failure(code: String): JSONObject = JSONObject().put("ok", false).put("error", code)

@@ -1,5 +1,6 @@
 "use client";
 
+import { installedApp } from "@/lib/native/admission";
 import { useEffect, useId, useRef, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
@@ -101,7 +102,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
       if (await accept(item.target) === "Accepted" && !lectern) acknowledge(item.target.ref);
     } catch (error) {
       const modeled = modeledApiError(error, setDefect);
-      if (modeled !== null && isStaleBuild(modeled)) setDefect({ error });
+      if (modeled !== null && isStaleBuild(modeled) && !installedApp) setDefect({ error });
       else if (modeled !== null)
         setNotice({ text: lectern ? "lectern change not confirmed" : "library change not confirmed", requestId: modeled.requestId });
     } finally {

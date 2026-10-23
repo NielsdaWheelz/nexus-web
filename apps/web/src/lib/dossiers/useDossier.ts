@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiErrorCopy } from "@/components/dossier/dossierCopy";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { isApiError, isRefusal } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -46,11 +47,15 @@ export function useDossier(target: DossierTarget): Dossier {
       : target.artifactRef;
   const targetRef = useRef(target);
   targetRef.current = target;
+  const admissionGeneration = useRemoteGeneration();
+  const [streamFailure, setStreamFailure] = useState<{ key: string; error: Error } | null>(null);
   const [loads, setLoads] = useState(0);
   const [loaded, setLoaded] = useState({ key, head: LOADING });
   const [busy, setBusy] = useState<Dossier["busy"]>(null);
   const [error, setError] = useState<string | null>(null);
-  const head = loaded.key === key ? loaded.head : LOADING;
+  const rawHead = loaded.key === key ? loaded.head : LOADING;
+  const head = rawHead.kind === "Ready" && streamFailure?.key === key
+    ? { ...rawHead, refreshFailure: apiErrorCopy(streamFailure.error) } : rawHead;
   const reload = () => {
     if (head.kind === "Failed" && head.retrying || head.kind === "Ready" && head.refreshing) return;
     setLoaded((current) => current.key !== key ? current : current.head.kind === "Failed"
@@ -66,7 +71,8 @@ export function useDossier(target: DossierTarget): Dossier {
         if (live) setLoaded({ key, head: { kind: "Ready", value, refreshing: false, refreshFailure: null } });
       },
       (failure: unknown) => {
-        if (!live || handleUnauthenticatedApiError(failure)) return;
+        if (!live) return;
+        handleUnauthenticatedApiError(failure);
         // A failed refresh keeps the head already on screen.
         setLoaded((current) =>
           current.key === key && current.head.kind === "Ready"
@@ -78,7 +84,7 @@ export function useDossier(target: DossierTarget): Dossier {
     return () => {
       live = false;
     };
-  }, [key, loads]);
+  }, [key, loads, admissionGeneration]);
 
   const ready = head.kind === "Ready" ? head.value : null;
   const watched =
@@ -92,6 +98,7 @@ export function useDossier(target: DossierTarget): Dossier {
       watched,
       (build) => {
         if (!live) return;
+        setStreamFailure(null);
         if (build.status !== "Active") return setLoads((count) => count + 1);
         setLoaded((current) =>
           current.head.kind === "Ready"
@@ -111,12 +118,13 @@ export function useDossier(target: DossierTarget): Dossier {
       () => {
         if (live) setLoads((count) => count + 1);
       },
+      error => { if (live) setStreamFailure({ key, error }); },
     );
     return () => {
       live = false;
       stop();
     };
-  }, [watched]);
+  }, [watched, key]);
 
   const run = (
     kind: "generate" | "cancel",

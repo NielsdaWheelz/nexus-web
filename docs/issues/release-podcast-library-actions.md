@@ -6,9 +6,10 @@ resource actions replace `AddPodcast`/`StopPodcast` with distinct
 write endpoints and database schemas do not change.
 
 production source `400e7039e` shipped wire `14`, as recorded by the release
-records on fetched main `aa3dfc086`. this is the first incompatible change in
-this checkout since that release: `python/nexus/api/edge.py` and generated
-`apps/web/src/lib/api/wire.gen.ts` now require wire `15`.
+records on main `aa3dfc086`. these actions share the pending wire `15` bump with
+the [installed workspace cutover](release-offline-startup.md). do not bump again
+before that release. `python/nexus/api/edge.py` and generated
+`apps/web/src/lib/api/wire.gen.ts` require the same revision.
 
 release api/web together. rebuild and pair any native client that sends the
 wire revision with the same contract; old-revision clients receive the existing

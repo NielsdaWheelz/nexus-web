@@ -19,10 +19,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { remoteReady } from "@/lib/native/admission";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import {
+  ApiError,
   isApiError,
   isSameSystemApiDefect,
-  type ApiError,
 } from "@/lib/api/client";
 import {
   handleUnauthenticatedApiError,
@@ -219,7 +221,7 @@ export async function requestWithRetry<T>(
       return await request(signal);
     } catch (error) {
       const retryable =
-        !signal.aborted &&
+        !signal.aborted && remoteReady() &&
         isApiError(error) &&
         (error.code === "E_NETWORK" ||
           (!isSameSystemApiDefect(error) && error.status >= 500));
@@ -256,7 +258,8 @@ export function modeledApiError(
   fail: (defect: Defect) => void,
   signIn: (error: unknown) => boolean = handleUnauthenticatedApiError,
 ): ApiError | null {
-  if (isAbortError(error) || signIn(error)) return null;
+  if (isAbortError(error)) return null;
+  signIn(error);
   if (isApiError(error) && !isSameSystemApiDefect(error)) return error;
   fail({ error });
   return null;
@@ -333,6 +336,7 @@ function useServerState<D>(
   load: Load<D>,
   readPolicy: string,
 ) {
+  const admissionGeneration = useRemoteGeneration();
   const account = useOptionalAuthenticatedAccount();
   const accountId = account?.accountId ?? null;
   const [firstAccount] = useState(accountId);
@@ -370,6 +374,10 @@ function useServerState<D>(
   const run = useCallback(
     async () => {
       if (flight.current !== null) { flight.current.queued = true; return; }
+      if (!remoteReady()) {
+        setState(h => ({ ...h, running: false, error: h.error ?? new ApiError(0, "E_NETWORK", "this view needs a connection") }));
+        return;
+      }
       const controller = new AbortController();
       const current = { controller, queued: true };
       flight.current = current;
@@ -426,6 +434,12 @@ function useServerState<D>(
   }, [key, stateKey, restoredHere, run]);
 
   const refetch = useCallback(() => owner.invalidate(), [owner]);
+  const admittedGeneration = useRef(admissionGeneration);
+  useEffect(() => {
+    if (admissionGeneration === admittedGeneration.current) return;
+    admittedGeneration.current = admissionGeneration;
+    refetch();
+  }, [admissionGeneration, refetch]);
 
   return valueOf(held, refetch);
 }

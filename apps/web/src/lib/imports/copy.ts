@@ -10,7 +10,7 @@ import type {
   FeedbackContent,
   FeedbackTone,
 } from "@/components/feedback/Feedback";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -990,8 +990,11 @@ export function loadFailure(error: unknown): FeedbackContent {
         "Refresh this view to start loading again.",
         "More imports couldn’t be loaded",
       );
-    default:
+    default: {
+      const transport = apiTransportFeedback(modeled(error), "Imports couldn’t be loaded");
+      if (transport !== null) return transport;
       throw error;
+    }
   }
 }
 
@@ -1073,7 +1076,11 @@ export function uploadCommandFeedback(
     };
   }
   const { code } = modeled(error);
-  if (!Object.hasOwn(COMMAND_REFUSAL, code)) throw error;
+  if (!Object.hasOwn(COMMAND_REFUSAL, code)) {
+    const transport = apiTransportFeedback(modeled(error), title);
+    if (transport !== null) return transport;
+    throw error;
+  }
   return { tone: "Danger", title, message: COMMAND_REFUSAL[code] };
 }
 
@@ -1141,7 +1148,11 @@ export function captureErrorFeedback(
     };
   }
   const { code, requestId } = modeled(error);
-  if (!Object.hasOwn(CAPTURE_REFUSAL, code)) throw error;
+  if (!Object.hasOwn(CAPTURE_REFUSAL, code)) {
+    const transport = apiTransportFeedback(modeled(error), title);
+    if (transport !== null) return transport;
+    throw error;
+  }
   return { tone: "Danger", title, message: CAPTURE_REFUSAL[code], requestId };
 }
 
@@ -1226,10 +1237,7 @@ export function acceptanceFailure(error: unknown): AcceptanceFailure {
   }
   const { status, code, requestId } = modeled(error);
   if (
-    status >= 500 ||
-    code === "E_NETWORK" ||
-    code === "E_UPSTREAM" ||
-    code === "E_UPSTREAM_TIMEOUT"
+    status >= 500 || outcomeUnknown(error)
   ) {
     return {
       kind: "AcceptanceUnresolved",

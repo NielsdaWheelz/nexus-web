@@ -21,7 +21,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import type { ApiError } from "@/lib/api/client";
+import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import {
   fetchBrowsePreview,
@@ -94,8 +94,11 @@ function previewErrorMessage(error: ApiError): Failure {
       return terminal("Invalid preview link");
     case "E_NOT_FOUND":
       return terminal("No longer available");
-    default:
+    default: {
+      const transport = apiTransportFeedback(error, "preview couldn’t be loaded");
+      if (transport !== null) return { content: transport, retryable: true };
       throw error;
+    }
   }
 }
 

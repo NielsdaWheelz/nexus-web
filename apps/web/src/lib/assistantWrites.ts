@@ -1,6 +1,7 @@
 /** The one undo of an assistant write: the chat card, connections and settings. */
 import {
   apiFetch,
+  apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
@@ -16,6 +17,8 @@ export async function undoAssistantWrite(toolCallId: string): Promise<void> {
 /** Copy for a failed undo or history read; anything unexpected is a defect. */
 export function undoFailureMessage(error: unknown): string {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const transport = apiTransportFeedback(error, "request wasn’t confirmed");
+  if (transport !== null) return transport.message ?? transport.title;
   switch (error.code) {
     case "E_NETWORK":
       return "Check your connection and try again.";

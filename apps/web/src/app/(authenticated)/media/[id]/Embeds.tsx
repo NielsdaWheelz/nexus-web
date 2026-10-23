@@ -9,7 +9,7 @@ import { articleContentLabel } from "@/lib/documentReader/chrome/ArticleContentN
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import { addMediaFromUrl, fetchAcceptedSource, type AcceptedIngest } from "@/lib/imports/ingest";
@@ -150,7 +150,7 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
         setRequest(await addMediaFromUrl({ id: requestId, url: post.source_url, guard: frozenGuard.current }));
       }
     } catch (error) {
-      if (isApiError(error) && !["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"].includes(error.code)) {
+      if (isApiError(error) && !outcomeUnknown(error)) {
         if (!request) { setRequestId(createRandomId()); frozenGuard.current = null; }
         else detail.refetch();
       }

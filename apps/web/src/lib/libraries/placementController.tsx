@@ -15,7 +15,7 @@ import DestinationChooser from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
-import { isApiError, isRefusal, isUnauthenticatedApiError } from "@/lib/api/client";
+import { isApiError, isRefusal, requestWithDeadline } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -94,9 +94,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   let lifetime = new AbortController();
   let defect: { error: unknown } | null = null;
   const fail = (value: { error: unknown }) => { defect = value; emit(); };
-  const signal = () => AbortSignal.any([lifetime.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
   const report = (error: unknown, title: string) => {
-    if (isUnauthenticatedApiError(error)) { signIn(error); return null; }
     return libraryErrorFeedback(error, title, fail, signIn);
   };
   const get = (target: LibraryPlacementTarget): Target => {
@@ -124,7 +122,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       try {
         while (active && lifetime === run) {
           row.dirty = false;
-          const snapshot = await requestWithRetry(s => placements(row.target, s), signal());
+          const snapshot = await requestWithDeadline({ signal: run.signal, timeoutMs: REQUEST_TIMEOUT_MS, request: signal => requestWithRetry(s => placements(row.target, s), signal) });
           if (!active || lifetime !== run) return false;
           if (row.dirty) continue;
           row.data = snapshot.placements;
@@ -181,10 +179,10 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         change.phase = "Sending";
         emit();
         try {
-          const result = await setPlacement(change.row.target, libraryId, {
+          const result = await requestWithDeadline({ signal: run.signal, timeoutMs: REQUEST_TIMEOUT_MS, request: signal => setPlacement(change.row.target, libraryId, {
             included: change.included, expected_order_revision: change.expectedRevision,
             expected_removal_revision: change.removalRevision,
-          }, signal());
+          }, signal) });
           if (!active || lifetime !== run) return;
           change.acknowledgedRevision = result.order_revision;
           change.row.failures.delete(libraryId);

@@ -12,6 +12,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { NavigationIdentity } from "@/lib/host/policy";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import type {
@@ -203,7 +204,7 @@ export function PaneRuntimeProvider(props: {
     <PaneReturnVisitScope paneId={pane.id} visitId={visitId} routeKey={route.routeKey}>
       <ActiveContext value={props.isActive}>
         <VisibleContext value={props.isVisible}>
-          <RuntimeContext value={value}>{props.children}</RuntimeContext>
+          <RuntimeContext value={value}><NavigationIdentity value={`${pane.id}:${visitId}:${href}`}>{props.children}</NavigationIdentity></RuntimeContext>
         </VisibleContext>
       </ActiveContext>
     </PaneReturnVisitScope>

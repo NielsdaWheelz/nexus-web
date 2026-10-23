@@ -75,7 +75,10 @@ server components: callFastAPI ────────────────�
 - `proxy.ts` (server only): `proxySession(request, path, lane)`,
   `proxyShare`, `proxyExtension`. The session lane refuses a cross-origin
   mutation (403), resolves the session before reading a body (ended → 401 and
-  the cookies cleared; refreshable → refreshed inline), forwards the allow-listed
+  the cookies cleared; refreshable → refreshed inline). ordinary android requests
+  are passive: no rotation or clearing, including assets/streams. the fixed native
+  credential operations own those effects ([installed workspace](device-startup.md)).
+  it forwards the allow-listed
   headers (`content-type accept range if-none-match if-modified-since
   idempotency-key x-nexus-wire`) plus the bearer, internal secret, request id
   and `X-Nexus-Device` from `nx_device`, and answers `private, no-store`,

@@ -22,6 +22,8 @@
 //   no pane visit owns.
 // - Defects throw in render; aborts and 401s are not failures.
 
+import { remoteReady } from "@/lib/native/admission";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, ApiError } from "@/lib/api/client";
@@ -132,6 +134,7 @@ function useList<T, M>(
   shownRef: { current: ListSnapshot<T, M> | null },
 ): ServerList<T, M> {
   const { key, stale } = input;
+  const admissionGeneration = useRemoteGeneration();
   const accountId = useOptionalAuthenticatedAccount()?.accountId ?? null;
   const [shownAccount, setShownAccount] = useState(accountId);
   const latestAccount = useRef(accountId);
@@ -168,6 +171,13 @@ function useList<T, M>(
       const { key, stale, pageSize, fetchPage, id } = latest.current;
       const base = shownRef.current?.key === key ? shownRef.current : null;
       if (latestAccount.current !== accountId || key === null || flight.current !== null) return;
+      if (!remoteReady()) {
+        const error = new ApiError(0, "E_NETWORK", "this view needs a connection");
+        setFailureAccount(accountId);
+        setFailure(previous => previous?.key === key ? previous : { key, op: requested, error });
+        for (const waiter of waiters.current.splice(0)) waiter.reject(error);
+        return;
+      }
       if (requested === "More" && base?.cursor == null) return;
       // A reread of a key with no rows yet is its first load.
       const op = requested === "Refetch" && base === null ? "Load" : requested;
@@ -296,6 +306,13 @@ function useList<T, M>(
       setFailure(null);
     };
   }, [key, run, shownRef]);
+
+  const admittedGeneration = useRef(admissionGeneration);
+  useEffect(() => {
+    if (admissionGeneration === admittedGeneration.current) return;
+    admittedGeneration.current = admissionGeneration;
+    if (remoteReady()) void refetch().catch(() => {});
+  }, [admissionGeneration, refetch]);
 
   const revalidate = useCallback(() => {
     if (latest.current.key === null || pendingObservation.current) return;

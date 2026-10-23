@@ -16,7 +16,9 @@ import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import {
   DEFAULT_RETURN_TARGET,
-  loginPath,
+  expectedAccountPath,
+  switchBrowserAccountPath,
+  parseReturnTarget,
   savedPasswordPath,
   type ReturnTarget,
 } from "@/lib/auth/urls";
@@ -34,9 +36,11 @@ const UNCONFIRMED: FeedbackContent = {
 export default function PasswordUpdateForm({
   nextPath,
   saved,
+  expectedAccountId,
 }: {
   nextPath: ReturnTarget;
   saved: boolean;
+  expectedAccountId: string | null;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [fieldError, setFieldError] = useState<FeedbackContent | null>(null);
@@ -52,10 +56,11 @@ export default function PasswordUpdateForm({
   }
 
   const { pending, submit } = useAuthForm<
-    "PolicyRejected" | "SessionEnded" | "RateLimited" | "ServiceUnavailable"
+    "PolicyRejected" | "SessionEnded" | "RateLimited" | "ServiceUnavailable" | "DifferentAccount"
   >((kind) => {
     // an ended session was cleared with feedback /login renders.
-    if (kind === "SessionEnded") window.location.replace(loginPath(nextPath));
+    if (kind === "DifferentAccount") window.location.replace(expectedAccountPath("/account/password", expectedAccountId));
+    else if (kind === "SessionEnded") window.location.replace(switchBrowserAccountPath(parseReturnTarget(expectedAccountPath("/account/password", expectedAccountId))));
     else if (kind === "PolicyRejected") fail(TOO_SHORT, null);
     else if (kind === "RateLimited") {
       fail(null, {
@@ -109,12 +114,13 @@ export default function PasswordUpdateForm({
         aria-busy={pending}
         noValidate
         onSubmit={(event) =>
-          void submit(event, savedPasswordPath(nextPath), { validate })
+          void submit(event, savedPasswordPath(nextPath, expectedAccountId), { validate })
         }
       >
         {nextPath === DEFAULT_RETURN_TARGET ? null : (
           <input type="hidden" name="next" value={nextPath} />
         )}
+        {expectedAccountId ? <input type="hidden" name="expected_account_id" value={expectedAccountId} /> : null}
         <div className={authStyles.field}>
           <label
             className={authStyles.label}

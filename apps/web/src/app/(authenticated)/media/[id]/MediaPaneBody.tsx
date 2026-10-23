@@ -14,10 +14,10 @@ import {
   useSyncExternalStore,
   type FocusEvent,
 } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -225,6 +225,11 @@ function MediaPane({ id }: { readonly id: string }) {
   const articleEmbeds = doc?.kind === "text"
     ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
     : [];
+  const [embedFailure, setEmbedFailure] = useState<ApiError | null>(null);
+  useWorkspaceCondition(`media-embed-updates:${runtime.paneId}`, embedFailure === null ? null : {
+    priority: "Status", announcement: "Polite",
+    content: { tone: "Warning", title: "article updates paused", requestId: embedFailure.requestId },
+  });
   const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
     embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
   useEffect(() => {
@@ -234,7 +239,8 @@ function MediaPane({ id }: { readonly id: string }) {
         path: `/api/stream/media/${childId}/events`,
         decode: (_type, data) => data,
         isTerminal: () => false,
-        onEvent: () => reader.reload(),
+        onEvent: () => { setEmbedFailure(null); reader.reload(); },
+        onSuspended: setEmbedFailure,
         // A final stream refusal gets one fresh projection through the reader's error owner.
         onError: () => reader.reload(),
       }),

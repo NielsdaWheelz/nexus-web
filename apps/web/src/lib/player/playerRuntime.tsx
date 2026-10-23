@@ -420,7 +420,7 @@ export function GlobalPlayerProvider({
     setUnavailable(null);
     unavailableRef.current = false;
     const created = androidShell
-      ? createNativeEngine(accountId, (responding) => {
+      ? createNativeEngine((responding) => {
           unavailableRef.current = !responding;
           setUnavailable(
             responding ? null : { kind: "Unavailable", reason: "NotResponding" },

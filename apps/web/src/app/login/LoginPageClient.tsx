@@ -1,7 +1,7 @@
 "use client";
-// google first, then email and password, then the other provider. in the
-// android shell the provider controls are deep links the native owner handles
-// (native google, custom-tab github).
+// google first, then email and password, then the other provider.
+// native handoff context selects the current credential attempt; the browser
+// user agent grants no identity and never selects an auth protocol.
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState, type ReactNode } from "react";
@@ -24,7 +24,7 @@ import {
   nativeGoogleDeepLink,
   oauthPath,
   PROVIDER_NAMES,
-  startDeepLink,
+  type HandoffContext,
   type LoginError,
   type OAuthProvider,
   type ReturnTarget,
@@ -114,22 +114,20 @@ function GoogleMark() {
 function ProviderLink({
   provider,
   nextPath,
-  isShell,
+  handoff,
   disabled,
 }: {
   provider: OAuthProvider;
   nextPath: ReturnTarget | null;
-  isShell: boolean;
+  handoff: HandoffContext | null;
   disabled: boolean;
 }) {
   const destination = disabled || nextPath === null
     ? { href: null, "aria-disabled": true } as const
     : {
-        href: !isShell
-          ? oauthPath(provider, nextPath)
-          : provider === "google"
-            ? nativeGoogleDeepLink(nextPath)
-            : startDeepLink(provider, nextPath),
+        href: handoff && provider === "google"
+          ? nativeGoogleDeepLink(nextPath, handoff)
+          : oauthPath(provider, nextPath, handoff),
       };
   return (
     <ButtonLink
@@ -172,11 +170,11 @@ function Disclosure({
 export default function LoginPageClient({
   feedback: initial,
   nextPath,
-  isShell,
+  handoff,
 }: {
   feedback: LoginError | "session_ended" | null;
   nextPath: ReturnTarget;
-  isShell: boolean;
+  handoff: HandoffContext | null;
 }) {
   const connectivity = useConnectivity();
   const target = useReturnTarget(nextPath);
@@ -248,7 +246,7 @@ export default function LoginPageClient({
     <AuthSurface
       title={initial === "session_ended" ? "sign in to continue" : "Sign in"}
       description={
-        isShell
+        handoff
           ? "Use the account connected to this Nexus."
           : "Private workspace. No public registration."
       }
@@ -269,7 +267,7 @@ export default function LoginPageClient({
         <ProviderLink
           provider="google"
           nextPath={completedTarget}
-          isShell={isShell}
+          handoff={handoff}
           disabled={controlsPending}
         />
 
@@ -292,6 +290,7 @@ export default function LoginPageClient({
             {completedTarget === null || completedTarget === DEFAULT_RETURN_TARGET ? null : (
               <input type="hidden" name="next" value={completedTarget} />
             )}
+            {handoff ? <><input type="hidden" name="flow" value="handoff" /><input type="hidden" name="hc" value={handoff.challenge} /></> : null}
             <label className={authStyles.field}>
               <span className={authStyles.label}>Email</span>
               <Input
@@ -385,14 +384,14 @@ export default function LoginPageClient({
             <ProviderLink
               provider="github"
               nextPath={completedTarget}
-              isShell={isShell}
+              handoff={handoff}
               disabled={controlsPending}
             />
           </div>
         </Disclosure>
 
         <nav className={authStyles.footer} aria-label="Login links">
-          {isShell ? null : <Link href="/android">Android</Link>}
+          {handoff ? null : <Link href="/android">Android</Link>}
           <Link href="/privacy">Privacy</Link>
           <Link href="/terms">Terms</Link>
         </nav>

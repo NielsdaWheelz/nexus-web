@@ -7,7 +7,7 @@
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useFeedback, useWorkspaceCondition, type FeedbackContent, type FeedbackContextValue } from "@/components/feedback/Feedback";
-import { isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
+import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -96,7 +96,8 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
     } catch (error) {
       if (!current(entry, scope)) return;
       if (isApiError(error) && error.requestId !== undefined) entry.requestId = error.requestId;
-      const unauthenticated = sent && handleUnauthenticatedApiError(error);
+      if (sent) handleUnauthenticatedApiError(error);
+      const unauthenticated = sent && isUnauthenticatedApiError(error);
       const defect = (!isApiError(error) && !isAbortError(error) && !(error instanceof ProgressPreparationError)) || isSameSystemApiDefect(error);
       if (!sent) {
         entry.failure = { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the episode-state change. resolve the player or reader save before trying again.", requestId: isApiError(error) ? error.requestId : undefined };

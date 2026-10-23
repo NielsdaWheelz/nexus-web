@@ -6,7 +6,7 @@
 // command to the account owner. Observation stops outside the visible pane.
 
 import { useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minus } from "lucide-react";
+import { ChevronDown, ChevronRight, Minus } from "lucide-react";
 import { PlaybackSourceContext, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -439,11 +439,12 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 </p>
               </div>
               <Button ref={detailsButton} className={styles.detailButton}
+                icon={expanded ? <ChevronDown /> : <ChevronRight />}
                 aria-expanded={expanded} aria-controls={detailId}
                 onClick={() => {
                   if (expanded && detailPanel.current?.contains(document.activeElement)) detailsButton.current?.focus();
                   setExpanded(!expanded);
-                }}>details</Button>
+                }}>{expanded ? "show less" : "show more"}</Button>
             </div>
             <div id={detailId} ref={detailPanel} hidden={!expanded}>
               {expanded ? <div className={styles.detailContent}>

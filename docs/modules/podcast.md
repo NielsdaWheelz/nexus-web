@@ -130,6 +130,12 @@ no app data or admission drafts enter browser storage. add modes, scope, counts,
 coverage errors and keep/remove consequences are explicit. global removal remains
 available on show detail after unsubscribing when saved episodes remain.
 
+the podcast overview uses one visit-local expansion state for its panel and
+existing disclosure button: `show more` with a right chevron when closed,
+`show less` with a down chevron when open. shared button anatomy owns the
+decorative icon; visible text names the action. visits retain their own expansion
+and the existing trigger retains focus recovery before hiding panel content.
+
 ## episode-wide commands
 
 `POST /podcasts/{id}/episodes/consumption/prepare` reads the complete visible

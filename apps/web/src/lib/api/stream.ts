@@ -3,6 +3,7 @@
 // the bff's planned cut before the platform's function limit). The server's
 // committed state is the truth: a reconnect replays what was missed (cursor
 // streams) or re-sends the whole snapshot (snapshot streams).
+import { installedApp, remoteAdmission, remoteReady, subscribeAdmission, observeRemoteFailure } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   ApiError,
@@ -27,9 +28,11 @@ export interface StreamOptions<E, P = unknown> {
   readonly onEvent: (event: E) => void;
   /**
    * Once, final: a refusal, a bad event, a throwing consumer, or reconnects
-   * spent. A 401 sends the tab to login instead.
+   * spent. Installed admission failures pause this owner; hosted 401 also starts sign-in.
    */
   readonly onError: (error: Error) => void;
+  /** Installed owners may show the real failure while the same cursor waits for admission. */
+  readonly onSuspended: (error: ApiError) => void;
   /** Once, final: the terminal event arrived. */
   readonly onComplete?: () => void;
   /** Before each wait after a failed connection (not after a planned cut). */
@@ -56,7 +59,7 @@ const jittered = (ms: number) =>
   );
 
 /**
- * Opens one stream. 401 (the tab goes to login) and every other 4xx but 429,
+ * Opens one stream. Hosted 401 and every other 4xx but 429,
  * a non-event-stream answer, a malformed or oversized event and a throwing
  * decode or onEvent are final. Network failures, 5xx and 429 back off and
  * reconnect. A clean end after an event (the planned cut) resumes at once; one
@@ -68,14 +71,41 @@ export function openStream<E, P = unknown>(
   options: StreamOptions<E, P>,
 ): () => void {
   const stop = new AbortController();
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, stop.signal])
-    : stop.signal;
+  const signal = stop.signal;
+  const abort = () => stop.abort(options.signal?.reason);
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener("abort", abort, { once: true });
+  const close = () => {
+    options.signal?.removeEventListener("abort", abort);
+    stop.abort();
+  };
   const maxReconnects = options.maxReconnects ?? 8;
   const maxBackoffMs = options.maxBackoffMs ?? 30_000;
   let cursor = options.after ?? "";
   let terminal = false;
   let failures = 0;
+
+  let suspended: ApiError | null = null;
+
+  // Admission waits retain this stream's cursor and owner. They spend no
+  // reconnect budget and submit no application command.
+  const admitted = () => new Promise<void>(resolve => {
+    if (remoteReady() || signal.aborted) return resolve();
+    const show = () => {
+      const admission = remoteAdmission();
+      if (admission === "Checking" || admission === "Ready") return;
+      if (suspended === null) {
+        suspended = new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0,
+          admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK",
+          "live updates need a connection");
+        options.onSuspended(suspended);
+      }
+    };
+    const done = () => { unsubscribe(); signal.removeEventListener("abort", done); resolve(); };
+    const unsubscribe = subscribeAdmission(() => { if (remoteReady()) done(); else show(); });
+    signal.addEventListener("abort", done, { once: true });
+    show();
+  });
 
   // One connection; true when it delivered an event.
   const connect = async (): Promise<boolean> => {
@@ -103,6 +133,7 @@ export function openStream<E, P = unknown>(
       try {
         // justify-type-assertion: the same deploy validated this event's public payload.
         const event = options.decode(type, data as P, id);
+        suspended = null;
         options.onEvent(event);
         terminal = options.isTerminal(event);
       } catch (error) {
@@ -119,6 +150,8 @@ export function openStream<E, P = unknown>(
   const run = async (): Promise<void> => {
     while (!signal.aborted) {
       try {
+        await admitted();
+        if (signal.aborted) return;
         const delivered = await connect();
         if (terminal) return options.onComplete?.();
         if (delivered) {
@@ -128,8 +161,22 @@ export function openStream<E, P = unknown>(
       } catch (error) {
         if (signal.aborted) return;
         if (error instanceof Fatal) {
-          if (handleUnauthenticatedApiError(error.reason)) return;
-          return options.onError(error.reason);
+          const reason = error.reason;
+          if (installedApp && isApiError(reason) && (reason.status === 401 || reason.status === 426)) {
+            handleUnauthenticatedApiError(reason);
+            suspended = reason;
+            options.onSuspended(reason);
+            continue;
+          }
+          handleUnauthenticatedApiError(reason);
+          return options.onError(reason);
+        }
+        if (installedApp && (error instanceof TypeError || (isApiError(error) && error.status === 0))) {
+          const failure = isApiError(error) ? error : new ApiError(0, "E_NETWORK", "Stream lost");
+          observeRemoteFailure(0);
+          suspended = failure;
+          options.onSuspended(failure);
+          continue;
         }
         if (!isApiError(error) && !(error instanceof TypeError)) {
           return options.onError(asError(error));
@@ -144,8 +191,8 @@ export function openStream<E, P = unknown>(
     }
   };
   // a final callback closes any connection still open
-  void run().finally(() => stop.abort());
-  return () => stop.abort();
+  void run().finally(close);
+  return close;
 }
 
 /**

@@ -71,8 +71,8 @@ function publish(next: OfflineSnapshot): void {
   for (const listener of listeners) listener();
 }
 
-/** Says hello once per document; the hosted app names its account, the shelf does not. */
-export function connectOffline(accountId?: string): void {
+/** Subscribes once per document; native owns account binding. */
+export function connectOffline(): void {
   if (port === undefined || connected) return;
   connected = true;
   port.onmessage = (event) => {
@@ -86,7 +86,7 @@ export function connectOffline(accountId?: string): void {
     if (frame.ok) reply?.resolve(frame);
     else reply?.reject(new Error(frame.error));
   };
-  void offlineCall("hello", accountId === undefined ? {} : { accountId }).then(
+  void offlineCall("hello").then(
     (reply) => publish(reply.snapshot as OfflineSnapshot),
     () => undefined,
   );

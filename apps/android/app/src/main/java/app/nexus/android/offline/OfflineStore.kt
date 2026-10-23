@@ -134,9 +134,9 @@ internal class OfflineStore private constructor(private val filesDir: File) {
 
     fun bind(accountId: UUID) {
         synchronized(lock) {
+            require(account == null || account == accountId) { "sign out before changing the download namespace" }
             authRequired = false
-            if (account != accountId) {
-                wipe()
+            if (account == null) {
                 account = accountId
                 persist()
             }
@@ -144,9 +144,19 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         changed()
     }
 
+    /** Explicit removal completes only when copies and crash leftovers are gone. */
     fun purge() {
         synchronized(lock) {
-            wipe()
+            items.clear()
+            leases.clear()
+            active = null
+            account = null
+            authRequired = false
+            consumptionRevision = 0
+            if (root.exists() && !root.deleteRecursively()) throw IOException("downloaded copies could not be removed")
+            filesDir.listFiles { file -> file.name.startsWith("offline-trash-") }?.forEach {
+                if (it.exists() && !it.deleteRecursively()) throw IOException("downloaded copy cleanup is incomplete")
+            }
             persist()
         }
         changed()

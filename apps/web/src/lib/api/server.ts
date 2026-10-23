@@ -25,10 +25,13 @@ const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
  */
 export async function callFastAPI<T>(
   path: string,
-  { timeoutMs = 30_000 }: { timeoutMs?: number } = {},
+  { timeoutMs = 30_000, context }: {
+    timeoutMs?: number;
+    context?: { accessToken: string; deviceId: string };
+  } = {},
 ): Promise<T> {
   const store = await cookies();
-  const bearer = readBearer(store.getAll());
+  const bearer = context?.accessToken ?? readBearer(store.getAll());
   if (bearer === null) {
     throw new ApiError(401, "E_UNAUTHENTICATED", "Authentication required");
   }
@@ -41,7 +44,7 @@ export async function callFastAPI<T>(
     [WIRE_HEADER]: String(WIRE_REVISION),
   });
   if (internalSecret) headers.set("x-nexus-internal", internalSecret);
-  const device = readDeviceId(store);
+  const device = context?.deviceId ?? readDeviceId(store);
   if (device) headers.set("x-nexus-device", device);
   const controller = new AbortController();
   const budget = isSuggestionJsonPath(path)

@@ -1,5 +1,6 @@
 "use client";
 
+import { installedApp } from "@/lib/native/admission";
 import { useEffect, useId, useState } from "react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -160,8 +161,10 @@ export default function MetadataResearchActions({
         <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
-        isStaleBuild(pending.error) ? <Button data-metadata-action="" onClick={() => window.location.reload()}>
-          reload app
+        isStaleBuild(pending.error) ? <Button data-metadata-action="" aria-disabled={installedApp || undefined}
+          tooltip={installedApp ? { text: "install the current nexus apk, then reopen the app." } : undefined}
+          onClick={() => { if (!installedApp) window.location.reload(); }}>
+          {installedApp ? "update nexus" : "reload app"}
         </Button> :
         <Button
           data-metadata-action=""

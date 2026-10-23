@@ -9,6 +9,7 @@ import { finish, isSameOrigin, type Effect } from "@/lib/auth/session";
 
 const STATUS = {
   Forbidden: 403,
+  DifferentAccount: 409,
   InvalidRequest: 400,
   InvalidCredentials: 401,
   SessionEnded: 401,

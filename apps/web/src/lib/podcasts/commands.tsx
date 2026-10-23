@@ -7,7 +7,7 @@
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useFeedback, useWorkspaceCondition, type FeedbackContextValue, type FeedbackContent } from "@/components/feedback/Feedback";
 import { assertNever } from "@/lib/assertNever";
-import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -53,13 +53,14 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
     emit();
     const command = entry.command;
     try {
-      const signal = AbortSignal.any([scope.signal, AbortSignal.timeout(30_000)]);
-      switch (command.kind) {
-        case "Admission": await admitPodcast(command.libraryId, command.mode, entry.body, signal); break;
-        case "Stop": await stopPodcast(command.podcastId, entry.body, signal); break;
-        case "Import": await changePodcastImport(command.libraryId, command.importId, command.action, entry.body, signal); break;
-        default: assertNever(command);
-      }
+      await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: async signal => {
+        switch (command.kind) {
+          case "Admission": await admitPodcast(command.libraryId, command.mode, entry.body, signal); break;
+          case "Stop": await stopPodcast(command.podcastId, entry.body, signal); break;
+          case "Import": await changePodcastImport(command.libraryId, command.importId, command.action, entry.body, signal); break;
+          default: assertNever(command);
+        }
+      } });
     } catch (error) {
       if (!current(entry, scope)) return false;
       invalidateReads("Podcasts", "Entries");
@@ -106,17 +107,18 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
       async check(key: string) {
         const entry = snapshot.find(value => value.key === key), scope = lifetime;
         if (entry === undefined || entry.phase !== "Unknown" || scope === null) return;
-        if (entry.command.kind !== "Import") { await send(entry); return; }
+        const command = entry.command;
+        if (command.kind !== "Import") { await send(entry); return; }
         entry.phase = "Sending"; emit();
         try {
-          const operation = await getPodcastImport(entry.command.libraryId, entry.command.importId, AbortSignal.any([scope.signal, AbortSignal.timeout(30_000)]));
+          const operation = await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: signal => getPodcastImport(command.libraryId, command.importId, signal) });
           if (!current(entry, scope)) return;
-          const confirmed = entry.command.action === "cancel"
+          const confirmed = command.action === "cancel"
             ? operation.state === "cancelled" || operation.state === "complete"
-            : operation.attempt_version === entry.command.body.expected_attempt_version + 1;
+            : operation.attempt_version === command.body.expected_attempt_version + 1;
           if (confirmed) {
             retire(entry); publishChange("Podcasts", "Entries");
-            feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: `${entry.command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed"} · ${entry.title}` } });
+            feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: `${command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed"} · ${entry.title}` } });
           } else { entry.phase = "Unknown"; emit(); }
         } catch (error) {
           if (!current(entry, scope)) return;

@@ -62,3 +62,9 @@ retained handback records required-consumer acceptance. the
 [raw evidence was not retained](wire10-qualification-evidence-not-retained.md).
 it does not assign or close the earlier firefox #418, or the separate
 attribute-only warning.
+
+2026-10-23: run `20261023-094017-ebab0e849fe5`, source `f7afce8a7`,
+recorded the same `#418`/`HTML` stack in the separate android chrome auth
+surface during cancel/wrong-account qualification. those assertions passed;
+the event's exact route/component was not captured. the installed workspace
+does not hydrate. no common cause or repair is established by this observation.

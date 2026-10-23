@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
+import { remoteReady } from "@/lib/native/admission";
 import {
   apiFetch,
   apiTransportFeedback,
@@ -180,6 +181,7 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
     pending: (kind: AdmissionIntent["kind"], mediaId: string) =>
       snapshot.find(entry => entry.intent.kind === kind && entry.intent.mediaId === mediaId) ?? null,
     admit(original: AdmissionIntent): Promise<AdmissionResult> {
+      if (!remoteReady()) return Promise.resolve({ kind: "LocalFailure", content: { tone: "Warning", title: "this request needs a connection", message: "try again after reconnecting." } });
       const scope = lifetime;
       if (scope === null || !live(scope)) return Promise.resolve({ kind: "OwnerGone" });
       const key = `media-admission:${accountId}:${original.kind}:${original.mediaId}`;
