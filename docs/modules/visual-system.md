@@ -81,6 +81,12 @@ they never replay. account departure retires presentation. an active modal
 suppresses unrelated workspace controls and live announcements; its own failures
 stay inside the modal.
 
+an acknowledged command may `settleCondition` with its unique condition key and
+receipt content. the feedback owner atomically removes that condition before
+applying the same receipt admission; other work or a modal still suppresses it.
+late hook withdrawal cannot remove a newer occurrence. no scheduling or replay is
+needed to bridge command settlement and react presentation cleanup.
+
 only changed short facts enter separate live regions. inactive panes stay
 silent. actions stay mounted and focusable while busy, with guarded activation;
 successful removal returns to an explicit owner destination, then the shell.

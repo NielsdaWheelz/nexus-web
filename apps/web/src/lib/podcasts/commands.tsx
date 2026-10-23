@@ -81,9 +81,9 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
     if (!current(entry, scope)) return false;
     retire(entry);
     publishChange("Podcasts", "Entries", "Lectern", "Metadata");
-    feedback.receipt({ tone: "Success", title: command.kind === "Admission" ? `${command.mode === "follow" ? "subscribed" : "import started"} · ${entry.title}`
+    feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: command.kind === "Admission" ? `${command.mode === "follow" ? "subscribed" : "import started"} · ${entry.title}`
       : command.kind === "Stop" ? `podcast change saved · ${entry.title}`
-        : command.action === "cancel" ? `import stopped; arrived episodes kept · ${entry.title}` : `import retry accepted · ${entry.title}` });
+        : command.action === "cancel" ? `import stopped; arrived episodes kept · ${entry.title}` : `import retry accepted · ${entry.title}` } });
     entry.onAccepted?.();
     return true;
   }
@@ -116,7 +116,7 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
             : operation.attempt_version === entry.command.body.expected_attempt_version + 1;
           if (confirmed) {
             retire(entry); publishChange("Podcasts", "Entries");
-            feedback.receipt({ tone: "Success", title: entry.command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed" });
+            feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: entry.command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed" } });
           } else { entry.phase = "Unknown"; emit(); }
         } catch (error) {
           if (!current(entry, scope)) return;

@@ -25,6 +25,9 @@ the existing account command owner and retained uncertainty recovery. canonical
 admission reads the exact library/show relationship; the default section's
 aggregate cannot establish personal membership. destination choice writes
 nothing. progress/retry/cancel remain available without subscription rows.
+acknowledgement settles the command's feedback condition before offering a
+`subscribed` or `import started` receipt. modal and unrelated-work suppression
+still apply; authoritative rereads never settle an uncertain command.
 
 ## owners and contracts
 
