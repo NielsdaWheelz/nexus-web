@@ -94,6 +94,9 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   remain prepared. menu selection passes the surviving overflow trigger to the
   command, not its departing menu item. no resource-action read occurs on row
   render except the existing metadata source-remedy read.
+  podcast-directory episode rows expose the same playback/more composition; the
+  directory's bounded snapshot limits listing completeness, not sealed-target
+  command authority. find results and stale query rows retain their existing gates.
 - external subjects use their sealed target as identity. `mediaContinuation` retains
   explicit membership intent above row/picker lifetime. acquisition freezes its source,
   retry identity and removal/destination revisions before provider i/o. unknown

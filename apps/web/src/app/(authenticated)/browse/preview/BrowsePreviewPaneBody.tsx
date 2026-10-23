@@ -113,7 +113,6 @@ function PreviewEpisodes({ preview }: {
         ariaLabel="Podcast episodes"
         empty={<FeedbackStatus content={{ tone: "Neutral", title: "no playable episodes in this directory preview" }} announcement="None" />}
         surface={false}
-        rowActionsAvailable={false}
       />
     </PaneSection>
   );
