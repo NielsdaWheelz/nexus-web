@@ -77,7 +77,7 @@ _ROWS_SQL = f"""
     SELECT m.id, m.kind, m.title, m.original_published_date,
         m.processing_status::text AS persisted_status, m.last_error_code,
         m.canonical_source_url, m.external_playback_url, m.provider, m.provider_id,
-        m.created_by_user_id = :viewer_id AS is_creator, rp.generation AS reader_generation,
+        COALESCE(m.created_by_user_id = :viewer_id, false) AS is_creator, rp.generation AS reader_generation,
         {media_file_exists_sql("m.id")} AS has_file,
         EXISTS (SELECT 1 FROM ({ready_publication_rows_sql()}) publication
                 WHERE publication.media_id = m.id) AS publication_ready,

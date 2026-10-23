@@ -125,7 +125,7 @@ class EnsureMediaHighlightRequest(BaseModel):
     id: UUID
     anchor: Annotated[TextHighlightAnchorIn | PdfHighlightAnchorIn, Field(discriminator="kind")]
     color: HIGHLIGHT_COLORS
-    expected_reader_generation: int = Field(ge=1)
+    expected_reader_generation: int | None = Field(ge=1)
     initial_note: "InitialHighlightNote | None"
 
     model_config = ConfigDict(extra="forbid")

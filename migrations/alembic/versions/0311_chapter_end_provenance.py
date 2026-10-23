@@ -1,7 +1,7 @@
 """Record whether a publisher chapter end was observed absent.
 
-Revision ID: 0310
-Revises: 0309
+Revision ID: 0311
+Revises: 0310
 
 Data effects: retain every chapter id, index, title and supplied start/end. Existing
 null ends remain unverified: false never infers their lost source provenance. Only
@@ -14,8 +14,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0310"
-down_revision: str | Sequence[str] | None = "0309"
+revision: str = "0311"
+down_revision: str | Sequence[str] | None = "0310"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -33,4 +33,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0310 is irreversible; restore the pre-release backup")
+    raise NotImplementedError("0311 is irreversible; restore the pre-release backup")

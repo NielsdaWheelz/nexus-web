@@ -44,6 +44,11 @@ import {
   usePlayerCommands,
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
+import { usePodcastSettingsOwner } from "@/lib/podcasts/usePodcastSettingsSave";
+import { usePodcastCommands } from "@/lib/podcasts/commands";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
+import type { PodcastTarget } from "@/lib/podcasts/api";
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
@@ -63,7 +68,8 @@ export type Overlay =
     }
   | { readonly kind: "LibrarySettings"; readonly libraryId: string }
   | { readonly kind: "PodcastSettings"; readonly podcastId: string }
-  | { readonly kind: "Subscribe"; readonly podcastId: string };
+  | { readonly kind: "AddPodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
+  | { readonly kind: "StopPodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly episodes: "keep" | "remove"; readonly removeOnly?: boolean };
 
 /** Everything a verb reads or calls; it changes only when one of those facts does. */
 export interface ActionContext {
@@ -94,6 +100,8 @@ export interface ActionContext {
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
+  readonly podcastSettings: ReturnType<typeof usePodcastSettingsOwner>["commands"];
+  readonly podcasts: ReturnType<typeof usePodcastCommands>["commands"];
   readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
@@ -202,8 +210,10 @@ export default function ResourceActionsProvider({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [confirmation, setConfirmation] = useState<ActionCommand | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
+  const podcasts = usePodcastCommands(accountId, setDefect);
+  const podcastSettings = usePodcastSettingsOwner(accountId, setDefect);
   const [overlay, setOverlay] = useState<
-    (Overlay & { key: number; open: boolean; opener: HTMLElement | null }) | null
+    (Overlay & { key: number; open: boolean; opener: HTMLElement | null; fallback: ReturnFocusTarget }) | null
   >(null);
 
   // One overlay at a time; the metadata overlay closes through its exit.
@@ -212,10 +222,13 @@ export default function ResourceActionsProvider({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    const section = opener?.closest<HTMLElement>("section[tabindex]") ?? null;
+    const paneId = opener?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? null;
+    const fallback = () => section?.isConnected ? section : findPaneLandmarkFocusTarget(paneId);
     setOverlay((current) =>
       current?.open
         ? current
-        : { ...next, key: (current?.key ?? 0) + 1, open: true, opener },
+        : { ...next, key: (current?.key ?? 0) + 1, open: true, opener, fallback },
     );
   }, []);
   const close = useCallback(
@@ -252,6 +265,8 @@ export default function ResourceActionsProvider({
       consumption: consumption.commands,
       admissions,
       podcastEpisodes: podcastEpisodes.commands,
+      podcasts: podcasts.commands,
+      podcastSettings: podcastSettings.commands,
       mediaContinuations,
       observeChatCommand,
       overlays: { open },
@@ -272,6 +287,8 @@ export default function ResourceActionsProvider({
       consumption.commands,
       admissions,
       podcastEpisodes.commands,
+      podcasts.commands,
+      podcastSettings.commands,
       mediaContinuations,
       observeChatCommand,
       open,
@@ -304,10 +321,7 @@ export default function ResourceActionsProvider({
           feedback.offer({
             key: `resource-action:${command.ref}:${command.id}`,
             announcement: "Polite",
-            content: command.id === "Playback" ? {
-              tone: "Warning", title: error.code === "E_AUDIO_UNAVAILABLE" ? "audio unavailable" : "couldn’t start playback",
-              requestId: error.requestId,
-            } : actionFailure(command.id, command.label, error),
+            content: actionFailure(command.id, command.label, error),
             actions: command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined,
           });
         } finally {
@@ -336,6 +350,8 @@ export default function ResourceActionsProvider({
         </> : null}
       </Dialog>
       {podcastEpisodes.feedback}
+      {podcasts.feedback}
+      {podcastSettings.feedback}
       <ResourceOverlays
         overlay={overlay}
         close={close}

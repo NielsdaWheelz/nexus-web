@@ -1,4 +1,9 @@
-"""Reads over shows and subscriptions: followed shows, show detail, action facts."""
+"""Library-owned subscriptions and imports, with physical episode membership.
+
+Section guards, relationships and progress come from one SQL snapshot. Catalog
+metadata is hydrated in batches. Reads acquire nothing and never expand show roots
+into episode placements.
+"""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -11,13 +16,13 @@ from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_id
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
-from nexus.services import library_entries
+from nexus.services import libraries, library_entries
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 
+from . import imports, settings
 from .episodes import episode_counts
-from .subscriptions import find_status
 
 SubscriptionSort = Literal["recent_episode", "unplayed_count", "alpha"]
 SubscriptionFilter = Literal["all", "has_new", "not_in_library"]
@@ -26,7 +31,7 @@ SubscriptionFilter = Literal["all", "has_new", "not_in_library"]
 @dataclass(frozen=True, slots=True)
 class PodcastState:
     subscribed: bool
-    backfill_retry_id: UUID | None
+    has_episodes: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,65 +43,226 @@ class CompactPodcastTarget:
 
 
 def active_subscription_rows_sql() -> str:
-    """The viewer's followed shows (``podcast_id``); binds ``:viewer_id``."""
-    return "SELECT ps.podcast_id FROM podcast_subscriptions ps WHERE ps.user_id = :viewer_id"
+    """One active show per viewer across current non-system member libraries."""
+    return """
+        SELECT s.podcast_id, min(s.created_at) AS followed_at
+        FROM library_podcast_subscriptions s
+        JOIN libraries l ON l.id=s.library_id
+        JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
+        WHERE l.system_key IS NULL AND (NOT l.is_default OR l.owner_user_id=:viewer_id)
+        GROUP BY s.podcast_id
+    """
 
 
 def podcast_states(
     db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
 ) -> dict[UUID, PodcastState]:
-    """Every persisted show among the ids, with the viewer's subscription facts."""
     rows = db.execute(
-        text("""
-            SELECT p.id, s.id IS NOT NULL AS subscribed, CASE WHEN b.failed_at IS NOT NULL OR
-                (b.completed_at IS NOT NULL AND b.error_code IS NOT NULL) THEN b.id END AS retry_id
-            FROM podcasts p
-            LEFT JOIN podcast_subscriptions s ON s.podcast_id = p.id AND s.user_id = :viewer_id
-            LEFT JOIN podcast_subscription_backfills b ON b.subscription_id = s.id
-            WHERE p.id = ANY(CAST(:ids AS uuid[]))
-        """),
+        text(f"""
+        SELECT p.id, EXISTS(SELECT 1 FROM ({active_subscription_rows_sql()}) s
+                             WHERE s.podcast_id=p.id) AS subscribed,
+               EXISTS(SELECT 1 FROM podcast_episodes pe
+                      JOIN ({library_entries.library_media_ids_cte_sql(library_param="(SELECT id FROM libraries WHERE is_default AND owner_user_id=:viewer_id)")}) vm ON vm.media_id=pe.media_id
+                      WHERE pe.podcast_id=p.id) AS has_episodes
+        FROM podcasts p WHERE p.id=ANY(CAST(:ids AS uuid[]))
+    """),
         {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     )
-    return {row.id: PodcastState(row.subscribed, row.retry_id) for row in rows}
+    return {row.id: PodcastState(row.subscribed, row.has_episodes) for row in rows}
 
 
 def hydrate_compact_podcast_targets(
     db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
 ) -> dict[UUID, CompactPodcastTarget]:
-    """Visible shows as compact suggestion targets: title, authors, href."""
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.resource_items.routing import resource_activations_for_refs
 
     rows = db.execute(
         text(f"""
-            SELECT p.id, p.title FROM podcasts p
-            WHERE p.id = ANY(CAST(:ids AS uuid[])) AND p.id IN ({visible_podcast_ids_cte_sql()})
-        """),
-        {"viewer_id": viewer_id, "ids": list(dict.fromkeys(podcast_ids))},
+        SELECT p.id,p.title FROM podcasts p WHERE p.id=ANY(CAST(:ids AS uuid[]))
+        AND p.id IN ({visible_podcast_ids_cte_sql()})
+    """),
+        {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     ).all()
     credits = load_contributor_credits_for_podcasts(db, [row.id for row in rows])
     refs = {row.id: ResourceRef(scheme="podcast", id=row.id) for row in rows}
     activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=list(refs.values()))
-    targets = {}
+    result = {}
     for row in rows:
-        authors = dict.fromkeys(
-            credit.contributor_display_name or credit.credited_name
-            for credit in credits.get(row.id, [])
-            if credit.role == "author"
+        names = dict.fromkeys(
+            c.contributor_display_name or c.credited_name
+            for c in credits.get(row.id, [])
+            if c.role == "author"
         )
         href = activations[refs[row.id].uri].href
-        assert href is not None  # a podcast ref always routes
-        targets[row.id] = CompactPodcastTarget(
-            podcast_id=row.id,
-            title=row.title,
-            subtitle=(", ".join(authors) or None),
-            href=href,
+        assert href is not None
+        result[row.id] = CompactPodcastTarget(row.id, row.title, ", ".join(names) or None, href)
+    return result
+
+
+def _catalog(
+    db: Session, ids: list[UUID]
+) -> tuple[dict[UUID, wire.PodcastListItemOut], dict[UUID, wire.PodcastRecurringOut]]:
+    rows = (
+        db.execute(
+            text("""
+        SELECT p.*,r.started_at AS run_started_at FROM podcasts p
+        LEFT JOIN podcast_feed_runs r ON r.id=p.sync_run_id
+        WHERE p.id=ANY(CAST(:ids AS uuid[]))
+    """),
+            {"ids": ids},
         )
-    return targets
+        .mappings()
+        .all()
+    )
+    credits = load_contributor_credits_for_podcasts(db, ids)
+    shows = {}
+    recurring = {}
+    for row in rows:
+        shows[row["id"]] = wire.PodcastListItemOut(
+            **{k: row[k] for k in wire.PodcastListItemOut.model_fields if k != "contributors"},
+            contributors=credits.get(row["id"], []),
+        )
+        recurring[row["id"]] = wire.PodcastRecurringOut(
+            state=("running" if row["run_started_at"] else "pending")
+            if row["sync_run_id"]
+            else "idle",
+            last_checked_at=row["last_checked_at"],
+            had_coverage_gaps=row["last_check_had_coverage_gaps"],
+            error_code=row["last_check_error_code"],
+            error_detail=row["last_check_error_detail"],
+            next_sync_at=row["next_sync_at"],
+        )
+    return shows, recurring
+
+
+def _snapshot(db: Session, viewer_id: UUID, library_id: UUID):
+    row = (
+        db.execute(
+            text("""
+        WITH root AS (
+            SELECT l.*,lm.role,u.removal_revision FROM libraries l
+            JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
+            JOIN users u ON u.id=:viewer_id WHERE l.id=:library_id
+        ), destinations AS (
+            SELECT l.id,l.name,l.is_default,l.order_revision,
+                   l.system_key IS NULL AND ((l.is_default AND l.owner_user_id=:viewer_id)
+                       OR (NOT l.is_default AND lm.role='admin')) AS can_manage
+            FROM libraries l JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
+            CROSS JOIN root WHERE l.system_key IS NULL
+              AND (NOT l.is_default OR l.owner_user_id=:viewer_id)
+              AND (root.is_default OR l.id=root.id)
+        ) SELECT root.order_revision,root.removal_revision,
+            root.system_key IS NULL AND ((root.is_default AND root.owner_user_id=:viewer_id)
+                       OR (NOT root.is_default AND root.role='admin')) AS can_manage,
+            COALESCE((SELECT jsonb_agg(to_jsonb(s)||jsonb_build_object(
+                'name',d.name,'is_default',d.is_default,'can_manage',d.can_manage))
+                FROM library_podcast_subscriptions s JOIN destinations d ON d.id=s.library_id),'[]') AS rules,
+            COALESCE((SELECT jsonb_agg(to_jsonb(r)||to_jsonb(i)||jsonb_build_object(
+                'podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',d.name,'library_is_default',d.is_default,'updated_at',r.updated_at,'order_revision',d.order_revision,
+                'can_manage',d.can_manage))
+                FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
+                JOIN podcasts p ON p.id=r.podcast_id JOIN destinations d ON d.id=i.library_id
+                WHERE r.completed_at IS NULL AND r.cancelled_at IS NULL),'[]') AS imports
+        FROM root
+    """),
+            {"viewer_id": viewer_id, "library_id": library_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+    return row
+
+
+def read_library_podcasts(
+    db: Session, viewer_id: UUID, library_id: UUID
+) -> wire.LibraryPodcastsOut:
+    snapshot = _snapshot(db, viewer_id, library_id)
+    destinations: dict[UUID, list[wire.PodcastDestinationOut]] = {}
+    history_ids = {UUID(rule["initial_import_id"]) for rule in snapshot["rules"]}
+    for rule in snapshot["rules"]:
+        p = UUID(rule["podcast_id"])
+        destinations.setdefault(p, []).append(
+            wire.PodcastDestinationOut(
+                library_id=rule["library_id"],
+                name=rule["name"],
+                is_default=rule["is_default"],
+                subscription_id=rule["id"],
+                can_add_content=rule["can_manage"],
+            )
+        )
+    operations = [
+        imports.import_from_row(
+            row, can_manage=row["can_manage"], order_revision=row["order_revision"]
+        )
+        for row in snapshot["imports"]
+    ]
+    shows, recurring = _catalog(db, list(destinations))
+    return wire.LibraryPodcastsOut(
+        order_revision=str(snapshot["order_revision"]),
+        removal_revision=str(snapshot["removal_revision"]),
+        can_add_content=snapshot["can_manage"],
+        subscriptions=[
+            wire.PodcastLibraryShowOut(
+                podcast=shows[p],
+                destinations=destinations[p],
+                recurring=recurring[p],
+                imports=[op for op in operations if op.podcast_id == p and op.id in history_ids],
+            )
+            for p in sorted(destinations, key=lambda p: (shows[p].title.casefold(), p))
+        ],
+        imports=[op for op in operations if op.id not in history_ids],
+    )
+
+
+def read_library_podcast(
+    db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
+) -> wire.LibraryPodcastOut:
+    row = (
+        db.execute(
+            text("""
+        SELECT l.order_revision,u.removal_revision,
+            l.system_key IS NULL AND ((l.is_default AND l.owner_user_id=:viewer_id)
+                OR (NOT l.is_default AND lm.role='admin')) AS can_manage,
+            (SELECT to_jsonb(s) FROM library_podcast_subscriptions s
+                WHERE s.library_id=l.id AND s.podcast_id=:podcast_id) AS subscription,
+            (SELECT to_jsonb(r)||to_jsonb(i)||jsonb_build_object('podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',l.name,'library_is_default',l.is_default,'updated_at',r.updated_at)
+                FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
+                WHERE i.library_id=l.id AND r.podcast_id=:podcast_id
+                AND r.completed_at IS NULL AND r.cancelled_at IS NULL) AS import,
+            (SELECT count(*) FROM library_entries e JOIN podcast_episodes pe ON pe.media_id=e.media_id
+                WHERE e.library_id=l.id AND pe.podcast_id=:podcast_id) AS episode_count
+        FROM libraries l JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
+        JOIN users u ON u.id=:viewer_id JOIN podcasts p ON p.id=:podcast_id WHERE l.id=:library_id
+    """),
+            {"viewer_id": viewer_id, "library_id": library_id, "podcast_id": podcast_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library or podcast not found")
+    return wire.LibraryPodcastOut.model_validate(
+        {
+            "library_id": library_id,
+            "podcast_id": podcast_id,
+            "subscription": row["subscription"],
+            "import": None
+            if row["import"] is None
+            else imports.import_from_row(
+                row["import"], can_manage=row["can_manage"], order_revision=row["order_revision"]
+            ),
+            "episode_count": row["episode_count"],
+            "order_revision": str(row["order_revision"]),
+            "removal_revision": str(row["removal_revision"]),
+            "can_add_content": row["can_manage"],
+        }
+    )
 
 
 def _plan(sort: SubscriptionSort) -> list[SortKey]:
-    """The one total order behind the listing's ORDER BY, predicate and cursor."""
     if sort == "alpha":
         return [
             SortKey("title_key", "asc", KeysetValueKind.Text),
@@ -108,12 +274,14 @@ def _plan(sort: SubscriptionSort) -> list[SortKey]:
         SortKey("followed_at", "desc", KeysetValueKind.DateTime),
         SortKey("podcast_id", "desc", KeysetValueKind.Uuid),
     ]
-    if sort == "unplayed_count":
-        return [SortKey("unplayed_count", "desc", KeysetValueKind.Int), *recency]
-    return recency
+    return (
+        [SortKey("unplayed_count", "desc", KeysetValueKind.Int), *recency]
+        if sort == "unplayed_count"
+        else recency
+    )
 
 
-def list_subscriptions(
+def list_podcasts(
     db: Session,
     viewer_id: UUID,
     *,
@@ -122,25 +290,21 @@ def list_subscriptions(
     sort: SubscriptionSort,
     filter: SubscriptionFilter,
     library_id: UUID | None,
-) -> CollectionPage[wire.PodcastSubscriptionListItemOut]:
-    """One keyset page of followed shows under one total order."""
+) -> CollectionPage[wire.PodcastListItemOut]:
     params: dict[str, object] = {"viewer_id": viewer_id}
-    # library_entries owns membership reads: library predicates arrive as id sets.
     where = []
     if filter == "has_new":
-        where.append("AND unplayed_count > 0")
+        where.append("AND unplayed_count>0")
     if filter == "not_in_library":
-        params["placed"] = list(
-            library_entries.podcast_ids_in_libraries_for_viewer(db, viewer_id=viewer_id)
+        where.append(
+            "AND NOT EXISTS (SELECT 1 FROM library_podcast_subscriptions s JOIN libraries l ON l.id=s.library_id JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id WHERE s.podcast_id=o.podcast_id AND NOT l.is_default AND l.system_key IS NULL)"
         )
-        where.append("AND podcast_id <> ALL(CAST(:placed AS uuid[]))")
     if library_id is not None:
-        params["scoped"] = list(
-            library_entries.podcast_ids_in_libraries_for_viewer(
-                db, viewer_id=viewer_id, library_id=library_id
-            )
+        libraries.access(db, viewer_id, library_id, lock=False)
+        params["library_id"] = library_id
+        where.append(
+            f"AND podcast_id IN (SELECT podcast_id FROM ({library_entries.library_podcast_rows_sql()}) scoped)"
         )
-        where.append("AND podcast_id = ANY(CAST(:scoped AS uuid[]))")
     state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
     joins = projection.episode_state_joins_sql(
         user_param=":viewer_id",
@@ -148,10 +312,10 @@ def list_subscriptions(
         listening_alias="pls",
         override_alias="co",
     )
-    page, next_cursor = keyset_page(
+    rows, next_cursor = keyset_page(
         db,
         binding={
-            "list": "PodcastSubscriptions",
+            "list": "Podcasts",
             "viewer": viewer_id,
             "sort": sort,
             "filter": filter,
@@ -163,71 +327,47 @@ def list_subscriptions(
         params=params,
         alias="o",
         sql=lambda keyset, order: f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()}),
-            episodes AS (
-                SELECT pe.podcast_id, pe.published_at, {state} AS episode_state
-                FROM podcast_episodes pe
-                JOIN visible_media vm ON vm.media_id = pe.media_id
-                {joins}
-            ),
-            o AS (
-                SELECT s.podcast_id, s.default_playback_speed, s.pause_shortening_mode,
-                        s.sync_status, s.created_at AS followed_at,
-                       p.title, p.image_url, LOWER(p.title) AS title_key,
-                       COUNT(e.*) FILTER (WHERE e.episode_state = 'unplayed') AS unplayed_count,
-                       MAX(e.published_at) AS latest_published_at,
-                       (MAX(e.published_at) IS NULL)::int AS latest_missing
-                FROM podcast_subscriptions s
-                JOIN podcasts p ON p.id = s.podcast_id
-                LEFT JOIN episodes e ON e.podcast_id = s.podcast_id
-                WHERE s.user_id = :viewer_id
-                GROUP BY s.id, p.id
-            )
-            SELECT * FROM o
-            WHERE TRUE {" ".join(where)} {keyset}
-            ORDER BY {order}
-            LIMIT :limit
-        """,
+        WITH episodes AS (SELECT pe.podcast_id,pe.published_at,{state} AS episode_state
+            FROM podcast_episodes pe JOIN ({visible_media_ids_cte_sql()}) vm ON vm.media_id=pe.media_id {joins}),
+        o AS (SELECT s.podcast_id,s.followed_at,lower(p.title) AS title_key,
+            count(e.*) FILTER(WHERE e.episode_state='unplayed') AS unplayed_count,
+            max(e.published_at) AS latest_published_at,(max(e.published_at) IS NULL)::int AS latest_missing
+            FROM ({active_subscription_rows_sql()}) s JOIN podcasts p ON p.id=s.podcast_id
+            LEFT JOIN episodes e ON e.podcast_id=s.podcast_id GROUP BY s.podcast_id,s.followed_at,p.id)
+        SELECT * FROM o WHERE TRUE {" ".join(where)} {keyset} ORDER BY {order} LIMIT :limit
+    """,
     )
-    credits = load_contributor_credits_for_podcasts(db, [row["podcast_id"] for row in page])
-    return CollectionPage(
-        items=[
-            wire.PodcastSubscriptionListItemOut(
-                podcast_id=row["podcast_id"],
-                title=row["title"],
-                image_url=row["image_url"],
-                contributors=credits.get(row["podcast_id"], []),
-                unplayed_count=row["unplayed_count"],
-                latest_episode_published_at=row["latest_published_at"],
-                default_playback_speed=row["default_playback_speed"],
-                pause_shortening_mode=row["pause_shortening_mode"],
-                sync_status=row["sync_status"],
-            )
-            for row in page
-        ],
-        next_cursor=next_cursor,
-    )
+    shows, _ = _catalog(db, [row["podcast_id"] for row in rows])
+    return CollectionPage(items=[shows[row["podcast_id"]] for row in rows], next_cursor=next_cursor)
 
 
 def get_podcast_detail(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastDetailOut:
-    """Catalog facts of any persisted show, with the viewer's subscription if any."""
-    row = (
-        db.execute(
-            text("""
-                SELECT id, provider, provider_podcast_id, title, feed_url, website_url,
-                       image_url, description, created_at, updated_at
-                FROM podcasts WHERE id = :id
-            """),
-            {"id": podcast_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
+    shows, recurring = _catalog(db, [podcast_id])
+    if podcast_id not in shows:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-    contributors = load_contributor_credits_for_podcasts(db, [podcast_id]).get(podcast_id, [])
+    default_id = libraries.default_library_id(db, viewer_id)
+    snapshot = _snapshot(db, viewer_id, default_id)
+    destinations = [
+        wire.PodcastDestinationOut(
+            library_id=r["library_id"],
+            name=r["name"],
+            is_default=r["is_default"],
+            subscription_id=r["id"],
+            can_add_content=r["can_manage"],
+        )
+        for r in snapshot["rules"]
+        if UUID(r["podcast_id"]) == podcast_id
+    ]
+    operations = [
+        imports.import_from_row(r, can_manage=r["can_manage"], order_revision=r["order_revision"])
+        for r in snapshot["imports"]
+        if UUID(r["podcast_id"]) == podcast_id
+    ]
     return wire.PodcastDetailOut(
-        podcast=wire.PodcastListItemOut(**row, contributors=contributors),
-        subscription=find_status(db, viewer_id, podcast_id),
+        podcast=shows[podcast_id],
+        destinations=destinations,
+        recurring=recurring[podcast_id],
+        imports=operations,
+        playback_settings=settings.get_settings(db, viewer_id, podcast_id),
         episode_counts=episode_counts(db, viewer_id, podcast_id),
     )

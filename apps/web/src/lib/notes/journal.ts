@@ -460,7 +460,7 @@ function checkIntent(value: unknown): void {
     case "passage": {
       shape(row, ["kind", "media_id", "request"]); string(row.media_id);
       const request = shape(row.request, ["id", "anchor", "color", "expected_reader_generation", "initial_note"]);
-      string(request.id); color(request.color); integer(request.expected_reader_generation);
+      string(request.id); color(request.color); if (request.expected_reader_generation !== null) integer(request.expected_reader_generation);
       const anchor = object(request.anchor);
       if (anchor.kind === "text") { shape(anchor, ["kind", "unit_id", "start_offset", "end_offset"]); string(anchor.unit_id); integer(anchor.start_offset); integer(anchor.end_offset); }
       else if (anchor.kind === "pdf") { shape(anchor, ["kind", "page_number", "quads"], ["exact"]); integer(anchor.page_number); quads(anchor.quads); if (anchor.exact !== undefined) string(anchor.exact); }

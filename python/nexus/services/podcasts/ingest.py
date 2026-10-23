@@ -4,12 +4,12 @@ Identity is a set of aliases per show: at most one PodcastIndex ref, at most one
 and any number of canonical enclosure urls. Title, date and random values are never
 identity. An item whose identity is ambiguous is skipped and counted, never guessed.
 
-Lock order, shared by every podcast writer: viewer, the caller's own row
-(subscription or backfill), then the batch's alias advisory locks in canonical
-order, the show row, the complete existing media set in uuid order, then libraries.
-Catalog writes finish before automatic retention. Explicit episode admission
-requests catalog-only ingestion and applies its guards before personal effects. Two writers of one show (two syncs, a sync and a backfill,
-an add) therefore serialize per alias, and a repeated batch converges on the same rows.
+Caller lock order is queue claim (when applicable), actor (when applicable), sorted
+aliases, show and owning run; this writer locks the complete existing media set.
+It writes catalog facts only. The imports owner processes finite observations and
+fans out canonical insertions after the complete page has been resolved. Repeated
+observations are harmless; conflicting strong identifiers are rejected, never guessed.
+No automatic model enrichment, download or transcript work is admitted.
 """
 
 import hashlib
@@ -32,10 +32,10 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
-from nexus.services.metadata_operations import enqueue_metadata_enrichment
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 from nexus.services.url_normalize import normalize_url_for_display
 
+from . import chapters
 from .feed import EpisodeFacts, is_safe_url
 from .provider import PROVIDER
 
@@ -66,6 +66,7 @@ class Alias:
 class IngestResult:
     media_ids: list[UUID | None]  # aligned with the input; None = skipped
     changed: bool
+    inserted_media_ids: list[UUID]
 
     @property
     def skipped(self) -> int:
@@ -107,29 +108,22 @@ def lock_aliases(db: Session, show_identity: str, aliases: Iterable[Alias]) -> N
 def ingest_episodes(
     db: Session,
     *,
-    viewer_id: UUID,
     podcast_id: UUID,
     feed_url: str,
     episodes: list[EpisodeFacts],
-    retain: bool = True,
+    viewer_id: UUID | None = None,
 ) -> IngestResult:
-    """Upsert a batch newest first (undated last); every written episode lands in the
-    viewer's All unless explicitly removed. Suppression retains the resolved episode id
-    without rejecting it. An item without an alias, one claiming a strong alias a newer
-    item of the batch claimed, or one whose aliases name two stored episodes is skipped.
-    A batch that inserted or changed an episode moves its show audience's collections."""
+    """Upsert catalog observations newest first, with aligned canonical ids and insertions.
+
+    The caller holds every alias and the show before entering. A skipped observation
+    has no id; an existing identity still belongs to this import's processed set.
+    """
     order = sorted(
         range(len(episodes)),
         key=lambda i: episodes[i].published_at or datetime.min.replace(tzinfo=UTC),
         reverse=True,
     )
     aliases = [aliases_of(episode) for episode in episodes]
-    show = db.execute(
-        text("SELECT provider, provider_podcast_id FROM podcasts WHERE id = :id"),
-        {"id": podcast_id},
-    ).one()
-    lock_aliases(db, f"{show.provider}:{show.provider_podcast_id}", (a for x in aliases for a in x))
-    db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": podcast_id})
     flat_aliases = [alias for item in aliases for alias in item]
     existing_ids = db.scalars(
         text("""
@@ -151,7 +145,7 @@ def ingest_episodes(
         if credit.role == "author" and credit.credited_name
     ]
     media_ids: list[UUID | None] = [None] * len(episodes)
-    claimed: set[Alias] = set()
+    inserted_media_ids: list[UUID] = []
     changed = False
     for i in order:
         episode = episodes[i]
@@ -159,9 +153,6 @@ def ingest_episodes(
         try:
             if not item:
                 raise _Skipped("no_identity")
-            if any(alias in claimed for alias in item):
-                raise _Skipped("alias_claimed_in_batch")
-            claimed.update(alias for alias in item if alias.scheme != "RssEnclosure")
             media_id, stored = _resolve(db, podcast_id, item)
         except _Skipped as skip:
             logger.warning(
@@ -175,6 +166,7 @@ def ingest_episodes(
         if media_id is None:
             media_id = new_uuid7()
             _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
+            inserted_media_ids.append(media_id)
             dirty = True
             changed = True
         else:
@@ -208,16 +200,11 @@ def ingest_episodes(
                 observation=build_observation({"author": entries})[0],
                 source="rss",
             )
-            enqueue_metadata_enrichment(
-                db, media_id=media_id, requester_user_id=viewer_id, request_id=None
-            )
-        _replace_chapters(db, media_id, episode.chapters)
+        chapters.observe(
+            db, media_id=media_id, inline=episode.chapters, source_url=episode.chapters_source_url
+        )
         media_ids[i] = media_id
-    if retain:
-        for media_id in sorted({media_id for media_id in media_ids if media_id is not None}):
-            if library_entries.ensure_media_in_default_library(db, viewer_id, media_id):
-                changed = True
-    return IngestResult(media_ids=media_ids, changed=changed)
+    return IngestResult(media_ids=media_ids, changed=changed, inserted_media_ids=inserted_media_ids)
 
 
 def _resolve(
@@ -250,11 +237,6 @@ def _resolve(
     for scheme in ("PodcastIndex", "RssGuid"):
         if len({a.value for a in merged if a.scheme == scheme}) > 1:
             raise _Skipped("ambiguous_identity")
-    new_enclosure = any(a.scheme == "RssEnclosure" and a not in stored for a in item)
-    known_guid = any(a.scheme == "RssGuid" and a in stored for a in item)
-    known_ref = any(a.scheme == "PodcastIndex" and a in stored for a in item)
-    if new_enclosure and known_guid and not known_ref:  # a reused guid, re-hosted
-        raise _Skipped("ambiguous_identity")
     return owners.pop(), stored
 
 
@@ -288,7 +270,7 @@ def _fingerprint(row: dict[str, Any]) -> str:
 
 def _insert(
     db: Session,
-    viewer_id: UUID,
+    viewer_id: UUID | None,
     podcast_id: UUID,
     media_id: UUID,
     row: dict[str, Any],
@@ -391,33 +373,6 @@ def _update(
         for key in ("published_at", "duration_seconds")
     )
     return dirty, changed
-
-
-def _replace_chapters(db: Session, media_id: UUID, chapters: list[dict] | None) -> None:
-    """None leaves chapters unchanged; a list replaces every observed occurrence.
-
-    Retrying the same observation converges on its ordered facts. End absence must
-    come from the feed parser, never from a missing field or a historical null.
-    """
-    if chapters is None:
-        return
-    db.execute(text("DELETE FROM podcast_episode_chapters WHERE media_id = :id"), {"id": media_id})
-    if chapters:
-        db.execute(
-            text("""
-                INSERT INTO podcast_episode_chapters (
-                    media_id, chapter_idx, title, t_start_ms, t_end_ms, end_absence_confirmed,
-                    url, image_url, source
-                )
-                VALUES (
-                    :media_id, :idx, :title, :t_start_ms, :t_end_ms, :end_absence_confirmed,
-                    :url, :image_url, :source
-                )
-            """),
-            [c | {"media_id": media_id, "idx": i} for i, c in enumerate(chapters)],
-        )
-
-    db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def select_visible_episode_media_id_by_podcast_index_ref(

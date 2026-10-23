@@ -22,7 +22,7 @@ from llm_tools import (
     ToolLimits,
     ToolSpec,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from universal_memory.tools import MEMORY_READ_SPECS, MEMORY_SAVE_NOTE_SPEC
 
 from nexus.db.models import MediaKind
@@ -30,6 +30,7 @@ from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.library import CreateLibraryRequest
+from nexus.schemas.podcast import PodcastAdmissionOut
 from nexus.schemas.resource_graph import (
     EDGE_KINDS,
     ConnectionDirection,
@@ -329,7 +330,20 @@ class RelationsListSuccess(_Closed):
     uri: Annotated[str, Field(max_length=_URI)]
 
 
+class PodcastLibraryAddInput(_Closed):
+    mode: Literal["follow", "current_episodes"]
+    id: UUID
+    import_id: UUID | None
+
+    @model_validator(mode="after")
+    def require_mode_identity(self) -> PodcastLibraryAddInput:
+        if (self.mode == "follow") != (self.import_id is not None):
+            raise ValueError("Following requires an initial import id; one-time import uses id")
+        return self
+
+
 class LibraryAddInput(_Closed):
+    podcast: PodcastLibraryAddInput | None
     library_id: Annotated[UUID, Field(description="The named library returned by inspect.")]
     expected_order_revision: OrderRevision
     expected_removal_revision: OrderRevision
@@ -340,6 +354,7 @@ class LibraryAddInput(_Closed):
 
 
 class LibraryAddSuccess(_Closed):
+    podcast: PodcastAdmissionOut | None
     already_present: bool
     library_name: Annotated[str, Field(max_length=_LIBRARY_NAME_MAX)]
     library_uri: Annotated[str, Field(max_length=_URI)]
@@ -519,7 +534,9 @@ NEXUS_SPECS = (
         "Add a resource to a user library.",
         "Perform the user's additive library filing request through the existing authorized "
         "library owner. Filing retains media personally; undo removes only the named filing. "
-        "Inspect the library for exact guards. Conflicts require user review; never refresh tokens internally.",
+        "Inspect the library for exact guards. Podcast requests require an explicit follow or current_episodes "
+        "mode and frozen resource ids; null podcast means media filing. Imports are accepted background work. "
+        "Conflicts require user review; never refresh tokens internally.",
         (
             LibraryAddInput,
             LibraryAddSuccess,

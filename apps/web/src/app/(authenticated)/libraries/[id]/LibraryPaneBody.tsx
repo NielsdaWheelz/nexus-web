@@ -9,6 +9,8 @@
 import { useCallback, useId, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
@@ -90,7 +92,7 @@ const UNIT = { singular: "entry", plural: "entries" };
 const VIEW_KEYS = ["sort", "entry_type", "projection", "completion"];
 
 const fields = (entry: LibraryEntry) =>
-  mediaListFilterFields(entry.kind === "media" ? entry.media_summary : entry);
+  mediaListFilterFields(entry.media_summary);
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
@@ -100,6 +102,7 @@ export default function LibraryPaneBody() {
 
 function LibraryPane({ id }: { readonly id: string }) {
   const { addToLibrary } = useLibraryPlacementController();
+  const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
   const router = usePaneRouter();
@@ -160,11 +163,10 @@ function LibraryPane({ id }: { readonly id: string }) {
   );
 
   const summaries = useMediaSummaries(
-    list.items.flatMap((entry) => (entry.kind === "media" ? [entry.media_summary] : [])),
+    list.items.map(entry => entry.media_summary),
   );
   // Live summaries; a row whose summary is gone leaves the list.
   const shown = list.items.flatMap((entry): LibraryEntry[] => {
-    if (entry.kind !== "media") return [entry];
     const summary = summaries.resolve(entry.media_summary);
     return summary === null ? [] : [{ ...entry, media_summary: summary }];
   });
@@ -390,11 +392,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   }
 
   const name = libraryDisplayName(library);
-  const added = (params.get("sort") ?? "").startsWith("added")
-    ? isAll
-      ? "Added to Nexus"
-      : "Added"
-    : null;
   const loadFailure =
     list.failure !== null && list.failure.op !== "More" ? list.failure.error : null;
   const empty = text ? (
@@ -450,9 +447,10 @@ function LibraryPane({ id }: { readonly id: string }) {
         ) : null
       }
     >
+      <LibraryPodcastsSection library={library} active={active} />
       <CollectionView
         returnScope="Library.Entries"
-        rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry, added),
+        rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry),
           id: entry.entry_id ?? libraryEntryId(entry) }))}
         empty={empty}
         status={list.status === "failed" ? "error" : list.status}
@@ -478,7 +476,12 @@ function LibraryPane({ id }: { readonly id: string }) {
           suggestions={suggestions}
           returnScope="Library.Suggestions"
           accept={async (target) => {
-            const accepted = await addToLibrary({ kind: target.kind, id: suggestionTargetId(target) }, id);
+            if (target.kind === "Podcast") {
+              ctx.overlays.open({ kind: "AddPodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
+                onAccepted: () => suggestions.acknowledge(target.ref) });
+              return "Retained";
+            }
+            const accepted = await addToLibrary({ kind: "Media", id: suggestionTargetId(target) }, id);
             return accepted ? "Accepted" : "Retained";
           }}
         />

@@ -25,16 +25,15 @@ from nexus.schemas.resource_items import (
     LecternMembershipAction,
     OpenSourceAction,
     PlaybackAction,
-    PodcastSubscriptionAction,
     RecoveryAction,
     RefreshSourceAction,
     ResourceActionOut,
     ResourceActionsOut,
     RetryMetadataAction,
-    RetryPodcastBackfillAction,
     ReviewMetadataResultAction,
     SimpleAction,
     SimpleActionKind,
+    StopPodcastAction,
     TranscriptAction,
     TranscriptState,
 )
@@ -216,14 +215,13 @@ def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceAct
     if state is None:
         return []
     actions: list[ResourceActionOut] = []
+    actions.append(_simple("AddPodcast"))
+    actions.append(_simple("PodcastSettings"))
     if state.subscribed:
-        actions += [_simple("PodcastSettings"), _simple("RefreshPodcast")]
-    if state.backfill_retry_id is not None:
-        actions.append(
-            RetryPodcastBackfillAction(blocked=None, backfill_id=state.backfill_retry_id)
-        )
-    actions.append(PodcastSubscriptionAction(blocked=None, subscribed=state.subscribed))
-    actions.append(_simple("LibraryPlacement"))
+        actions.append(_simple("RefreshPodcast"))
+        actions.append(StopPodcastAction(blocked=None, episodes="keep"))
+    elif state.has_episodes:
+        actions.append(StopPodcastAction(blocked=None, episodes="remove"))
     return actions
 
 

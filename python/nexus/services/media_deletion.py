@@ -120,6 +120,9 @@ def _claim_teardown(db: Session, media_id: UUID) -> None:
     # The reference writer may already have its serializable snapshot while
     # waiting on this row. Touch the tuple so it restarts and sees the intent.
     db.execute(text("UPDATE media SET updated_at = updated_at WHERE id = :m"), {"m": media_id})
+    db.execute(
+        text("UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m"), {"m": media_id}
+    )
     intent_id = db.scalar(
         text("""
             INSERT INTO media_teardown_intents (id, media_id) VALUES (:id, :m)
@@ -153,6 +156,34 @@ def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> N
     )
 
 
+def remove_podcast_workspace_access_locked(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+) -> None:
+    """Scoped podcast removal hides access while preserving authored work and history.
+
+    caller has the actor, complete media and destination locks. grants remain;
+    viewer markers hide their paths until an explicit fresh acquisition clears them.
+    """
+    from nexus.services.consumption import lectern
+    from nexus.services.dossier import engine as dossier
+
+    projections = resource_grants.annotation_visibility(
+        db, user_ids={viewer_id}, media_ids=set(media_ids)
+    )
+    for media_id in media_ids:
+        db.execute(
+            text("""INSERT INTO user_media_deletions(user_id,media_id) VALUES (:u,:m)
+                           ON CONFLICT DO NOTHING"""),
+            {"u": viewer_id, "m": media_id},
+        )
+        lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+    resource_grants.invalidate_annotation_visibility(db, projections)
+    dossier.on_visibility_lost(db, user_id=viewer_id)
+
+
 def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     """Drop the media from the viewer's whole workspace (I5). Idempotent: a media the viewer
     cannot read is already removed. One reachable only through a system library is 403."""
@@ -172,6 +203,21 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         # The lectern's lock order, as teardown takes it: the viewer before the media.
         users.lock_viewer(db, viewer_id)
         users.advance_removal_revision(db, viewer_id)
+        from nexus.services.podcasts import imports
+
+        parent = library_entries.lock_parent_podcast(db, media_id)
+        if parent is not None:
+            managed = list(
+                db.scalars(
+                    text("""
+                SELECT l.id FROM libraries l JOIN memberships m ON m.library_id=l.id
+                WHERE m.user_id=:viewer AND l.system_key IS NULL
+                  AND ((l.is_default AND l.owner_user_id=:viewer) OR (NOT l.is_default AND m.role='admin'))
+            """),
+                    {"viewer": viewer_id},
+                )
+            )
+            imports.mark_processed(db, library_ids=managed, media_id=media_id)
         kind = _lock_kind(db, media_id)
         if kind is None or not can_read_media(db, viewer_id, media_id):
             return
@@ -303,6 +349,7 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     from nexus.services.reader_publication import delete_reader_publication
 
     paths = _storage_paths(db, media_id)
+    _run(db, "UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m", m=media_id)
     metadata_operations.delete_media_reviews(db, media_id=media_id)
     dossier_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)

@@ -494,7 +494,8 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
     twin(anchor) { const bound = source(anchor); return storeFor(bound.mediaId).twin(bound.anchor); },
     prepareCreate({ anchor, color, id, initialNote }) {
       const bound = source(anchor);
-      if (bound.generation === null) throw new Error("the passage has no captured source generation");
+      if (bound.generation === null && !(doc?.kind === "text" && doc.format === "transcript"))
+        throw new Error("the passage has no captured source generation");
       return { kind: "passage", media_id: bound.mediaId, request: {
         id, anchor: wireAnchor(bound.anchor), color,
         expected_reader_generation: bound.generation, initial_note: initialNote,

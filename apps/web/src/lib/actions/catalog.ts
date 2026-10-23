@@ -137,19 +137,8 @@ export const ACTION_CATALOG = {
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },
-  PodcastSubscription: {
-    label: "Subscribe",
-    icon: Rss,
-    group: "Organize",
-    confirmation: {
-      title: "unsubscribe?",
-      body: "this stops episode updates for “{title}”, deletes its subscription settings, and removes the show from libraries you own with no other members. saved episodes, listening progress, and shared library placements remain. subscribing again won’t restore the deleted settings or placements.",
-    },
-    states: {
-      Unsubscribed: { label: "Subscribe", icon: Rss },
-      Subscribed: { label: "Unsubscribe", icon: Rss },
-    },
-  },
+  AddPodcast: { label: "add podcast…", icon: Rss, group: "Organize" },
+  StopPodcast: { label: "stop everywhere…", icon: Rss, group: "Organize" },
   Chat: {
     label: "Chat about this…",
     icon: MessageCircle,
@@ -246,18 +235,13 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   PodcastSettings: {
-    label: "playback options…",
+    label: "playback defaults…",
     icon: Settings,
     group: "Manage",
   },
   RefreshPodcast: {
     label: "Check for new episodes",
     icon: RefreshCw,
-    group: "Manage",
-  },
-  RetryPodcastBackfill: {
-    label: "retry episode history",
-    icon: RotateCcw,
     group: "Manage",
   },
   RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
@@ -339,6 +323,8 @@ export function actionFailure(
   label: string,
   error: ApiError,
 ): FeedbackContent {
+  if (id === "Playback" && error.code === "E_AUDIO_UNAVAILABLE")
+    return { tone: "Warning", title: "audio unavailable", requestId: error.requestId };
   if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
     return { tone: "Warning", title: `couldn’t ${label}`, message: error.message };
   if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")

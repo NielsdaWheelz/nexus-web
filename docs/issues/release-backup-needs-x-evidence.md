@@ -13,11 +13,14 @@ refuse at 0293 with `published X lacks normalized source evidence`, media
 
 the same media and reviewed one-row repair are recorded in
 `690744421:docs/issues/release-x-thread-imports.md`; `ea3eafdd5` records the
-successful production repair and upgrade to 0306. the private reviewed snapshot
-is absent locally. production therefore has evidence this retained backup lacks.
+successful production repair and upgrade to 0306. the exact reviewed packet and
+helper are available in the primary checkout's `.nexus-local/x-thread-release/`
+and `.nexus-local/release-recovery-20261022/`. their hashes match the recorded
+production repair inputs. the retained archive still lacks that separately held
+evidence.
 
-resolve by retaining and restoring a verified current-schema backup, or recording
-and rehearsing the exact reviewed historical repair. never invent source evidence
-or silently discard the affected media. prove restore and upgrade to the current
-head with preserved user data. a temporary local rehearsal snapshot alone does
-not replace the retained recovery archive.
+resolve by retaining and restoring a verified current-schema backup, or retaining
+the exact reviewed repair inputs and procedure alongside this archive. never invent
+source evidence or silently discard the affected media. prove restore and upgrade
+to the current head with preserved user data from those retained inputs. local
+private repair files alone do not provide durable recovery.

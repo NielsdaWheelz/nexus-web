@@ -1,17 +1,14 @@
 "use client";
 
 import { lazy, Suspense } from "react";
-import AcquisitionControl from "@/components/browse/AcquisitionControl";
+import PodcastAcquisitionDialog from "@/components/podcasts/PodcastAcquisitionDialog";
+import PodcastStopDialog from "@/components/podcasts/PodcastStopDialog";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
-import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
-import Button from "@/components/ui/Button";
-import Dialog from "@/components/ui/Dialog";
+import PodcastSettingsOverlay from "@/components/podcasts/PodcastSettingsOverlay";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { Overlay } from "@/lib/actions/ResourceActionsProvider";
-import { subscribeToPodcast } from "@/lib/podcasts/api";
-import { useWorkGuard } from "@/lib/unsavedWork";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import styles from "./ResourceOverlays.module.css";
 
 const MediaAuthorsEditor = lazy(
   () => import("@/components/contributors/MediaAuthorsEditor"),
@@ -19,8 +16,8 @@ const MediaAuthorsEditor = lazy(
 
 /**
  * The overlays verbs open, under one synthetic pane visit so their
- * pane-coupled controls have a scope. Each overlay loads its own facts and
- * refuses to close while its own save runs.
+ * pane-coupled controls have a scope. Each overlay loads its own facts;
+ * account commands survive presentation dismissal.
  */
 export function ResourceOverlays({
   overlay,
@@ -31,14 +28,11 @@ export function ResourceOverlays({
         readonly key: number;
         readonly open: boolean;
         readonly opener: HTMLElement | null;
+        readonly fallback: ReturnFocusTarget;
       })
     | null;
   readonly close: () => void;
 }) {
-  const guard = useWorkGuard();
-  const mayDismiss = () => guard.confirmLoss({
-    scopes: [{ kind: "visit", visitId: "resource-action-overlays", routeKey: "resource-action-overlays" }], ownerIds: [],
-  });
   return (
     <PaneReturnVisitScope
       visitId="resource-action-overlays"
@@ -76,37 +70,14 @@ export function ResourceOverlays({
         />
       ) : null}
       {overlay?.kind === "PodcastSettings" ? (
-        <PodcastSubscriptionSettingsOverlay
+        <PodcastSettingsOverlay
           key={overlay.key}
           podcastId={overlay.podcastId}
           onClose={close}
         />
       ) : null}
-      {overlay?.kind === "Subscribe" ? (
-        <Dialog key={overlay.key} open onClose={close} onDismissRequest={() => mayDismiss() ? "accepted" : "blocked"} title="Subscribe">
-          <div className={styles.subscribe}>
-            <p>Subscribe to this podcast and choose where to file it.</p>
-            <AcquisitionControl
-              key={overlay.podcastId}
-              scopeKey={overlay.podcastId}
-              commit={async (command) => {
-                const result = await subscribeToPodcast({
-                  target: { kind: "Canonical", podcast_id: overlay.podcastId },
-                  guard: command.guard,
-                  replaceEpisodes: command.replaceEpisodes,
-                });
-                return { href: result.href, available: result.available };
-              }}
-              onCommitted={close}
-            />
-            <div>
-              <Button onClick={() => { if (mayDismiss()) close(); }}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </Dialog>
-      ) : null}
+      {overlay?.kind === "AddPodcast" ? <PodcastAcquisitionDialog key={overlay.key} target={overlay.target} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={() => overlay.opener} returnFocusFallback={overlay.fallback} onClose={close} /> : null}
+      {overlay?.kind === "StopPodcast" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={overlay.libraryId} episodes={overlay.episodes} removeOnly={overlay.removeOnly} returnFocusTo={() => overlay.opener} returnFocusFallback={overlay.fallback} onClose={close} /> : null}
     </PaneReturnVisitScope>
   );
 }

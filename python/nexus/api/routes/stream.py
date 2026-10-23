@@ -2,7 +2,7 @@
 
 Two semantics share one envelope. A cursor stream (chat runs) emits each committed event
 with ``id: <seq>`` and resumes after ``?after=<seq>``; a snapshot stream (oracle readings,
-dossier builds, metadata, podcast subscriptions) emits the whole
+dossier builds, metadata) emits the whole
 ``state`` when it changed and ``done`` when terminal, and a reconnect re-sends it. Every
 wake (a NOTIFY carrying the entity id, or the keepalive timeout) re-reads committed state
 in a fresh session, so a missed NOTIFY delays but never drops. The first read happens
@@ -36,7 +36,6 @@ from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.dossier import engine as dossier_engine
 from nexus.services.oracle import readings as oracle_readings
-from nexus.services.podcasts import subscriptions as podcast_subscriptions
 
 router = APIRouter(tags=["streaming"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -282,31 +281,3 @@ async def stream_metadata_events(
         return view.model_dump(mode="json"), view.unfinished_count == 0
 
     return await _snapshot_stream(request, "media_events", media_id, read)
-
-
-@router.get("/stream/podcast-subscriptions/{podcast_id}/events")
-async def stream_podcast_subscription_events(
-    request: Request, podcast_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    """One subscription until sync and backfill settle; a deleted or transferred one ends
-    silently (each read names the subscription the stream opened on)."""
-
-    def lifecycle(expected: UUID | None) -> podcast_subscriptions.PodcastSubscriptionLifecycle:
-        with get_session_factory()() as db:
-            return podcast_subscriptions.read_subscription_lifecycle(
-                db,
-                viewer_id=viewer.user_id,
-                podcast_id=podcast_id,
-                expected_subscription_id=expected,
-            )
-
-    first = await run_in_threadpool(lifecycle, None)
-
-    def read() -> Snapshot:
-        current = lifecycle(first.subscription_id)
-        return current.snapshot.model_dump(mode="json"), current.terminal
-
-    listener = await open_listener(
-        podcast_subscriptions.PODCAST_SUBSCRIPTION_NOTIFY_CHANNEL, str(first.subscription_id)
-    )
-    return _respond(_snapshot_frames(request, listener, read))

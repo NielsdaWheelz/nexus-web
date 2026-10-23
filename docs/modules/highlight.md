@@ -131,10 +131,13 @@ highlight there never blocks the viewer's own.
 
 highlight responses are generated wire types (`TypedHighlightOut`), including the
 viewer's note attachment `links_version`. `POST /media/{id}/highlights` takes
-`{anchor, color}` and returns `{created, highlight}`. it authoritatively reuses
-the viewer's current exact extent or creates it; the map's twin lookup is only
-an optimization. retry converges on current state, without historical receipts:
-if the highlight was deleted, a later ensure may create a new one.
+`{id, anchor, color, expected_reader_generation, initial_note}` and returns the
+writing owner's acknowledgement. recognized ids resolve current canonical state
+without repeating initialization; an exact extent can alias an existing highlight.
+creation and its initial note commit together. the map's twin lookup is only an
+optimization. published documents require their exact positive generation;
+transcripts require a null generation and their current immutable unit id. the
+media lock prevents transcript replacement from crossing that unit check.
 
 ## Mutations And Notes
 
@@ -145,7 +148,10 @@ owner and require the selection's `exact` quote.
 
 every `PATCH /highlights/{id}` carries the observed `expected_version` and
 absolute desired fields. fragment-offset updates also carry their `unit_id`;
-offsets from another text section are rejected before no-op handling. the
+an unresolved quote may relocate to matching current text; transcripts use null
+and current immutable fragment membership, while published text requires its
+positive reader generation. other cross-section updates are rejected before
+no-op handling. the
 opaque `version` returned by highlight and document-map reads is a deterministic
 digest of the id, raw stored anchor (ordered canonical pdf quads), colour and
 quote triple. timestamps, notes and links do not change it; unresolved reader

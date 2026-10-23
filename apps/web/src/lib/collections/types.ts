@@ -52,7 +52,7 @@ export type CollectionActivity =
     }
   | {
       readonly kind: "PodcastSync";
-      readonly status: Extract<Schema<"PodcastSyncStatus">, "Pending" | "Running">;
+      readonly status: Extract<Schema<"PodcastRecurringOut">["state"], "pending" | "running">;
     };
 
 export type CollectionContext =
@@ -61,7 +61,7 @@ export type CollectionContext =
 
 export type ExceptionalStatus = {
   readonly kind: "PodcastSync";
-  readonly status: Extract<Schema<"PodcastSyncStatus">, "Failed">;
+  readonly status: "failed";
 };
 
 interface CollectionRowBase {

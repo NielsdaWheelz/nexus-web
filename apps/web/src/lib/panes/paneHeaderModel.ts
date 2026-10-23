@@ -1,5 +1,5 @@
 // A pane's identity: the workspace title, route header contract and body-owned
-// support facts. Pure; SurfaceHeader presents subscription status;
+// support facts. Pure;
 // PaneHeaderIdentity formats the remaining support facts and credits.
 import { getDestination } from "@/lib/navigation/destinations";
 import type { PaneRouteHeaderContract } from "@/lib/panes/paneRouteModel";
@@ -21,7 +21,6 @@ export type PaneHeaderCreditGroup =
 export type PaneHeaderMeta =
   | { readonly kind: "None" }
   | { readonly kind: "Pending" }
-  | { readonly kind: "Subscription"; readonly subscribed: boolean }
   /** `value` counts whole rows; its producer owns that. */
   | { readonly kind: "Count"; readonly value: number; readonly unit: string };
 

@@ -2,16 +2,18 @@
 
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas import podcast as wire
-from nexus.services import library_entries, users
+from nexus.services import libraries, library_entries, users
 from nexus.services.browse.targets import ResolvedEpisode
 from nexus.services.suggestion_changes import record_input_change
 
+from . import imports
 from .feed import EpisodeFacts
 from .ingest import aliases_of, identity_conflict, ingest_episodes, lock_aliases
 from .provider import PROVIDER
@@ -48,17 +50,33 @@ def acquire_episode(
             # The alias locks precede the show row lock, as for every episode writer.
             lock_aliases(db, f"{PROVIDER}:{show.podcast_ref}", aliases_of(episode))
             podcast_id = upsert_show(db, show)
+            db.execute(text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
             result = ingest_episodes(
                 db,
                 viewer_id=viewer_id,
                 podcast_id=podcast_id,
                 feed_url=show.feed_url,
                 episodes=[episode],
-                retain=False,
             )
             media_id = result.media_ids[0]
             if media_id is None:
                 raise identity_conflict()
+            rule_libraries = list(
+                db.scalars(
+                    text(
+                        "SELECT library_id FROM library_podcast_subscriptions WHERE podcast_id=:id"
+                    ),
+                    {"id": podcast_id},
+                )
+            )
+            libraries.lock_library_rows_in_order(
+                db,
+                [
+                    libraries.default_library_id(db, viewer_id),
+                    *[guard.library_id for guard in body.destinations],
+                    *rule_libraries,
+                ],
+            )
             destinations = library_entries.validate_acquisition_destinations(
                 db,
                 viewer_id=viewer_id,
@@ -67,16 +85,20 @@ def acquire_episode(
             )
             outcomes = {}
             for library_id in destinations:
-                if library_entries.entry_exists(
-                    db, library_id, library_entries.podcast_target(podcast_id)
-                ):
-                    outcomes[library_id] = "IncludedThroughPodcast"
-                elif library_entries.entry_exists(
-                    db, library_id, library_entries.media_target(media_id)
-                ):
-                    outcomes[library_id] = "AlreadyPresent"
-                else:
-                    outcomes[library_id] = "Added"
+                outcomes[library_id] = (
+                    "AlreadyPresent"
+                    if library_entries.entry_exists(
+                        db, library_id, library_entries.media_target(media_id)
+                    )
+                    else "Added"
+                )
+            imports.publish_episodes(
+                db,
+                podcast_id=podcast_id,
+                media_ids=[media_id],
+                new_media_ids=result.inserted_media_ids,
+                import_id=None,
+            )
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db, viewer_id, media_id, destinations
             )

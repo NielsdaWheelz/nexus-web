@@ -28,8 +28,8 @@ import {
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
-  listSubscriptions,
-  type PodcastSubscriptionRow,
+  listPodcasts,
+  type PodcastRow,
 } from "@/lib/podcasts/api";
 import { useChangeStamp } from "@/lib/api/changes";
 import {
@@ -47,7 +47,7 @@ import {
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
 
-const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastSubscriptionRow>>(
+const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastRow>>(
   "Podcasts.Subscriptions",
 );
 const LIBRARIES = definePaneVisitDataKey<ListSnapshot<Library>>("Podcasts.LibraryChoices");
@@ -72,7 +72,7 @@ const FILTERS = [
   { value: "not_in_library", label: "Not in a library" },
 ];
 
-const fields = (row: PodcastSubscriptionRow) => [
+const fields = (row: PodcastRow) => [
   row.title,
   ...row.contributors.flatMap((credit) => [
     credit.contributor_display_name ?? "",
@@ -92,15 +92,15 @@ export default function PodcastsPaneBody() {
   const query = new URLSearchParams({ sort, filter });
   if (libraryId !== null) query.set("library_id", libraryId);
   const key = query.toString();
-  const list = useServerList<PodcastSubscriptionRow>({
-    key: `/podcasts/subscriptions?${key}`,
+  const list = useServerList<PodcastRow>({
+    key: `/podcasts?${key}`,
     stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
     pageSize: 100,
     active,
     visit: VISIT,
-    id: (row) => row.podcast_id,
+    id: (row) => row.id,
     fetchPage: (cursor, limit, signal) =>
-      listSubscriptions(pageQuery(key, cursor, limit), signal),
+      listPodcasts(pageQuery(key, cursor, limit), signal),
   });
   const libraries = useServerList<Library>({
     key: "podcasts:member-libraries",
@@ -242,15 +242,12 @@ export default function PodcastsPaneBody() {
       returnScope="Podcasts.Subscriptions"
       rows={visible.map((row) =>
         presentPodcast({
-          id: row.podcast_id,
+          id: row.id,
           title: row.title,
           imageUrl: row.image_url,
           contributors: row.contributors,
-          unplayedCount:
-            row.unplayed_count > 0
-              ? { value: row.unplayed_count }
-              : null,
-          syncStatus: row.sync_status,
+          unplayedCount: null,
+          recurring: null,
         }),
       )}
       status={list.status === "loading" ? "loading" : "ready"}

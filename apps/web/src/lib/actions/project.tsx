@@ -42,8 +42,6 @@ import { offlineCall } from "@/lib/offline/bridge";
 import { playingEpisode, type PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
   requestPodcastRefresh,
-  retryPodcastSubscriptionBackfill,
-  unsubscribeFromPodcast,
 } from "@/lib/podcasts/api";
 import { activateResource } from "@/lib/resources/activation";
 import { resourceShareTarget } from "@/lib/sharing/targets";
@@ -411,7 +409,7 @@ export function projectResourceActions(
         const anchor = () => triggerEl;
         const fallback = () => findPaneLandmarkFocusTarget(paneId);
         ctx.openLibraryPlacement(
-          [{ kind: ref.startsWith("podcast:") ? "Podcast" : "Media", id }],
+          [{ kind: "Media", id }],
           { anchor, returnFocusFallback: fallback },
         );
       },
@@ -443,6 +441,7 @@ export function projectResourceActions(
     EditAuthors: overlay({ kind: "Authors", mediaId: id }),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
+    AddPodcast: overlay({ kind: "AddPodcast", target: { kind: "Canonical", podcast_id: id }, title: facts.label, libraryId: null }),
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
     ],
@@ -672,29 +671,9 @@ export function projectResourceActions(
           blocked, ctx, busy, run,
         });
       }
-      case "PodcastSubscription": {
-        const { subscribed } = action;
-        const states = ACTION_CATALOG.PodcastSubscription.states;
-        return make(
-          "PodcastSubscription",
-          blocked,
-          () =>
-            subscribed
-              ? unsubscribeFromPodcast(id)
-              : ctx.overlays.open({ kind: "Subscribe", podcastId: id }),
-          {
-            state: subscribed ? states.Subscribed : states.Unsubscribed,
-            confirmation: subscribed
-              ? ACTION_CATALOG.PodcastSubscription.confirmation
-              : null,
-            tracked: subscribed,
-          },
-        );
-      }
-      case "RetryPodcastBackfill":
-        return make("RetryPodcastBackfill", blocked, () =>
-          retryPodcastSubscriptionBackfill(id, action.backfill_id),
-        );
+      case "StopPodcast":
+        return make("StopPodcast", blocked, () => ctx.overlays.open({ kind: "StopPodcast", podcastId: id, title: facts.label, libraryId: null, episodes: action.episodes, removeOnly: action.episodes === "remove" }), { tracked: false,
+          state: { label: action.episodes === "remove" ? "remove episodes everywhere…" : "stop everywhere…", icon: ACTION_CATALOG.StopPodcast.icon } });
       case "RetryMetadata": {
         const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;

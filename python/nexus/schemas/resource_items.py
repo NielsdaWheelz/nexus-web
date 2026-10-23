@@ -212,6 +212,7 @@ SimpleActionKind = Literal[
     "LibrarySettings",
     "DeleteLibrary",
     "PodcastSettings",
+    "AddPodcast",
     "RefreshPodcast",
     "DeleteConversation",
     "ForkMessage",
@@ -287,14 +288,9 @@ class ConsumptionAction(_Action):
     episode: bool
 
 
-class RetryPodcastBackfillAction(_Action):
-    kind: Literal["RetryPodcastBackfill"] = "RetryPodcastBackfill"
-    backfill_id: UUID
-
-
-class PodcastSubscriptionAction(_Action):
-    kind: Literal["PodcastSubscription"] = "PodcastSubscription"
-    subscribed: bool
+class StopPodcastAction(_Action):
+    kind: Literal["StopPodcast"] = "StopPodcast"
+    episodes: Literal["keep", "remove"]
 
 
 class TranscriptAction(_Action):
@@ -322,8 +318,7 @@ ResourceActionOut = Annotated[
     | OpenSourceAction
     | PlaybackAction
     | ConsumptionAction
-    | RetryPodcastBackfillAction
-    | PodcastSubscriptionAction
+    | StopPodcastAction
     | TranscriptAction
     | LecternMembershipAction
     | HighlightNoteAction,
