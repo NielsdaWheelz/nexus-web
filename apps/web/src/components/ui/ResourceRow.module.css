@@ -168,7 +168,7 @@ button.primary:disabled {
   grid-column: primary;
 }
 
-.primaryControl > * {
+:where(.primaryControl) > * {
   min-width: 0;
   max-width: 100%;
 }
