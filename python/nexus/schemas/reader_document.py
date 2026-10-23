@@ -101,8 +101,7 @@ class ReaderTocNodeOut(_Out):
     children: list["ReaderTocNodeOut"]
 
 
-class ReaderTextDocumentOut(_Out):
-    kind: Literal["web_article", "epub", "transcript"]
+class ReaderTextBodyOut(_Out):
     identity: str
     title: str
     units: list[ReaderUnitOut]
@@ -112,6 +111,35 @@ class ReaderTextDocumentOut(_Out):
     embeds: list[DocumentEmbedOut]
     x_capture: ReaderXCaptureOut | None = None
     x_article_content: XArticleContent | None
+
+
+class ReaderTextDocumentOut(ReaderTextBodyOut):
+    kind: Literal["web_article", "epub"]
+
+
+class TranscriptReaderSearchExtentOut(_Out):
+    start: ReaderPointOut
+    end: ReaderPointOut
+
+
+class TranscriptReaderChapterOut(_Out):
+    id: str
+    label: str
+    start_ms: int
+    end_ms: int | None
+    at: ReaderPointOut | None
+    search_extent: TranscriptReaderSearchExtentOut | None
+
+
+class TranscriptNavigationOut(_Out):
+    key: str
+    chapters: list[TranscriptReaderChapterOut]
+
+
+class ReaderTranscriptDocumentOut(ReaderTextBodyOut):
+    kind: Literal["transcript"]
+    transcript_coverage: Literal["partial", "full"]
+    transcript_navigation: TranscriptNavigationOut
 
 
 class ReaderPdfFileOut(_Out):
@@ -128,5 +156,6 @@ class ReaderPdfDocumentOut(_Out):
 
 
 ReaderDocumentOut = Annotated[
-    ReaderTextDocumentOut | ReaderPdfDocumentOut, Field(discriminator="kind")
+    ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut,
+    Field(discriminator="kind"),
 ]

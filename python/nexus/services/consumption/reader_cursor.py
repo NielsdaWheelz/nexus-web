@@ -34,7 +34,7 @@ from nexus.schemas.reader import (
     WebReaderResumeState,
     XReaderResumeState,
 )
-from nexus.schemas.reader_document import ReaderPdfFileOut, ReaderTextDocumentOut, ReaderUnitOut
+from nexus.schemas.reader_document import ReaderPdfFileOut, ReaderTextBodyOut, ReaderUnitOut
 from nexus.services.canonicalize import canonicalize_structure
 
 _LOCATOR_KIND = {
@@ -58,7 +58,7 @@ class XCursorRemapSnapshot:
     positions: tuple[tuple[UUID, TextCursor], ...]
 
 
-def _document(db: Session, media_id: UUID, viewer_id: UUID | None = None) -> ReaderTextDocumentOut:
+def _document(db: Session, media_id: UUID, viewer_id: UUID | None = None) -> ReaderTextBodyOut:
     from nexus.services.reader_document import build_reader_document
 
     def no_pdf() -> ReaderPdfFileOut:
@@ -66,7 +66,7 @@ def _document(db: Session, media_id: UUID, viewer_id: UUID | None = None) -> Rea
         raise AssertionError("X cursor reconciliation received a PDF")
 
     document = build_reader_document(db, media_id=media_id, viewer_id=viewer_id, pdf_file=no_pdf)
-    if not isinstance(document, ReaderTextDocumentOut):
+    if not isinstance(document, ReaderTextBodyOut):
         # justify-defect: the publication closure is made of text documents.
         raise AssertionError("X cursor reconciliation requires text")
     return document

@@ -83,6 +83,14 @@ absence preserves existing chapters. external url/job identity fences publicatio
 including a→b→a changes. successful sidecars revalidate after 24h; changed urls
 reset freshness. failures preserve old chapters; core imports never await chapters.
 
+chapter ingestion retains every publisher occurrence and its source times. supplied
+invalid ends reject the observation with `E_PODCAST_FEED_UNAVAILABLE`; zero-length
+intervals remain supplied and cannot support exact scope. source decimal seconds,
+including numeric json fractions, floor exactly once to integer milliseconds within
+the storage bound. `end_absence_confirmed` records actual absent
+ends; existing nulls remain unverified until a new observation. reader navigation may
+derive the next later start only from confirmed absence, never lost provenance.
+
 ## wire and presentation
 
 library podcast section/detail reads provide relationships and guards in one
@@ -181,6 +189,12 @@ the transcript marked `queued`, and one durable source attempt created. "Transcr
 all ⟨state⟩" forecasts a count and a selection fingerprint, then queues the whole
 recomputed selection or nothing (409 `E_SELECTION_CHANGED`): the forecast is the
 exactness guard, not vestigial. A video's request imports its YouTube captions.
+
+the episode pane displays only `transcribe` before admission, then truthful queued,
+running, failed or unavailable states. its mounted processing stream owns updates.
+readable full/partial text mounts the shared reader and tools; failed document reads
+remain reader retries. notes are a pane-visit disclosure. playback remains in the
+canonical header action; body playback explanations and chapter inventories are gone.
 
 - **Current transcript publication — `transcripts.current`.** This is the single,
   advisory-locked writer of `podcast_transcript_segments`, `fragments`, and

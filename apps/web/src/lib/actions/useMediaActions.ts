@@ -2,7 +2,7 @@
 
 /** Shared media commands read the account runtime, never the lazy resource menu. */
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
-import { projectLecternAction } from "@/lib/actions/project";
+import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
 import { compareRevision } from "@/lib/collections/order";
 import { ApiError, requestWithDeadline } from "@/lib/api/client";
 import { browsePreviewHref, fetchBrowsePreview } from "@/lib/browse/api";
@@ -49,9 +49,6 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const holding = creatingLibrary || operation !== null && operation.phase !== "complete";
   const heldReason = creatingLibrary ? "finish creating this item's library first" : "finish this item's import first";
   const actions: MediaAction[] = [];
-  const execute = (id: MediaAction["id"], label: string, command: () => unknown) => run({
-    ref, id, title, label, tracked: true, confirmation: null, execute: command,
-  });
   if (kind === "podcast_episode") {
     const state = ctx.player.state;
     const loadedPreview = state.kind === "Loaded" && subject.kind === "External" &&
@@ -67,14 +64,20 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const available = pending || loaded || (subject.kind === "Stored" ? subject.summary.can_play : true);
     const updateRequired = state.kind === "Unavailable" && state.reason === "UpdateRequired";
     const label = `${verb}: ${title}`;
-    actions.push({ id: "Playback", label, glyph: playing ? "Pause" : "Play", busy: busy.has("Playback"),
+    if (mediaId !== null && !loadedPreview) {
+      const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, ctx, run });
+      actions.push({ id: "Playback", label: `${projected.label}: ${title}`, glyph: projected.glyph, busy: false,
+        disabled: projected.disabled === true || !available,
+        disabledReason: projected.disabledReason ?? (available ? null : "audio unavailable"),
+        invoke: trigger => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
+      });
+    } else actions.push({ id: "Playback", label, glyph: playing ? "Pause" : "Play", busy: false,
       disabled: updateRequired || !available,
       disabledReason: updateRequired ? "update nexus for android to play audio" : available ? null : "audio unavailable",
       invoke: () => {
         if (updateRequired || !available) return;
         if (playing) { ctx.player.commands.pause(); return; }
-        execute("Playback", label, async () => {
-          if (mediaId !== null && !loadedPreview) return ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor });
+        run({ ref, id: "Playback", title, label, tracked: false, confirmation: null, execute: async () => {
           if (subject.kind !== "External") return;
           return ctx.player.commands.playPreviewAudio({ target: subject.target, resolveDescriptor: async () => {
             const signal = ctx.sessionSignal();
@@ -92,7 +95,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
               durationMs: preview.kind_facts.duration_seconds === null ? null : preview.kind_facts.duration_seconds * 1000,
             };
           } });
-        });
+        } });
       },
     });
   }

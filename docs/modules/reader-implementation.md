@@ -13,9 +13,9 @@ the reader is three facts and one policy.
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
   `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
   read once from one snapshot, never mixed with another read. identity versions
-  content/targets; title and embedded-child presentation are mutable metadata.
-  a same-identity reload updates those without replacing units, learned
-  structure, surface nodes, navigation or unsaved progress.
+  source text; title, embedded-child presentation and transcript navigation are
+  mutable metadata. a same-identity reload replaces navigation/find inputs while
+  retaining units, geometry, surface nodes, held origin and unsaved progress.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
   below, negative above. capture, reflow and return use it; chrome insets can
@@ -77,7 +77,7 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 
 | route | contract |
 | --- | --- |
-| `GET /media/{id}/reader` | the whole publication from one snapshot: text (`units` with `html_sanitized`, `canonical_text`, `char_count`, times and speakers for transcripts, `sections`, `toc_nodes`, `source_issues`, `embeds`) or pdf (`file`, `page_count`). typed `Data[ReaderTextDocumentOut \| ReaderPdfDocumentOut]`. |
+| `GET /media/{id}/reader` | one snapshot: prose `ReaderTextDocumentOut`, transcript `ReaderTranscriptDocumentOut`, or `ReaderPdfDocumentOut`. text shares units/embeds; transcripts require coverage and canonical `transcript_navigation`, with empty wire sections/toc. prose archives retain their shape. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
 | `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
@@ -89,6 +89,38 @@ the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
 `/evidence/{span}`, fragment and pdf highlight lists and creates, the highlight
 reader-target route) are gone. a text highlight whose fragment cache is gone is
 listed in Evidence as unavailable (`Stale`), never painted.
+
+### transcripts
+
+`transcript_navigation.py` reads ordered fragment ids and canonical publisher chapter
+facts. its digest is both navigation `key` and processing `transcript_reader_key`;
+body identity remains the segment-id digest. state/publication/chapter transactions
+notify `media_events` after commit. the pane reloads on a changed key or coverage;
+there is no episode-pane provisioning poll or raw media-response spread.
+before disabling a focused admission button, the hosted pane holds focus on its
+existing root. root blur or pane deactivation cancels the handoff. the ready reader
+takes focus only while that active pane's root still holds it; background completion
+is quiet. answered refusals stay distinct from an unconfirmed admission.
+
+chapter starts target only a containing half-open cue, choosing the last containing
+cue in publication order for overlap. uncovered starts retain a disabled destination.
+explicit publisher ends remain explicit; a confirmed absent end derives the next
+strictly later start. historical unverified null ends stay unknown. a chapter scope
+requires a bounded interval and contiguous whole cues entirely inside it; straddling
+or untimed holes refuse scope. current chapter requires unique whole-cue membership.
+otherwise find covers the whole available transcript and partial results stay qualified.
+chapter label refresh preserves captured scope; changed identity/interval/extent or
+body replacement clears scoped search. whole find retains query, active result and
+placement across navigation-only refresh without reveal.
+
+hosts pass `playback: {identity, unit} | null`. the generic reader imports no player.
+the hosted binding observes the engine clock, sends only changed covered cues and
+marks the existing timestamp with `aria-current="time"` plus an inset gutter mark.
+pause/buffering retains confirmed time; errors, gaps or another source clear it.
+ticks never scroll, focus, change selection, write progress or reveal mobile chrome.
+`show playback position` inspects once with a return spot. reader navigation and
+deep links inspect only; explicit transcript timestamps adopt reading position and
+request their named episode/source time. public and shelf supply null playback.
 
 ### the cursor
 
@@ -309,8 +341,9 @@ scope labels describe capability; active labels name the captured scope.
 requested narrowing without a valid scope fails explicitly, never broadens.
 clear aborts computation and movement and removes text/results/paint, while preserving
 preferences and the reader's held first departure. owner retirement resets the
-session; a publication change retains text/preferences and recaptures once
-against the restored replacement.
+session; a publication change clears a captured narrowed query, retaining the
+source's explanation through replacement loading. whole-document queries and
+preferences survive and prepare against the restored replacement.
 computation and reveal use separate abort signals. return cancels movement and
 revokes pending automatic reveal while results may still settle; a new query,
 option change or retry starts fresh navigation intent. effect cleanup aborts
@@ -412,8 +445,9 @@ its focusable link control still inspects locally or reports shifted unavailabil
 imports no pane/workspace state; public and shelf hosts inspect locally. hosted
 contents, section/page navigation, map, authored links and evidence items bind
 the same capability. shift opens the exact destination without inspecting,
-seeking, changing selection or advancing progress in its source. chapter/time
-ordinary activation seeks; shift opens a timed reader location.
+seeking, changing selection or advancing progress in its source. reader chapter
+activation inspects; timestamp activation explicitly reads and plays. shift opens
+a timed reader location without starting playback.
 choosing a local section through its menu focuses the reader source after
 inspection. standalone previous/next controls retain their repeatable focus.
 
@@ -479,7 +513,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
-| `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |
+| `Transcript.tsx` | transcript admission states, visit-owned notes disclosure, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
 

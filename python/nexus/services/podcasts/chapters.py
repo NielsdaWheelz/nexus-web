@@ -4,12 +4,14 @@ The media lock owns source, freshness and exact queue identity. Changed sources 
 inline observations supersede earlier jobs, including a→b→a. Failed retrieval keeps
 published rows; an exact dead letter releases ownership for a later observation.
 Workers lock queue→media and fetch outside transactions. No permanent queue dedupe.
+Every publisher chapter occurrence survives publication. Supplied invalid ends refuse
+an observation; only confirmed source absence permits a derived reader interval.
 """
 
 import json
-import math
 import re
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urljoin
 from uuid import UUID
@@ -30,19 +32,25 @@ _CLOCK = re.compile(r"^(?:(?P<h>\d+):)?(?P<m>[0-5]?\d):(?P<s>[0-5]?\d(?:\.\d+)?)
 
 
 def parse_rows(entries: list[dict[str, Any]], *, source: str, base: str) -> list[dict[str, Any]]:
-    """Accept supported publisher chapter fields; malformed individual rows are omitted."""
+    """Omit missing starts/titles; refuse supplied invalid ends before publication."""
     rows = []
     for entry in entries:
         title = str(entry.get("title") or "").strip()
         start = _clock_ms(_first(entry, "startTime", "start_time", "start"))
         if not title or start is None:
             continue
-        end = _clock_ms(_first(entry, "endTime", "end_time", "end"))
+        raw_end = _first(entry, "endTime", "end_time", "end")
+        end = _clock_ms(raw_end)
+        if raw_end is not None and (end is None or end < start):
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Publisher chapter end is invalid"
+            )
         rows.append(
             {
                 "title": title,
                 "t_start_ms": start,
-                "t_end_ms": end if end is not None and end >= start else None,
+                "t_end_ms": end,
+                "end_absence_confirmed": raw_end is None,
                 "url": _link(_first(entry, "url", "href"), base),
                 "image_url": _link(_first(entry, "img", "image", "image_url"), base),
                 "source": source,
@@ -103,20 +111,24 @@ def observe(
 
 
 def replace_rows(db: Session, *, media_id: UUID, rows: list[dict[str, Any]]) -> None:
-    """Replace published rows, including a successful empty result, under the media lock."""
+    """Replace every ordered occurrence, including empty success, under the media lock.
+
+    Retrying the same observation converges on its facts. Every new row carries
+    explicit end-absence provenance from the parser, never a historical null.
+    """
     db.execute(text("DELETE FROM podcast_episode_chapters WHERE media_id=:id"), {"id": media_id})
-    unique: dict[tuple[int, str], dict[str, Any]] = {}
-    for row in rows:
-        unique.setdefault((row["t_start_ms"], row["title"].lower()), row)
-    if unique:
+    if rows:
         db.execute(
             text("""
             INSERT INTO podcast_episode_chapters
-                (media_id,chapter_idx,title,t_start_ms,t_end_ms,url,image_url,source)
-            VALUES (:media_id,:idx,:title,:t_start_ms,:t_end_ms,:url,:image_url,:source)
+                (media_id,chapter_idx,title,t_start_ms,t_end_ms,end_absence_confirmed,
+                 url,image_url,source)
+            VALUES (:media_id,:idx,:title,:t_start_ms,:t_end_ms,:end_absence_confirmed,
+                    :url,:image_url,:source)
         """),
-            [row | {"media_id": media_id, "idx": i} for i, row in enumerate(unique.values())],
+            [row | {"media_id": media_id, "idx": i} for i, row in enumerate(rows)],
         )
+    db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def _lock_owner(db: Session, *, context: JobExecutionContext, media_id: UUID, url: str) -> bool:
@@ -144,7 +156,7 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobR
                 return {"status": "Stale"}
         result = safe_get(url, max_bytes=_MAX_BYTES, timeout_s=15.0)
         try:
-            value = json.loads(result.content)
+            value = json.loads(result.content, parse_float=Decimal)
             entries = value.get("chapters") if isinstance(value, dict) else value
             if not isinstance(entries, list):
                 raise ValueError("Chapter response must contain an array")
@@ -189,19 +201,27 @@ def _link(raw: Any, base: str) -> str | None:
 
 
 def _clock_ms(raw: Any) -> int | None:
+    if isinstance(raw, bool):
+        return None
     value = str(raw).strip() if raw is not None else ""
     if not value:
         return None
+    whole_ms = 0
     try:
-        seconds = float(value)
-    except ValueError:
+        seconds = Decimal(value)
+    except InvalidOperation:
         match = _CLOCK.match(value)
         if match is None:
             return None
-        seconds = int(match["h"] or 0) * 3600 + int(match["m"]) * 60 + float(match["s"])
-    # The published chapter offsets are PostgreSQL integer milliseconds.
-    return (
-        math.floor(seconds * 1000)
-        if math.isfinite(seconds) and 0 <= seconds <= 2_147_483.647
-        else None
-    )
+        whole_ms = (int(match["h"] or 0) * 3600 + int(match["m"]) * 60) * 1000
+        seconds = Decimal(match["s"])
+    remaining_ms = 2**31 - 1 - whole_ms
+    if (
+        not seconds.is_finite()
+        or seconds < 0
+        or remaining_ms < 0
+        or seconds > Decimal(remaining_ms) / 1000
+    ):
+        return None
+    # The bounded integer quotient is exact; multiplying fractional seconds can round.
+    return whole_ms + int(seconds // Decimal("0.001"))

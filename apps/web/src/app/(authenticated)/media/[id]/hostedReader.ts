@@ -2,13 +2,13 @@
 
 // Source and cursor ports, source-locator geometry and per-visit reader state.
 // The workspace delivers arrivals; this module never watches a hash or a bus.
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
-import { readerDocument, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
+import { readerDocument, transcriptUnitAtTime, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
 import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -31,7 +31,7 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
   if (target.kind === "pdf" || target.kind === "quads")
     return doc.kind === "pdf" && target.page <= (state.pdf?.pages ?? doc.pages ?? 0) ? target : null;
   if (doc.kind !== "text") return null;
-  if (target.kind === "time") return doc.format === "transcript" && doc.units.some((unit) => unit.time && unit.time.startMs <= target.ms && target.ms < unit.time.endMs) ? target : null;
+  if (target.kind === "time") return doc.format === "transcript" && transcriptUnitAtTime(doc.units, target.ms) !== null ? target : null;
   const unit = doc.units.find((unit) => unit.id === (target.kind === "point" ? target.point.unit : target.unit));
   if (!unit) return null;
   if (target.kind === "point") return target.point.offset <= unit.length ? target : null;
@@ -171,4 +171,27 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
     return () => controller.abort();
   }, [reader, runtime.paneEntryDelivery, runtime.visitId, saved]);
   return saved;
+}
+
+
+const SHOW_NOTES = definePaneVisitDataKey<boolean>("Reader.ShowNotes");
+
+/** The pane visit owns its notes disclosure across provisioning and reader remounts. */
+export function useShowNotesVisit() {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "useShowNotesVisit");
+  const current = useRef(false);
+  const saved = usePaneVisitData(SHOW_NOTES, () => current.current);
+  const write = usePaneVisitDataWriter(SHOW_NOTES);
+  const [open, setOpen] = useState(saved ?? false);
+  current.current = open;
+  useLayoutEffect(() => {
+    current.current = saved ?? false;
+    setOpen(saved ?? false);
+  }, [runtime.visitId, saved]);
+  const change = useCallback((value: boolean) => {
+    current.current = value;
+    setOpen(value);
+    write(value);
+  }, [write]);
+  return { open, change };
 }

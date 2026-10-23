@@ -292,27 +292,6 @@
   border: 0;
 }
 
-.chapters {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.chapters :is(button, a) {
-  padding: var(--space-1) 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.chapters :is(button, a)[aria-current] {
-  color: var(--accent);
-  font-weight: var(--weight-semibold);
-}
-
 .seek {
   padding: 0;
   border: 0;

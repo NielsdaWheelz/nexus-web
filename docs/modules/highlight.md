@@ -148,7 +148,10 @@ owner and require the selection's `exact` quote.
 
 every `PATCH /highlights/{id}` carries the observed `expected_version` and
 absolute desired fields. fragment-offset updates also carry their `unit_id`;
-offsets from another text section are rejected before no-op handling. the
+an unresolved quote may relocate to matching current text; transcripts use null
+and current immutable fragment membership, while published text requires its
+positive reader generation. other cross-section updates are rejected before
+no-op handling. the
 opaque `version` returned by highlight and document-map reads is a deterministic
 digest of the id, raw stored anchor (ordered canonical pdf quads), colour and
 quote triple. timestamps, notes and links do not change it; unresolved reader

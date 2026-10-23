@@ -119,6 +119,8 @@ export interface DocumentReaderViewProps {
   readonly reader: Reader;
   readonly profile: Schema<"ReaderProfileOut">;
   readonly isMobile: boolean;
+  /** Passive source position; never a reader navigation command. */
+  readonly playback: { readonly identity: string; readonly unit: string } | null;
   /** Hosts silence a reader while its pane is inactive. */
   readonly announcement?: FeedbackAnnouncement;
   readonly decorations?: Decorations;

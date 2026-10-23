@@ -2,7 +2,7 @@
 
 /**
  * The Android shell's audio engine: a thin client of the native service behind
- * `window.nexusPlayer`, which owns playback, listening writes, activity and natural ends.
+ * `window.nexusAudioSession`, which owns playback, listening writes, activity and natural ends.
  *
  * Frames are trusted json in the grammar of `window.nexusDownloads`: both ends ship in one release
  * train, and the object's name is the compatibility identity (its absence means an older app).
@@ -17,8 +17,6 @@ import {
   PlaybackPreferenceError,
   type Engine,
   type EngineState,
-  type PlayerDescriptor,
-  type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
@@ -28,7 +26,7 @@ interface Port {
   onmessage: ((event: { readonly data: unknown }) => void) | null;
 }
 
-type NativeSnapshot = Omit<EngineState, "playbackSubject"> & { readonly load_id: string | null };
+type NativeSnapshot = Omit<EngineState, "playbackSubject"> & { readonly load_id: string | null; readonly snapshot_id: number };
 type Frame =
   | { readonly snapshot: NativeSnapshot }
   | { readonly id: number; readonly ok: true; readonly snapshot?: NativeSnapshot }
@@ -37,7 +35,7 @@ type Frame =
 const port =
   typeof window === "undefined"
     ? undefined
-    : (window as Window & { nexusPlayer?: Port }).nexusPlayer;
+    : (window as Window & { nexusAudioSession?: Port }).nexusAudioSession;
 
 export const nativePlayerAvailable = port !== undefined;
 
@@ -58,28 +56,29 @@ export function createNativeEngine(
   accountId: string,
   onResponding: (responding: boolean) => void,
 ): Engine {
-  if (port === undefined) throw new Error("window.nexusPlayer is unavailable");
+  if (port === undefined) throw new Error("window.nexusAudioSession is unavailable");
   const listeners = new Set<() => void>();
   const pending = new Map<
     number,
-    { resolve: () => void; reject: (error: Error) => void; publication: number }
+    { resolve: () => void; reject: (error: Error) => void }
   >();
   let state: EngineState = IDLE_ENGINE_STATE;
+  let snapshotId = 0;
   let responding = true;
-  let publication = 0;
   const respond = (value: boolean) => {
     if (responding === value) return;
     responding = value;
     onResponding(value);
   };
 
-  const publish = ({ load_id, ...snapshot }: NativeSnapshot) => {
-    publication += 1;
+  const publish = ({ load_id, snapshot_id, ...snapshot }: NativeSnapshot) => {
+    if (snapshot_id <= snapshotId) return;
+    snapshotId = snapshot_id;
     if (snapshot.consumptionRevision !== state.consumptionRevision)
       publishChange("Consumption");
     // Keep the source's identity across position pushes, so session readers do not re-render.
     const same =
-      JSON.stringify(snapshot.source) === JSON.stringify(state.source);
+      load_id === state.playbackSubject && JSON.stringify(snapshot.source) === JSON.stringify(state.source);
     state = { ...snapshot, source: same ? state.source : snapshot.source, playbackSubject: load_id };
     for (const listener of listeners) listener();
   };
@@ -89,9 +88,7 @@ export function createNativeEngine(
     if (!("id" in frame)) return publish(frame.snapshot);
     const waiting = pending.get(frame.id);
     if (waiting === undefined) return; // an expired reply cannot replace a newer pushed snapshot
-    if (frame.ok && frame.snapshot &&
-        (waiting.publication === publication || frame.snapshot.load_id === state.playbackSubject))
-      publish(frame.snapshot);
+    if (frame.ok && frame.snapshot) publish(frame.snapshot);
     pending.delete(frame.id);
     if (frame.ok) waiting.resolve();
     else waiting.reject(new Error(frame.error));
@@ -110,7 +107,6 @@ export function createNativeEngine(
         reject(new Error("NotResponding"));
       }, options.timeoutMs ?? REPLY_TIMEOUT_MS);
       pending.set(id, {
-        publication,
         resolve: () => {
           window.clearTimeout(timer);
           resolve();
@@ -123,7 +119,29 @@ export function createNativeEngine(
       port.postMessage(JSON.stringify({ ...args, id, op }));
     });
   };
-  /** Capture the loaded occurrence; a retired command is silently ignored by the service. */
+  const command = async (op: string, args: Record<string, unknown> = {}, timeoutMs = REPLY_TIMEOUT_MS) => {
+    try {
+      await call(op, args, { timeoutMs });
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      if (error.message === "Stale" || error.message === "Closed")
+        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+      if (error.message === "Reconciled")
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress synchronized. press play to resume.");
+      if (error.message === "Fenced")
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress is being synchronized. try again after it finishes.");
+      if (error.message === "Unauthenticated")
+        throw new ApiError(401, "E_UNAUTHENTICATED", "sign in to resume playback.");
+      if (error.message === "AuthorityRefused")
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "the server refused this episode’s playback state. reload and try again.");
+      if (error.message === "NotConnected")
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player is not connected. reload the app and try again.");
+      if (error.message === "NotResponding" || error.message === "Unavailable")
+        throw new ApiError(0, "E_PLAYBACK_UNCONFIRMED", "the playback request was not confirmed.");
+      throw error;
+    }
+  };
+  /** Fire a session op at whatever is loaded; a stale key is harmless and only logged. */
   const send = (op: string, args: Record<string, unknown> = {}) =>
     void call(op, args).catch((error: Error) => {
       if (error.message !== "NotResponding" && error.message !== "Stale")
@@ -163,14 +181,6 @@ export function createNativeEngine(
     }
   };
 
-  const installSource = async (op: "load" | "preview", descriptor: PlayerDescriptor | PreviewAudioDescriptor) => {
-    try { await call(op, { descriptor }, { timeoutMs: LOAD_TIMEOUT_MS }); }
-    catch (error) {
-      if (!nativeUnavailable(error)) throw error;
-      throw new ApiError(0, "E_NATIVE_PLAYER_NOT_RESPONDING", "The native player is unavailable. Try again.");
-    }
-  };
-
   void call("hello", { accountId }).catch(() => undefined);
 
   return {
@@ -180,10 +190,19 @@ export function createNativeEngine(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    load: descriptor => installSource("load", descriptor),
-    preview: descriptor => installSource("preview", descriptor),
-    play: (given) => keyed("play", given ? { descriptor: given } : {}),
-    pause: () => keyed("pause"),
+    load: descriptor => command("load", { descriptor }, LOAD_TIMEOUT_MS),
+    preview: descriptor => command("preview", { descriptor }, LOAD_TIMEOUT_MS),
+    async play(given) {
+      const loaded = key();
+      if (loaded === null) throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+      await command("play", { key: loaded, expected_load_id: state.playbackSubject, ...(given ? { descriptor: given } : {}) });
+    },
+    async pause() {
+      const loaded = key();
+      if (loaded !== null) await command("pause", { key: loaded, expected_load_id: state.playbackSubject });
+    },
+    cancelPendingPlayback: () => send("cancelPlayback"),
+    seekAndPlay: (mediaId, positionMs) => command("seekAndPlay", { key: mediaId, expected_load_id: state.playbackSubject, position_ms: positionMs }),
     seekTo({ positionMs, expectedSubject }) {
       const subject = expectedSubject ?? state.playbackSubject;
       if (subject === null || subject !== state.playbackSubject) return;
@@ -212,7 +231,7 @@ export function createNativeEngine(
         // justify-ignore-error: the service's retry snapshot or onResponding(false) owns the outage; saving stays fenced until authority returns.
       }
     },
-    dismiss: () => call("dismiss", {}, { timeoutMs: LOAD_TIMEOUT_MS }).catch(() => undefined),
+    dismiss: () => command("dismiss", {}, LOAD_TIMEOUT_MS),
     close() {
       port.onmessage = null;
       for (const { reject } of pending.values()) reject(new Error("Closed"));

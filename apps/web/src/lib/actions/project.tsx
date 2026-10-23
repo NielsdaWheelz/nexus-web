@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   ACTION_CATALOG,
@@ -39,7 +39,7 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
 import { offlineCall } from "@/lib/offline/bridge";
-import { playingEpisode } from "@/lib/player/playerRuntime";
+import { playingEpisode, type PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
   requestPodcastRefresh,
 } from "@/lib/podcasts/api";
@@ -152,10 +152,39 @@ export function projectLecternAction({
   };
 }
 
-/**
- * One resource's menu: the server's verbs, labelled, ordered by the catalog,
- * separated by group and wired to their owners. Commands run only through `run`.
- */
+/** The header and menu share one playback action; its descriptor is already owned by the caller. */
+export function projectPlaybackAction({ mediaId, title, descriptor, blocked, ctx, run }: {
+  readonly mediaId: string;
+  readonly title: string;
+  readonly descriptor: PlayerDescriptor | null;
+  readonly blocked: BlockedReason | null;
+  readonly ctx: ActionContext;
+  readonly run: (command: ActionCommand) => void;
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly glyph: "Play" | "Pause" } {
+  const player = ctx.player.state;
+  const loaded = player.kind === "Loaded" && player.source.kind === "Episode" &&
+    player.source.descriptor.media_id === mediaId;
+  const pending = ctx.player.pendingPlayback?.kind === "Episode" && ctx.player.pendingPlayback.mediaId === mediaId;
+  const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
+  const pausing = phase === "Playing" || phase === "Buffering";
+  const state = ACTION_CATALOG.Playback.states[phase];
+  const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
+    : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio" : undefined;
+  return {
+    kind: "command", id: "Playback", label: state.label,
+    glyph: pausing ? "Pause" : "Play",
+    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    disabled: disabledReason !== undefined || undefined, disabledReason,
+    onSelect: () => run({
+      ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
+      confirmation: null, tracked: false,
+      execute: () => pausing ? ctx.player.commands.pause() :
+        ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null }),
+    }),
+  };
+}
+
+/** One resource's menu: server verbs ordered by the catalog and executed through run. */
 export function projectResourceActions(
   facts: ResourceActions,
   ctx: ActionContext,
@@ -576,32 +605,9 @@ export function projectResourceActions(
       case "OpenSource": {
         return link(make("OpenSource", blocked, () => {}), action.href);
       }
-      case "Playback": {
-        const player = ctx.player.state;
-        const loaded =
-          player.kind === "Loaded" &&
-          player.source.kind === "Episode" &&
-          player.source.descriptor.media_id === id;
-        const pending = ctx.player.pendingPlayback?.kind === "Episode" &&
-          ctx.player.pendingPlayback.mediaId === id;
-        const updateRequired = player.kind === "Unavailable" && player.reason === "UpdateRequired";
-        const pausing = pending || loaded && (player.phase === "Playing" || player.phase === "Buffering");
-        const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
-        const descriptor = make(
-          "Playback", blocked,
-          () => pausing ? ctx.player.commands.pause()
-            : ctx.player.commands.playAudio({ mediaId: id, knownDescriptor: action.player_descriptor }),
-          { state: ACTION_CATALOG.Playback.states[phase], tracked: !pausing },
-        );
-        // Pause cancels this start through the player lane; the existing start
-        // keeps its busy key until it settles. Server refusals still apply.
-        const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
-          : updateRequired ? "update nexus for android to play audio" : undefined;
-        return pausing || updateRequired ? { ...descriptor,
-          disabled: disabledReason !== undefined || undefined,
-          disabledReason,
-        } : descriptor;
-      }
+      case "Playback":
+        return projectPlaybackAction({ mediaId: id, title: facts.label,
+          descriptor: action.player_descriptor, blocked, ctx, run });
       case "Consumption": {
         const { finished, episode } = action;
         const states = ACTION_CATALOG.Consumption.states;

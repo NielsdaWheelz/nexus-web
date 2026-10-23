@@ -16,6 +16,7 @@ import {
   resolveDomRangeOffsets,
   resolveDomTextRanges,
 } from "@/lib/canonicalText/domTextRanges";
+import { transcriptUnitAtTime } from "../model";
 import type { PassageGeometry, TextRange } from "../DocumentReader";
 import { measureScrollport } from "../scrollport";
 import type {
@@ -171,9 +172,7 @@ export function createTextGeometry(
     if (to.kind === "point") return to.point.kind === "text" ? to.point : null;
     if (to.kind === "range") return { unit: to.unit, offset: to.start };
     if (to.kind === "time") {
-      const unit =
-        doc.units.findLast((u) => u.time !== null && u.time.startMs <= to.ms) ??
-        doc.units[0];
+      const unit = transcriptUnitAtTime(doc.units, to.ms);
       return unit ? { unit: unit.id, offset: 0 } : null;
     }
     return null;

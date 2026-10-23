@@ -205,7 +205,12 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - summaries expose `can_play` exactly when an episode record and nonempty
   application playback source permit a descriptor. processing/transcript readiness
   does not gate audio; remote delivery remains the engine's responsibility.
-- `playAudio({mediaId, knownDescriptor})` returns `Installed` or `Superseded`.
+- `playAudio({mediaId, knownDescriptor, positionMs})` returns `Applied` or `Superseded`.
+  null resumes; a number starts at that exact source time. a live matching episode
+  uses acknowledged in-place `seekAndPlay`; another, absent or ended source requires
+  fresh authority and overrides only its position. timed starts never use a stale
+  descriptor after an unanswered read. applied means accepted with play requested,
+  not audible or durably saved.
   descriptor resolution, engine installation, resume, pause and dismiss share one
   ordered lane. obsolete resolution cannot dispatch a load; pause/dismiss applies
   after an already-dispatched installation. known descriptors support offline use;
@@ -223,8 +228,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   preferences initialize from each engine's observed snapshot; android installs
   inherited settings before publishing a source. requested rate and silence
   choices stay separate from observed engine state; one flight applies the
-  newest pair. queued preferences retain their engine-owned load subject and
-  request generation. replacement fences rate, silence and seek, including
+  newest pair. queued preferences retain their engine-owned load subject across
+  in-place timed seeks. replacement fences rate, silence and seek, including
   same-media reloads and native advance, and retires old work and presentation;
   temporary native unavailability blocks playback-command admission while
   retaining the confirmed subject and captured save receipts.
@@ -258,7 +263,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   outgoing episode after taking its last sample, and its late writes send that. The episode rate
   is sent only after the listener sets one; until then the stored value stands.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusPlayer` (below); an unanswered bounded request shows "Player
+  `window.nexusAudioSession` (below); an unanswered bounded request shows "Player
   unavailable" until the next frame arrives. preference commands resolve after
   application and snapshot publication. expired replies are ignored; live
   replies cannot replace an intervening confirmed load. real pushes from the
@@ -351,7 +356,7 @@ the [podcast module](podcast.md) owns saved nullable defaults and their form.
 
 ## The Android bridge
 
-`window.nexusPlayer` carries trusted json frames in the grammar of
+`window.nexusAudioSession` carries trusted json frames in the grammar of
 `window.nexusDownloads`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
 `{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
 second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
@@ -359,12 +364,24 @@ second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
 `skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
 `sessionShortenPauses{key, on}` (this load's boolean override),
-`dismiss{}`.
+`dismiss{}`, `cancelPlayback{}`, `seekAndPlay{key, position_ms}`.
 every keyed op also carries `expected_load_id`; every snapshot has nullable
 `load_id`, mapped to the web session's `playbackSubject`. each install, including
 same-media reload and service restart, gets a fresh id. the service checks both
 key and load id under its load lock immediately before application; mismatch
 answers `Stale` without mutation. transient transport loss preserves identity.
+
+every web playback entrance supersedes unresolved work; its descriptor read is
+aborted. dispatched operations drain in order. playback actions allow replacement
+intents through the existing action runtime. native commands and operating-system
+controls use their existing owner and load lock; there is no global order between
+undispatched web requests and independent system controls. a natural-end write may
+settle after a newer intent; only its original still-current continuation may advance.
+
+private native snapshots also carry process-monotone `snapshot_id`; the web adapter
+strips it before publishing engine state. older snapshots cannot regress the clock,
+even while their delayed preference acknowledgements resolve. the uuid `load_id`
+remains the sole playback subject; in-place seeking preserves it.
 The object's name is the compatibility identity: an incompatible change renames
 it, and an app without it renders "Update Nexus for Android". There is no
 protocol version or hash.

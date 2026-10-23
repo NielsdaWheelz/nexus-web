@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type FocusEvent,
 } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
@@ -22,14 +23,13 @@ import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
-import DocumentReaderView, {
+import {
   useDocumentReader,
   useReaderState,
   type Decorations,
   type Inspection,
   type Reader,
 } from "@/lib/documentReader/DocumentReader";
-import type { FindSource } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
 import { holdProgress } from "@/lib/consumption/state";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -50,7 +50,7 @@ import {
   usePaneParam,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { useSourceArrival, type SourceArrivalContext } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
@@ -75,11 +75,12 @@ import {
   inspectionOfLocator,
   targetOfLocator,
   useReaderVisit,
+  useShowNotesVisit,
   readerDestinationHref,
   destinationTarget,
 } from "./hostedReader";
 import SelectionDock from "./SelectionDock";
-import { TranscriptChrome, TranscriptState } from "./Transcript";
+import { HostedReaderView, TranscriptChrome, TranscriptState } from "./Transcript";
 import { useAnnotationVerbs } from "./useAnnotationVerbs";
 import styles from "./media.module.css";
 
@@ -147,8 +148,8 @@ function MediaPane({ id }: { readonly id: string }) {
   // owner's, which follows Consumption, so a reading auto-finish shows here at once).
   const row = lectern.find((item) => item.media_summary.media_id === id);
   const summaries = useMediaSummaries(row ? [row.media_summary] : []);
-  const { seekTo, resume } = usePlayerCommands();
-  const player = usePlayerSession();
+  const { playAudio } = usePlayerCommands();
+  const showNotes = useShowNotesVisit();
   const root = useRef<HTMLDivElement>(null);
 
   // ---- the media record ----
@@ -162,14 +163,22 @@ function MediaPane({ id }: { readonly id: string }) {
       ),
   });
   const loaded = record.status === "ready" ? record.data : null;
-  const [media, setMedia] = useState<MediaDetail | null>(null);
+  const [detail, setMedia] = useState<MediaDetail | null>(null);
   useEffect(() => {
     if (loaded) setMedia(loaded);
   }, [loaded]);
-  const { snapshot } = useMediaProcessingStatus(media?.id ?? null);
-  useEffect(() => {
-    if (snapshot) setMedia((current) => current && { ...current, ...snapshot });
-  }, [snapshot]);
+  const { snapshot } = useMediaProcessingStatus(detail?.id ?? null);
+  const media = useMemo(() => detail === null ? null : snapshot === null ? detail : {
+      ...detail,
+      processing_status: snapshot.processing_status,
+      last_error_code: snapshot.last_error_code,
+      retrieval_status: snapshot.retrieval_status,
+      retrieval_status_reason: snapshot.retrieval_status_reason,
+      capabilities: snapshot.capabilities,
+      transcript_state: snapshot.transcript_state,
+      transcript_coverage: snapshot.transcript_coverage,
+      reader_generation: snapshot.reader_generation,
+    }, [detail, snapshot]);
   const transcript = media?.kind === "podcast_episode" || media?.kind === "video";
   const readable = media?.capabilities?.can_read === true;
 
@@ -230,6 +239,28 @@ function MediaPane({ id }: { readonly id: string }) {
     if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
       reader.reload(media.reader_generation);
   }, [doc, media?.reader_generation, readable, reader]);
+  useEffect(() => {
+    if (readable && snapshot !== null && doc?.kind === "text" && doc.format === "transcript"
+      && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key
+        || doc.transcriptCoverage !== snapshot.transcript_coverage)) reader.reload();
+  }, [doc, readable, reader, snapshot]);
+  const pendingTranscriptFocus = useRef(false);
+  const holdTranscriptFocus = useCallback(() => {
+    const element = root.current;
+    if (!element) return;
+    pendingTranscriptFocus.current = true;
+    element.focus({ preventScroll: true });
+  }, []);
+  const cancelTranscriptFocus = useCallback((event: FocusEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) pendingTranscriptFocus.current = false;
+  }, []);
+  useLayoutEffect(() => {
+    if (!paneActive) pendingTranscriptFocus.current = false;
+    else if (pendingTranscriptFocus.current && readable && restored) {
+      pendingTranscriptFocus.current = false;
+      if (document.activeElement === root.current) reader.focusSource();
+    }
+  }, [paneActive, readable, reader, restored]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
   useEffect(
     () =>
@@ -318,18 +349,15 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- playback: the global player, or a video's own embed ----
   const [videoAt, setVideoAt] = useState<number | null>(null);
-  /** Moves playback to a time; `play` also resumes the global player. */
-  const cue = useCallback(
-    (ms: number, play: boolean) => {
-      if (media?.kind === "video") return setVideoAt(ms);
-      if (player.state.kind !== "Loaded" || player.state.source.kind !== "Episode" || player.state.source.descriptor.media_id !== id) return;
-      if (player.playbackSubject === null) return;
-      seekTo({ positionMs: ms, expectedSubject: player.playbackSubject });
-      if (play) resume();
-    },
-    [id, media?.kind, player.state, player.playbackSubject, resume, seekTo],
-  );
-  const seek = useCallback((ms: number) => cue(ms, true), [cue]);
+  const seek = useCallback((ms: number) => {
+    if (media?.kind === "video") return setVideoAt(ms);
+    if (!media || media.kind !== "podcast_episode") return;
+    run({
+      ref: `media:${id}`, id: "Playback", label: "play", title: media.title,
+      confirmation: null, tracked: false,
+      execute: () => playAudio({ mediaId: id, knownDescriptor: media.playerDescriptor, positionMs: ms }),
+    });
+  }, [id, media, playAudio, run]);
 
   // The chosen pane alone resolves, positions and paints a source arrival.
   const [inspection, setInspection] = useState<(Inspection & { activationId: string }) | null>(null);
@@ -441,21 +469,7 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- find ----
   const source = useReaderState(reader, (s) => s.restored ? s.find : null);
-  const partial = media?.transcript_state === "partial" || media?.transcript_coverage === "partial";
-  const findSource = useMemo<FindSource<unknown> | null>(
-    () =>
-      source && partial
-        ? {
-            ...source,
-            search: async (...args: Parameters<typeof source.search>) => {
-              const outcome = await source.search(...args);
-              return outcome.kind === "Rows" ? { ...outcome, partial: "available transcript" } : outcome;
-            },
-          }
-        : source,
-    [partial, source],
-  );
-  const find = useFind({ ownerKey: paneSourceKey(runtime), source: findSource });
+  const find = useFind({ ownerKey: paneSourceKey(runtime), source });
 
   // ---- evidence and chrome ----
   const { noteEdit, hovered, hover, closeNoteEdit, relocate } = verbs;
@@ -544,7 +558,7 @@ function MediaPane({ id }: { readonly id: string }) {
   if (record.status === "failed" || !media) {
     const missing = record.status === "failed" && record.error.status === 404;
     return (
-      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1}>
+      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
           <FeedbackState
             content={{ tone: "Danger", title: missing ? "item not found" : "couldn’t load this item" }}
@@ -564,7 +578,8 @@ function MediaPane({ id }: { readonly id: string }) {
     sourceUrl: media.canonical_source_url,
   });
   const transcriptChrome = transcript ? (
-    <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader} />
+    <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader}
+      notesOpen={showNotes.open} onNotesOpen={showNotes.change} transcriptReaderKey={snapshot?.transcript_reader_key ?? null} />
   ) : null;
   const captureHint = media.capabilities.can_replace_x_article && media.canonical_source_url
     ? <FeedbackNotice content={{ tone: "Neutral", title: "update saved article",
@@ -573,13 +588,13 @@ function MediaPane({ id }: { readonly id: string }) {
     : null;
   if (!readable)
     return (
-      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1}>
+      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
           {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
           {transcriptChrome}
           {captureHint}
           {transcript ? (
-            <TranscriptState media={media} onChange={(next) => setMedia({ ...media, ...next })}
+            <TranscriptState media={media} holdFocus={holdTranscriptFocus}
               announcement={paneActive ? "Polite" : "None"}
               returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}
             />
@@ -614,9 +629,11 @@ function MediaPane({ id }: { readonly id: string }) {
   const embeds = doc?.kind === "text" ? doc.embeds : [];
 
   return (
-    <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode}>
+    <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode} onBlurCapture={cancelTranscriptFocus}>
       {verbs.notice ? <FeedbackStatus content={verbs.notice} announcement={paneActive ? "Polite" : "None"} /> : null}
-      <DocumentReaderView
+      <HostedReaderView
+        mediaId={id}
+        transcriptReaderKey={snapshot?.transcript_reader_key ?? null}
         reader={reader}
         profile={profile}
         isMobile={isMobile}
@@ -651,6 +668,7 @@ function MediaPane({ id }: { readonly id: string }) {
                 ? "these saved threads overlap. both were kept; repair is required."
                 : "couldn’t refresh from x. saved copy kept." }} announcement={paneActive ? "Polite" : "None"} /> : null}
             {transcriptChrome}
+            {doc?.kind === "text" && doc.transcriptCoverage === "partial" ? <FeedbackStatus content={{ tone: "Neutral", title: "partial transcript" }} announcement="None" /> : null}
             {captureHint}
           </>
         }

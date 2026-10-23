@@ -64,6 +64,7 @@ from nexus.services.source_attempts import (
     source_repairable_sql,
 )
 from nexus.services.source_types import LATEST_ORDER_SQL
+from nexus.services.transcript_navigation import read_transcript_navigation_source
 from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import x_article_content_facts, x_source_contexts
 
@@ -489,5 +490,10 @@ def read_processing_snapshot(
         transcript_state=row.transcript_state,
         transcript_coverage=row.transcript_coverage,
         reader_generation=row.reader_generation,
+        transcript_reader_key=read_transcript_navigation_source(db, media_id=media_id).key
+        if row.kind in _TRANSCRIPT_KINDS
+        and row.transcript_state in ("ready", "partial")
+        and row.transcript_coverage in ("full", "partial")
+        else None,
         work_in_flight=_in_flight(row, status, retrieval),
     )

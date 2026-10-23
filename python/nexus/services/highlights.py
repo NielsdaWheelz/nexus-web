@@ -1060,7 +1060,9 @@ def update_highlight(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     relocating = moved_to is not None and moved_to.unit_id != fragment_anchor.fragment_id
     if relocating:
-        if req.expected_reader_generation is None:
+        if req.expected_reader_generation is None and db.scalar(
+            select(Media.kind).where(Media.id == media_id)
+        ) not in ("podcast_episode", "video"):
             raise InvalidRequestError(message="Relocation requires the current reader generation")
         sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
         match = text_quote.match_quote_in_sources(

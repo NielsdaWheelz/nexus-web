@@ -221,8 +221,9 @@ override real saved progress.
   segment; choosing a time reads from there. a click on the text does not seek:
   in a reading surface the first click of a word selection, a tap or a click
   that dismisses a menu would start audio and move the cursor. a deep link that
-  moves a transcript seeks without resuming. the player does not move the text;
-  the active chapter follows the player.
+  moves a transcript inspects without playback. the reader's chapter follows reading;
+  a quiet segment marker follows audio without moving text. an explicit position
+  action returns to the current audio passage once, retaining a way back.
 - **evidence has an explicit view choice**: following aligns items beside their
   passages; all items uses normal-flow grouping. both choices remain visible on
   desktop. sidebar scrolling inspects overflow without changing the choice;

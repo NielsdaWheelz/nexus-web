@@ -321,10 +321,7 @@ export default function ResourceActionsProvider({
           feedback.offer({
             key: `resource-action:${command.ref}:${command.id}`,
             announcement: "Polite",
-            content: command.id === "Playback" ? {
-              tone: "Warning", title: error.code === "E_AUDIO_UNAVAILABLE" ? "audio unavailable" : "couldn’t start playback",
-              requestId: error.requestId,
-            } : actionFailure(command.id, command.label, error),
+            content: actionFailure(command.id, command.label, error),
             actions: command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined,
           });
         } finally {

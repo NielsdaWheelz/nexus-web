@@ -49,7 +49,8 @@ export type FindReveal =
 /**
  * Everything a surface supplies; useFind owns query state, debounce, staleness,
  * stepping and results.
- * - key names the searched snapshot: a new key re-prepares and re-runs the live query.
+ * - key names the searched body: a new key re-prepares and re-runs the live query.
+ *   A replacement source with the same key refreshes context without moving the reader.
  * - narrowLabel names the available scope before a query captures it.
  * - prepare runs at the first nonempty query. It freezes the reading anchor
  *   and scope, and returns the captured scope's label or null if unavailable.
@@ -64,6 +65,12 @@ export interface FindSource<L> {
   readonly key: string;
   readonly label: string;
   readonly narrowLabel: string | null;
+  /** Source-owned copy when a captured scope no longer applies. */
+  readonly scopeChangeMessage?: string;
+  /** A navigation refresh invalidated the scope captured by prepare. */
+  readonly scopeInvalidated?: boolean;
+  /** Refreshed publisher label for the retained captured chapter, if any. */
+  readonly capturedScopeLabel?: string | null;
   prepare(): string | null;
   search(
     options: FindOptions,
