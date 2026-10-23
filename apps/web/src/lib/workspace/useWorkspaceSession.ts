@@ -6,6 +6,9 @@
 // a success acknowledges exactly the state sent. Transport failures keep a
 // Retry notice up; a stale build (426) keeps the update notice up and the
 // workspace with it; anything else is a defect for the workspace boundary.
+// Hosted HTTP saves own workspace durability (Write). In the installed app,
+// useDeviceWorkspaceSave owns that durability (Write); this best-effort cloud
+// mirror reports Status and never claims that the current local save completed.
 import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useDeviceWorkspace } from "@/lib/native/workspaceContext";
@@ -24,7 +27,7 @@ import type { WorkspaceStore } from "@/lib/workspace/store";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
 const NOTICE = "workspace-session-save";
-const TITLE = "workspace changes not confirmed";
+const TITLE = installedApp ? "workspace cloud copy not confirmed" : "workspace changes not confirmed";
 
 export function useWorkspaceSession(store: WorkspaceStore): void {
   const local = useDeviceWorkspace();
@@ -37,11 +40,11 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     retry: () => void;
   } | null>(null);
   useWorkspaceCondition(NOTICE, notice ? {
-    priority: "Write",
+    priority: installedApp ? "Status" : "Write",
     content: notice.content,
     announcement: "Polite",
     actions: notice.stale && installedApp ? undefined : [{
-      label: notice.stale ? "reload app" : "retry save",
+      label: notice.stale ? "reload app" : installedApp ? "retry cloud copy" : "retry save",
       busy: notice.busy,
       onClick: notice.stale ? () => window.location.reload() : notice.retry,
     }],
@@ -95,7 +98,9 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
             content: {
               tone: "Warning",
               title: TITLE,
-              message: "your changes remain in this tab. retry saves the latest workspace.",
+              message: installedApp
+                ? "retry updates the cloud copy. saving on this device is reported separately."
+                : "your changes remain in this tab. retry saves the latest workspace.",
               requestId: error.requestId,
             },
             stale: false,
