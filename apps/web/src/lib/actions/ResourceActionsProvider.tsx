@@ -69,8 +69,10 @@ export type Overlay =
     }
   | { readonly kind: "LibrarySettings"; readonly libraryId: string }
   | { readonly kind: "PodcastSettings"; readonly podcastId: string }
-  | { readonly kind: "AddPodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
-  | { readonly kind: "StopPodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly episodes: "keep" | "remove"; readonly removeOnly?: boolean };
+  | { readonly kind: "SubscribePodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
+  | { readonly kind: "ImportPodcastEpisodes"; readonly target: PodcastTarget; readonly title: string }
+  | { readonly kind: "UnsubscribePodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly successFocus?: ReturnFocusTarget }
+  | { readonly kind: "RemovePodcastEpisodes"; readonly podcastId: string; readonly title: string };
 
 /** Everything a verb reads or calls; it changes only when one of those facts does. */
 export interface ActionContext {

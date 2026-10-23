@@ -213,7 +213,10 @@ SimpleActionKind = Literal[
     "LibrarySettings",
     "DeleteLibrary",
     "PodcastSettings",
-    "AddPodcast",
+    "SubscribePodcast",
+    "ImportPodcastEpisodes",
+    "UnsubscribePodcast",
+    "RemovePodcastEpisodes",
     "RefreshPodcast",
     "DeleteConversation",
     "ForkMessage",
@@ -289,11 +292,6 @@ class ConsumptionAction(_Action):
     episode: bool
 
 
-class StopPodcastAction(_Action):
-    kind: Literal["StopPodcast"] = "StopPodcast"
-    episodes: Literal["keep", "remove"]
-
-
 class TranscriptAction(_Action):
     kind: Literal["Transcript"] = "Transcript"
     state: TranscriptState
@@ -319,7 +317,6 @@ ResourceActionOut = Annotated[
     | OpenSourceAction
     | PlaybackAction
     | ConsumptionAction
-    | StopPodcastAction
     | TranscriptAction
     | LecternMembershipAction
     | HighlightNoteAction,

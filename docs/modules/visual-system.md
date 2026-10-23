@@ -81,14 +81,19 @@ they never replay. account departure retires presentation. an active modal
 suppresses unrelated workspace controls and live announcements; its own failures
 stay inside the modal.
 
+an acknowledged command may `settleCondition` with its unique condition key and
+receipt content. the feedback owner atomically removes that condition before
+applying the same receipt admission; other work or a modal still suppresses it.
+late hook withdrawal cannot remove a newer occurrence. no scheduling or replay is
+needed to bridge command settlement and react presentation cleanup.
+
 only short facts enter separate live regions. local `FeedbackNotice` owners may
 supply an occurrence and exact-occurrence dismissal; other recovery surfaces
-retain their existing contract. replacing an occurrence commits an empty live
-region before publishing even identical text. controls remain mounted; local
-announcement identity does not replace workspace action identity. local occurrences
-wait through an empty rendered frame before publication; supersession cancels
-their captured frames. inactive panes
-stay silent. actions stay mounted and focusable while busy, with guarded activation;
+retain their existing contract. controls remain mounted; local announcement
+identity does not replace workspace action identity. replacing a local occurrence
+keeps the live region empty for a rendered frame before publishing even identical
+text; supersession cancels its captured frames. inactive panes stay silent.
+actions stay mounted and focusable while busy, with guarded activation;
 successful removal returns to an explicit owner destination, then the shell.
 `FeedbackScope` supplies a pane's focus destination and announcement permission
 without a new state owner. disabled reasons remain visible. compact targets are
@@ -135,9 +140,14 @@ adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
 
-transient results have a six-row preferred budget (32px fine, 44px coarse), not
-a result-count limit. full workspaces retain their larger area. essential names
-wrap. `lib/ui/collection.ts` owns scoped reveal and constrained-body measurement;
+search/catalog results use `compactViewport`'s six-row preferred budget (32px
+fine, 44px coarse), not a result-count limit. actions and standalone chapters use
+`contentViewport`: intrinsic height, capped by anchored bounds and the parent's
+flex allocation, without a measured collection ceiling or minimum viewport row.
+short lists do not stretch. full workspaces retain `fillViewport`'s larger area.
+essential names wrap. `lib/ui/collection.ts` owns constrained-body measurement
+and reveals retained focus after resize within the owned list/body, without
+moving focus or scrolling the host;
 [overlays](overlays.md#surfaces) owns available geometry and dismissal.
 
 `lib/ui/searchOptions.ts` supplies controlled bindings and keyed reconciliation.
@@ -235,6 +245,11 @@ reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 `--space-2` gap, `--radius-sm` corners and `--surface-2` background. containment
 preserves the complete publisher image and can letterbox it. existing compact
 title clamping, metadata ellipsis and status placement remain in force.
+
+ordinary rows below `18rem` give the title full width, retain metadata below it,
+and move controls to their own trailing line. the font-relative threshold preserves
+legible names under text enlargement; normal-width rows keep inline controls.
+row defaults yield to each control's owned minimum target size.
 
 mobile chrome/switchboard retain 48px and desktop nexus retains its wider
 shortcut-bearing control through the same geometry contract.

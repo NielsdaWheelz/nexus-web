@@ -6,7 +6,7 @@ import {
   ListTree,
   Network,
   PanelRight,
-  Search,
+  TextSearch,
   Users,
   X,
   type LucideIcon,
@@ -67,7 +67,7 @@ const ICONS: Record<TabId, LucideIcon> = {
   "resource-forks": GitBranch,
   "resource-dossier": FileText,
   "import-detail": FileText,
-  "find-results": Search,
+  "find-results": TextSearch,
 };
 const title = (id: TabId) =>
   id === "find-results" ? "Search results" : SECONDARY_SURFACES[id].title;

@@ -10,17 +10,28 @@
 }
 
 .compactViewport,
-.fillViewport {
+.fillViewport,
+.contentViewport {
   --collection-row-height: 32px;
-  --collection-content-height: 12rem;
   flex: 0 1 auto;
   min-inline-size: 0;
-  min-block-size: calc(var(--collection-row-height) + 2 * var(--space-1));
   margin: 0;
   padding: var(--space-1);
   list-style: none;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.compactViewport,
+.fillViewport {
+  --collection-content-height: 12rem;
+  min-block-size: calc(var(--collection-row-height) + 2 * var(--space-1));
+}
+
+.contentViewport {
+  /* Parent flex constraints release as space grows; measured caps would not. */
+  min-block-size: 0;
+  max-block-size: var(--anchored-max-height, 100dvh);
 }
 
 .compactViewport {
@@ -32,18 +43,19 @@
   max-block-size: var(--collection-available-height, 100dvh);
 }
 
-:global([data-collection-body]):has(.compactViewport, .fillViewport) {
+:global([data-collection-body]):has(.compactViewport, .fillViewport, .contentViewport) {
   min-block-size: 0;
   overflow: hidden;
 }
 
-:global([data-collection-constrained="true"]):has(.compactViewport, .fillViewport) {
+:global([data-collection-constrained="true"]):has(.compactViewport, .fillViewport, .contentViewport) {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 :global([data-collection-constrained="true"]) .compactViewport,
-:global([data-collection-constrained="true"]) .fillViewport {
+:global([data-collection-constrained="true"]) .fillViewport,
+:global([data-collection-constrained="true"]) .contentViewport {
   flex: 0 0 auto;
   max-block-size: none;
   overflow: visible;
@@ -86,7 +98,8 @@
 
 .row:focus-visible,
 .compactViewport:focus-visible,
-.fillViewport:focus-visible {
+.fillViewport:focus-visible,
+.contentViewport:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: calc(-1 * var(--focus-ring-width));
 }
@@ -132,8 +145,12 @@
 
 @media (any-pointer: coarse) {
   .compactViewport,
-  .fillViewport {
+  .fillViewport,
+  .contentViewport {
     --collection-row-height: 44px;
+  }
+  .compactViewport,
+  .fillViewport {
     --collection-content-height: 16.5rem;
   }
   .row,

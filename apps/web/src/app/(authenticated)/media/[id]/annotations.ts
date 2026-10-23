@@ -269,6 +269,7 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
       held.watch.stop(); held.controller?.abort(); noteWatches.delete(ref);
     }
     for (const [ref, note] of notes) {
+      if (readText(ref)?.gone) continue;
       let generation = generations.get(ref);
       let held = noteWatches.get(ref);
       if (!held) {
@@ -280,23 +281,34 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
             receiveNote(ref, note);
             return { body_version: readText(ref)?.acked?.version ?? note.body_version };
           }, invalidate(state) {
+            if (noteWatches.get(ref) !== binding) return;
             binding.controller?.abort();
-            if (state === "unavailable") { setGone(ref); return; }
+            const generation = binding.watch.capture();
+            if (state === "unavailable") { retire(generation); return; }
             binding.controller = new AbortController();
             const signal = binding.controller.signal;
-            const generation = binding.watch.capture();
             const noteId = ref.slice("note_block:".length);
             void readSharedValue({ accountId, key: `/notes/blocks/${encodeURIComponent(noteId)}`,
               load: readSignal => fetchNote(noteId, readSignal), signal, revalidate: true,
             }).then(body => {
-              if (signal.aborted || !binding.watch.adopt({ body_version: body.body_version }, generation)) return;
+              if (signal.aborted || noteWatches.get(ref) !== binding ||
+                !binding.watch.adopt({ body_version: body.body_version }, generation)) return;
               receiveNote(ref, body);
             }).catch(error => {
-              if (signal.aborted || isAbortError(error) || handleUnauthenticatedApiError(error)) return;
-              binding.watch.fail(error, generation);
+              if (signal.aborted || isAbortError(error) || noteWatches.get(ref) !== binding ||
+                binding.watch.capture() !== generation) return;
+              if (isApiError(error) && !isSameSystemApiDefect(error) && error.status === 404) retire(generation);
+              else binding.watch.fail(error, generation);
             });
           } }),
         };
+        function retire(generation: number) {
+          if (noteWatches.get(ref) !== binding || binding.watch.capture() !== generation) return;
+          noteWatches.delete(ref);
+          binding.controller?.abort();
+          binding.watch.stop();
+          setGone(ref);
+        }
         held = binding; noteWatches.set(ref, held);
         generation = held.watch.capture();
       }

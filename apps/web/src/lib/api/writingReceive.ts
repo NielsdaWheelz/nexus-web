@@ -2,11 +2,12 @@
 
 // one authenticated-tab stream wakes account-scoped, mounted projections. a watch
 // owns its adopted lanes; a probe is evidence for a reread, never authored state.
+// each failure survives retry until its own accepted recovery or retirement.
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { assertNever } from "@/lib/assertNever";
 import { remoteReady } from "@/lib/native/admission";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
@@ -18,6 +19,18 @@ import { acknowledgeGraphCommands } from "@/lib/resourceGraph/links";
 
 export type WritingVersionLane = "body_version" | "title_version" | "links_version" | "annotations_version" | "highlight_version";
 export type WritingVersions = Partial<Pick<Schema<"ResourceVersionState">, WritingVersionLane>>;
+export interface WritingConnection {
+  readonly phase: "idle" | "connecting" | "live" | "recovering" | "failed";
+  readonly failure: ApiError | null;
+}
+export interface WritingReceiveSnapshot {
+  readonly connection: WritingConnection;
+  readonly probe_failure: ApiError | null;
+  readonly probing: boolean;
+}
+const IDLE_SNAPSHOT: WritingReceiveSnapshot = {
+  connection: { phase: "idle", failure: null }, probe_failure: null, probing: false,
+};
 export interface WritingWatch {
   capture(): number;
   adopt(versions: WritingVersions, generation: number): boolean;
@@ -32,7 +45,7 @@ interface Watch extends WritingWatch {
   observed: WritingVersions;
   stale: boolean;
   unavailable: boolean;
-  error: Error | null;
+  error: ApiError | null;
   invalidate(state: "stale" | "unavailable"): void;
   acknowledge?: (ack: Schema<"WritingAck">) => WritingVersions;
 }
@@ -41,22 +54,30 @@ interface Receiver {
   listeners: Set<() => void>;
   revision: number | null;
   stamp: number;
-  error: Error | null;
+  snapshot: WritingReceiveSnapshot;
   users: number;
   start(): void;
   stop(): void;
   probe(): void;
-  retry(): void;
+  reconnect(): void;
+  retryRefresh(ref: string): void;
   notify(): void;
 }
 const receivers = new Map<string, Receiver>();
 const PROBE_BATCH_SIZE = 256;
-const asError = (error: unknown) => error instanceof Error ? error : new Error(String(error));
+function modeledFailure(error: unknown): ApiError | null {
+  // justify-ignore-error: abort and handled sign-in already have recovery owners.
+  if (isAbortError(error) || handleUnauthenticatedApiError(error)) return null;
+  if (isApiError(error) && !isSameSystemApiDefect(error)) return error;
+  reportError(error);
+  return null;
+}
 
 function receiver(accountId: string): Receiver {
   const existing = receivers.get(accountId);
   if (existing) return existing;
   let epoch = 0;
+  let streamEpoch = 0;
   let controller: AbortController | null = null;
   let stopStream: (() => void) | null = null;
   let stopAcknowledgements: (() => void) | null = null;
@@ -64,20 +85,28 @@ function receiver(accountId: string): Receiver {
   let probing = false;
   let queued = false;
   let scheduled = false;
-  let streamError: Error | null = null;
-  let probeError: Error | null = null;
+  let phase: WritingConnection["phase"] = "idle";
+  // a retry's defect must not turn the retained earlier failure into a focus retry.
+  let terminalDefect = false;
+  let streamError: ApiError | null = null;
+  let probeError: ApiError | null = null;
   const notify = () => {
-    let watchError: Error | null = null;
-    for (const watch of current.watchers) if (watch.error !== null) { watchError = watch.error; break; }
-    current.error = streamError ?? probeError ?? watchError;
+    if (current.watchers.size === 0) probeError = null;
+    const previous = current.snapshot;
+    const connection = previous.connection.phase === phase && previous.connection.failure === streamError
+      ? previous.connection : { phase, failure: streamError };
+    const busy = scheduled || probing || queued;
+    if (connection !== previous.connection || probeError !== previous.probe_failure || busy !== previous.probing)
+      current.snapshot = { connection, probe_failure: probeError, probing: busy };
     for (const listener of current.listeners) listener();
   };
-  function retryFailedWatches() {
-    for (const watch of current.watchers) {
-      if (watch.error === null) continue;
-      watch.error = null;
-      watch.stale = false;
+  function retryFailedWatches(ref: string | null) {
+    for (const watch of [...current.watchers]) {
+      if (!current.watchers.has(watch) || watch.error === null || (ref !== null && watch.ref !== ref)) continue;
+      watch.stale = true;
       watch.generation += 1;
+      try { watch.invalidate(watch.unavailable ? "unavailable" : "stale"); }
+      catch (error) { reportError(error); }
     }
   }
   function stale(watch: Watch, versions: WritingVersions, unavailable: boolean) {
@@ -95,9 +124,9 @@ function receiver(accountId: string): Receiver {
   async function probe() {
     const active = controller;
     const started = epoch;
-    if (active === null || active.signal.aborted || !remoteReady()) return;
-    if (probing) { queued = true; return; }
+    if (active === null || active.signal.aborted || !remoteReady()) { notify(); return; }
     probing = true;
+    notify();
     try {
       do {
         queued = false;
@@ -123,21 +152,27 @@ function receiver(accountId: string): Receiver {
       } while (queued && started === epoch && !active.signal.aborted);
     } catch (error) {
       if (started !== epoch || active.signal.aborted || isAbortError(error)) return;
-      handleUnauthenticatedApiError(error);
-      probeError = asError(error);
+      const failure = modeledFailure(error);
+      if (failure !== null && current.watchers.size > 0) probeError = failure;
       notify();
     } finally {
       if (started === epoch) {
         probing = false;
-        if (queued) current.probe();
+        if (queued) { queued = false; current.probe(); }
+        notify();
       }
     }
   }
   function connect() {
     const active = controller;
     if (active === null) return;
+    const opened = ++streamEpoch;
     stopStream?.();
     const started = epoch;
+    const currentStream = () => started === epoch && opened === streamEpoch && !active.signal.aborted;
+    terminalDefect = false;
+    phase = "connecting";
+    notify();
     stopStream = openStream<Schema<"WritingState">, Schema<"WritingState">>({
       path: "/api/stream/writing",
       decode(type, state) {
@@ -146,7 +181,9 @@ function receiver(accountId: string): Receiver {
       },
       isTerminal: () => false,
       onEvent(state) {
-        if (started !== epoch) return;
+        if (!currentStream()) return;
+        terminalDefect = false;
+        phase = "live";
         streamError = null;
         if (current.revision !== state.revision) {
           current.revision = state.revision;
@@ -156,27 +193,32 @@ function receiver(accountId: string): Receiver {
         current.probe();
       },
       onReconnect() {
-        if (started !== epoch) return;
-        streamError = new Error("writing updates disconnected. reconnecting…");
-        retryFailedWatches();
+        if (!currentStream()) return;
+        phase = "recovering";
+        retryFailedWatches(null);
         notify();
         current.probe();
       },
       onSuspended(error) {
-        if (started !== epoch) return;
-        streamError = error;
+        if (!currentStream()) return;
+        phase = "recovering";
+        const failure = modeledFailure(error);
+        if (failure !== null) streamError = failure;
         notify();
       },
       onError(error) {
-        if (started !== epoch) return;
-        streamError = error;
+        if (!currentStream()) return;
+        phase = "failed";
+        const failure = modeledFailure(error);
+        terminalDefect = failure === null;
+        if (failure !== null) streamError = failure;
         notify();
       },
       signal: active.signal,
     });
   }
   const current: Receiver = {
-    watchers: new Set(), listeners: new Set(), revision: null, stamp: 0, error: null, users: 0,
+    watchers: new Set(), listeners: new Set(), revision: null, stamp: 0, snapshot: IDLE_SNAPSHOT, users: 0,
     notify,
     start() {
       if (controller !== null) return;
@@ -231,9 +273,9 @@ function receiver(accountId: string): Receiver {
       const foreground = () => {
         if (document.visibilityState === "hidden") return;
         current.stamp += 1;
-        retryFailedWatches();
+        retryFailedWatches(null);
         notify();
-        if (streamError !== null) connect();
+        if (phase === "failed" && streamError !== null && !terminalDefect) current.reconnect();
         current.probe();
       };
       document.addEventListener("visibilitychange", foreground);
@@ -242,32 +284,42 @@ function receiver(accountId: string): Receiver {
         document.removeEventListener("visibilitychange", foreground);
         for (const event of ["focus", "online", "pageshow"] as const) window.removeEventListener(event, foreground);
       };
-      retryFailedWatches();
+      retryFailedWatches(null);
       connect();
       current.probe();
     },
     stop() {
       epoch += 1;
+      streamEpoch += 1;
       controller?.abort();
       controller = null;
       stopStream?.(); stopStream = null;
       stopAcknowledgements?.(); stopAcknowledgements = null;
       removeForeground?.(); removeForeground = null;
       probing = false; queued = false; scheduled = false;
-      streamError = null; probeError = null;
+      phase = "idle"; streamError = null; probeError = null;
+      for (const watch of current.watchers) { watch.generation += 1; watch.error = null; }
       notify();
     },
     probe() {
-      if (controller === null || scheduled) return;
-      scheduled = true;
-      queueMicrotask(() => { scheduled = false; void probe(); });
-    },
-    retry() {
       if (controller === null) return;
-      retryFailedWatches();
+      if (probing) { queued = true; notify(); return; }
+      if (scheduled) return;
+      scheduled = true;
+      const started = epoch;
       notify();
+      queueMicrotask(() => {
+        if (started !== epoch) return;
+        scheduled = false;
+        void probe();
+      });
+    },
+    reconnect() {
+      if (controller === null || phase === "connecting" || phase === "recovering") return;
       connect();
-      current.probe();
+    },
+    retryRefresh(ref) {
+      if (controller !== null) retryFailedWatches(ref);
     },
   };
   if (typeof window !== "undefined") receivers.set(accountId, current);
@@ -304,7 +356,9 @@ export function watchWritingResource(input: {
     },
     fail(error, generation) {
       if (!owner.watchers.has(watch) || generation !== watch.generation) return;
-      watch.error = asError(error);
+      const failure = modeledFailure(error);
+      if (failure === null) return;
+      watch.error = failure;
       owner.notify();
     },
     stop() {
@@ -319,7 +373,11 @@ export function watchWritingResource(input: {
   return watch;
 }
 
-export function useWritingReceive(accountId: string): { error: Error | null; retry(): void } {
+export function useWritingReceive(accountId: string): {
+  snapshot: WritingReceiveSnapshot;
+  reconnect(): void;
+  retryProbe(): void;
+} {
   const owner = receiver(accountId);
   useEffect(() => {
     owner.users += 1;
@@ -330,8 +388,25 @@ export function useWritingReceive(accountId: string): { error: Error | null; ret
     owner.listeners.add(listener);
     return () => { owner.listeners.delete(listener); };
   }, [owner]);
-  const error = useSyncExternalStore(subscribe, () => owner.error, () => null);
-  return { error, retry: owner.retry };
+  const snapshot = useSyncExternalStore(subscribe, () => owner.snapshot, () => IDLE_SNAPSHOT);
+  return { snapshot, reconnect: owner.reconnect, retryProbe: owner.probe };
+}
+
+/** Passive observation; the mounted projection remains the only read owner. */
+export function useWritingRefresh(ref: string): { error: ApiError | null; retry(): void } {
+  const account = useOptionalAuthenticatedAccount();
+  const owner = account === null ? null : receivers.get(account.accountId) ?? null;
+  const subscribe = useCallback((listener: () => void) => {
+    owner?.listeners.add(listener);
+    return () => { owner?.listeners.delete(listener); };
+  }, [owner]);
+  const error = useSyncExternalStore(subscribe, () => {
+    if (owner !== null) for (const watch of owner.watchers)
+      if (watch.ref === ref && watch.error !== null) return watch.error;
+    return null;
+  }, () => null);
+  const retry = useCallback(() => owner?.retryRefresh(ref), [owner, ref]);
+  return { error, retry };
 }
 
 export function useWritingRevision(): number {

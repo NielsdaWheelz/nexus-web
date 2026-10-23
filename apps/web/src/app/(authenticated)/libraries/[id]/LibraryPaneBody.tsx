@@ -490,7 +490,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           returnScope="Library.Suggestions"
           accept={async (target) => {
             if (target.kind === "Podcast") {
-              ctx.overlays.open({ kind: "AddPodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
+              ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
                 onAccepted: () => suggestions.acknowledge(target.ref) });
               return "Retained";
             }

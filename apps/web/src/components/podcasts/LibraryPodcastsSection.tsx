@@ -45,7 +45,10 @@ export default function LibraryPodcastsSection({ library, active }: { readonly l
     {source.status !== "loading" && source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t load library podcasts.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch }]} /> : null}
     <CollectionView surface={false} returnScope={`Library.Podcasts:${library.id}`} ariaLabel="subscribed podcasts" status={source.status === "failed" ? "error" : source.status}
       rows={(data?.subscriptions ?? []).map(show => presentPodcast({ id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, unplayedCount: null, recurring: show.recurring }))}
-      rowControls={Object.fromEntries((data?.subscriptions ?? []).map(show => [show.podcast.id, <Button key={show.podcast.id} aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId: show.podcast.id, title: show.podcast.title, libraryId: library.is_default ? null : library.id, episodes: "keep" })}>{library.is_default ? "stop everywhere…" : "stop adding…"}</Button>]))}
+      rowControls={Object.fromEntries((data?.subscriptions ?? []).map(show => [show.podcast.id, <Button key={show.podcast.id} aria-haspopup="dialog"
+        aria-disabled={!library.is_default && !library.can_add_content || undefined}
+        tooltip={!library.is_default && !library.can_add_content ? { text: "a library admin must remove this subscription." } : undefined}
+        onClick={() => ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId: show.podcast.id, title: show.podcast.title, libraryId: library.is_default ? null : library.id })}>{library.is_default ? "unsubscribe…" : "remove from library…"}</Button>]))}
       rowPanels={Object.fromEntries((data?.subscriptions ?? []).map(show => [show.podcast.id, <div key={show.podcast.id}>
         <p>{library.is_default ? `new episodes added automatically to ${show.destinations.map(destination => destination.is_default ? "all" : destination.name).join(", ")}` : "new episodes added automatically"}</p>
         {show.recurring.error_code !== null || show.recurring.had_coverage_gaps ? <p>the last check could not load all available episodes. checking will retry automatically.</p> : null}

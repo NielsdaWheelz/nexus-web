@@ -3,7 +3,7 @@
 // Every title editor uses canonical page text; history remains with its surface.
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import Textarea from "@/components/ui/Textarea";
-import { NoteConflict, useWriting } from "./NoteNotices";
+import { NoteConflict, useWriting, WritingRefreshNotice } from "./NoteNotices";
 import { adoptText, flushText, readText, useText, type TextEditBase } from "@/lib/notes/texts";
 import { readWriting } from "@/lib/notes/journal";
 import type { Schema } from "@/lib/api/wire";
@@ -188,6 +188,7 @@ export default function PageTitleEditor({
           }
         }}
       />
+      <WritingRefreshNotice textRef={occurrence.noteRef} kind="title" />
       <NoteConflict textRef={occurrence.noteRef} />
     </>
   );

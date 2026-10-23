@@ -606,7 +606,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       const chaptersPanel = <section className={styles.panel} aria-label="chapters">
         <h2 className={styles.panelTitle}>chapters</h2>
         <ChapterContext />
-        <ChapterList state={state} compact={false} />
+        <ChapterList state={state} presentation="embedded" />
       </section>;
       const toggle = (kind: "Playback" | "Chapters") => {
         if (shownPicker === kind) { setPicker(null); return; }
@@ -672,7 +672,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLInputElement>('input[type="range"]')}>
           {playbackPanel}
         </PickerSurface>
-        <PickerSurface active={!isMobile && shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId}
+        <PickerSurface active={!isMobile && shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId} heightLimit="available"
           anchor={() => returnFocus(chaptersRef.current)} returnFocusFallback={() => returnFocus(null)}
           skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
             && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
@@ -680,7 +680,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           <section className={`${styles.panel} ${styles.chapterPanel}`} aria-label="chapters">
             <h2 className={styles.panelTitle}>chapters</h2>
             <ChapterContext />
-            <ChapterList state={state} compact />
+            <ChapterList state={state} presentation="popup" />
           </section>
         </PickerSurface>
       </>;

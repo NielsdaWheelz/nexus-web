@@ -474,10 +474,23 @@ with its accepted snapshot or complete acknowledgement facts. body changes read
 that body; links changes read that outline; annotations membership and embedded
 note bodies have separate watches. notes index uses the coarse writing revision.
 no body autosave publishes a broad notes-topic reread. reconnect, resume and the
-server's 15-second fresh revision read repair missed notification hints. an exhausted
-projection refresh records its captured-generation failure in the existing receive
-status; retry, foreground and reconnect permit that failed watch to read the same
-observed version again. healthy watches keep their duplicate-invalidation fence.
+server's 15-second fresh revision read repair missed notification hints.
+connection activity, unresolved connection failure and probe failure are separate
+facts. initial connection and planned renewal are quiet; automatic recovery uses
+neutral status in the shared strip. a stopped connection and failed probe have
+separate targeted actions; retry retains failure until accepted recovery. stream
+delivery clears neither probe nor resource failure. installed admission retains
+the waiting stream and its real failure rather than replacing it on focus.
+
+`useWritingRefresh(ref)` passively observes existing account watches; body/title
+notices sit beside the affected editor, independently of outgoing writing state.
+accepted adoption, retirement or account teardown clears a watch failure. retry,
+foreground and reconnect directly invalidate failed watches without first clearing
+their errors, allowing the same observed version to reread. healthy watches keep
+their duplicate-invalidation fence. confirmed unavailable text and embedded-note
+bindings retire their watches under generation and binding-identity checks, while
+retaining authored recovery branches. only modeled api errors enter failure
+state; authentication and defects follow their existing owners.
 
 `useWritingRuntime` acquires the shared account runtime lease before editors mount,
 rechecks the authenticated account, and owns the one document-exit/security/reload

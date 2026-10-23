@@ -310,7 +310,11 @@ finish, undo, unread, reset and settle publish `Consumption`.
   handle is the only header control. playback and chapters begin closed and
   are mutually exclusive plain disclosures; opening/closing the sheet, changing
   subject or changing viewport mode retires them. desktop retains anchored
-  pickers and an interactive footer. only positive saved-time totals appear
+  pickers and an interactive footer.
+  standalone chapter pickers use intrinsic list height within available anchored
+  space; embedded mobile chapters retain their host's scrolling. both render the
+  same source order, timestamps and current marker. desktop opening retains
+  current/first focus without seeking. only positive saved-time totals appear
   beneath silence as `approx. time saved on this device`: the existing device
   estimate, with no episode, precise or cross-device claim. episode up-next
   lives inside playback; chapter context lives in chapters.

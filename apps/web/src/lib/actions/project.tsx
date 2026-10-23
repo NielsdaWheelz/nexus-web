@@ -66,7 +66,7 @@ import type {
 
 export type ResourceActions = Schema<"ResourceActionsOut">;
 type Action = ResourceActions["actions"][number];
-type SimpleKind = Schema<"SimpleAction">["kind"];
+type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribePodcast" | "UnsubscribePodcast">;
 
 /** One chosen verb. The provider confirms it, tracks it busy and reports failure. */
 export interface ActionCommand {
@@ -188,6 +188,36 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
       execute: () => pausing ? ctx.player.commands.pause() :
         ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
     }),
+  };
+}
+
+/** Loaded aggregate subscription facts choose the same fixed verb in header and menu. */
+export function projectPodcastSubscriptionAction({ podcastId, title, subscribed, blocked, ctx, run }: {
+  readonly podcastId: string;
+  readonly title: string;
+  readonly subscribed: boolean;
+  readonly blocked: BlockedReason | null;
+  readonly ctx: ActionContext;
+  readonly run: (command: ActionCommand) => void;
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
+  const id = subscribed ? "UnsubscribePodcast" : "SubscribePodcast";
+  const entry = ACTION_CATALOG[id];
+  const label = `${entry.label}: ${title}`;
+  return {
+    kind: "command", id, label,
+    icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+    disabled: blocked !== null || undefined,
+    disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
+    onSelect: () => {
+      if (blocked !== null) return;
+      run({
+        ref: `podcast:${podcastId}`, id, label, title,
+        confirmation: null, tracked: false,
+        execute: () => ctx.overlays.open(subscribed
+          ? { kind: "UnsubscribePodcast", podcastId, title, libraryId: null }
+          : { kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: podcastId }, title, libraryId: null }),
+      });
+    },
   };
 }
 
@@ -402,7 +432,7 @@ export function projectResourceActions(
     return ctx.player.commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
       command: { kind: next ? "insert-next" : "append", entry } });
   };
-  const verbs: Record<SimpleKind, Verb> = {
+  const verbs: Record<DirectKind, Verb> = {
     Open: [follow("Follow"), { tracked: false }],
     OpenInNewPane: [follow("Fork"), { tracked: false }],
     MediaMetadata: [
@@ -450,7 +480,8 @@ export function projectResourceActions(
     EditAuthors: overlay({ kind: "Authors", mediaId: id }),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
-    AddPodcast: overlay({ kind: "AddPodcast", target: { kind: "Canonical", podcast_id: id }, title: facts.label, libraryId: null }),
+    ImportPodcastEpisodes: overlay({ kind: "ImportPodcastEpisodes", target: { kind: "Canonical", podcast_id: id }, title: facts.label }),
+    RemovePodcastEpisodes: overlay({ kind: "RemovePodcastEpisodes", podcastId: id, title: facts.label }),
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
     ],
@@ -681,9 +712,11 @@ export function projectResourceActions(
           blocked, ctx, busy, run,
         });
       }
-      case "StopPodcast":
-        return make("StopPodcast", blocked, () => ctx.overlays.open({ kind: "StopPodcast", podcastId: id, title: facts.label, libraryId: null, episodes: action.episodes, removeOnly: action.episodes === "remove" }), { tracked: false,
-          state: { label: action.episodes === "remove" ? "remove episodes everywhere…" : "stop everywhere…", icon: ACTION_CATALOG.StopPodcast.icon } });
+      case "SubscribePodcast":
+      case "UnsubscribePodcast":
+        return projectPodcastSubscriptionAction({
+          podcastId: id, title: facts.label, subscribed: action.kind === "UnsubscribePodcast", blocked, ctx, run,
+        });
       case "RetryMetadata": {
         const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;
