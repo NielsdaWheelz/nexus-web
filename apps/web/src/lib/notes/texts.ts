@@ -12,7 +12,6 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { readSharedValue } from "@/lib/api/serverState";
 import { watchWritingResource, type WritingWatch } from "@/lib/api/writingReceive";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { bodyHasContent, emptyBody, parseBody, sameBody, type NoteBody } from "./noteBody";
 import { fetchNote } from "./api";
@@ -228,7 +227,7 @@ export function adoptText(ref: string, value: TextValue, version: number | null)
 }
 function watchText(ref: string, version: number): void {
   const accountId = readWriting().account_id;
-  if (accountId === null || watches.has(ref)) return;
+  if (accountId === null || watches.has(ref) || textEntry(ref)?.gone) return;
   const title = ref.startsWith("page:");
   const lane = title ? "title_version" : "body_version";
   const owner: { watch: WritingWatch; controller: AbortController | null } = {
@@ -239,10 +238,11 @@ function watchText(ref: string, version: number): void {
         return value === undefined ? {} : "title_version" in value ? { title_version: value.title_version } : { body_version: value.body_version };
       },
       invalidate(state) {
+        if (watches.get(ref) !== owner) return;
         owner.controller?.abort();
-        if (state === "unavailable") { setGone(ref); return; }
-        const controller = new AbortController(); owner.controller = controller;
         const generation = owner.watch.capture();
+        if (state === "unavailable") { retire(generation); return; }
+        const controller = new AbortController(); owner.controller = controller;
         const read = title
           ? apiFetch<ApiJson<"/resource-graph/outline/{ref}", "get">>(`/api/resource-graph/outline/${encodeURIComponent(ref)}?limit=1`, { signal: controller.signal, cache: "no-store" }).then(reply => {
               const content = reply.data.source.content;
@@ -253,17 +253,24 @@ function watchText(ref: string, version: number): void {
               load: signal => fetchNote(ref.slice("note_block:".length), signal),
             }).then(note => ({ value: { body_pm_json: note.body_pm_json, body_text: note.body_text }, version: note.body_version }));
         void read.then(saved => {
-          if (controller.signal.aborted || readWriting().account_id !== accountId) return;
+          if (controller.signal.aborted || readWriting().account_id !== accountId || watches.get(ref) !== owner) return;
           if (owner.watch.adopt({ [lane]: saved.version }, generation)) adoptText(ref, saved.value, saved.version);
         }).catch(error => {
-          if (controller.signal.aborted || isAbortError(error) || readWriting().account_id !== accountId || handleUnauthenticatedApiError(error)) return;
-          if (isApiError(error) && error.status === 404) setGone(ref);
-          else if (isApiError(error) && !isSameSystemApiDefect(error)) owner.watch.fail(error, generation);
-          else reportError(error);
+          if (controller.signal.aborted || isAbortError(error) || readWriting().account_id !== accountId ||
+            watches.get(ref) !== owner || owner.watch.capture() !== generation) return;
+          if (isApiError(error) && !isSameSystemApiDefect(error) && error.status === 404) retire(generation);
+          else owner.watch.fail(error, generation);
         });
       },
     }),
   };
+  function retire(generation: number) {
+    if (watches.get(ref) !== owner || owner.watch.capture() !== generation) return;
+    watches.delete(ref);
+    owner.controller?.abort();
+    owner.watch.stop();
+    setGone(ref);
+  }
   watches.set(ref, owner); owner.watch.adopt({ [lane]: version }, owner.watch.capture());
 }
 export function createText(ref: string, value: NoteBody, publication: Publication | null): void {
