@@ -269,7 +269,7 @@ function ChapterContext() {
  * outlive their pickers. Overlays return ordinary focus; departed controls recover
  * to idle or the active pane.
  */
-export default function GlobalPlayerSurfaces() {
+export default function GlobalPlayerSurfaces({ readerComposition }: { readerComposition: boolean }) {
   const { state, queue, preferences, playbackSubject, supportsSilenceSkipping } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
   const workspace = useWorkspaceStore();
@@ -364,8 +364,8 @@ export default function GlobalPlayerSurfaces() {
   useMobileChromeSurface(footerRef, isMobile);
   useLayoutEffect(() => {
     if (!isMobile || suppressed || slotRef.current === null) return;
-    return mobileViewport.registerBottomSurface("Player", slotRef.current);
-  }, [isMobile, suppressed, mobileViewport]);
+    return mobileViewport.registerBottomSurface("Player", slotRef.current, footerRef.current);
+  }, [isMobile, suppressed, mobileViewport, readerComposition]);
 
   // Loaded replacement retains the sheet but retires its old disclosure.
   useLayoutEffect(() => { setPicker(null); }, [playbackSubject, isMobile, sheetOpen]);
@@ -690,7 +690,7 @@ export default function GlobalPlayerSurfaces() {
 
   return <>
     <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
-    <div ref={slotRef} className={styles.slot} hidden={suppressed} inert={suppressed || undefined}
+    <div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
       onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}
       onBlurCapture={event => { if (event.relatedTarget !== null) focusedControl.current = null; }}>
       <footer ref={footerRef} className={`${styles.surface} ${isMobile ? styles.mini : styles.bar}`}

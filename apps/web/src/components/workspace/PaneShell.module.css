@@ -42,8 +42,13 @@
   pointer-events: none;
 }
 
-.chrome {
+.chromeFrame {
   grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chrome {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -200,24 +205,25 @@
 
 .paneShell[data-mobile="true"] {
   border-right: none;
-  --mobile-pane-chrome-height: 0px;
-  --mobile-pane-content-offset: calc(
-    var(--mobile-pane-chrome-height) + var(--space-2)
-  );
 }
 
 .paneShell[data-mobile="true"] .controlRow {
   padding-inline: var(--space-2);
 }
 
-/* Both top rows move by the same amount above an unchanged reading surface. */
-.paneShell[data-mobile="true"] .chrome {
-  --mobile-chrome-offset: calc(-1 * var(--space-2));
+/* The viewport places a stationary frame; only its painted controls retreat. */
+.paneShell[data-mobile="true"] .chromeFrame {
   position: absolute;
-  top: 0;
+  top: var(--mobile-controls-top);
   left: 0;
   right: 0;
   z-index: 11;
+  pointer-events: none;
+}
+
+.paneShell[data-mobile="true"] .chrome {
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
+  pointer-events: auto;
   padding-right: var(--viewport-safe-right);
   padding-left: var(--viewport-safe-left);
   background: var(--surface-2);
@@ -293,12 +299,10 @@
 }
 
 .paneShell[data-mobile="true"] {
-  --effective-pane-header-height: var(--pane-chrome-header-height);
-  padding-top: calc(var(--viewport-safe-top) + var(--effective-pane-header-height));
+  padding-top: var(--mobile-header-height);
 }
 
-@media (max-width: 479px) {
-  .paneShell[data-mobile="true"][data-media-route="true"] {
-    --effective-pane-header-height: calc(var(--pane-chrome-header-height) + 48px);
-  }
+.paneShell[data-mobile="true"][data-reader-composition="true"] {
+  padding-top: var(--viewport-safe-top);
+  padding-bottom: var(--mobile-canvas-safe-bottom);
 }

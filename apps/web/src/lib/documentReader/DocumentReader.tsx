@@ -219,6 +219,7 @@ export default function DocumentReaderView(
   const positionNeedsReload = useReaderState(runtime, (state) => state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument");
   const frame = useRef<HTMLDivElement>(null);
   const scrollIndicator = useRef<HTMLDivElement>(null);
+  const feedback = useRef<HTMLDivElement>(null);
   const returnFocus = useCallback(
     () => frame.current?.querySelector<HTMLElement>("[data-pane-content]") ?? frame.current,
     [],
@@ -227,13 +228,13 @@ export default function DocumentReaderView(
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
-      <div className={styles.feedback}>
+      <div className={`${styles.feedback} ${styles.readerState}`}>
         <FeedbackState content={{ tone: "Neutral", title: "opening document…" }} announcement={announcement} />
       </div>
     );
   } else if (publication.status === "failed") {
     body = (
-      <div className={styles.feedback}>
+      <div className={`${styles.feedback} ${styles.readerState}`}>
         <FeedbackState
           content={{ tone: "Danger", title: "couldn’t open this document" }}
           announcement={announcement}
@@ -249,6 +250,7 @@ export default function DocumentReaderView(
         doc={publication.doc}
         view={props}
         scrollIndicator={scrollIndicator}
+        feedback={feedback}
       />
     );
   } else {
@@ -259,6 +261,7 @@ export default function DocumentReaderView(
         structure={publication.structure}
         view={props}
         scrollIndicator={scrollIndicator}
+        feedback={feedback}
       />
     );
   }
@@ -271,18 +274,20 @@ export default function DocumentReaderView(
       data-theme={props.profile.theme}
       data-hyphenation={props.profile.hyphenation}
     >
-      {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
-      {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
-        <div className={`${styles.status} ${styles.feedback}`}>
-          <FeedbackNotice
-            content={{ tone: "Warning", title: "couldn’t reload this document", message: "the previous copy is still open. retry to check for updates." }}
-            announcement={announcement}
-            actions={[{ label: "retry document", onClick: runtime.retryLoad, busy: publication.refreshing }]}
-            disclosure="Anchored"
-            returnFocus={returnFocus}
-          />
-        </div>
-      ) : null}
+      <div ref={feedback} className={styles.statusStack}>
+        {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
+        {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
+          <div className={`${styles.status} ${styles.feedback}`}>
+            <FeedbackNotice
+              content={{ tone: "Warning", title: "couldn’t reload this document", message: "the previous copy is still open. retry to check for updates." }}
+              announcement={announcement}
+              actions={[{ label: "retry document", onClick: runtime.retryLoad, busy: publication.refreshing }]}
+              disclosure="Anchored"
+              returnFocus={returnFocus}
+            />
+          </div>
+        ) : null}
+      </div>
       {body}
       <div
         ref={scrollIndicator}

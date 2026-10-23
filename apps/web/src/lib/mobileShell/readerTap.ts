@@ -17,6 +17,12 @@ export function listenForReaderTap(port: HTMLElement, onTap: () => void): () => 
   // that small reader-lifetime cost preserves other pointers' delayed clicks.
   const completed = new Set<number>();
   const pending = new Set<number>();
+  // Reader-owned focusable reading surfaces mark their own input boundary.
+  // Their tabindex serves keyboard reading; controls inside still own gestures.
+  const interactive = (target: EventTarget | null) => {
+    const boundary = target instanceof Element ? target.closest("[data-reader-input-boundary]") : null;
+    return isInteractiveTarget(target, boundary && port.contains(boundary) ? boundary : port);
+  };
 
   const down = (event: PointerEvent) => {
     const interrupted = candidate !== null;
@@ -27,7 +33,7 @@ export function listenForReaderTap(port: HTMLElement, onTap: () => void): () => 
       event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
       !(event.target instanceof Node) || !port.contains(event.target) ||
       document.getSelection()?.isCollapsed === false ||
-      isInteractiveTarget(event.target, port) || hasActiveInteractionOwner()
+      interactive(event.target) || hasActiveInteractionOwner()
     ) return;
     candidate = { id: event.pointerId, x: event.clientX, y: event.clientY };
   };
@@ -71,7 +77,7 @@ export function listenForReaderTap(port: HTMLElement, onTap: () => void): () => 
       if (
         event.defaultPrevented || !(event.target instanceof Node) ||
         !port.contains(event.target) || document.getSelection()?.isCollapsed === false ||
-        isInteractiveTarget(event.target, port) || hasActiveInteractionOwner()
+        interactive(event.target) || hasActiveInteractionOwner()
       ) return;
       onTap();
     }, 0);
