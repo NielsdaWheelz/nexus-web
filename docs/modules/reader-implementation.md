@@ -72,6 +72,8 @@ the runtime is a plain object; react reads it through `subscribe`/`getState`
 `position`, `find`, pdf `setZoom`) and report viewports and input.
 only a surface owning the ready publication may consume restoration or report
 its viewport. metadata labels do not own the text or pdf viewer lifecycle.
+visit capture projects that owned measurement; it does not recapture transient
+layout during host resize or unmount.
 
 ## server contracts
 
@@ -190,6 +192,9 @@ to the reader only if the removed feedback owned it.
 an ordinary publication reread retains the readable document and projects its
 `refreshFailure` beside it. retry retains that failure until a successful read;
 it does not remount the reader or change the cursor's existing fences.
+same-identity metadata refresh also preserves navigation feedback when position
+loading has failed. only explicit position recovery restarts that restoration;
+a new publication still rebinds source and cursor.
 
 **save.** a reading viewport reports `locatorAt(primary, terminal)`; the sync
 saves after 500 ms idle or 5 s after the first unsaved move, one request in
@@ -256,14 +261,17 @@ nothing; ordinary measurement cannot replace explicit intent.
 
 viewport and pixel placement are published together from one surface capture.
 hosted visit retention consumes that measured placement and navigation state;
-explicit departure/history capture still reads fresh geometry. text positioning
-realizes the target before checking arrival. an already-satisfied target returns
+explicit navigation departure still reads fresh geometry. text positioning
+realizes the target before checking arrival, retaining layout/style/paint
+containment across temporary visibility changes. an already-satisfied target returns
 synchronously; writes within the existing 2px tolerance are skipped, so a resize
 below the passage cannot begin chasing native inertia. unchanged reflow preserves
 earlier genuine input while newer input or authority always wins; actual
 corrections retain the progress fence.
-input arriving before a queued layout frame retires its cached placement;
-the required layout work still runs without restoring over that newer input.
+explicit reading/navigation and source retirement also retire the surface's
+queued placement through `SurfaceHandle.retireReflow`; required layout work still
+runs without restoring over newer intent. an unmeasurable retained pane keeps
+queued geometry until its existing resize observer reports usable bounds.
 
 canonical cursors reuse collected spans when whole-string nfc is identical
 and token boundaries still match codepoints. normalization-changing input

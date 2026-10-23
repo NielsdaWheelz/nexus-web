@@ -36,13 +36,15 @@ export function useScrollport(
   layout: { readonly placement: RefObject<Placement | null>; change(): void },
   indicatorRef: RefObject<HTMLDivElement | null>,
   feedbackRef: RefObject<HTMLDivElement | null>,
-): (reason: "Occlusion" | "Layout") => void {
+): { geometryChanged(reason: "Occlusion" | "Layout"): void; retireReflow(): void } {
   const measureRef = useRef(measure);
   measureRef.current = measure;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const invalidate = useRef<(reason: "Occlusion" | "Layout") => void>(() => {});
+  const retire = useRef<() => void>(() => {});
   const geometryChanged = useCallback((reason: "Occlusion" | "Layout") => invalidate.current(reason), []);
+  const retireReflow = useCallback(() => retire.current(), []);
   useLayoutEffect(() => {
     const port = ref.current;
     if (!port) return;
@@ -132,6 +134,9 @@ export function useScrollport(
     const schedule = () => {
       frame ||= requestAnimationFrame(() => {
         frame = 0;
+        // A retained hidden pane has no geometry. Keep its passage until the
+        // existing resize observer sees it again, or a newer intent retires it.
+        if (readScrollport(port) === null) return;
         const geometry = pending;
         pending = null;
         const observation = scrolled;
@@ -168,8 +173,8 @@ export function useScrollport(
       if (pending) pending.placement = null;
       layoutRef.current.placement.current = null;
     };
+    retire.current = retirePlacement;
     const input = (direction: "forward" | "backward") => {
-      retirePlacement();
       runtime.input(direction);
     };
     const wheel = (event: WheelEvent) => {
@@ -207,7 +212,6 @@ export function useScrollport(
       }
       if (event.key === "Home" || event.key === "End") {
         event.preventDefault();
-        retirePlacement();
         void runtime.inspect({
           target: { kind: "edge", edge: event.key === "Home" ? "start" : "end" },
         });
@@ -230,7 +234,6 @@ export function useScrollport(
       )
         return;
       if (event.target !== port) return;
-      retirePlacement();
       const op = runtime.seek();
       if (op) seek = { op, top: port.scrollTop };
     };
@@ -263,6 +266,7 @@ export function useScrollport(
       window.removeEventListener("pointercancel", cancel);
       release?.();
       invalidate.current = () => {};
+      retire.current = () => {};
       cancelAnimationFrame(frame);
       feedbackObserver.disconnect();
       readerFrame.removeAttribute("data-reader-overlay");
@@ -274,7 +278,7 @@ export function useScrollport(
       finish(true);
     };
   }, [ref, runtime, indicatorRef, feedbackRef, geometryChanged]);
-  return geometryChanged;
+  return { geometryChanged, retireReflow };
 }
 
 /** Resolves on the next frame, or at once when aborted. */

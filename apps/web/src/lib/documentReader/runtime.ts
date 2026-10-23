@@ -124,6 +124,8 @@ export interface SurfaceHandle extends Positioner {
   measurePassage(passage: Passage): PassageGeometry | null;
   measureBounds(): DOMRect | null;
   focusSource(): void;
+  /** A newer intent retires geometry queued before the navigator admitted work. */
+  retireReflow(): void;
   setZoom?(zoom: number | null): void;
 }
 export interface ReaderRuntime extends Reader {
@@ -194,6 +196,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
 
   const navigate = (signal: AbortSignal | null = null) => {
     inputCount += 1;
+    surface?.retireReflow();
     options.host?.onIntent?.({ kind: "Navigate", signal });
   };
 
@@ -244,6 +247,11 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         return placement && locator(placement);
       },
     });
+
+  function retireNavigationAttempt() {
+    surface?.retireReflow();
+    navigator.retireNavigationAttempt();
+  }
 
   async function applySnapshot(snapshot: CursorSnapshot) {
     input = { at: -Infinity, direction: "none" };
@@ -298,7 +306,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (controller.signal.aborted) return;
       if (previous) {
         if (previous.identity !== doc.identity) {
-          navigator.retireNavigationAttempt();
+          retireNavigationAttempt();
           navigator.invalidateOrigin(doc.identity);
         }
         input = { at: -Infinity, direction: "none" };
@@ -387,7 +395,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         surface.focusSource();
     },
     captureView() {
-      const placement = surface?.capture() ?? null;
+      const placement = state.placement;
       const identity = ready()?.doc.identity;
       const { mode, origin, originUnavailable } = navigator.state();
       return state.restored && placement && identity && placement.identity === identity
@@ -458,6 +466,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       );
     },
     input(direction) {
+      surface?.retireReflow();
       options.host?.onIntent?.({ kind: "Read" });
       input = { at: performance.now(), direction };
       inputCount += 1;
@@ -500,7 +509,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (adopted && !ready()?.refreshing) sync?.report(adopted, { adoptUnresolved: true });
     },
     dismissNavigationFailure: (expected) => navigator.dismissNavigationFailure(expected),
-    retireNavigationAttempt: () => navigator.retireNavigationAttempt(),
+    retireNavigationAttempt,
     resolveHandoff: async (choice) => sync?.resolve(choice),
     retrySave: () => sync?.retry(),
     retryLoad: () => { if (loading === null) void load({ recoverPosition: true }); },
@@ -526,6 +535,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (sync?.state().kind === "Ready") void applySnapshot(snapshot);
     },
     setZoom(zoom) {
+      surface?.retireReflow();
       options.host?.onIntent?.({ kind: "Read" });
       inputCount += 1;
       navigator.cancel();

@@ -272,7 +272,7 @@ export default function PdfSurface({
       state,
     );
   }, [capture, doc.identity, pdfState, runtime]);
-  const geometryChanged = useScrollport(container, runtime, measure, {
+  const { geometryChanged, retireReflow } = useScrollport(container, runtime, measure, {
     placement: cachedPlacement,
     change() {
       const viewer = live.current?.viewer;
@@ -606,6 +606,7 @@ export default function PdfSurface({
 
     const handle: Omit<SurfaceHandle, "find"> = {
       identity: doc.identity,
+      retireReflow,
       measurePassage(passage) {
         const bounds = measureScrollport(container.current);
         if (!bounds || passage.identity !== doc.identity || passage.anchor.kind !== "pdf") return null;
@@ -752,7 +753,7 @@ export default function PdfSurface({
       live.current = null;
       void task?.destroy();
     };
-  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged]);
+  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged, retireReflow]);
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {

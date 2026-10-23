@@ -413,10 +413,23 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
 function Announcement({ text, level, deferred = false, occurrence }: {
   text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object;
 }) {
-  // A new occurrence commits empty before the effect publishes even identical text.
+  // A new local occurrence keeps the live region empty for a rendered frame.
   const [spoken, setSpoken] = useState<{ text: string; occurrence?: object }>({ text: "" });
   useEffect(() => {
-    if (!deferred) setSpoken({ text: level === "None" ? "" : text, occurrence });
+    if (deferred) return;
+    const next = { text: level === "None" ? "" : text, occurrence };
+    if (occurrence === undefined || level === "None") {
+      setSpoken(next);
+      return;
+    }
+    let publication: number | null = null;
+    const empty = requestAnimationFrame(() => {
+      publication = requestAnimationFrame(() => setSpoken(next));
+    });
+    return () => {
+      cancelAnimationFrame(empty);
+      if (publication !== null) cancelAnimationFrame(publication);
+    };
   }, [text, level, deferred, occurrence]);
   if (level === "None") return null;
   return <span
