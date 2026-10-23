@@ -31,6 +31,19 @@ http (all authenticated repeatable reads, `Data{data}`; the web under `/api`):
 
 imports sends no write of its own. its commands go to their owners with their retry rules: `POST /media/{id}/retry` and `/repair` (`recoverMedia`, the offer's exact expectation; a stale one is 409 and reads "This import changed"), `POST /media/uploads` with the session's own id and the original file, and `DELETE /media/uploads/{id}` (a session that published meanwhile is done), metadata research and review through `lib/media`.
 
+row shortcuts and overflow share the same open, offered recovery and upload
+commands. at row content widths up to 520px only more remains beside identity;
+status and operation feedback may wrap below. the menu explicitly retains open
+when ready, independently of title selection, which opens the import inspector.
+overflow open is a command with plain/shift intent: close precedes asynchronous
+validation. wide/title anchors retain native browser gestures.
+unpublished upload menus are immediate; media menus retain canonical preparation.
+retry upload synchronously opens the existing file input, then file selection
+uses the session's existing attempt owner. cancellation creates no command.
+metadata retains its canonical menu projectors and direct recovery owner, including
+the existing eager source-remedy read and visible feedback. responsive hosts use
+owner-defined control markers; they do not interpret metadata workflow internals.
+
 the workspace planner owns reuse and creation; pane count never refuses completion.
 
 in process: `append_upload_event` and `append_processing_event` (caller's transaction, nothing returned), `delete_upload_history_in_current_transaction` and `delete_processing_history_in_current_transaction` (history dies with its session or media), `events_of_import_sql`, the queue hooks `on_source_job_outcome` and `on_index_job_outcome` (inside the job transition), `assume_safe_failure_code`, `queue_failure_code`, `parse_import_ref`, `format_import_ref`. web: `publishImportsInvalidation` / `subscribeImportsInvalidations` (the in-tab `Imports.Invalidated` event), `encodeImportsUrl` (Add's "view import"), `ImportsBadge`, the companion group `imports-inspector` with surface `import-detail`, `FAILURE_COPY` (the media banner) and the acquisition copy the add panel, share, Connections and note attachments word their outcomes with.

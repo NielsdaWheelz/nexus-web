@@ -440,9 +440,10 @@ desktop and mobile headers order back/forward, identity, optional primary action
 the shared media action group when published,
 optional passive subscription status, exactly one more trigger when contextual
 commands exist, and the optional typed companion action. identity yields width;
-controls retain whole targets. at primary-pane widths up to 479px, media headers
-put history/identity above media actions/more/inspector. other headers retain one
-line. search/return, refresh, route share,
+controls retain whole targets. at primary-pane widths up to 479px, media shortcuts
+move into the existing more menu; history, identity, more and inspector stay in
+one line. the fixed mobile header uses the same viewport threshold outside the
+desktop containment boundary. search/return, refresh, route share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -454,11 +455,9 @@ paint belong to the [visual system](visual-system.md#overflow-buttons).
 for overflow, headers own only placement and the decorative status marker. the
 menu retains its existing commands, composition, refs and focus policy.
 
-every primary header starts with `--pane-chrome-header-height`. narrow desktop
-media headers add a 32px action row, or 44px with a coarse pointer, through their
-own ancestor `primaryPane` query. mobile media routes reserve the extra 48px row
-before data loads through local `--effective-pane-header-height`; both fixed header
-and pane padding consume it, with the safe area additive. hiding reader chrome
+every primary header uses `--pane-chrome-header-height`, including while media
+facts load. fixed mobile header and pane padding add the safe area to that same
+base height; routes reserve no additional action row. hiding reader chrome
 preserves that reservation. refinement-room measurement observes the inner
 `primaryPane` content rectangle. the content row explicitly occupies grid row two,
 the declared fill row; mobile's out-of-flow chrome leaves row one empty instead of

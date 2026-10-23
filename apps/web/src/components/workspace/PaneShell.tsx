@@ -375,7 +375,6 @@ function PaneView({
       projection={isMobile ? "Mobile" : "Desktop"}
       header={header}
       identityId={identityId}
-      mediaRoute={route.id === "media"}
       mediaActions={body?.mediaActions}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
@@ -486,7 +485,6 @@ function PaneView({
       data-pane-focus-landmark="true"
       data-active={isActive}
       data-mobile={isMobile}
-      data-media-route={route.id === "media" || undefined}
       data-maximized={isMaximized || undefined}
       tabIndex={-1}
       onClickCapture={activateAnchor}

@@ -293,12 +293,5 @@
 }
 
 .paneShell[data-mobile="true"] {
-  --effective-pane-header-height: var(--pane-chrome-header-height);
-  padding-top: calc(var(--viewport-safe-top) + var(--effective-pane-header-height));
-}
-
-@media (max-width: 479px) {
-  .paneShell[data-mobile="true"][data-media-route="true"] {
-    --effective-pane-header-height: calc(var(--pane-chrome-header-height) + 48px);
-  }
+  padding-top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
 }

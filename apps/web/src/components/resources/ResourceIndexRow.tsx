@@ -34,6 +34,8 @@ export default function ResourceIndexRow({ item: supplied, occurrenceKey, match 
   const metadata = resourceMetadata({ item, matchMethod, occurrenceLabel });
   const summary = body.kind === "media" ? body.media_summary : null;
   const title = useRef<HTMLAnchorElement>(null);
+  const more = useRef<HTMLButtonElement>(null);
+  const returnFocus = () => more.current?.isConnected && more.current.getClientRects().length ? more.current : title.current;
   const parts = [...metadata.bibliography, ...metadata.parts];
   return <ResourceRow
     media={summary !== null}
@@ -47,7 +49,8 @@ export default function ResourceIndexRow({ item: supplied, occurrenceKey, match 
     evidence={match && body.kind !== "passage" && body.kind !== "prose" ? <ResourceMatchEvidence match={match} /> : undefined}
     status={item.missing || item.activation.kind === "none" ? <FeedbackNotice content={{ tone: "Warning", title: "this resource can’t be opened here" }} announcement="None" /> : undefined}
     primaryControl={primaryControl}
-    actions={<>{summary ? <MediaActions subject={{ kind: "Stored", summary }} knownDescriptor={null} density="Row" returnFocus={() => title.current} /> : null}<ContextualActionMenu title={item.label} subjectKey={occurrenceKey} sections={[]}
+    actions={<>{summary ? <MediaActions subject={{ kind: "Stored", summary }} knownDescriptor={null} density="Row" returnFocus={returnFocus} /> : null}<ContextualActionMenu title={item.label} subjectKey={occurrenceKey} sections={[]}
+      triggerRef={node => { more.current = node; }}
       resourceRef={assumeCanonicalResourceRef(item.action_ref)} displayedActivation={item.activation}
       showSourceSubject={item.action_ref !== item.ref} /></>}
     expanded={nestedContent}

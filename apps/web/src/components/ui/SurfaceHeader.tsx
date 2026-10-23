@@ -52,7 +52,6 @@ export default function SurfaceHeader({
   identityId,
   primaryAction,
   mediaActions,
-  mediaRoute = false,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -64,7 +63,6 @@ export default function SurfaceHeader({
   header: PaneHeaderModel;
   identityId: string;
   mediaActions?: PaneChrome["mediaActions"];
-  mediaRoute?: boolean;
   primaryAction?: {
     readonly action: PanePrimaryAction;
     readonly onActivate: (event:
@@ -83,6 +81,10 @@ export default function SurfaceHeader({
   const paneId = usePaneRuntime()?.paneId;
   const mobile = projection === "Mobile";
   const ref = useRef<HTMLElement>(null);
+  const more = useRef<{ readonly element: HTMLButtonElement; readonly resourceRef: CanonicalResourceRef | null } | null>(null);
+  const returnFocus = () => more.current?.resourceRef === (resourceRef ?? null) &&
+    more.current.element.isConnected && more.current.element.getClientRects().length
+    ? more.current.element : findPaneLandmarkFocusTarget(paneId);
   const mobileChrome = useMobileChrome();
   const visibility = useMobileChromeState();
   useMobileChromeSurface(ref, mobile);
@@ -112,7 +114,6 @@ export default function SurfaceHeader({
         ref={ref}
         className={mobile ? styles.mobile : styles.header}
         onMouseDown={onMouseDown}
-        data-media-header={mediaRoute || undefined}
       >
         <div className={styles.navigation}>
           <Button
@@ -145,7 +146,7 @@ export default function SurfaceHeader({
               subject={mediaActions.subject}
               knownDescriptor={mediaActions.knownDescriptor}
               density="Header"
-              returnFocus={() => findPaneLandmarkFocusTarget(paneId)}
+              returnFocus={returnFocus}
             />
           ) : null}
           {primaryAction && primary && primaryState ? (
@@ -198,6 +199,7 @@ export default function SurfaceHeader({
                 { id: "View", actions: menuActions },
               ]}
               resourceRef={resourceRef}
+              triggerRef={node => { more.current = node ? { element: node, resourceRef: resourceRef ?? null } : null; }}
               triggerAttributes={
                 mobile ? { "data-pane-chrome-focus": "true" } : undefined
               }

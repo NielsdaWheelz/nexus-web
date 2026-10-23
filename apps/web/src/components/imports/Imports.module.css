@@ -212,23 +212,27 @@
 }
 
 @container (max-width: 520px) {
-  .workspace [data-row-primary-control] {
-    grid-column: 1 / -1;
-    grid-row: 4;
-    max-width: none;
-    justify-content: flex-start;
+  .workspace [data-import-ref] [data-row-primary-control],
+  .workspace [data-import-ref] .rowActions {
+    display: contents;
+  }
+
+  .workspace [data-import-ref] :is([data-import-shortcut], [data-metadata-action]) {
+    display: none;
+  }
+
+  .workspace [data-import-ref] [data-metadata-feedback] {
+    position: relative;
+    z-index: 2;
+    grid-column: content / end;
   }
 
   .workspace [data-row-focusable] {
     overflow-wrap: anywhere;
   }
-
-  .rowActions {
-    justify-content: flex-start;
-  }
 }
 
-@media (pointer: coarse) {
+@media (any-pointer: coarse) {
   .workspace button,
   .inspector :is(button, summary) {
     min-width: var(--size-xl);
