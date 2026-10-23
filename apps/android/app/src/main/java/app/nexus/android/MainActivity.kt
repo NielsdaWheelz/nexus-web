@@ -229,7 +229,13 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
             ): WebResourceResponse? {
                 val ownedRequest = request ?: return null
-                return shelfRouter?.intercept(ownedRequest, shelfActive) ?: appRouter.intercept(ownedRequest)
+                // Parser preloads can precede onPageStarted. Their browser-owned
+                // referrer distinguishes the incoming app from the outgoing shelf;
+                // shelf requests and missing referrers keep the shelf's refusal.
+                val fromApp = ownedRequest.requestHeaders.entries
+                    .firstOrNull { it.key.equals("Referer", ignoreCase = true) }
+                    ?.value?.let { appRouter.isOwned(Uri.parse(it)) } == true
+                return shelfRouter?.intercept(ownedRequest, shelfActive && !fromApp) ?: appRouter.intercept(ownedRequest)
             }
         }
 
