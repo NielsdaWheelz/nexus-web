@@ -1,4 +1,4 @@
-/* All mobile bottom-sheet geometry lives here and only here. */
+/* Sheet layout and height policies; MobileSheet projects the visual viewport. */
 
 .backdrop,
 .softBackdrop {
@@ -12,6 +12,11 @@
 
 .softBackdrop {
   background: var(--overlay-scrim-soft);
+}
+
+.backdrop.available,
+.softBackdrop.available {
+  padding-top: max(var(--space-6), var(--viewport-safe-top));
 }
 
 .panel {
@@ -39,6 +44,13 @@
   padding-bottom: max(var(--space-2), var(--viewport-safe-bottom));
   overflow: hidden;
   animation: sheetIn var(--duration-base) var(--ease-bloom);
+}
+
+.panel.available {
+  bottom: 0;
+  min-block-size: 0;
+  max-height: none;
+  max-block-size: 100%;
 }
 
 .header {

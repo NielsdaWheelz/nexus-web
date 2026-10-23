@@ -9,6 +9,10 @@
   z-index: var(--z-popover);
 }
 
+.surface.available {
+  max-block-size: var(--anchored-max-height, 100dvh);
+}
+
 .surface:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: calc(-1 * var(--focus-ring-width));
