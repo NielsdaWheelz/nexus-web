@@ -40,7 +40,8 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
-  the overlays (authors, metadata, library settings, podcast settings, subscribe).
+  the overlays (authors, metadata, library settings, podcast settings and fixed
+  podcast subscription/import/unsubscribe/cleanup reviews).
   action defects are thrown by `ResourceActionDefect` beneath the existing workspace
   boundary; the account command owner and its feedback remain above containment.
   an unconfirmed podcast request and its loss guard therefore survive an action defect.
@@ -163,8 +164,10 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   account owner.
 - confirmations substitute the resource's `label` literally into body `{title}`
   tokens (a media's bare title, without authors); label text is never a replacement
-  pattern. confirmation precedes execution and busy tracking. `PodcastSubscription`
-  confirms only unsubscribe; subscribe opens its overlay without that warning.
+  pattern. confirmation precedes execution and busy tracking. podcast actions use
+  distinct `SubscribePodcast`, `ImportPodcastEpisodes`, `UnsubscribePodcast` and
+  `RemovePodcastEpisodes` ids and fixed overlays; their guarded review is the
+  confirmation. the subscription projector also serves loaded pane-header facts.
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
 - visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
   actions read and the item read agree on `missing`; a podcast is a public catalog row (any

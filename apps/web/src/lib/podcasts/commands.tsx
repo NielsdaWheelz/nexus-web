@@ -68,7 +68,7 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
       if (isRefusal(error)) {
         entry.phase = entry.uncertain ? "Unknown" : "Refused";
         entry.failure = entry.uncertain
-          ? { tone: "Warning", title: entry.command.kind === "Admission" ? "add not confirmed" : "change not confirmed", message: "the exact retry was refused. the original request may have succeeded. review the current state before choosing again.", requestId: error.requestId }
+          ? { tone: "Warning", title: "change not confirmed", message: "the exact retry was refused. the original request may have succeeded. review the current state before choosing again.", requestId: error.requestId }
           : { tone: "Warning", title: error.status === 409 ? "library changed. review it and choose again." : "podcast change refused.", message: "review the current state before choosing again.", requestId: error.requestId };
       } else {
         entry.uncertain = true;
@@ -82,9 +82,9 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
     if (!current(entry, scope)) return false;
     retire(entry);
     publishChange("Podcasts", "Entries", "Lectern", "Metadata");
-    feedback.receipt({ tone: "Success", title: command.kind === "Admission" ? `add accepted · ${entry.title}`
+    feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: command.kind === "Admission" ? `${command.mode === "follow" ? "subscribed" : "import started"} · ${entry.title}`
       : command.kind === "Stop" ? `podcast change saved · ${entry.title}`
-        : command.action === "cancel" ? `import stopped; arrived episodes kept · ${entry.title}` : `import retry accepted · ${entry.title}` });
+        : command.action === "cancel" ? `import stopped; arrived episodes kept · ${entry.title}` : `import retry accepted · ${entry.title}` } });
     entry.onAccepted?.();
     return true;
   }
@@ -118,7 +118,7 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
             : operation.attempt_version === command.body.expected_attempt_version + 1;
           if (confirmed) {
             retire(entry); publishChange("Podcasts", "Entries");
-            feedback.receipt({ tone: "Success", title: command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed" });
+            feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: `${command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed"} · ${entry.title}` } });
           } else { entry.phase = "Unknown"; emit(); }
         } catch (error) {
           if (!current(entry, scope)) return;
@@ -148,12 +148,17 @@ export function usePodcastCommands(accountId: string, fail: (input: { error: unk
   return { commands: { ...owner.commands }, feedback: entries.map(entry => <CommandCondition key={entry.key} entry={entry} commands={owner.commands} />) };
 }
 function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnType<typeof createOwner>["commands"] }) {
-  const add = entry.command.kind === "Admission";
+  const admission = entry.command.kind === "Admission" ? entry.command : null;
+  const content: FeedbackContent = entry.failure ?? {
+    tone: entry.phase === "Sending" ? "Neutral" : "Warning",
+    title: entry.phase === "Sending" ? admission === null ? "changing podcast…" : admission.mode === "follow" ? "subscribing…" : "starting import…" : "change not confirmed",
+    message: entry.phase === "Unknown" ? "the request may have succeeded. checking retains the original ids and guards." : undefined,
+    requestId: entry.requestId ?? undefined,
+  };
   useWorkspaceCondition(entry.key, { priority: "Write", announcement: "Polite",
-    content: entry.failure ?? { tone: entry.phase === "Sending" ? "Neutral" : "Warning", title: `${entry.phase === "Sending" ? add ? "adding podcast…" : "changing podcast…" : add ? "add not confirmed" : "change not confirmed"} · ${entry.title}`,
-      message: entry.phase === "Unknown" ? "the request may have succeeded. checking retains the original ids and guards." : undefined, requestId: entry.requestId ?? undefined },
+    content: { ...content, title: `${content.title} · ${entry.title}` },
     actions: entry.phase === "Sending" ? undefined : entry.phase === "Refused" ? [{ label: "review current state", onClick: () => commands.review(entry.key) }]
-      : [{ label: add ? "check add" : "check change", commandKey: entry.key, onClick: () => { void commands.check(entry.key); } }, { label: "stop tracking", onClick: () => commands.review(entry.key) }],
+      : [{ label: "check change", commandKey: entry.key, onClick: () => { void commands.check(entry.key); } }, { label: "stop tracking", onClick: () => commands.review(entry.key) }],
   });
   return null;
 }

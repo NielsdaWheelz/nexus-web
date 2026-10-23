@@ -58,6 +58,8 @@ export interface FeedbackOffer {
 }
 export interface FeedbackContextValue {
   receipt(content: Pick<FeedbackContent, "tone" | "title">): void;
+  /** Settle the owner's unique command condition; ordinary receipt suppression still applies. */
+  settleCondition(input: { key: string; content: Pick<FeedbackContent, "tone" | "title"> }): void;
   offer(input: OfferNotice & { key: string }): FeedbackOffer;
 }
 const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);

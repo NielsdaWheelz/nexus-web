@@ -139,8 +139,9 @@ export const ACTION_CATALOG = {
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },
-  AddPodcast: { label: "add podcast…", icon: Rss, group: "Organize" },
-  StopPodcast: { label: "stop everywhere…", icon: Rss, group: "Organize" },
+  SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
+  UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
+  ImportPodcastEpisodes: { label: "import available episodes…", icon: Download, group: "Organize" },
   Chat: {
     label: "Chat about this…",
     icon: MessageCircle,
@@ -246,6 +247,7 @@ export const ACTION_CATALOG = {
     icon: RefreshCw,
     group: "Manage",
   },
+  RemovePodcastEpisodes: { label: "remove podcast and episodes…", icon: Trash2, group: "Danger" },
   RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
     label: "remove from nexus",

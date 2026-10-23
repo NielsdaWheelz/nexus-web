@@ -10505,7 +10505,7 @@ export interface components {
          */
         ResourceActionsOut: {
             /** Actions */
-            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["StopPodcastAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
+            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
             activation: components["schemas"]["ResourceActivationOut"];
             /** Label */
             label: string;
@@ -11042,7 +11042,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddPodcast" | "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "Share";
+            kind: "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "UnsubscribePodcast";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -11356,21 +11356,6 @@ export interface components {
             x: number | null;
             /** Y */
             y: number | null;
-        };
-        /** StopPodcastAction */
-        StopPodcastAction: {
-            /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
-            /**
-             * Episodes
-             * @enum {string}
-             */
-            episodes: "keep" | "remove";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "StopPodcast";
         };
         /** SubscriptionBilling */
         SubscriptionBilling: {

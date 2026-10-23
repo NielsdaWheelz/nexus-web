@@ -65,6 +65,17 @@ export function createWorkspaceSignals() {
     const entries = snapshot.entries.filter((entry) => entry.key !== key || entry.token !== token);
     if (entries.length !== snapshot.entries.length) commit({ ...snapshot, entries: ordered(entries) });
   };
+  const publishReceipt = (content: Pick<FeedbackContent, "tone" | "title">, entries: readonly WorkspaceSignal[]) => {
+    if (!active) return;
+    if (entries.length > 0 || hasActiveModal()) {
+      if (entries !== snapshot.entries) commit({ ...snapshot, entries: ordered(entries) });
+      return;
+    }
+    stopClock();
+    clock = { remaining: 5000, started: null };
+    commit({ entries: [], receipt: { id: nextId++, content } });
+    runClock();
+  };
   return {
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -72,11 +83,11 @@ export function createWorkspaceSignals() {
     },
     snapshot: () => snapshot,
     receipt(content: Pick<FeedbackContent, "tone" | "title">) {
-      if (!active || snapshot.entries.length > 0 || hasActiveModal()) return;
-      stopClock();
-      clock = { remaining: 5000, started: null };
-      commit({ entries: [], receipt: { id: nextId++, content } });
-      runClock();
+      publishReceipt(content, snapshot.entries);
+    },
+    settleCondition({ key, content }: { key: string; content: Pick<FeedbackContent, "tone" | "title"> }) {
+      const entries = snapshot.entries.filter(entry => entry.key !== key || entry.kind !== "Condition");
+      publishReceipt(content, entries.length === snapshot.entries.length ? snapshot.entries : entries);
     },
     offer(input: OfferNotice & { key: string }): FeedbackOffer {
       const { key, ...notice } = input;

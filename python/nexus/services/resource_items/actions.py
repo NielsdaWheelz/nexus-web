@@ -33,7 +33,6 @@ from nexus.schemas.resource_items import (
     ReviewMetadataResultAction,
     SimpleAction,
     SimpleActionKind,
-    StopPodcastAction,
     TranscriptAction,
     TranscriptState,
 )
@@ -216,13 +215,13 @@ def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceAct
     if state is None:
         return []
     actions: list[ResourceActionOut] = []
-    actions.append(_simple("AddPodcast"))
+    actions.append(_simple("UnsubscribePodcast" if state.subscribed else "SubscribePodcast"))
+    actions.append(_simple("ImportPodcastEpisodes"))
     actions.append(_simple("PodcastSettings"))
     if state.subscribed:
         actions.append(_simple("RefreshPodcast"))
-        actions.append(StopPodcastAction(blocked=None, episodes="keep"))
-    elif state.has_episodes:
-        actions.append(StopPodcastAction(blocked=None, episodes="remove"))
+    if state.has_episodes:
+        actions.append(_simple("RemovePodcastEpisodes"))
     return actions
 
 

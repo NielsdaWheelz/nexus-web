@@ -246,6 +246,7 @@
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"] {
   padding-bottom: var(--mobile-content-bottom-clearance);
+  scroll-padding-top: var(--mobile-pane-content-offset);
   scroll-padding-bottom: var(--mobile-content-bottom-clearance);
 }
 
