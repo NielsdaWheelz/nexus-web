@@ -102,7 +102,7 @@ function StopPreview({ podcastId, title, libraryId, episodes, onClose, onSaved }
   const submit = async () => {
     if (sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null) return;
     setSending(true);
-    const accepted = await ctx.podcasts.submit({ subject, title, command: { kind: "Stop", podcastId, body: {
+    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${all ? "everywhere" : preview.destinations.map(libraryDisplayName).join(", ")}`, command: { kind: "Stop", podcastId, body: {
       scope: preview.scope, episodes: preview.episodes, expected_removal_revision: preview.removal_revision,
       destinations: preview.destinations.map(destination => ({ library_id: destination.library_id,
         expected_subscription_id: destination.subscription_id, expected_import_id: destination.import_id,

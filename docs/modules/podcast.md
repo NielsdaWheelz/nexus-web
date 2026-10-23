@@ -28,6 +28,8 @@ nothing. progress/retry/cancel remain available without subscription rows.
 acknowledgement settles the command's feedback condition before offering a
 `subscribed` or `import started` receipt. modal and unrelated-work suppression
 still apply; authoritative rereads never settle an uncertain command.
+command feedback names the observed destination or everywhere, including refusal
+and exact-request recovery.
 
 ## owners and contracts
 

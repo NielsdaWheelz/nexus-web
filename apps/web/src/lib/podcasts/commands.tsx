@@ -116,7 +116,7 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
             : operation.attempt_version === entry.command.body.expected_attempt_version + 1;
           if (confirmed) {
             retire(entry); publishChange("Podcasts", "Entries");
-            feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: entry.command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed" } });
+            feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: `${entry.command.action === "cancel" ? "import is stopped; arrived episodes kept" : "import retry confirmed"} · ${entry.title}` } });
           } else { entry.phase = "Unknown"; emit(); }
         } catch (error) {
           if (!current(entry, scope)) return;
@@ -147,9 +147,14 @@ export function usePodcastCommands(accountId: string, fail: (input: { error: unk
 }
 function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnType<typeof createOwner>["commands"] }) {
   const admission = entry.command.kind === "Admission" ? entry.command : null;
+  const content: FeedbackContent = entry.failure ?? {
+    tone: entry.phase === "Sending" ? "Neutral" : "Warning",
+    title: entry.phase === "Sending" ? admission === null ? "changing podcast…" : admission.mode === "follow" ? "subscribing…" : "starting import…" : "change not confirmed",
+    message: entry.phase === "Unknown" ? "the request may have succeeded. checking retains the original ids and guards." : undefined,
+    requestId: entry.requestId ?? undefined,
+  };
   useWorkspaceCondition(entry.key, { priority: "Write", announcement: "Polite",
-    content: entry.failure ?? { tone: entry.phase === "Sending" ? "Neutral" : "Warning", title: `${entry.phase === "Sending" ? admission === null ? "changing podcast…" : admission.mode === "follow" ? "subscribing…" : "starting import…" : "change not confirmed"} · ${entry.title}`,
-      message: entry.phase === "Unknown" ? "the request may have succeeded. checking retains the original ids and guards." : undefined, requestId: entry.requestId ?? undefined },
+    content: { ...content, title: `${content.title} · ${entry.title}` },
     actions: entry.phase === "Sending" ? undefined : entry.phase === "Refused" ? [{ label: "review current state", onClick: () => commands.review(entry.key) }]
       : [{ label: "check change", commandKey: entry.key, onClick: () => { void commands.check(entry.key); } }, { label: "stop tracking", onClick: () => commands.review(entry.key) }],
   });

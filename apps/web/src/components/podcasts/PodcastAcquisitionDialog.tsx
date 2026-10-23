@@ -83,7 +83,7 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, onClose
     if (source.error !== null || source.refreshing || blocked || pending !== null || sending || refused) return;
     const guards = { target, expected_order_revision: facts.order_revision, expected_removal_revision: facts.removal_revision };
     setSending(true);
-    const accepted = await ctx.podcasts.submit({ subject, title, onAccepted: mode === "follow" ? onAccepted : undefined, command: mode === "follow"
+    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, onAccepted: mode === "follow" ? onAccepted : undefined, command: mode === "follow"
       ? { kind: "Admission", libraryId: id, mode, body: { ...guards, id: crypto.randomUUID(), import_id: crypto.randomUUID() } }
       : { kind: "Admission", libraryId: id, mode, body: { ...guards, id: crypto.randomUUID() } } });
     setSending(false);

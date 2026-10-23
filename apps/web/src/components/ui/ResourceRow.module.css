@@ -201,7 +201,7 @@ button.primary:disabled {
   grid-row: 1;
 }
 
-@container (max-width: 520px) {
+@container (max-width: 520px) or (max-width: 18rem) {
   .row:not(.wrapped) .secondary {
     display: flex;
     min-width: 0;
@@ -242,6 +242,27 @@ button.primary:disabled {
   .actions {
     grid-column: actions-narrow;
     grid-row: 1;
+  }
+}
+
+@container (max-width: 18rem) {
+  .row:not(.wrapped) .titleCell {
+    grid-column: content / end;
+  }
+
+  .row:not(.wrapped) .primaryControl {
+    grid-column: content / actions;
+    grid-row: 3;
+    max-width: 100%;
+  }
+
+  .row:not(.wrapped) .actions {
+    grid-column: actions / end;
+    grid-row: 3;
+  }
+
+  .row:not(.wrapped) .expanded {
+    grid-row: 4;
   }
 }
 

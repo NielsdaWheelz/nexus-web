@@ -236,6 +236,11 @@ reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 preserves the complete publisher image and can letterbox it. existing compact
 title clamping, metadata ellipsis and status placement remain in force.
 
+ordinary rows below `18rem` give the title full width, retain metadata below it,
+and move controls to their own trailing line. the font-relative threshold preserves
+legible names under text enlargement; normal-width rows keep inline controls.
+row defaults yield to each control's owned minimum target size.
+
 mobile chrome/switchboard retain 48px and desktop nexus retains its wider
 shortcut-bearing control through the same geometry contract.
 
