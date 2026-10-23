@@ -1,26 +1,21 @@
 # release nightly backups
 
-the next release installs and enables `nexus-nightly-backup.timer`, hands
-`/var/backups/nexus/r2` to the backup one-off (uid 10001), and prunes after its
-own backup. that first prune deletes nothing: `releases/99320b630…` is the only
-other archive, and the rule keeps the newest week-old one. `99320b630` and its
-receipt go at the first prune after the next release's own archive turns seven
-days old.
+status: timer and first live job qualified at deployed `400e7039e`, schema 0312;
+expired-archive deletion remains unverified.
 
-after that release, on the host:
+the installed units pass `systemd-analyze verify`; the enabled timer schedules
+11:00 utc. the manually started canonical service completed on 2026-10-23 with
+verified `nightly/2026-10-23/database.dump` evidence and an empty deletion list.
+all seven services were observed healthy during the job and the subsequent
+`release.py --check` passed against that archive. the backup one-off remained
+within its 512-mib cap with no observed oom. build identities and proof are in
+the release pr.
 
-- `sudo systemd-analyze verify /etc/systemd/system/nexus-nightly-backup.service
-  /etc/systemd/system/nexus-nightly-backup.timer` is clean and
-  `systemctl list-timers nexus-nightly-backup.timer` shows the next 11:00 utc run.
-- the first nightly's journal ends in verified evidence for
-  `nightly/<date>/database.dump`. it is the first backup one-off (512 mib cap)
-  and `pg_dump` to run beside all seven live services; no qualification covers
-  that working set, so check it for memory pressure.
-- `release.py --check` reports that archive and passes.
-
-the util-linux `flock`, the systemd units and r2 deletion have run only against
-stand-ins. the backup credentials first delete at the first prune that expires
-an archive, about a week after the release.
+the release and nightly jobs have used the real host lock, units and private r2
+bucket. no archive has yet expired under the retention rule, so deletion with
+the production credentials is still unqualified. do not manufacture expiry or
+delete a retained recovery point for this check. after the current archives
+age out, inspect the ordinary job's deletion evidence and retained keys.
 
 resolved when a nightly or release prune has deleted an expired archive with its
 manifest and receipt, and the bucket holds what the rule keeps.
