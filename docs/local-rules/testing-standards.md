@@ -61,10 +61,10 @@ public assets, then serves a private standalone runtime without hot reload.
 build constants match the server's public key, exact loopback origin and source
 sha; each server receives a fresh closed runtime environment. readiness establishes
 service health and identity; the driver owns assertions and deadlines. exit zero alone proves only
-what that driver actually checked. teardown removes generated worker images with
-`down --rmi local`. cleanup checks the host-wide `nexus-lab-*` image namespace;
-any remaining image makes an otherwise successful run exit 125 and retains its
-private recovery inputs. current checkout runs create no per-run images.
+what that driver actually checked. teardown uses exact compose/auth ownership,
+including `down --rmi local`; current labs create no per-run images. unrelated
+images and other runs' resources neither fail cleanup nor become its targets.
+incomplete owned cleanup turns success into exit 125 and retains recovery inputs.
 
 auth teardown and recorded recovery share `python/scripts/lab_auth_cleanup.py`:
 list exact `com.supabase.cli.project=<auth project>` containers in all states,
@@ -104,8 +104,10 @@ application/device reset across repeats: a fresh browser context does not reset
 the database.
 
 docker desktop is the sole lab engine (dev-server
-`docs/macbook-capacity-plan.md`, d1). d2 fixes the target at 8 gib and 8 cpus;
-a lab that fails for memory is the evidence to raise it. host cpu burners and host load-average thresholds are retired;
+`docs/macbook-capacity-plan.md`, d1). d2 fixes the target at 8 gib and 8 cpus,
+with the existing disk limit. six full fake-provider labs must fit this allocation;
+a measured capacity blocker remains unresolved and returns to the owner. do not
+increase docker resources or reduce the accepted concurrency. host cpu burners and host load-average thresholds are retired;
 historical burner results do not qualify client throttling. ask for owner
 approval before calibration or the 20-run repeats.
 
@@ -145,15 +147,24 @@ ci starts no services or browsers.
 
 ### host admission
 
-labs share two host slots at
-`${XDG_STATE_HOME:-~/.local/state}/nexus-lab/slots/slot-{1,2}`. the state home must
-be absolute and outside checkouts and docker bind mounts. after checkout
-ownership and before acquiring images or services, an ordinary invocation takes
-any free `fcntl.flock` slot and holds it through teardown. `--client-throttle N`
-takes both slots in fixed order, slot 1 then slot 2, and uses slot 1's ports. an
-unsuccessful exclusive attempt releases any partial acquisition before waiting.
-a waiter holds neither slot, reports the recorded holder run ids, and fails
-with 125 after 1800 seconds.
+labs share persistent `fcntl.flock` slots at
+`${XDG_STATE_HOME:-~/.local/state}/nexus-lab/slots/slot-<number>`. the state home
+must be absolute, common to participating worktrees and outside checkouts and
+docker bind mounts. capacity defaults to six. one optional sibling
+`capacity.json` supplies exactly `{"max_parallel_labs": 6}`: an integer excluding
+booleans, at least one, with `31000 + 10*n - 1 <= 65535`. unreadable or invalid
+policy fails with 125 before image acquisition or services. no command-line or
+environment count override exists. read policy once per invocation; change it
+only after all lab invocations, waiters and owned runtimes are drained. counts
+above six are configurable but unqualified.
+
+after checkout ownership and before acquiring images or services, an ordinary
+invocation takes any one free slot and holds it through teardown.
+`--client-throttle N`, including `N = 1`, takes all configured lab slots in
+ascending order and uses slot 1's ports. an unsuccessful exclusive attempt
+releases every partial acquisition before waiting. a waiter holds no slots,
+reports observed holder run ids without claiming a complete occupancy count,
+and fails with 125 after 1800 seconds.
 the checkout lock remains separate and is released last. interruption releases
 the slot after teardown; a crash releases it through the kernel. child processes
 do not inherit the descriptors. slot files persist; their run ids are diagnostic,
@@ -163,7 +174,7 @@ admission, not fifo ordering or a reservation for an existing waiter.
 ### client throttling
 
 `./scripts/lab --client-throttle N -- COMMAND [ARG ...]` accepts an integer
-`N >= 1`, holds the whole host budget, and publishes `client_cpu_throttle: N`.
+`N >= 1`, holds all configured lab slots, and publishes `client_cpu_throttle: N`.
 ordinary runs publish null. `N = 1` is an exclusive unthrottled baseline.
 
 campaign cases import `test` from `apps/web/scripts/lab/test.ts`. its default
@@ -192,8 +203,8 @@ verification requires 20 normal passes each, with no expected-failure annotation
 
 ### reusable web package and fresh data
 
-each host slot fixes ten loopback ports: slot 1 uses 31000–31009 and slot 2 uses
-31010–31019, in database, storage, api, web, auth, auth database, shadow database,
+each lab slot fixes ten loopback ports starting at `31000 + 10*(slot-1)`;
+six slots use 31000–31059, in database, storage, api, web, auth, auth database, shadow database,
 mail, smtp and pop3 order. all ten are checked together before acquiring images
 or services. an occupied port fails the invocation; there is no alternate-port
 selection. the slot remains held through teardown.
@@ -253,8 +264,8 @@ and docker bind mounts.
 under that lock the owner removes only other `nexus-worker-checkout:*` tags whose
 full image ids no container references. this includes stopped containers and
 references through other tag aliases; unowned tags stay intact. lab runs create
-no per-run images. checkout images remain shared after teardown; generated
-`nexus-lab-*` image cleanup and verification remain teardown responsibilities.
+no per-run images. checkout images remain shared after teardown; only their
+cache owner acquires and retains them. teardown performs no host image inventory.
 
 ## retained foundation
 
