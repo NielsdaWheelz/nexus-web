@@ -4,7 +4,7 @@
 // this visit, independently of whether its collection is available.
 
 import { useCallback, useId, useState } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import LibraryInvitations from "@/components/libraries/LibraryInvitations";
@@ -25,7 +25,7 @@ import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { INDEX_SORTS, offered } from "@/lib/libraries/views";
 import { truncatePaneSearchQuery, usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import { matchesPaneFilterQuery, paneFilterRowsStatusVisible } from "@/lib/panes/paneFilterRows";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneFilterRows";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
   definePaneVisitDataKey,
@@ -63,10 +63,11 @@ export default function LibrariesPaneBody() {
   const retainedFilter = usePaneVisitData(FILTER, (): string => filter);
   const [filter, setFilter] = useState(retainedFilter ?? "");
   const text = filter.trim();
+  const visible = list.items.filter((library) => matchesPaneFilterQuery(text, [libraryDisplayName(library)]));
   const rowStatus = listRowStatus(
     list,
     list.items.length,
-    list.items.filter((library) => matchesPaneFilterQuery(text, [libraryDisplayName(library)])).length,
+    visible.length,
     UNIT,
   );
   const change = useCallback(
@@ -79,6 +80,14 @@ export default function LibrariesPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const emptyTitle = text
+    ? list.complete ? "no libraries match this filter." : "no matching library found so far."
+    : list.complete ? "no libraries yet." : "no libraries loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT, waiting: list.status === "loading" && !invalid,
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const canReset = Boolean(sort);
   // The count describes the complete view, never a subset.
   const headerMeta: PaneHeaderMeta = invalid
@@ -117,11 +126,8 @@ export default function LibrariesPaneBody() {
           status={{
             placement: "Inline",
             id: queryStatusId,
-            visible: paneFilterRowsStatusVisible({
-              status: rowStatus,
-              filtering: text !== "",
-            }),
-            content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filter} />,
+            visible: false,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={rowStatus} query={filter} />,
           }}
           onReset={canReset ? reset : undefined}
         />
@@ -134,6 +140,7 @@ export default function LibrariesPaneBody() {
   if (invalid) {
     return (
       <>
+        {readFeedback.announcement}
         {creation.content}
         <FeedbackNotice
           content={{ tone: "Danger", title: "Invalid libraries view" }}
@@ -161,43 +168,30 @@ export default function LibrariesPaneBody() {
     ) : null;
   return (
     <>
+      {readFeedback.announcement}
       {creation.content}
       <LibraryInvitations returnFocus={() => inputRef.current} />
       <CollectionView
         returnScope="Libraries.Items"
-        rows={list.items
-          .map(presentLibrary)
-          .filter((row) => matchesPaneFilterQuery(text, [row.title.text]))}
+        rows={visible.map(presentLibrary)}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Libraries"
         rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
         collectionBusy={list.running !== null || !list.current}
         error={loadFailure}
+        notice={<>
+          {list.status === "ready" ? loadFailure : null}
+          {text && list.current && !list.complete && list.failure === null && visible.length > 0
+            ? <p>filter applies to loaded items.</p> : null}
+        </>}
         empty={
           <FeedbackNotice
-            content={
-              text
-                ? {
-                    tone: "Neutral",
-                    title: list.complete
-                      ? "No libraries match this filter."
-                      : "No matching library found so far.",
-                  }
-                : {
-                    tone: "Neutral",
-                    title: list.complete ? "no libraries yet." : "no libraries loaded so far.",
-                    message: list.complete ? "use new library to create one." : undefined,
-                  }
-            }
-            announcement="Polite"
+            content={{ tone: "Neutral", title: emptyTitle,
+              message: !text && list.complete ? "use new library to create one." : undefined }}
+            announcement="None"
           />
         }
-        footer={
-          <>
-            <CollectionExhaustionNotice list={list} unit={{ singular: "library", plural: "libraries" }} returnFocus={() => inputRef.current} />
-            {list.status === "ready" ? loadFailure : null}
-          </>
-        }
+        footer={readFeedback.notice}
       />
     </>
   );

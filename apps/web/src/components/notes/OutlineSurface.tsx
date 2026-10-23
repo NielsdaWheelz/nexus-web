@@ -8,6 +8,7 @@ import ResourceOutlineList, {OutlineSessionContext} from "@/components/resources
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
 import OutlineInsertionLine from "./OutlineInsertionLine";
+import {outlineFilterFields} from "./outlineFilterFields";
 import {UnavailableTexts} from "./NoteNotices";
 import {hasUnsavedText, useText} from "@/lib/notes/texts";
 import {indentParent, readClipboard, structuralRow, type Row} from "@/lib/notes/outline";
@@ -148,8 +149,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
         {directRows.map(row => <SurfaceRow key={row.key} row={row} rows={rows} session={session}
           rootEndpoint={rootEndpoint} destination={destination(row)} editable={writable}
           historicalBranch={historicalBranch} publication={publication} selected={selected.includes(row.key)}
-          hidden={filtering && !matchesPaneFilterQuery(filter, [row.link.target.item.label,
-            row.link.target.content.kind === "note" ? row.link.target.content.body_text : ""])}
+          hidden={filtering && !matchesPaneFilterQuery(filter, outlineFilterFields(row))}
           onSelect={extend => select(row.key, extend)} onKey={event => onKey(event,row)}
           composer={surfaceComposer !== null && composerRow === row.key
             ? surfaceComposer.destination : null}

@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useSyncExternalStore } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import WritingRecovery from "@/components/notes/WritingRecovery";
 import {
@@ -51,7 +51,6 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -149,6 +148,16 @@ export default function NotesPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const filtering = query.trim() !== "";
+  const visible = rows.filter((row) => matchesPaneFilterQuery(query, [row.title.text]));
+  const emptyTitle = filtering
+    ? list.complete ? "no pages match this filter." : "no matching page found so far."
+    : list.complete ? "no pages yet." : "no pages loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT, waiting: list.status === "loading" && !invalid,
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
@@ -196,11 +205,8 @@ export default function NotesPaneBody() {
           status={{
             placement: "Inline",
             id: queryStatusId,
-            visible: paneFilterRowsStatusVisible({
-              status: filterRows.rowStatus,
-              filtering: query.trim() !== "",
-            }),
-            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+            visible: false,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
           }}
           onReset={canReset ? reset : undefined}
         />
@@ -240,11 +246,14 @@ export default function NotesPaneBody() {
 
   if (invalid) {
     return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid pages view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: reset }]}
-      />
+      <div>
+        {readFeedback.announcement}
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Invalid pages view" }}
+          announcement="Assertive"
+          actions={[{ label: "Reset view", onClick: reset }]}
+        />
+      </div>
     );
   }
   const failed = list.failure?.op === "More" ? null : list.failure?.error;
@@ -259,15 +268,13 @@ export default function NotesPaneBody() {
       actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
-  const filtering = query.trim() !== "";
   return (
     <div>
+      {readFeedback.announcement}
       <WritingRecovery />
       <CollectionView
         returnScope="Notes.Pages"
-        rows={rows.filter((row) =>
-          matchesPaneFilterQuery(query, [row.title.text]),
-        )}
+        rows={visible}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Notes"
         rowChangePresentation={{
@@ -275,22 +282,22 @@ export default function NotesPaneBody() {
           key: query.trim(),
         }}
         collectionBusy={list.running !== null || !list.current}
-        notice={list.status === "ready" ? loadFailure : undefined}
+        notice={<>
+          {list.status === "ready" ? loadFailure : null}
+          {filtering && list.current && !list.complete && list.failure === null && visible.length > 0
+            ? <p>filter applies to loaded items.</p> : null}
+        </>}
         error={list.status === "ready" ? undefined : loadFailure}
         empty={
           <FeedbackNotice
             content={{
               tone: "Neutral",
-              title: !filtering
-                ? list.complete ? "no pages yet." : "no pages loaded so far."
-                : list.complete
-                  ? "No pages match this filter."
-                  : "No matching page found so far.",
+              title: emptyTitle,
             }}
             announcement="None"
           />
         }
-        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "page", plural: "pages" }} returnFocus={() => inputRef.current} />}
+        footer={readFeedback.notice}
         toolbar={
           <>
             <form

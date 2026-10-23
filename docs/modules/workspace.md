@@ -356,16 +356,20 @@ supplied status requires `{ placement, id, content, visible }`. omit status for
 idle find. visibility changes only the
 wrapper's sighted presentation (`sr-only` when false); the described element
 and domain-owned live subtree stay mounted. local-filter publishers use fixed
-inline placement and `paneFilterRowsStatusVisible({ status, filtering })`:
-complete counts appear only for trimmed text or narrowing facets; partial,
-retained and failed status remains explicit. sorting, reset eligibility and
-independent header counts do not imply filtering. local reset appears only for
-changed facets/order and clears text plus those settings; text-only views use
-clear/escape. ordering feedback is independent of count visibility. totals cover
-the current server scope before local text filtering, never an inferred global
-collection. outline counts cover top-level items and preserve their branches;
-failed outlines publish failed status, and definitive no-match requires ready.
-browse, search and imports retain their own status policy. empty details have zero
+inline placement with `visible: false`: full scope descriptions remain attached
+to the input, while routine loading/count text has no chrome footprint. local
+query changes speak after 400ms only with a usable source in the active pane;
+imports server queries disable that narrator. the first-read feedback owner
+speaks its own initial outcome once. no narrator speaks automatic page arrivals.
+sorting, reset eligibility and independent header counts do not imply filtering.
+local reset appears only for changed facets/order and clears text plus those
+settings; text-only views use clear/escape. header totals retain their existing
+exact/domain meaning. unfinished local filters use provisional empty copy and,
+when matches exist, explain “filter applies to loaded items.” at the results
+boundary. outline filters name loaded top-level items and retain explicit show
+more; failures and complete empty results stay distinct. browse/search keep
+explicit query waiting, failures and ordering descriptions, without rolling
+counts or automatic-pagination completion summaries. empty details have zero
 visual height and no tab stop; a suppressed status keeps its live subtree
 mounted and accessible. empty details without that subtree are hidden. capture
 focus ownership before hiding; repair to the enabled input before paint, or
@@ -386,8 +390,16 @@ interaction overlays win and unsupported/resolving panes retain native find.
 menu commands focus the permanent desktop field. source identity is
 `paneSourceKey(runtime)` (`visitId:routeId:pathname`), excluding query/hash.
 
-`usePaneFilterRows` owns source-local text and honest complete/partial/retained/
-failed status for local rows. `useFind({ownerKey, source, presentation?})` owns
+`usePaneFilterRows` owns source-local text and honest complete/partial/failed
+status for local rows. shared lists expose only current-key rows and metadata;
+same-key refresh retains usable data. `useCollectionReadFeedback` owns only
+continuation failure recovery and a single outcome after an announced active
+initial wait, bound to `list.requestedKey` so restoring another ready query
+retires the abandoned wait. its notice is literal null when quiet; mount its persistent live
+node outside optional footer/state wrappers so hidden speech creates no gap.
+initial/refresh errors remain with their feature owner. inactive/abandoned waits
+retire without replay; restored-ready mounts and passive traversal stay silent.
+`useFind({ownerKey, source, presentation?})` owns
 find lifetime, frozen first-query scope, computation, movement and painting.
 return aborts movement while pending computation settles at the restored origin;
 new query/options/retry allow automatic navigation again. the shell

@@ -3,7 +3,7 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Button from "@/components/ui/Button";
 import ResourceOutlineList, {OutlineSessionScope, ResourceBranch} from "@/components/resources/ResourceOutlineList";
 import OutlineInsertionLine from "@/components/notes/OutlineInsertionLine";
@@ -65,6 +65,10 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   });
   const loading = list.running === "Load" || list.running === "Refetch";
   const loadError = list.failure?.op === "More" ? null : list.failure?.error ?? null;
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: { singular: "connection", plural: "connections" }, waiting: false, outcome: null,
+    returnFocus: () => section.current,
+  });
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
@@ -89,7 +93,8 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {list.complete && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
       <ConnectionsItems selfRef={selfRef} items={list.items} reload={reload}/>
-      <CollectionExhaustionNotice list={list} unit={{ singular: "connection", plural: "connections" }} returnFocus={() => section.current} />
+      {readFeedback.notice}
+      {readFeedback.announcement}
     </section>
   );
 }

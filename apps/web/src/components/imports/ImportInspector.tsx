@@ -6,7 +6,7 @@ import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
 import ButtonLink from "@/components/ui/ButtonLink";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
@@ -434,6 +434,9 @@ function Attempts({
   }, [observation, revalidate]);
   const error = history.failure?.error ?? null;
   const entries = history.items;
+  const feedback = useCollectionReadFeedback({
+    list: history, unit: HISTORY_UNIT, waiting: false, outcome: null, returnFocus,
+  });
   const outside =
     matched !== null && !entries.some((entry) => entry.id === matched.id);
   const event = (entry: HistoryEntry) => (
@@ -490,7 +493,8 @@ function Attempts({
   }
   return <>
     {content}
-    {gone(error) ? null : <CollectionExhaustionNotice list={history} unit={HISTORY_UNIT} returnFocus={returnFocus} />}
+    {gone(error) ? null : feedback.notice}
+    {feedback.announcement}
   </>;
 }
 

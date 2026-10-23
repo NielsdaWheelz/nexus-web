@@ -195,7 +195,7 @@ export default function ImportsToolbar({
       status={{
         placement: "Details",
         id: statusId,
-        visible: true,
+        visible: false,
         content: resultStatus,
       }}
       actions={

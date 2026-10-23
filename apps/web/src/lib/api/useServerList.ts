@@ -1,8 +1,8 @@
 "use client";
 
 // One server-ordered list (docs/architecture.md §8.12).
-// - `key` names the view. A new key loads its first page; until it lands the
-//   previous key's rows stay shown (`current: false`), then they swap at once.
+// - `key` names the view. Only its matching, account-owned snapshot is
+//   exposed; a new key loads with no previous-key rows or metadata.
 // - Rows are deduped by `id`; the first occurrence wins.
 // - `refetch()` rereads the loaded prefix (at least one page; a complete list
 //   to its end, so it stays complete) and commits it at once. It runs after the
@@ -14,8 +14,8 @@
 //   A remount has fresh admission under its existing route/open/query owner.
 // - `revalidate()` coalesces periodic observations behind traversal and strict
 //   refresh. It never supersedes a read or clears a settled failure.
-// - Rows are always kept. A continuation that fails in transport or with a 5xx
-//   is a failure, never a defect.
+// - Same-key refresh and continuation failures keep the committed rows.
+//   A continuation that fails in transport or with a 5xx is a failure, never a defect.
 // - A pane return paints this visit's snapshot and rereads it only if `stale`
 //   moved since it was read; a server seed for the first key paints the first
 //   visit without a read. usePaneFreeServerList is the same list for a dialog
@@ -58,15 +58,16 @@ export interface ListSnapshot<T, M = null> {
 }
 type Op = "Load" | "More" | "Refetch";
 export interface ServerList<T, M = null> {
+  /** Requested query identity, including null while no query is admitted. */
+  readonly requestedKey: string | null;
   readonly status: "loading" | "failed" | "ready";
   readonly items: readonly T[];
-  readonly shownKey: string | null;
-  /** The shown rows belong to the requested key. */
+  /** The requested key has a committed snapshot. */
   readonly current: boolean;
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
   readonly orderRevision: string | null;
-  /** Metadata from the latest committed response, including an empty page. */
+  /** Current-key metadata from the latest committed response, including an empty page. */
   readonly metadata: M | null;
   readonly running: Op | null;
   readonly failure: { readonly op: Op; readonly error: ApiError } | null;
@@ -335,13 +336,13 @@ function useList<T, M>(
   }, [active, ofKey, running, failure, observation, run]);
 
   return {
-    status: shown !== null ? "ready" : failure !== null ? "failed" : "loading",
-    items: shown?.items ?? NONE,
-    shownKey: shown?.key ?? null,
+    requestedKey: key,
+    status: ofKey !== null ? "ready" : failure !== null ? "failed" : "loading",
+    items: ofKey?.items ?? NONE,
     current: ofKey !== null,
     complete: ofKey !== null && ofKey.cursor === null,
     orderRevision: ofKey?.orderRevision ?? null,
-    metadata: shown?.metadata ?? null,
+    metadata: ofKey?.metadata ?? null,
     running,
     failure,
     active,
@@ -376,10 +377,6 @@ export function listRowStatus(
   visibleCount: number,
   unit: { readonly singular: string; readonly plural: string },
 ): PaneFilterRowsStatus {
-  if (list.status === "ready" && !list.current) {
-    const cause = list.failure === null ? "Updating" : "Failed";
-    return { kind: "Retained", visibleCount, loadedCount, unit, cause };
-  }
   if (list.status === "failed" || list.failure?.op === "More") {
     return { kind: "Failed", visibleCount, loadedCount, unit };
   }

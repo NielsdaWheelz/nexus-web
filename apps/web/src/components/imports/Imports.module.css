@@ -16,11 +16,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.resultStatus {
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
-}
-
 .dateGroup {
   display: inline-flex;
   align-items: center;

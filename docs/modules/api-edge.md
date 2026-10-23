@@ -58,7 +58,11 @@ server components: callFastAPI ────────────────�
   once it held still: a search reads by its settled text and shows results
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
-  way (architecture §8.12), automatically exhausting active collections. strict
+  way (architecture §8.12), exposing only the requested key’s rows and metadata
+  from the first render and automatically exhausting active collections quietly.
+  same-key refresh retains its usable snapshot; a different key exposes loading
+  until its own snapshot exists. `requestedKey` names that requested scope, even
+  before a response; initial-wait feedback uses it to retire abandoned queries. private exact-key visit snapshots remain valid. strict
   refresh supersedes; periodic `revalidate()` waits behind admitted reads and
   coalesces observations. `usePagePrefix` belongs only to explicit authored
   outline branches.

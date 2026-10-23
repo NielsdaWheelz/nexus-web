@@ -5,7 +5,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Input from "@/components/ui/Input";
 import { useSettled } from "@/lib/api/serverState";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
@@ -83,7 +83,13 @@ export default function AuthorSearchField({ initialQuery, selectInitial, takenHa
   const status = overLength ? "a name can be up to 200 characters."
     : !searchable || failed ? "" : !current ? "searching…"
       : items.length === 0 ? search.complete ? "no matching authors" : "no matching authors found so far"
-        : search.complete ? `${count(items.length, "author")} found` : `${count(items.length, "author")} loaded; results incomplete`;
+        : "";
+  const readFeedback = useCollectionReadFeedback({
+    list: search, unit: { singular: "author", plural: "authors" },
+    waiting: listVisible && live && !failed && !current,
+    outcome: items.length > 0 ? "results updated." : status,
+    returnFocus: () => inputRef.current,
+  });
   useOverlay(true, { kind: "transient", eligible: () => rootRef.current?.contains(document.activeElement) ?? false,
     onDismiss: () => { if (composing.current) return; if (listVisible) setOpen(false); else onDismiss(); },
   });
@@ -120,6 +126,7 @@ export default function AuthorSearchField({ initialQuery, selectInitial, takenHa
         </div>;
       })}
     </div> : null}
-    {listVisible ? <CollectionExhaustionNotice list={search} unit={{ singular: "author", plural: "authors" }} returnFocus={() => inputRef.current} /> : null}
+    {listVisible ? readFeedback.notice : null}
+    {readFeedback.announcement}
   </div>;
 }

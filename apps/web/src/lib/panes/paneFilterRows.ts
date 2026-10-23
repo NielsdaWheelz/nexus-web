@@ -31,25 +31,7 @@ export type PaneFilterRowsStatus =
       readonly visibleCount: number;
       readonly totalCount: number;
       readonly unit: PaneFilterRowsUnit;
-    }
-  | {
-      readonly kind: "Retained";
-      readonly visibleCount: number;
-      readonly loadedCount: number;
-      readonly unit: PaneFilterRowsUnit;
-      readonly cause: "Updating" | "Failed";
     };
-
-/** Complete lists show counts only while text or facets filter the view. */
-export function paneFilterRowsStatusVisible({
-  status,
-  filtering,
-}: {
-  readonly status: PaneFilterRowsStatus;
-  readonly filtering: boolean;
-}): boolean {
-  return status.kind !== "Complete" || filtering;
-}
 
 /** The spoken status: full sentences. */
 export function paneFilterRowsStatusMessage(
@@ -67,42 +49,10 @@ export function paneFilterRowsStatusMessage(
         : `${textActive ? `${matches} among ` : ""}${status.loadedCount} loaded ${status.loadedCount === 1 ? status.unit.singular : status.unit.plural}; results are incomplete.`;
     case "Complete":
       return `${status.visibleCount}${textActive ? " matching" : ""} ${unit} of ${status.totalCount} total.`;
-    case "Retained":
-      return `${status.cause === "Updating" ? "Updating" : "Update failed"}; showing results from the previous view.`;
     case "Failed":
       return status.loadedCount === 0
         ? "Results unavailable."
         : `Loading failed; ${textActive ? `${matches} among ` : ""}${status.loadedCount} loaded ${status.loadedCount === 1 ? status.unit.singular : status.unit.plural}.`;
-  }
-}
-
-/** The visible status of a persistent collection row: terse. */
-export function paneCollectionRowsStatusMessage(
-  status: PaneFilterRowsStatus,
-  query: string,
-): string {
-  const unit =
-    status.visibleCount === 1 ? status.unit.singular : status.unit.plural;
-  const textActive = query.trim() !== "";
-  switch (status.kind) {
-    case "Partial":
-      return status.loadedCount === 0
-        ? `no ${status.unit.plural} loaded yet`
-        : textActive
-          ? `${status.visibleCount} ${status.visibleCount === 1 ? "match" : "matches"} in ${status.loadedCount} loaded; results incomplete`
-          : `${status.loadedCount} ${status.loadedCount === 1 ? status.unit.singular : status.unit.plural} loaded; results incomplete`;
-    case "Complete":
-      return !textActive || status.visibleCount === status.totalCount
-        ? `${status.visibleCount}${textActive ? " matching" : ""} ${unit}`
-        : `${status.visibleCount} of ${status.totalCount} ${status.totalCount === 1 ? status.unit.singular : status.unit.plural}`;
-    case "Retained":
-      return `${status.cause === "Updating" ? "updating" : "update failed"}; showing previous results`;
-    case "Failed":
-      return status.loadedCount === 0
-        ? "results unavailable"
-        : textActive
-          ? `loading failed; ${status.visibleCount} ${status.visibleCount === 1 ? "match" : "matches"} in ${status.loadedCount} loaded`
-          : `loading failed; ${status.loadedCount} ${status.loadedCount === 1 ? status.unit.singular : status.unit.plural} loaded`;
   }
 }
 

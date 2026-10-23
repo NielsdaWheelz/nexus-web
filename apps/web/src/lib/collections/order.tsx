@@ -221,15 +221,13 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
   switch (order?.state.kind) {
     case undefined:
     case "Ready":
+    case "Incomplete":
+    case "Refreshing":
       return null;
     case "Sorted":
       return "choose custom order to reorder.";
     case "Filtered":
       return "clear filters to reorder.";
-    case "Incomplete":
-      return "reordering is available when all items finish loading.";
-    case "Refreshing":
-      return "updating order…";
     case "Saving":
       return "saving order…";
     case "Checking":
@@ -240,8 +238,9 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
 }
 
 /** The order's notice, announced in the pane the move came from while that pane
- * shows it, else in the active pane. */
-export function OrderNotice({
+ * shows it, else in the active pane. Returns null when no notice is needed so
+ * the surface does not reserve an empty state slot. */
+export function renderOrderNotice({
   order,
   active,
   paneId,

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
@@ -61,6 +61,9 @@ export default function AssistantWrites({
     },
   });
   const writes = list.items;
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT, waiting: false, outcome: null, returnFocus: () => landmark.current,
+  });
   const found = list.current && writes.some((write) => write.id === toolCallId);
   useEffect(() => {
     if (!found || !list.active || didFocus.current) return;
@@ -189,7 +192,8 @@ export default function AssistantWrites({
           returnFocus={() => landmark.current}
         />
       ) : null}
-      <CollectionExhaustionNotice list={list} unit={UNIT} returnFocus={() => landmark.current} />
+      {readFeedback.notice}
+      {readFeedback.announcement}
     </PaneSection>
   );
 }

@@ -5,7 +5,7 @@ import ResourceList from "@/components/ui/ResourceList";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
@@ -24,12 +24,11 @@ import styles from "./page.module.css";
 
 type Response = ApiJson<"/search", "get">;
 type Row = Response["results"][number];
-type Metadata = Pick<Response, "view" | "semantic_status">;
+type Metadata = Pick<Response, "semantic_status">;
 const VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Results");
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"];
 const FAILED = {
   Load: "search couldn’t be completed",
-  More: "more results couldn’t be loaded",
   Refetch: "results couldn’t be refreshed",
 };
 
@@ -90,29 +89,31 @@ function SearchResults({ query }: { query: SearchQuery }) {
     visit: VISIT,
     id: (row) => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
-      if (idle) return { items: [], next_cursor: null, metadata: { view: query.view, semantic_status: "not_requested" } };
+      if (idle) return { items: [], next_cursor: null, metadata: { semantic_status: "not_requested" } };
       const page = await fetchSearchResultPage(query, { limit, cursor, signal });
       return {
         items: page.results,
         next_cursor: page.page.next_cursor,
-        metadata: { view: page.view, semantic_status: page.semantic_status },
+        metadata: { semantic_status: page.semantic_status },
       };
     },
   });
-  // Retained rows from a different query are useful only within the same view.
-  const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
+  const results = list.items;
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
-  const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
-  const status = blank
-    ? "ready to search."
-    : !list.current
-      ? count > 0
-        ? `${count} ${unit} retained from the previous search; ${failure ? "update failed" : "updating"}.`
-        : failure ? "results unavailable." : "searching…"
-      : `${count}${list.complete ? "" : " loaded"} ${unit}${list.complete ? "." : "; results incomplete."}`;
+  const emptyTitle = list.complete
+    ? unsupported ? "no passages for these content types" : "no results found"
+    : "no results found so far.";
+  const feedback = useCollectionReadFeedback({
+    list,
+    unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" },
+    waiting: searching,
+    outcome: idle ? null : count > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
+  const status = blank ? "ready to search." : searching ? "searching…" : "";
   usePaneReturnReady(list.current || failure !== null);
   usePaneChrome({
     query: {
@@ -134,7 +135,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
     { key: "inside", label: "inside sources", rows: results.filter((row) => "section" in row && row.section === "inside") },
   ];
   return <div data-pane-return-scope="Search.Results">
-    {failure ? <FeedbackNotice
+    {failure && failure.op !== "More" ? <FeedbackNotice
       content={failureContent(failure.error, failure.op)} announcement="Polite"
       actions={UNFIXABLE.includes(failure.error.code) ? undefined : failure.error.code === "E_EMBEDDING_PROVIDER_UNAVAILABLE"
         ? [{ label: "retry", onClick: list.retry, busy: list.running !== null }, { label: "restart search", onClick: () => { void list.refetch().catch(() => {}); }, busy: list.running !== null }]
@@ -152,14 +153,15 @@ function SearchResults({ query }: { query: SearchQuery }) {
     </ResourceList>}
     {count === 0 && !failure ? blank && !unsupported ? <FeedbackNotice
       content={{ tone: "Info", title: query.view === "passages" ? "search inside your sources" : "search your nexus", message: query.view === "passages" ? "type text to find individual passages." : "type a name or text, or open filters to narrow by format or author." }} announcement="None"
-    /> : list.current && list.complete ? <div className={styles.empty}>
-      <FeedbackNotice content={{ tone: "Neutral", title: unsupported ? "no passages for these content types" : "no results found" }} announcement="None" />
-      {unsupported ? <div className={styles.emptyActions}>
+    /> : list.current ? <div className={styles.empty}>
+      <FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />
+      {list.complete && unsupported ? <div className={styles.emptyActions}>
         <Button onClick={() => commit({ ...query, view: "resources" })}>Show resources</Button>
         <Button onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
       </div> : filtered ? <Button onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
     </div> : null : null}
-    <CollectionExhaustionNotice list={list} unit={query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }} returnFocus={() => inputRef.current} />
+    {feedback.notice}
+    {feedback.announcement}
   </div>;
 }
 

@@ -1820,8 +1820,9 @@ history, and the chat read tool's completed messages.
   episode state filter. The tab's own writes always reread from page one.
 
 the browser holds every paginated collection in `lib/api/useServerList.ts`.
-`key` names the view; a new key admits exactly its first page while previous
-rows remain visible as `current: false`. each page publishes immediately, even
+`key` names the view; a new key exposes no previous-key rows or metadata,
+including before effects run, and admits its first page. same-key refresh keeps
+its usable snapshot until atomic replacement or failure. each page publishes immediately, even
 when empty, then the list appends sequentially to cursor exhaustion while its
 surface is active and the document visible. embedded disclosures additionally
 require their open lifetime. an admitted logical read may finish inactive;
@@ -1840,9 +1841,12 @@ then requires explicit recovery. only a null cursor licenses completion counts
 and operations requiring completeness, including custom ordering.
 
 a pane return restores its visit snapshot and rereads only if `stale` moved;
-a server seed supplies the first page once. shared exhaustion feedback owns
-loading, pause, continuation recovery and active traversal announcements;
-filter status speaks subsequent user query changes. complete single-response
+a server seed supplies the first page once. automatic continuation is visually
+and audibly quiet. `useCollectionReadFeedback` supplies a nullable continuation
+recovery notice and a persistent, separate live node: an announced active initial
+wait receives one first-response outcome, never a per-page or exhaustion receipt.
+inactive or abandoned waits retire without replay. local filter status speaks
+subsequent user query changes; complete single-response
 reads remain single responses. authored outline branches alone retain explicit
 `usePagePrefix` expansion with their first-page authority and generations.
 
