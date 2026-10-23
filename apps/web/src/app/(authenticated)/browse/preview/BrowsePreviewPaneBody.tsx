@@ -127,7 +127,6 @@ export default function BrowsePreviewPaneBody() {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const target = params.get("target");
-  const libraryId = params.get("library_id");
   const { ctx } = useActionRuntime();
   const resource = usePaneFreeServerValue<BrowsePreview>({
     key: target === null ? null : `browse-preview:${target}`,
@@ -139,7 +138,7 @@ export default function BrowsePreviewPaneBody() {
   const preview = resource.status === "ready" ? resource.data : null;
   const owned =
     preview !== null && preview.resolution.kind !== "Preview"
-      ? `${preview.resolution.href}${preview.kind === "Podcast" && libraryId !== null ? `?library_id=${encodeURIComponent(libraryId)}` : ""}`
+      ? preview.resolution.href
       : null;
   useEffect(() => {
     // A background read canonicalizes its pane without changing the active pane.
@@ -211,7 +210,7 @@ export default function BrowsePreviewPaneBody() {
     );
   }
 
-  const acquisition = preview.kind === "Podcast" ? <Button emphasis="strong" aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Discovery", target: preview.target }, title: preview.title, libraryId })}>subscribe…</Button> : null;
+  const acquisition = preview.kind === "Podcast" ? <Button emphasis="strong" aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Discovery", target: preview.target }, title: preview.title, libraryId: null })}>subscribe…</Button> : null;
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =

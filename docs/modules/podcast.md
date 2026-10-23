@@ -17,6 +17,23 @@ unsubscribes everywhere from loaded aggregate facts. the default destination is
 excluded only from card rows, never from subscription state. library changes
 invalidate these names immediately within the tab.
 
+library podcast cards and the podcast index share the native `browse podcasts`
+plus link. browse has no destination context: discovery and canonical subscribe
+both use the personal default; named placement requires explicit selection.
+browsing remains available in readable, read-only libraries. all promotes global
+unsubscribe; named cards promote local removal with the same projector as the
+show's libraries card. confirmed rows remain during failed/refreshing reads, with
+their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
+warnings and import progress remain.
+
+at row content widths at or below 479px the shortcut moves into more. named menus
+contain distinct local occurrence removal and canonical global unsubscribe; all
+contains the canonical action once. hiding a focused shortcut returns focus to
+more. removal captures displayed successor ids at selection; acknowledged success
+focuses the next surviving title, then the card's browse/picker control, then its
+section or pane. cancellation restores the opener. list refresh does not own
+acknowledgement or this success target.
+
 import and destructive cleanup are separate menu commands. cleanup chooses one
 named affected library or everywhere, including while subscribed and for
 episode-only destinations. changing scope remounts the review and reads fresh

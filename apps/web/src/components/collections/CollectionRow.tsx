@@ -21,6 +21,9 @@ import type {
 } from "@/lib/collections/types";
 import { collectionActivityText } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import styles from "./CollectionRow.module.css";
 
 function renderContext(context: CollectionContext): ReactNode {
@@ -39,12 +42,18 @@ function renderContext(context: CollectionContext): ReactNode {
   }
 }
 
-/** Canonical semantic renderer for every media-like collection row. */
+/**
+ * Canonical collection rows keep occurrence commands beside authoritative item
+ * actions. Opted-in compact shortcuts hand hidden focus to the same row's more.
+ */
 export default function CollectionRow({
   row,
   as = "li",
   panel,
   primaryControl,
+  occurrenceActions,
+  capturePodcastRemovalFocus,
+  compactPrimaryControl = false,
   rowActionsAvailable = true,
   viewTransitionName,
 }: {
@@ -52,15 +61,20 @@ export default function CollectionRow({
   readonly as?: "li" | "div";
   readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
+  readonly occurrenceActions?: readonly ActionDescriptor[];
+  readonly capturePodcastRemovalFocus?: () => ReturnFocusTarget;
+  readonly compactPrimaryControl?: boolean;
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
   const mediaLayout = row.media !== undefined;
   const paneId = usePaneRuntime()?.paneId;
   const moreRef = useRef<HTMLButtonElement>(null);
+  const primaryControlRef = useRef<HTMLSpanElement>(null);
   const setMore = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
   const returnFocus = () => moreRef.current?.isConnected && moreRef.current.getClientRects().length
     ? moreRef.current : findPaneCollectionRowFocusTarget(paneId, row.id);
+  useActionFocusRecovery(primaryControlRef, returnFocus);
   const title = row.title.segments
     ? (
         <EmphasisSegments
@@ -105,6 +119,10 @@ export default function CollectionRow({
   const menuLabel = `more actions for ${row.title.text}`;
   const sections: readonly ContextActionSection[] = [
     {
+      id: "Occurrence",
+      actions: rowActionsAvailable ? (occurrenceActions ?? []) : [],
+    },
+    {
       id: "View",
       actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
@@ -120,6 +138,7 @@ export default function CollectionRow({
       title={row.title.text} subjectKey={`collection:${row.id}`}
       sections={sections}
       resourceRef={row.resourceRef ?? undefined}
+      capturePodcastRemovalFocus={capturePodcastRemovalFocus}
       displayedActivation={row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
       label={menuLabel}
       triggerRef={setMore}
@@ -156,7 +175,11 @@ export default function CollectionRow({
           imageUrl={row.artwork.imageUrl}
         />
       ) : undefined}
-      primaryControl={mediaLayout ? undefined : primaryControl}
+      primaryControl={mediaLayout ? undefined : compactPrimaryControl && primaryControl ? (
+        <span ref={primaryControlRef} className={styles.compactPrimaryControl} data-row-compact-primary-control="">
+          {primaryControl}
+        </span>
+      ) : primaryControl}
       actions={
         <>
           {row.media && rowActionsAvailable ? (
