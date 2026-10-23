@@ -12,7 +12,7 @@
 
 import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { useEffect } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isUnauthenticatedApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
@@ -274,7 +274,8 @@ async function send(): Promise<void> {
         });
         attempt = 0;
       } catch (error) {
-        const signingIn = handleUnauthenticatedApiError(error);
+        handleUnauthenticatedApiError(error);
+        const signingIn = isUnauthenticatedApiError(error);
         const status = isApiError(error) ? error.status : 0;
         if (signingIn || status === 0 || status === 408 || status === 429 || status >= 500) {
           const { modality } = request.batch;

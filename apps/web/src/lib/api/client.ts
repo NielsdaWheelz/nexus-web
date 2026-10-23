@@ -4,6 +4,7 @@
 // refused here, never rewritten. A 426 means this tab was built for another
 // wire: the tab reloads itself once per build unless writing holds it.
 import { installedApp, remoteReady, remoteAdmission, observeRemoteFailure } from "@/lib/native/admission";
+import { androidShellDocument } from "@/lib/androidShell";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
 import { isRecord } from "@/lib/validation";
@@ -97,11 +98,11 @@ export function isRefusal(error: unknown): error is ApiError {
   );
 }
 
-/** A write whose answer was lost: it may have landed, so a retry resends the same intent. */
-export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" } {
+/** A lost answer or lapsed session keeps the same write intent for an explicit retry. */
+export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" | "E_UNAUTHENTICATED" } {
   return (
     isApiError(error) &&
-    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT")
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT" || isUnauthenticatedApiError(error))
   );
 }
 
@@ -126,8 +127,8 @@ export function isStaleBuild(error: unknown): error is ApiError & { readonly cod
 /** Hosted delivery reloads; installed delivery requires an APK update and retains work. */
 export const STALE_BUILD_FEEDBACK: FeedbackContent = {
   tone: "Warning",
-  title: installedApp ? "update nexus to reconnect" : "Nexus was updated. Reload this page to continue.",
-  ...(installedApp ? { message: "install the current nexus apk, then reopen the app." } : { reload: true }),
+  title: installedApp || androidShellDocument ? "update nexus to reconnect" : "Nexus was updated. Reload this page to continue.",
+  ...(installedApp || androidShellDocument ? { message: "install the current nexus apk, then reopen the app." } : { reload: true }),
 };
 
 /** Copy for the transport failures every command answers alike; null for domain codes. */
@@ -137,6 +138,13 @@ export function apiTransportFeedback(
 ): FeedbackContent | null {
   const { requestId } = error;
   switch (error.code) {
+    case "E_UNAUTHENTICATED":
+      return {
+        tone: "Warning",
+        title,
+        message: "sign in to reconnect, then retry this request.",
+        requestId,
+      };
     case "E_NETWORK":
       return {
         tone: "Danger",
@@ -232,7 +240,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
     retryAfterMs(response.headers.get("retry-after")),
   );
   observeRemoteFailure(status);
-  if (status === 426 && typeof window !== "undefined" && !installedApp) reloadForNewBuild();
+  if (status === 426 && typeof window !== "undefined" && !installedApp && !androidShellDocument) reloadForNewBuild();
   throw failure;
 }
 

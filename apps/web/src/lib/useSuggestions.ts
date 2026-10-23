@@ -144,7 +144,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
 
     function failed(error: unknown, area: "Read" | "Observation", input?: SuggestionRefresh) {
       if (isAbortError(error) || controller.signal.aborted) return;
-      if (handleUnauthenticatedApiError(error) && !installedApp) return withdraw();
+      if (handleUnauthenticatedApiError(error)) return withdraw();
       if (isApiError(error) && !isSameSystemApiDefect(error) && (error.status === 403 || error.status === 404)) return withdraw();
       if (isStaleBuild(error) && !installedApp) return setDefect({ error });
       if (isApiError(error) && !isSameSystemApiDefect(error)) {

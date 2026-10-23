@@ -8,7 +8,7 @@ import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { SettingsIdentity, EmailChangeResult, IdentityDeleteResult } from "@/lib/account/settingsWire";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import type { DeviceStartup, RemoteAdmission, SignInResult } from "./contracts";
-import { bindSessionCheck, publishAdmission } from "./admission";
+import { bindSessionCheck, publishAdmission, observeRemoteFailure } from "./admission";
 
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: unknown }) => void) | null };
 type Reply = { id: number; ok: true } & Record<string, unknown>;
@@ -39,6 +39,7 @@ if (port) port.onmessage = ({ data }) => {
       const error = frame.error;
       if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string" || typeof error.status !== "number" || !Number.isInteger(error.status)) throw invalidReply();
       waiting.delete(frame.id);
+      observeRemoteFailure(error.status);
       pending?.reject(new ApiError(error.status, error.code, error.message));
       return;
     }

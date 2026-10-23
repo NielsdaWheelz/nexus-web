@@ -20,7 +20,7 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -258,6 +258,10 @@ function Editor({
       if (signal.aborted) return;
       draft.set(latest => ({ ...latest, saving: false, request: isRefusal(error) && value.request === null ? null : request }));
       if (handleUnauthenticatedApiError(error)) return;
+      if (isApiError(error)) {
+        const transport = apiTransportFeedback(error, "authors weren’t saved");
+        if (transport !== null) { setNotice(transport); return; }
+      }
       const copy = isApiError(error) && !isSameSystemApiDefect(error) ? ERRORS[error.code] : undefined;
       if (copy === undefined || !isApiError(error)) return throwLater({ error });
       setNotice({ tone: "Danger", title: copy[0], message: copy[1], requestId: error.requestId });

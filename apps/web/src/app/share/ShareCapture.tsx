@@ -59,11 +59,9 @@ function failed(
   return { label, ok: false, retryable: true, review: isApiError(error) && ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), feedback };
 }
 
-/** The account read and the plain-text append model only a lost connection. */
-function networkOnly(error: unknown): FeedbackContent | null {
-  return isApiError(error) && error.code === "E_NETWORK"
-    ? apiTransportFeedback(error, "Couldn’t save")
-    : null;
+/** Account reads and plain-text append retain ordinary transport/admission failures. */
+function captureTransportFeedback(error: unknown): FeedbackContent | null {
+  return isApiError(error) ? apiTransportFeedback(error, "Couldn’t save") : null;
 }
 
 export default function ShareCapture(props: { text: string; isShell: boolean }) {
@@ -140,7 +138,7 @@ function ShareCaptureContent({
           return;
         }
         try {
-          setResults([failed(trimmed, error, () => networkOnly(error))]);
+          setResults([failed(trimmed, error, () => captureTransportFeedback(error))]);
         } catch (thrown) {
           setDefect({ error: thrown });
         }
@@ -280,7 +278,7 @@ function ShareCaptureContent({
   const shown =
     results ??
     (account.status === "failed"
-      ? [failed(trimmed, account.error, () => networkOnly(account.error))]
+      ? [failed(trimmed, account.error, () => captureTransportFeedback(account.error))]
       : null);
   if (shown === null) {
     return (

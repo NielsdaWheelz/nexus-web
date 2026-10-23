@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
     private var authAttempt: DeviceSession.Attempt? = null
     private var browserWasPaused = false
     private var pendingAppLink: Uri? = null
+    private var pendingShelfExit: Uri? = null
     private var appDocumentGeneration = 0L
     private val googleSignInController by lazy { GoogleSignInController(this) }
     // offline (android 14+): the bridge and the shelf router exist only there
@@ -138,7 +139,6 @@ class MainActivity : AppCompatActivity() {
                     override fun showDownloads() = webView.loadUrl(SHELF_URL)
 
                     override fun openHosted(path: String) {
-                        shelfActive = false
                         webView.loadUrl(BuildConfig.NEXUS_BASE_URL.trimEnd('/') + path)
                     }
 
@@ -206,6 +206,11 @@ class MainActivity : AppCompatActivity() {
                 appBridge.onPageStarted()
                 offline?.onPageStarted()
                 playerBridge.onPageStarted()
+                if (url?.let { appRouter.isAppRoute(Uri.parse(it)) } == true) {
+                    val target = pendingShelfExit
+                    pendingShelfExit = null
+                    target?.let(::routeUrl)
+                }
             }
 
             override fun onReceivedHttpError(
@@ -224,7 +229,6 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
             ): WebResourceResponse? {
                 val ownedRequest = request ?: return null
-                if (ownedRequest.isForMainFrame) shelfActive = ownedRequest.url.host == SHELF_HOST
                 return shelfRouter?.intercept(ownedRequest, shelfActive) ?: appRouter.intercept(ownedRequest)
             }
         }
@@ -457,8 +461,11 @@ class MainActivity : AppCompatActivity() {
             .setMessage("return to your workspace to open this link.")
             .setNegativeButton("stay here", null)
             .setPositiveButton("open workspace") { _, _ ->
-                shelfActive = false
-                loadUrlFromIntent(intent)
+                if (appRouter.isAppRoute(uri)) loadUrlFromIntent(intent)
+                else {
+                    pendingShelfExit = uri
+                    webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
+                }
             }.show()
     }
 

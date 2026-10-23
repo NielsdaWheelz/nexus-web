@@ -483,14 +483,16 @@ export function useNexusController() {
   /** Nexus copy for an expected create failure; anything else becomes a workspace defect. */
   function createFailure(error: unknown, title: string, codes: readonly string[], unconfirmed: boolean): FeedbackContent | null {
     if (handleUnauthenticatedApiError(error)) return null;
+    if (isApiError(error)) {
+      const transport = apiTransportFeedback(error, title);
+      if (transport !== null) return transport;
+    }
     if (isApiError(error) && codes.includes(error.code)) {
       if (unconfirmed || outcomeUnknown(error)) return {
         tone: "Warning", title: "request unconfirmed",
         message: "it may already have started work. retry sends the same request. accepted server work is not cancelled.",
         requestId: error.requestId,
       };
-      const content = apiTransportFeedback(error, title);
-      if (content !== null) return content;
       const message = CREATE_FAILURE_COPY[error.code];
       if (message !== undefined) return { tone: "Danger", title, message, requestId: error.requestId };
     }

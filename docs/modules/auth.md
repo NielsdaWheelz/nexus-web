@@ -48,15 +48,15 @@ active), `sub` a uuid.
 
 ## web sessions (`apps/web/src/lib/auth/session.ts`)
 
-`resolveEntry(cookies)` (middleware, the resolve route, extension connect)
+`resolveEntry(cookies)` (hosted middleware, the resolve route, extension connect)
 verifies an active bearer and renews once when it is rejected or expiring;
 `liveSession()` (hosted bff and fixed account operations) takes an active bearer on the 120 s margin
 alone and renews only a refreshable one. Both answer `Live` (with the rotation's
 writes to publish first), `Ended` (names to clear) or `Anonymous`, and throw
 `AuthUnavailable`. `verifySession()` (server components) verifies only: a
 rejected GET waits on the unavailable page, a POST goes to login.
-`presentedSession()` verifies an installed client's bearer without renewing or
-clearing its cookies. `finish` applies one `Effect` (Preserve, Write, Clear with the one-minute ended feedback)
+`presentedSession(cookies)` verifies an installed client's bearer without renewing
+or clearing its cookies. `finish` applies one `Effect` (Preserve, Write, Clear with the one-minute ended feedback)
 with `private, no-store` and `Vary: Cookie`.
 
 Network-free, restated (#607 verifies at entry): classifying the cookie never
@@ -74,10 +74,18 @@ bearer/device context; renewal and device cookie effects survive later failures.
 only a complete aggregate is published. `refresh_after_ms` is an ephemeral
 nonnegative duration derived from the existing renewal margin.
 
-ordinary `NexusAndroidShell` bff calls verify the presented bearer but never
-renew or clear cookies. the marker grants no authority. native serializes the
-fixed bootstrap, handoff and account operations that may publish credentials.
-`lib/native/contracts.ts` and `lib/account/settingsWire.ts` own their wire shapes.
+ordinary `NexusAndroidShell` bff calls and protected hosted documents verify the
+presented bearer without renewing or clearing cookies. middleware never mints
+`nx_device` for these requests. native serializes the fixed bootstrap, handoff
+and account operations that may publish credentials. the marker grants no
+authority. `lib/native/contracts.ts` and `lib/account/settingsWire.ts` own their
+wire shapes.
+
+hosted auth pages and forms refuse this marker with 403 before provider or cookie
+effects. only fixed `POST /auth/native/google` and `POST /auth/signout` pass;
+neither publishes app cookies. browser and custom-tab requests keep their normal
+auth flow. the public `/share` document never renews credentials; native checks
+admission before loading it and retires it when its local account binding ends.
 
 `POST /api/native/session/handoff` consumes once, verifies the consumed and
 installed successor accounts, and compares the native expected account before

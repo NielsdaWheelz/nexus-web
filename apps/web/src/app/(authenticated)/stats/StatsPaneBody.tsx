@@ -15,7 +15,7 @@ import CollectionExhaustionNotice from "@/components/collections/CollectionExhau
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
   useServerValue,
@@ -105,6 +105,8 @@ function correctionFailure(
     error.status >= 500
   )
     return RETRY;
+  const transport = apiTransportFeedback(error, "activity correction wasn’t confirmed");
+  if (transport !== null) return transport;
   if (error.status === 404)
     return { title: "That activity is no longer available" };
   return error.status === 400 || error.status === 409 ? STALE : null;

@@ -400,7 +400,7 @@ internal class DeviceSession private constructor(private val context: Context) {
     /** Email is never retried here. Identity deletion is idempotent at its fixed BFF endpoint. */
     suspend fun accountOperation(op: String, value: String?): JSONObject = withContext(NonCancellable + Dispatchers.IO) {
         credentials.withLock {
-            if (!remotelyAdmitted()) throw NexusOriginError(401, "E_SESSION_REQUIRED")
+            if (!remotelyAdmitted()) throw NexusOriginError(401, "E_UNAUTHENTICATED")
             val generation = lifetime.get()
             val current = { lifetime.get() == generation }
             when (op) {

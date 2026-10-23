@@ -15,7 +15,7 @@ import DestinationChooser from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
-import { isApiError, isRefusal, isUnauthenticatedApiError, requestWithDeadline } from "@/lib/api/client";
+import { isApiError, isRefusal, requestWithDeadline } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -95,7 +95,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   let defect: { error: unknown } | null = null;
   const fail = (value: { error: unknown }) => { defect = value; emit(); };
   const report = (error: unknown, title: string) => {
-    if (isUnauthenticatedApiError(error)) { signIn(error); return null; }
     return libraryErrorFeedback(error, title, fail, signIn);
   };
   const get = (target: LibraryPlacementTarget): Target => {

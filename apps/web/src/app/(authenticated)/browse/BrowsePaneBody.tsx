@@ -21,7 +21,7 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import type { ApiError } from "@/lib/api/client";
+import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { fetchBrowsePage, type BrowseCandidate } from "@/lib/browse/api";
 import {
@@ -82,8 +82,11 @@ function sectionErrorMessage(error: ApiError): string {
       return `Rate limited${until(details.retry_at)}`;
     case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
       return `Quota exhausted${until(details.reset_at)}`;
-    default:
+    default: {
+      const transport = apiTransportFeedback(error, "source couldn’t be loaded");
+      if (transport !== null) return transport.message ?? transport.title;
       throw error;
+    }
   }
 }
 

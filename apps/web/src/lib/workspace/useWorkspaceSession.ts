@@ -25,12 +25,6 @@ import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/wo
 
 const NOTICE = "workspace-session-save";
 const TITLE = "workspace changes not confirmed";
-const TRANSPORT = [
-  "E_NETWORK",
-  "E_UPSTREAM",
-  "E_UPSTREAM_TIMEOUT",
-  "E_AUTH_UNAVAILABLE",
-];
 
 export function useWorkspaceSession(store: WorkspaceStore): void {
   const local = useDeviceWorkspace();
@@ -87,14 +81,13 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
         })
         .catch((error: unknown) => {
           if (!live || handleUnauthenticatedApiError(error)) return;
-          // every save is refused until a reload; a background save never
-          // takes the workspace down with text a leave-page prompt kept
-          const update =
-            isStaleBuild(error) && apiTransportFeedback(error, TITLE);
-          if (update) {
-            return setNotice({ content: update, stale: true, busy: false, retry: save });
+          // Common transport/admission failures retain this mirror and its
+          // independent native local save owner.
+          const transport = isApiError(error) && apiTransportFeedback(error, TITLE);
+          if (transport) {
+            return setNotice({ content: transport, stale: isStaleBuild(error), busy: false, retry: save });
           }
-          if (!isApiError(error) || !TRANSPORT.includes(error.code)) {
+          if (!isApiError(error) || error.code !== "E_AUTH_UNAVAILABLE") {
             live = false;
             return setDefect({ error });
           }
