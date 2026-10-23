@@ -1,12 +1,13 @@
 # mobile reader chrome qualification and release
 
-status: local implementation; qualification in progress. production activation
-is separate and must retain [the transcript paired cutover](release-transcript-reader.md).
+status: locally implemented and qualified. production activation is separate
+and must retain [the transcript paired cutover](release-transcript-reader.md)
+and [queue recorder drain](release-playback-queue.md).
 
 hosted reader overlays introduce no native protocol. shared reader assets also
 ship in the apk; existing downloaded copies retain their interaction and do not
 need redownloading for layout changes. publish api/web/workers/apk together under
-the existing wire-14 and migration-0311 release prerequisites.
+the existing wire-14 and migration-0312 release prerequisites (after 0311).
 
 before closing: verify the activated served source and installed apk identities,
 then text/pdf actual taps, endpoint access, selection, find/keyboard, player and
