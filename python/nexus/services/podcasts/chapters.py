@@ -156,7 +156,7 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobR
                 return {"status": "Stale"}
         result = safe_get(url, max_bytes=_MAX_BYTES, timeout_s=15.0)
         try:
-            value = json.loads(result.content)
+            value = json.loads(result.content, parse_float=Decimal)
             entries = value.get("chapters") if isinstance(value, dict) else value
             if not isinstance(entries, list):
                 raise ValueError("Chapter response must contain an array")
@@ -206,13 +206,22 @@ def _clock_ms(raw: Any) -> int | None:
     value = str(raw).strip() if raw is not None else ""
     if not value:
         return None
+    whole_ms = 0
     try:
         seconds = Decimal(value)
     except InvalidOperation:
         match = _CLOCK.match(value)
         if match is None:
             return None
-        seconds = Decimal(match["h"] or 0) * 3600 + Decimal(match["m"]) * 60 + Decimal(match["s"])
-    if not seconds.is_finite() or not 0 <= seconds <= Decimal(2**31 - 1) / 1000:
+        whole_ms = (int(match["h"] or 0) * 3600 + int(match["m"]) * 60) * 1000
+        seconds = Decimal(match["s"])
+    remaining_ms = 2**31 - 1 - whole_ms
+    if (
+        not seconds.is_finite()
+        or seconds < 0
+        or remaining_ms < 0
+        or seconds > Decimal(remaining_ms) / 1000
+    ):
         return None
-    return int(seconds * 1000)
+    # The bounded integer quotient is exact; multiplying fractional seconds can round.
+    return whole_ms + int(seconds // Decimal("0.001"))

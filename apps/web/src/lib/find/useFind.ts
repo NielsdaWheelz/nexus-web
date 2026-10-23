@@ -66,9 +66,9 @@ interface Session {
 }
 
 /**
- * A new pane owner starts fresh. A new publication keeps text and preferences,
- * but recaptures geometry after the replacement source is ready. `presentation`
- * changes repaint text that was rerendered without changing its publication.
+ * A new pane owner starts fresh. A new publication retains an unscoped query
+ * and preferences; a captured scoped query clears instead of recapturing scope.
+ * `presentation` changes repaint text without changing its publication.
  */
 export function useFind({
   ownerKey,
@@ -98,17 +98,23 @@ export function useFind({
   const [session, setSession] = useState(initial);
   // Adjust before publishing: replacement panes must never render old results.
   if (session.ownerKey !== ownerKey) setSession(initial);
-  else if (session.sourceKey !== key)
+  else if (session.sourceKey !== key) {
+    const invalidated = session.query !== "" && session.narrowed;
     setSession({
       ...session,
       sourceKey: key,
       source,
       scopeLabel: null,
       narrow: null,
-      result: IDLE,
+      query: invalidated ? "" : session.query,
+      narrowed: invalidated ? false : session.narrowed,
+      // Keep the clear reason through the unavailable-source gap while restoring.
+      result: invalidated ? { kind: "Failed", message: session.source?.scopeChangeMessage ?? "search scope changed; search cleared" }
+        : session.query ? IDLE : session.result,
       returnable: false,
       defect: null,
     });
+  }
   const latest = useRef(session);
   latest.current = session;
   const [lifetime, setLifetime] = useState<{
@@ -145,9 +151,9 @@ export function useFind({
       ...session, source,
       ...(source?.capturedScopeLabel !== undefined && source.capturedScopeLabel !== null ? { narrow: source.capturedScopeLabel } : {}),
       ...(invalidated ? { narrow: null, scopeLabel: null } : {}),
-      ...(invalidated && session.narrowed ? {
+      ...(invalidated && session.query !== "" && session.narrowed ? {
         query: "", narrowed: false,
-        result: { kind: "Failed", message: "chapters changed; search cleared" },
+        result: { kind: "Failed", message: source?.scopeChangeMessage ?? "search scope changed; search cleared" },
       } : {}),
     });
   }

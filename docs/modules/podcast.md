@@ -85,8 +85,9 @@ reset freshness. failures preserve old chapters; core imports never await chapte
 
 chapter ingestion retains every publisher occurrence and its source times. supplied
 invalid ends reject the observation with `E_PODCAST_FEED_UNAVAILABLE`; zero-length
-intervals remain supplied and cannot support exact scope. decimal source seconds
-normalize once to integer milliseconds. `end_absence_confirmed` records actual absent
+intervals remain supplied and cannot support exact scope. source decimal seconds,
+including numeric json fractions, floor exactly once to integer milliseconds within
+the storage bound. `end_absence_confirmed` records actual absent
 ends; existing nulls remain unverified until a new observation. reader navigation may
 derive the next later start only from confirmed absence, never lost provenance.
 

@@ -109,8 +109,9 @@ strictly later start. historical unverified null ends stay unknown. a chapter sc
 requires a bounded interval and contiguous whole cues entirely inside it; straddling
 or untimed holes refuse scope. current chapter requires unique whole-cue membership.
 otherwise find covers the whole available transcript and partial results stay qualified.
-chapter label refresh preserves captured scope; changed identity/interval/extent clears
-scoped search. whole find retains query, active result and placement without reveal.
+chapter label refresh preserves captured scope; changed identity/interval/extent or
+body replacement clears scoped search. whole find retains query, active result and
+placement across navigation-only refresh without reveal.
 
 hosts pass `playback: {identity, unit} | null`. the generic reader imports no player.
 the hosted binding observes the engine clock, sends only changed covered cues and
@@ -340,8 +341,9 @@ scope labels describe capability; active labels name the captured scope.
 requested narrowing without a valid scope fails explicitly, never broadens.
 clear aborts computation and movement and removes text/results/paint, while preserving
 preferences and the reader's held first departure. owner retirement resets the
-session; a publication change retains text/preferences and recaptures once
-against the restored replacement.
+session; a publication change clears a captured narrowed query, retaining the
+source's explanation through replacement loading. whole-document queries and
+preferences survive and prepare against the restored replacement.
 computation and reveal use separate abort signals. return cancels movement and
 revokes pending automatic reveal while results may still settle; a new query,
 option change or retry starts fresh navigation intent. effect cleanup aborts

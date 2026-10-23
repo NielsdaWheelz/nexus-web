@@ -65,7 +65,9 @@ export interface FindSource<L> {
   readonly key: string;
   readonly label: string;
   readonly narrowLabel: string | null;
-  /** A navigation refresh invalidated the chapter captured by prepare. */
+  /** Source-owned copy when a captured scope no longer applies. */
+  readonly scopeChangeMessage?: string;
+  /** A navigation refresh invalidated the scope captured by prepare. */
   readonly scopeInvalidated?: boolean;
   /** Refreshed publisher label for the retained captured chapter, if any. */
   readonly capturedScopeLabel?: string | null;

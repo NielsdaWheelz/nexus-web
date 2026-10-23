@@ -53,6 +53,7 @@ export function createTextFind(
     key: doc.identity,
     label: transcript ? "Find in transcript" : doc.format === "epub" ? "Find in book" : "Find in article",
     narrowLabel: narrowLabel(),
+    scopeChangeMessage: transcript ? "chapters changed; search cleared" : "sections changed; search cleared",
     scopeInvalidated,
     capturedScopeLabel: chapter?.label ?? null,
     prepare() {

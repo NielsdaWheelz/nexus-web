@@ -13,7 +13,7 @@ required. api, web, workers and the new apk must ship as a
 paired cutover. unloaded or ended timestamp starts require fresh server state;
 loaded seeking remains available offline.
 
-before activation: migration `0310`, after `0309`, adds chapter end-absence provenance:
+before activation: migration `0311`, after `0310`, adds chapter end-absence provenance:
 existing chapter facts and ids survive, but historical null ends stay unverified
 (`end_absence_confirmed = false`). their exact scopes remain unavailable until a
 new publisher observation confirms an absent end. no data is deleted. supplied
