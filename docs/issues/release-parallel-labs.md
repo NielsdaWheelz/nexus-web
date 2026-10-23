@@ -1,6 +1,6 @@
 # activate concurrent lab admission
 
-pending six-full-lab qualification on the unchanged docker allocation. baseline
+qualification passed; cross-repository integration and activation pending. baseline
 `aa3dfc0863e24e91db8c2bdebc7a4ba2cdb5e306` takes only two slots, including for
 exclusive runs (`python/scripts/disposable_runtime.py:619-635`). mixed old/new
 runners therefore cannot preserve measurement exclusivity.
@@ -16,6 +16,6 @@ update nexus verification docs and dev-server's `docs/macbook-capacity-plan.md`
 two-slot policy together. changing capacity later also requires drained labs and
 waiters; there is no live resizing or backward-compatible admission protocol.
 
-resolved when the six-run acceptance and scoped teardown pass on the fixed
-allocation, all participating runners use the new contract, and the policy docs
-agree. fewer concurrent labs is an unresolved capacity blocker.
+resolved when six-run acceptance and scoped teardown pass on the fixed allocation,
+all participating runners use the new contract, and both repositories' policy
+changes are integrated. fewer concurrent labs is an unresolved capacity blocker.

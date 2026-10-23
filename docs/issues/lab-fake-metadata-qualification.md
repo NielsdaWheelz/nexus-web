@@ -8,9 +8,11 @@ but `python/scripts/lab_fake_providers.py:3-6,29` explicitly excludes structured
 generation and returns fixed plain text. required research tools may also be
 unavailable. failed generation can settle as a typed product outcome (`272-300`).
 
-this is source evidence; no new runtime reproduction was performed. a fake-mode
-epub import can prove ingestion, storage and reading without proving metadata
-success. record the exact ancillary outcome; never count it as successful
+observed at `56927b624` in the parallel-lab qualification: epub ingestion and
+chat succeeded; enrichment settled with `E_METADATA_MODEL_UNAVAILABLE`, reason
+`model_unavailable`, generation `runtime_unavailable`, and detail
+`tools unavailable: web.search`. a fake-mode epub import can prove ingestion,
+storage and reading without proving metadata success. never count this as successful
 research or suppress unexpected failures. fake-provider semantics stay unchanged.
 
 resolved when separate supported metadata qualification proves the intended

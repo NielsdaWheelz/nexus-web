@@ -150,9 +150,11 @@ ci starts no services or browsers.
 labs share persistent `fcntl.flock` slots at
 `${XDG_STATE_HOME:-~/.local/state}/nexus-lab/slots/slot-<number>`. the state home
 must be absolute, common to participating worktrees and outside checkouts and
-docker bind mounts. capacity defaults to six. one optional sibling
-`capacity.json` supplies exactly `{"max_parallel_labs": 6}`: an integer excluding
-booleans, at least one, with `31000 + 10*n - 1 <= 65535`. unreadable or invalid
+docker bind mounts. capacity defaults to six. the optional
+`${XDG_STATE_HOME:-~/.local/state}/nexus-lab/capacity.json` is a closed object
+with sole key `max_parallel_labs`, for example `{"max_parallel_labs": 6}`.
+its value is an integer excluding booleans, at least one, with
+`31000 + 10*n - 1 <= 65535`. unreadable or invalid
 policy fails with 125 before image acquisition or services. no command-line or
 environment count override exists. read policy once per invocation; change it
 only after all lab invocations, waiters and owned runtimes are drained. counts
@@ -170,6 +172,8 @@ the slot after teardown; a crash releases it through the kernel. child processes
 do not inherit the descriptors. slot files persist; their run ids are diagnostic,
 never ownership or permission to kill a process. polling provides capacity
 admission, not fifo ordering or a reservation for an existing waiter.
+kernel lock release does not establish service or resource removal; hard kills
+require explicit recovery before reusing the affected checkout or ports.
 
 ### client throttling
 

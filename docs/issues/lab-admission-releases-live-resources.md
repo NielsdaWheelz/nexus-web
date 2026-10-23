@@ -12,7 +12,9 @@ this is a source-derived failure path, not an executed crash reproduction.
 reproduce with an owned disposable lab: kill only its supervisor, inspect its
 surviving resources, then request another lab from a different checkout.
 
-the admission owner must account for surviving owned runtimes before reusing
-their capacity or endpoints. reconcile exact recorded ownership; never kill a
-saved pid blindly. resolved when supervisor loss cannot admit replacement work
-against occupied capacity, and recovery leaves an unrelated lab intact.
+accepted limit of the parallel-labs change: hard kills require manual recovery.
+the operator reconciles exact recorded ownership before reusing the affected
+checkout or ports; never kill a saved pid blindly. automatic prevention would
+require separately scoped admission recovery. resolved when supervisor loss
+cannot admit replacement work against occupied capacity, and recovery leaves
+an unrelated lab intact.
