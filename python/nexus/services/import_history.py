@@ -96,7 +96,10 @@ def delete_upload_history_in_current_transaction(db: Session, *, session_id: UUI
 
 
 def delete_processing_history_in_current_transaction(db: Session, *, media_id: UUID) -> None:
-    """History dies with the media it documents."""
+    """history and frozen discovery catalogues die with the physically collected source."""
+    from nexus.services.part_discovery import delete_source_discovery
+
+    delete_source_discovery(db, source_media_id=media_id)
     db.execute(text("DELETE FROM media_processing_events WHERE media_id = :id"), {"id": media_id})
 
 

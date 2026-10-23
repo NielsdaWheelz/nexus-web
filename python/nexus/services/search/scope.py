@@ -17,9 +17,11 @@ from nexus.auth.permissions import (
     can_read_media,
     is_library_member,
     media_containment_edges_sql,
+    visible_media_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.library_entries import library_media_ids_cte_sql, library_podcast_rows_sql
+from nexus.services.media_text_scope import highlight_in_reading_scope_sql
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.query import SearchScope
@@ -94,8 +96,9 @@ def _note_cells(scheme: str, column: str) -> dict[str, str]:
             OR (e.target_scheme = '{scheme}' AND e.target_id = {column}))
           AND e.kind = 'context' AND e.origin IN ('user', 'highlight_note')
           AND e.user_id = :viewer_id AND e.ordinal IS NULL
-          AND MEDIA IN (CASE WHEN e.source_scheme = 'media' THEN e.source_id END,
-              CASE WHEN e.target_scheme = 'media' THEN e.target_id END, h.anchor_media_id))"""
+          AND (MEDIA IN (CASE WHEN e.source_scheme = 'media' THEN e.source_id END,
+              CASE WHEN e.target_scheme = 'media' THEN e.target_id END, h.anchor_media_id)
+              OR (h.id IS NOT NULL AND {highlight_in_reading_scope_sql("h.id", "MEDIA")})))"""
     return {
         "media": f"""EXISTS (SELECT 1 FROM ({_MEDIA}) reading
             WHERE {edge.replace("MEDIA", "reading.media_id")})""",
@@ -111,7 +114,7 @@ _CELLS: dict[str, dict[str, str]] = {
     "content_chunk": _media_cells(_context("media", "m.id")),
     "fragment": _media_cells(_context("media", "m.id")),
     "reader_apparatus_item": _media_cells(_context("media", "m.id")),
-    "highlight": _media_cells(_context("highlight", "h.id")),
+    "highlight": _media_cells(f"({_context('highlight', 'h.id')} OR {_context('media', 'm.id')})"),
     "podcast": {
         "library": f"p.id IN ({_LIBRARY_PODCASTS})",
         "conversation": f"p.id IN ({_CONTEXT_PODCASTS})",
@@ -131,12 +134,14 @@ _CELLS: dict[str, dict[str, str]] = {
     "conversation": {"conversation": f"(c.id = :{{s}} OR {_context('conversation', 'c.id')})"},
     "web_result": {"conversation": "msg.conversation_id = :{s}"},
     "passage_anchor": {
-        kind: f"""((pa.owner_scheme = 'media' AND pa.owner_id IN ({media}))
+        kind: f"""((pa.owner_scheme = 'media' AND m.id IN ({media}))
             OR (pa.owner_scheme = 'note_block'
                 AND {_note_cells("note_block", "pa.owner_id")[kind]}))"""
         for kind, media in (("media", _MEDIA), ("library", _LIBRARY_MEDIA))
     }
-    | {"conversation": _context("passage_anchor", "pa.id")},
+    | {
+        "conversation": f"({_context('passage_anchor', 'pa.id')} OR (pa.owner_scheme='media' AND {_context('media', 'm.id')}))"
+    },
 }
 
 # family -> the (scheme, column) pairs a frozen chat context admits by exact ref; a frozen
@@ -147,6 +152,7 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
     "fragment": (("fragment", "f.id"),),
     "reader_apparatus_item": (("reader_apparatus_item", "rai.id"),),
     "highlight": (("highlight", "h.id"),),
+    "passage_anchor": (("passage_anchor", "pa.id"),),
     "podcast": (("podcast", "p.id"),),
     "contributor": (("contributor", "vc.contributor_id"),),
     "page": (("page", "p.id"),),
@@ -182,3 +188,42 @@ def scope_predicate(
             params[f"scope_{n}"] = scope.id
             clauses.append(cell.replace("{s}", f"scope_{n}"))
     return (f" AND ({' OR '.join(clauses)})", params) if clauses else None
+
+
+def admitted_reading_media_sql(
+    scopes: Sequence[SearchScope], frozen: tuple[ResourceRef, ...] | None
+) -> tuple[str, dict[str, Any]]:
+    """The visible reading identities the requested union explicitly admits.
+
+    Canonical passage refs do not admit their whole source. Their own family
+    keeps exact-ref admission; a media context admits its bounded reading identity.
+    """
+    roots: list[str] = []
+    params: dict[str, Any] = {}
+    for index, scope in enumerate(scopes):
+        if scope.kind == "all":
+            if frozen is None:
+                return visible_media_ids_cte_sql(), {}
+            params["frozen_media"] = [ref.id for ref in frozen if ref.scheme == "media"]
+            roots.append("SELECT unnest(CAST(:frozen_media AS uuid[])) AS media_id")
+        else:
+            param = f"scope_{index}"
+            params[param] = scope.id
+            if scope.kind == "media":
+                roots.append(f"SELECT CAST(:{param} AS uuid) AS media_id")
+            elif scope.kind == "library":
+                roots.append(library_media_ids_cte_sql(library_param=f":{param}"))
+            elif scope.kind == "conversation":
+                roots.append(
+                    f"SELECT target_id AS media_id FROM ({context_facts_sql(f':{param}')}) context WHERE target_scheme='media'"
+                )
+    selected = (
+        " UNION ".join(f"SELECT media_id FROM ({root}) root" for root in roots)
+        if roots
+        else "SELECT NULL::uuid AS media_id WHERE FALSE"
+    )
+    reading = reading_media_ids_sql(selected)
+    return (
+        f"SELECT DISTINCT reading.media_id FROM ({reading}) reading JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id=reading.media_id",
+        params,
+    )

@@ -147,7 +147,7 @@ export function useReferenceInput(
     const selectedTarget =
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
-        : { kind: "passage" as const, candidate_ref: target.candidate_ref };
+        : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target };
     owner.onSelected(selectedTarget, target.item, []);
     set(null, true);
   }

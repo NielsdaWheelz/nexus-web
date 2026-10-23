@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
-from nexus.schemas.resource_evidence import CapturedEvidence
+from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
 
@@ -128,6 +128,7 @@ class LinkFragmentSelectionSource(Model):
 
     kind: Literal["fragment_selection"] = "fragment_selection"
     highlight_id: UUID
+    reading_media_id: UUID
     fragment_id: UUID
     start_offset: int = Field(..., ge=0)
     end_offset: int = Field(..., gt=0)
@@ -153,6 +154,7 @@ class LinkPassageEndpoint(Model):
 
     kind: Literal["passage"] = "passage"
     candidate_ref: str
+    passage_target: CapturedPassageTarget | None
 
 
 LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discriminator="kind")]

@@ -117,6 +117,41 @@ class ReaderTextDocumentOut(ReaderTextBodyOut):
     kind: Literal["web_article", "epub"]
 
 
+class ReaderPartUnitOut(ReaderUnitOut):
+    source_start_offset: int = Field(ge=0)
+
+
+class ReaderPartExtentPointOut(_Out):
+    fragment_id: UUID
+    offset: int = Field(ge=0)
+
+
+class ReaderPartExtentOut(_Out):
+    start: ReaderPartExtentPointOut
+    end: ReaderPartExtentPointOut
+
+
+class ReaderPartProvenanceOut(_Out):
+    source_media_id: UUID
+    source_generation: int = Field(ge=1)
+    extent: ReaderPartExtentOut
+
+
+class ReaderPartDocumentOut(_Out):
+    kind: Literal["text_part"]
+    source_format: Literal["epub", "web_article"]
+    provenance: ReaderPartProvenanceOut
+    identity: str
+    title: str
+    units: list[ReaderPartUnitOut]
+    sections: list[ReaderSectionOut]
+    toc_nodes: list[ReaderTocNodeOut]
+    source_issues: list[SourceIssue]
+    embeds: list[DocumentEmbedOut]
+    x_capture: None
+    x_article_content: None
+
+
 class TranscriptReaderSearchExtentOut(_Out):
     start: ReaderPointOut
     end: ReaderPointOut
@@ -156,6 +191,9 @@ class ReaderPdfDocumentOut(_Out):
 
 
 ReaderDocumentOut = Annotated[
-    ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut,
+    ReaderTextDocumentOut
+    | ReaderPartDocumentOut
+    | ReaderTranscriptDocumentOut
+    | ReaderPdfDocumentOut,
     Field(discriminator="kind"),
 ]

@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, ColumnExpressionArgument, delete, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Highlight, Media, ResourceGrant, User
+from nexus.db.models import Highlight, ResourceGrant, User
 from nexus.db.retries import TransactionRestart, retry_read_committed
 from nexus.db.session import transaction
 from nexus.services.resource_graph.refs import ResourceRef
@@ -184,6 +184,16 @@ def delete_viewer_media_paths(db: Session, *, viewer_user_id: UUID, media_id: UU
     return _delete(db, _media_tree(media_id), viewer, also=frozenset({viewer_user_id}))
 
 
+def decline_received_media_paths(db: Session, *, viewer_user_id: UUID, media_id: UUID) -> int:
+    """Decline the viewer's received access; their issued grants remain independent roots."""
+    return _delete(
+        db,
+        _media_tree(media_id),
+        ResourceGrant.grantee_user_id == viewer_user_id,
+        also=frozenset({viewer_user_id}),
+    )
+
+
 def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> int:
     """Move direct-media grants onto the dedupe winner; per audience the oldest row survives.
 
@@ -220,11 +230,13 @@ def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id
 
 
 def lock_subject(db: Session, subject: ResourceRef) -> UUID | None:
-    """Lock the parent media, then the highlight, FOR UPDATE; the parent media id, or None if gone."""
+    """Lock the complete media family in uuid order, then the highlight; None if gone."""
+    from nexus.services.library_entries import lock_media_rows_in_order
+
     media_id = subject.id
     if subject.scheme == "highlight":
         media_id = db.scalar(select(Highlight.anchor_media_id).where(Highlight.id == subject.id))
-    if db.scalar(select(Media.id).where(Media.id == media_id).with_for_update()) is None:
+    if media_id is None or not lock_media_rows_in_order(db, [media_id]):
         return None
     if subject.scheme == "highlight":
         same = select(Highlight.id).where(

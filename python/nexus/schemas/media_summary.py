@@ -35,12 +35,18 @@ class MediaDurationOut(BaseModel):
     estimate: ReadingTimeEstimateOut
 
 
+class MediaPartSourceOut(BaseModel):
+    title: str
+    href: str | None
+
+
 class MediaSummaryOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     media_id: UUID
     media_kind: MediaKind
     title: str
+    part_source: MediaPartSourceOut | None
     contributors: list[ContributorCreditOut]
     original_published_date: PublicationDate | None
     processing_status: MediaProcessingStatus

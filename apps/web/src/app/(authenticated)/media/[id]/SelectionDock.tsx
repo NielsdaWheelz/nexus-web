@@ -52,11 +52,12 @@ function SelectionAction({ action, help, busy }: {
 }
 
 /** A press freezes one source capture; only its native click may execute it. */
-function MobileSelectionActions({ verbs, reader, store, canQuote }: {
+function MobileSelectionActions({ verbs, reader, store, canQuote, sharePiece }: {
   readonly verbs: AnnotationVerbs;
   readonly reader: Reader;
   readonly store: AnnotationStore;
   readonly canQuote: boolean;
+  readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
   const feedback = useFeedback();
   const authoringReason = verbs.composer.paused ? "writing is paused." : null;
@@ -180,7 +181,7 @@ function MobileSelectionActions({ verbs, reader, store, canQuote }: {
       const guard = (event: MouseEvent | KeyboardEvent) => {
         if (!verbs.selectionCurrent(captured)) { event.preventDefault(); event.stopPropagation(); }
       };
-      options.push(...state.options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
+      options.push(...state.options.filter((action) => !COMPOSER_ACTIONS.has(action.id) && !(sharePiece !== null && action.id === "Share")).map((action) => {
         if (action.kind === "command") return { ...action,
           onSelect: (detail: ActionSelectDetail) => { if (verbs.selectionCurrent(captured)) action.onSelect(detail); } };
         if (action.kind === "link") {
@@ -194,10 +195,19 @@ function MobileSelectionActions({ verbs, reader, store, canQuote }: {
           {action.render(controls)}
         </div> } satisfies ActionDescriptor;
       }));
-    } else if (!captured.highlightId) options.push(
+    } else if (!captured.highlightId && sharePiece === null) options.push(
       { kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
         disabled: authoringReason !== null, disabledReason: authoringReason ?? undefined, onSelect: ({ triggerEl }) => { menuCommand.current = captured; verbs.shareSelection(captured, triggerEl); } },
     );
+    if (sharePiece !== null) options.push({
+      kind: "command", id: "SharePiece", label: "share piece", icon: <Share2 size={16} aria-hidden="true" />,
+      disabled: authoringReason !== null, disabledReason: authoringReason ?? undefined,
+      onSelect: ({ triggerEl }) => {
+        if (!verbs.selectionCurrent(captured)) return;
+        menuCommand.current = captured;
+        sharePiece(triggerEl);
+      },
+    });
     return { sections: [{ id: "Passage", label: null, options }] };
   };
   const source: MenuSource = {
@@ -255,13 +265,14 @@ function MobileSelectionActions({ verbs, reader, store, canQuote }: {
     )} />;
 }
 
-export default function SelectionDock({ verbs, store, reader, isMobile, canQuote, returnFocus }: {
+export default function SelectionDock({ verbs, store, reader, isMobile, canQuote, returnFocus, sharePiece }: {
   readonly verbs: AnnotationVerbs;
   readonly store: AnnotationStore;
   readonly reader: Reader;
   readonly isMobile: boolean;
   readonly canQuote: boolean;
   readonly returnFocus: () => HTMLElement | null;
+  readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
   const { composer, menu } = verbs;
   const visitScope = usePaneVisitWorkScope();
@@ -351,7 +362,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       }
     }
     if (draft.highlightId) {
-      if (resourceState?.kind === "Ready") options.push(...resourceState.options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) =>
+      if (resourceState?.kind === "Ready") options.push(...resourceState.options.filter((action) => !COMPOSER_ACTIONS.has(action.id) && !(sharePiece !== null && action.id === "Share")).map((action) =>
         action.kind === "command" && (action.id === "DeleteHighlight" || action.id === "EditHighlightBounds")
           ? { ...action, disabled: action.disabled || blockedReason !== null, disabledReason: action.disabledReason ?? blockedReason ?? undefined } : action));
       else {
@@ -360,7 +371,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           : <FeedbackStatus content={{ tone: "Neutral", title: "loading highlight actions…" }} announcement="Polite" /> });
         if (resourceState?.kind === "Failed") options.push(command("RetryHighlightActions", "retry highlight actions", undefined, () => setActionAttempt((value) => value + 1), null));
       }
-    } else options.push(command("SharePassage", "share passage", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => verbs.share(triggerEl), blockedReason));
+    } else if (sharePiece === null) options.push(command("SharePassage", "share passage", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => verbs.share(triggerEl), blockedReason));
+    if (sharePiece !== null) options.push(command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason));
     options.push({ kind: "custom", id: "PassagePreview", label: "selected passage", render: () => <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div> });
     if (emptyExisting) options.push({ ...command("DeleteEmptyNote", "delete empty note (keep highlight)", <Trash2 size={16} aria-hidden="true" />, composer.deleteNote, blockedReason), tone: "danger" });
     options.push({ ...command("CloseComposer", "close composer", <X size={16} aria-hidden="true" />, () => dismiss(), null), restoreFocusOnClose: false });
@@ -447,7 +459,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     );
   };
   return <>
-    {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} store={store} canQuote={canQuote} /> : null}
+    {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} store={store} canQuote={canQuote} sharePiece={sharePiece} /> : null}
     {isMobile ? <MobileSheet active={draft !== null && opening !== null}
       ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}
       heightLimit="available" onDismiss={composer.dismiss} focusKey={opening?.id}

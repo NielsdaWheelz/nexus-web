@@ -45,6 +45,7 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.media import media_summaries
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_items.locations import media_passages
 from nexus.services.resource_items.routing import resource_activations_for_refs
 
 _VISIBLE = f"({visible_media_ids_cte_sql()})"
@@ -98,9 +99,13 @@ def passage_label(selection: ExcerptOut) -> str:
 
 
 def resource_items_out(
-    db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+    reading_media_id: UUID | None = None,
 ) -> list[ResourceItemOut]:
-    rows = _rows(db, viewer_id, refs)
+    rows = _rows(db, viewer_id, refs, reading_media_id=reading_media_id)
     summaries = media_summaries(
         db,
         viewer_id=viewer_id,
@@ -115,6 +120,7 @@ def resource_items_out(
         viewer_id=viewer_id,
         refs=refs,
         missing_ref_uris=missing,
+        reading_media_id=reading_media_id,
     )
     owner_refs = list({row["owner_ref"] for row in rows.values() if row.get("owner_ref")})
     sources = source_attributions(
@@ -140,6 +146,7 @@ def resource_items_out(
                 source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
                 annotation=annotations.get(ref.id),
                 activation=activations[ref.uri],
+                reading_media_id=reading_media_id,
             )
         )
     return out
@@ -154,6 +161,7 @@ def _resource_item_out(
     source: SourceAttributionOut | None,
     annotation: ResourceAnnotationOut | None,
     activation: ResourceActivationOut,
+    reading_media_id: UUID | None,
 ) -> ResourceItemOut:
     body: ResourceBodyOut
     if row is None:
@@ -182,6 +190,8 @@ def _resource_item_out(
                 "reader_apparatus_item",
                 "oracle_passage_anchor",
             )
+            else row.get("owner_ref", ref.uri)
+            if ref.scheme == "highlight" and reading_media_id is not None
             else ref.uri
         )
     return ResourceItemOut(
@@ -194,8 +204,12 @@ def _resource_item_out(
     )
 
 
-def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceItemOut:
-    return resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0]
+def resource_item_out(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
+) -> ResourceItemOut:
+    return resource_items_out(
+        db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+    )[0]
 
 
 def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> set[str]:
@@ -347,7 +361,13 @@ def _annotations(
     }
 
 
-def _rows(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str, dict[str, Any]]:
+def _rows(
+    db: Session,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+    *,
+    reading_media_id: UUID | None = None,
+) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
         ids = list({ref.id for ref in refs if ref.scheme == scheme})
@@ -355,6 +375,37 @@ def _rows(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str
             text(_QUERIES[scheme]), {"ids": ids, "viewer_id": viewer_id}
         ).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
+    passages = media_passages(db, viewer_id=viewer_id, refs=refs, reading_media_id=reading_media_id)
+    canonical_schemes = {
+        "highlight",
+        "fragment",
+        "reader_apparatus_item",
+        "content_chunk",
+        "evidence_span",
+        "oracle_passage_anchor",
+        "passage_anchor",
+    }
+    for ref in refs:
+        row = out.get(ref.uri)
+        if ref.scheme in canonical_schemes and (
+            ref.scheme
+            in {"highlight", "fragment", "reader_apparatus_item", "oracle_passage_anchor"}
+            or row is not None
+            and str(row.get("owner_ref", "")).startswith("media:")
+        ):
+            out.pop(ref.uri, None)
+        passage = passages.get(ref.uri)
+        if passage is not None:
+            out[ref.uri] = {
+                "id": ref.id,
+                "body_kind": "passage",
+                "exact": passage.quote.exact,
+                "prefix": passage.quote.prefix,
+                "suffix": passage.quote.suffix,
+                "color": passage.quote.color,
+                "owner_ref": passage.owner.uri,
+                "location_label": row.get("location_label") if row is not None else None,
+            }
     return out
 
 

@@ -178,6 +178,19 @@ def _clean(value: str) -> str:
 def _opening_words(db: Session, media: Media) -> list[str]:
     """The first source with text: plain text, the first four fragments, episode notes, then
     the description; at most 64,000 raw characters read across all of them."""
+    if media.kind == "text_part":
+        from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
+
+        scope = read_media_text_scope(db, media.id)
+        remaining = _SOURCE_READ_MAX_CHARS
+        selected: list[str] = []
+        for interval in scope.fragment_intervals:
+            if remaining <= 0:
+                break
+            body = read_scope_fragment(db, scope, interval).canonical_text[:remaining]
+            selected.append(body)
+            remaining -= len(body)
+        return "\n\n".join(selected).split()[: get_settings().metadata_enrichment_max_content_words]
     if media.provider == "x":
         from nexus.services.x_source import load_x_source
 
@@ -243,6 +256,18 @@ def build_metadata_research_input(db: Session, media: Media) -> MetadataResearch
         "current_description": media.description,
     }
     source: dict[str, object] = {"kind": str(media.kind)}
+    if media.kind == "text_part":
+        from nexus.services.media_parts import part_definition_version
+        from nexus.services.media_text_scope import read_media_text_scope
+
+        scope = read_media_text_scope(db, media.id)
+        source["part_definition_version"] = part_definition_version(db, media_id=media.id)
+        source["source_media_id"] = str(scope.source_media_id)
+        source["source_generation"] = scope.source_generation
+        source["extent"] = [
+            (str(interval.fragment_id), interval.start_offset, interval.end_offset)
+            for interval in scope.fragment_intervals
+        ]
     if media.kind == "podcast_episode":
         episode = db.execute(
             text("""

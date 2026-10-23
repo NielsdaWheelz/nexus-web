@@ -2,7 +2,9 @@
 display strings. Visibility is the item gate's (``items.visible_refs``): a loader reads
 only refs it admitted, so a missing, forbidden or unknown ref hydrates as ``missing``
 and this layer never raises. Writes reject invisible endpoints through
-:func:`assert_ref_visible`.
+:func:`assert_ref_visible`. A highlight reads through its reading owner
+(``locations.media_passages``): a piece-only reader sees its piece's title and context
+clipped to the piece, never neighbouring source text.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.items import visible_refs
+from nexus.services.resource_items.locations import media_passages
 
 INLINE_THRESHOLD_CHARS = 1500
 
@@ -201,28 +204,40 @@ def _library(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedReso
 
 
 def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedResource]:
-    rows = db.execute(
-        text(f"""
-        SELECT h.id, h.exact, h.prefix, h.suffix, m.title, {media_author_names_agg_sql()}
-        FROM highlights h JOIN media m ON m.id = h.anchor_media_id
-        {media_author_credits_join_sql()}
-        WHERE h.id = ANY(:ids)
-        GROUP BY h.id, h.exact, h.prefix, h.suffix, m.title
-        """),
-        {"ids": ids, "viewer_id": viewer_id},
-    ).all()
-    notes = linked_note_blocks_for_highlights(db, viewer_id, [row.id for row in rows])
-    out = []
-    for row in rows:
-        source = f"“{row.title}” by {row.authors}" if row.authors else f"“{row.title}”"
-        quote = ResolvedQuote(
-            exact=str(row.exact or ""),
-            prefix=str(row.prefix or ""),
-            suffix=str(row.suffix or ""),
-            source_label=source,
-            note="\n\n".join(b.body_text for b in notes.get(row.id, []) if b.body_text) or None,
+    passages = media_passages(
+        db, viewer_id=viewer_id, refs=[ResourceRef("highlight", id_) for id_ in ids]
+    )
+    owners = {
+        row.id: row
+        for row in db.execute(
+            text(f"""
+            SELECT m.id, m.title, {media_author_names_agg_sql()}
+            FROM media m {media_author_credits_join_sql()}
+            WHERE m.id = ANY(:ids)
+            GROUP BY m.id, m.title
+            """),
+            {
+                "ids": list({passage.owner.id for passage in passages.values()}),
+                "viewer_id": viewer_id,
+            },
         )
-        uri = f"highlight:{row.id}"
+    }
+    notes = linked_note_blocks_for_highlights(db, viewer_id, ids)
+    out = []
+    for id_ in ids:
+        uri = f"highlight:{id_}"
+        passage = passages.get(uri)
+        if passage is None:
+            continue
+        owner = owners[passage.owner.id]
+        source = f"“{owner.title}” by {owner.authors}" if owner.authors else f"“{owner.title}”"
+        quote = ResolvedQuote(
+            exact=passage.quote.exact,
+            prefix=passage.quote.prefix or "",
+            suffix=passage.quote.suffix or "",
+            source_label=source,
+            note="\n\n".join(b.body_text for b in notes.get(id_, []) if b.body_text) or None,
+        )
         out.append(
             ResolvedResource(
                 uri,

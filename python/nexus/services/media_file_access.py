@@ -44,8 +44,8 @@ def get_media_file_source(db: Session, *, media_id: UUID) -> MediaFileSource | N
         db.execute(
             text("""
                 SELECT storage_path, content_type, size_bytes
-                FROM media_file
-                WHERE media_id = :media_id
+                FROM media_file file JOIN media owner ON owner.id=file.media_id
+                WHERE media_id = :media_id AND owner.kind <> 'text_part'
             """),
             {"media_id": media_id},
         )

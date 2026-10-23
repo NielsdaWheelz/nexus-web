@@ -66,6 +66,7 @@ export default function ResourceOutlineRow(props: {
   details?: ReactNode;
   userUnlinkAction?: Extract<ActionDescriptor, { kind: "command" }> | null;
   commandDisabledReason?: string;
+  omitResourceActions?: readonly string[];
   placement?: PlacementBranch;
   rootProps?: HTMLAttributes<HTMLElement> & {
     "data-active"?: boolean;
@@ -271,6 +272,7 @@ export default function ResourceOutlineRow(props: {
       ? `/conversations/${made.conversation_id}?message=${made.message_id}`
       : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});
   const menu = {
+    omitResourceActions: props.omitResourceActions,
     title: item.label, subjectKey: occurrenceKey,
     resourceRef: assumeCanonicalResourceRef(item.action_ref),
     displayedActivation: item.activation,

@@ -18,16 +18,19 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Message
-from nexus.errors import NotFoundError
+from nexus.errors import ConflictError, NotFoundError
 from nexus.services.chat import quotes
-from nexus.services.chat.retrievals import RetrievalCitation, citation_from_search_result
+from nexus.services.chat.retrievals import (
+    RetrievalCitation,
+    citation_from_search_result,
+    reopen_search_result,
+)
 from nexus.services.generation.contract import GenerationIntent, TextOutput
 from nexus.services.generation.policy import policy
 from nexus.services.resource_graph.context import list_context_refs
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_graph.resolve import ResolvedResource
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.search.service import get_search_result
 
 BLOCK_OVERHEAD_TOKENS = 4
 
@@ -282,11 +285,13 @@ def _attached_citation(
     if result_type is None:
         return None
     try:
-        result = get_search_result(db, viewer_id, result_type, str(ref.id))
+        result = reopen_search_result(
+            db, viewer_id=viewer_id, result_type=result_type, source_id=str(ref.id)
+        )
         citation = citation_from_search_result(result)
-    except (NotFoundError, ValueError):
-        # justify-ignore-error: no active content index or no resolvable anchor: the
-        # resource stays in the prompt, uncitable (no synthetic row).
+    except (NotFoundError, ConflictError, ValueError):
+        # justify-ignore-error: no active content index, no resolvable anchor or a body
+        # that moved under capture: the resource stays in the prompt, uncitable.
         return None
     citation.selected = True
     return citation

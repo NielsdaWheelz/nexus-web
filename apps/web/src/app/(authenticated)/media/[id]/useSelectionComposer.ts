@@ -326,6 +326,7 @@ export function useSelectionComposer(input: {
     const referenceSource: ComposerDraft["referenceSource"] = anchor.kind === "text"
       ? {
         kind: "fragment_selection",
+        reading_media_id: boundSource.mediaId,
         fragment_id: anchor.unit,
         start_offset: anchor.start,
         end_offset: anchor.end,

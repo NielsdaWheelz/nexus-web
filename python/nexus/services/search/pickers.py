@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_search import (
     ResourceTargetOut,
     ResourceTargetPassageOut,
@@ -26,6 +27,7 @@ from nexus.services.resource_graph.refs import (
     require_ref,
 )
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.resource_items.items import resource_items_out
 from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
@@ -87,6 +89,7 @@ def _targets(
     if source is not None:
         identity, link_source = source_identity(db, viewer_id, source)
         excluded |= {source.uri, identity}
+    reading_owners: dict[str, UUID | None] = {}
     if exact is not None:
         candidates = [exact]
         needed = 1
@@ -97,19 +100,45 @@ def _targets(
         r = Retrieval(viewer_id, q, 2 * needed + len(excluded), embedding=embedding)
         hits = merge(hit for family in (*_DIRECT, *_PASSAGES) for hit in rank(db, r, family))
         candidates = _refs(hits[: r.k])
+        reading_owners = {_refs([hit])[0].uri: hit.reading_media_id for hit in hits[: r.k]}
     candidates = [ref for ref in candidates if ref.uri not in excluded]
-    items = {
-        item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=candidates)
-    }
+    items = {}
+    for owner in dict.fromkeys(reading_owners.get(ref.uri) for ref in candidates):
+        items.update(
+            (item.ref, item)
+            for item in resource_items_out(
+                db,
+                viewer_id=viewer_id,
+                refs=[ref for ref in candidates if reading_owners.get(ref.uri) == owner],
+                reading_media_id=owner,
+            )
+        )
     admitted: dict[str, ResourceTargetOut] = {}
     for ref in candidates:
         passage = capability(ref.scheme).link_mode == "materialize_passage"
-        quote = candidate_owner_and_quote(db, ref=ref) if passage else None
+        try:
+            captured = (
+                capture_evidence(
+                    db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_owners.get(ref.uri)
+                )
+                if passage and ref.uri in items and not items[ref.uri].missing
+                else None
+            )
+        except NotFoundError:
+            continue
+        quote = (
+            (require_ref(captured.target.owner_ref), captured.quote.exact)
+            if captured is not None
+            and isinstance(captured.target, CapturedPassageTarget)
+            and captured.quote is not None
+            else None
+        )
         if not passage and ref.uri in items and not items[ref.uri].missing:
             key = ref.uri
             link = _link(db, viewer_id, link_source, ref)
             target = ResourceTargetResourceOut(item=items[ref.uri], existing_link_id=link)
         elif quote is not None:
+            assert captured is not None and isinstance(captured.target, CapturedPassageTarget)
             owner = resource_items_out(db, viewer_id=viewer_id, refs=[quote[0]])[0]
             identity = None if owner.missing else _passage_identity(db, viewer_id, *quote)
             if identity is None:
@@ -117,6 +146,7 @@ def _targets(
             key, anchor = identity
             target = ResourceTargetPassageOut(
                 candidate_ref=ref.uri,
+                target=captured.target,
                 item=items[ref.uri],
                 existing_link_id=_link(db, viewer_id, link_source, anchor),
             )
@@ -145,7 +175,7 @@ def source_identity(
         if resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0].missing:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
         return ref.uri, ref
-    quote = candidate_owner_and_quote(db, ref=ref)
+    quote = candidate_owner_and_quote(db, viewer_id=viewer_id, ref=ref)
     if quote is None or resource_items_out(db, viewer_id=viewer_id, refs=[quote[0]])[0].missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
     identity = _passage_identity(db, viewer_id, *quote)
@@ -183,32 +213,16 @@ def _passage_identity(
     return anchor.uri, anchor
 
 
-_QUOTES = {
-    "content_chunk": "SELECT owner_kind, owner_id, chunk_text FROM content_chunks WHERE id = :id",
-    "evidence_span": "SELECT owner_kind, owner_id, span_text FROM evidence_spans WHERE id = :id",
-    "fragment": "SELECT 'media', media_id, canonical_text FROM fragments WHERE id = :id",
-    # Whatever the item read admits quotes (Q3): an apparatus item of a live state its body,
-    # located or not; an Oracle anchor its current span or chunk, else its frozen quote, as
-    # its loader reads it. Materializing refuses a quote its owner does not hold uniquely.
-    "reader_apparatus_item": """SELECT 'media', rai.media_id,
-            COALESCE(rai.body_text, rai.label, '')
-        FROM reader_apparatus_items rai JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-        WHERE rai.id = :id AND ras.status IN ('ready', 'partial')""",
-    "oracle_passage_anchor": """SELECT 'media', s.media_id,
-            COALESCE(es.span_text, cc.chunk_text, a.quote)
-        FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
-        LEFT JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
-            AND a.resolution_status = 'resolved' AND cc.owner_id = s.media_id
-        LEFT JOIN evidence_spans es ON es.id = a.current_evidence_span_id
-            AND a.resolution_status = 'resolved' AND es.owner_id = s.media_id
-        WHERE a.id = :id""",
-}
-
-
-def candidate_owner_and_quote(db: Session, *, ref: ResourceRef) -> tuple[ResourceRef, str] | None:
-    """The owner ref and quote text of one passage candidate, or None once it is gone."""
-    row = db.execute(text(_QUOTES[ref.scheme]), {"id": ref.id}).first()
-    if row is None:
+def candidate_owner_and_quote(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
+) -> tuple[ResourceRef, str] | None:
+    """The exact current passage under its authorized reading owner, never its naked source."""
+    try:
+        captured = capture_evidence(
+            db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id
+        )
+    except NotFoundError:
         return None
-    owner: Literal["media", "note_block"] = row[0]
-    return ResourceRef(owner, row[1]), str(row[2] or "")
+    if captured.quote is None or not isinstance(captured.target, CapturedPassageTarget):
+        return None
+    return require_ref(captured.target.owner_ref), captured.quote.exact

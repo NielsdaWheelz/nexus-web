@@ -22,7 +22,7 @@ def reading_time_rows_sql() -> str:
         SELECT duration.media_id, duration.total_seconds,
                CASE
                    WHEN NOT COALESCE(cursor.positioned, false) THEN duration.total_seconds
-                   WHEN duration.media_kind IN ('web_article', 'epub')
+                   WHEN duration.media_kind IN ('web_article', 'epub', 'text_part')
                        THEN duration.total_seconds * (1.0::float8 - cursor.total_progression)
                    ELSE NULL::float8
                END AS remaining_seconds

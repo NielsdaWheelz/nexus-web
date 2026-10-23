@@ -55,6 +55,7 @@ class MediaKind(str, PyEnum):
 
     web_article = "web_article"
     epub = "epub"
+    text_part = "text_part"
     pdf = "pdf"
     video = "video"
     podcast_episode = "podcast_episode"
@@ -339,6 +340,76 @@ class Media(Base):
     metadata_enriched_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class MediaPart(Base):
+    """one independently readable identity pinned to a root publication and exact cuts."""
+
+    __tablename__ = "media_parts"
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    source_media_id: Mapped[UUID]
+    source_generation: Mapped[int] = mapped_column(BigInteger)
+    start_fragment_idx: Mapped[int]
+    start_offset: Mapped[int]
+    end_fragment_idx: Mapped[int]
+    end_offset: Mapped[int]
+    start_dom_path: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
+    start_dom_edge: Mapped[Literal["before", "after"]] = mapped_column(Text)
+    end_dom_path: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
+    end_dom_edge: Mapped[Literal["before", "after"]] = mapped_column(Text)
+    form: Mapped[Literal["essay", "poem", "letter", "short_story", "section"] | None] = (
+        mapped_column(Text)
+    )
+    version: Mapped[int] = mapped_column(BigInteger)
+    word_count: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class MediaPartSet(Base):
+    """source-local revision of definitions and candidate decisions; not a retention root."""
+
+    __tablename__ = "media_part_sets"
+    source_media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class MediaPartCandidate(Base):
+    """a generation-qualified observation and independent decision; candidates never pin."""
+
+    __tablename__ = "media_part_candidates"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    source_media_id: Mapped[UUID]
+    source_generation: Mapped[int] = mapped_column(BigInteger)
+    range_key: Mapped[str]
+    start_fragment_idx: Mapped[int]
+    start_offset: Mapped[int]
+    end_fragment_idx: Mapped[int]
+    end_offset: Mapped[int]
+    finding: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    user_decision: Mapped[Literal["accepted", "rejected"] | None] = mapped_column(Text)
+    part_id: Mapped[UUID | None]
+    accepted_selection: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    version: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class ContentIndexState(Base):
+    """one canonical index and its independently completed structural preparation."""
+
+    __tablename__ = "content_index_states"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    status: Mapped[str]
+    status_reason: Mapped[str | None]
+    active_embedding_provider: Mapped[str | None]
+    active_embedding_model: Mapped[str | None]
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    owner_kind: Mapped[Literal["media", "note_block"]] = mapped_column(Text)
+    owner_id: Mapped[UUID]
+    revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    section_witness_key: Mapped[str | None]
+    section_bounds_key: Mapped[str | None]
 
 
 class MediaSourceAttempt(Base):
@@ -998,6 +1069,10 @@ class EpubNavLocation(Base):
     end_fragment_idx: Mapped[int | None]
     end_offset: Mapped[int | None]
     source: Mapped[str]
+    start_dom_path: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    start_dom_edge: Mapped[Literal["before", "after"] | None] = mapped_column(Text)
+    end_dom_path: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    end_dom_edge: Mapped[Literal["before", "after"] | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 

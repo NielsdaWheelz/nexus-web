@@ -42,7 +42,12 @@ def resolve_source_target(
     request: ResolveSourceTargetRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[SourceTargetOut]:
     return Data(
-        data=evidence.resolve_source_target(db, viewer_id=viewer.user_id, target=request.target)
+        data=evidence.resolve_source_target(
+            db,
+            viewer_id=viewer.user_id,
+            target=request.target,
+            reading_media_id=request.reading_media_id,
+        )
     )
 
 

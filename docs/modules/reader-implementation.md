@@ -86,7 +86,7 @@ focus transfer or owner unmount releases recovery.
 
 | route | contract |
 | --- | --- |
-| `GET /media/{id}/reader` | one snapshot: prose `ReaderTextDocumentOut`, transcript `ReaderTranscriptDocumentOut`, or `ReaderPdfDocumentOut`. text shares units/embeds; transcripts require coverage and canonical `transcript_navigation`, with empty wire sections/toc. prose archives retain their shape. |
+| `GET /media/{id}/reader` | one snapshot: prose `ReaderTextDocumentOut`, source-backed `ReaderPartDocumentOut`, transcript `ReaderTranscriptDocumentOut`, or `ReaderPdfDocumentOut`. text shares units/embeds; transcripts require coverage and canonical `transcript_navigation`, with empty wire sections/toc. prose archives retain their shape. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
 | `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
@@ -98,6 +98,35 @@ the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
 `/evidence/{span}`, fragment and pdf highlight lists and creates, the highlight
 reader-target route) are gone. a text highlight whose fragment cache is gone is
 listed in Evidence as unavailable (`Stale`), never painted.
+
+### source-backed pieces
+
+`media_text_scope.py` resolves the reading identity separately from the canonical
+source. a piece freezes one contiguous source range and its proved element-edge
+cuts; `reader_text_slice.py` clips retained rich html and proves its text equals
+the known source substring after boundary whitespace trim. uncertain ends and
+unproved rich boundaries refuse separate reading. source text is never copied or
+rewritten. `ReaderPartDocumentOut` carries child body identity, source provenance
+and `ReaderPartUnitOut.source_start_offset`; unit ids remain canonical fragment
+ids, while unit order, text, navigation and map geometry describe the slice.
+
+`documentReader/model.ts` alone translates mounted offsets to and from canonical
+source offsets. outside points are unavailable. find, selection and duration use
+only mounted text. notes are limited to direct in-body references and their
+required assets; private note and asset requests revalidate that scope. a piece
+has no source file or offline reading-copy capability.
+
+highlights retain canonical source identity and appear in every readable piece
+containing the complete anchor; crossing anchors stay hidden there. scoped reads
+bound quote context, while compact write acknowledgements return the exact
+passage without incidental affixes. a bounds update carries its required
+`reading_media_id` and fences that reading publication before admitting canonical
+coordinates. old and new containing views invalidate when an anchor moves.
+
+cursor, engagement and finish belong to the reading media. piece bounds correction
+advances its body generation, recomputes surviving canonical cursor progression,
+requires explicit recovery for excluded cursors, and clears current finish without
+erasing completion history. whole-source and sibling progress remain independent.
 
 ### transcripts
 
@@ -138,9 +167,9 @@ request their named episode/source time. public and shelf supply null playback.
   tombstone. cursor, engagement and completion commit in one transaction; a stale
   write records none of them. android adds `expected_reader_generation` (409
   `E_READER_CONTENT_CHANGED` on mismatch); see [offline](offline.md).
-- base-revision validation precedes equal-locator handling. An accepted equal
-  save keeps its revision but counts as resumed activity; stale equal saves
-  conflict without effects. Percentage follows current position. Completion at
+- an equal locator returns the current revision. an equal save with the current
+  base counts as resumed activity; a stale equal save has no effects. other stale
+  bases conflict. percentage follows current position. completion at
   known progress ≥95% remains finished until unread/reset; history is separate.
 - native x replacement locks publication and all saved cursors before deleting
   fragments. `reader_cursor.py` prepares exact whole-text or literal ±64-codepoint
@@ -497,7 +526,9 @@ the dom is never rewritten (`text/paint.ts`).
 ## the hosted pane (`app/(authenticated)/media/[id]`)
 
 `location.ts` owns strict portable `ReaderDestination` parsing and fixed-order
-serialization. hosted targets use `/media/<id>?loc=<compact JSON>` within the
+serialization. portable text destinations use canonical source offsets; local
+controls map once through `model.ts` before producing a destination, and arrivals
+map once into the mounted slice. local inspection retains the local target. hosted targets use `/media/<id>?loc=<compact JSON>` within the
 existing 4096-character href limit. one `loc`, exact fields, publication identity,
 format, unit/anchor/item membership and valid geometry are required; competing
 saved-source selectors fail visibly. invalid targets never become whole-source
@@ -553,6 +584,11 @@ closed location codecs reject unknown/duplicate fields and invalid coordinates.
 `loc` decoding is shared by workspace, native opening and reload. oversized cold
 links show entry refusal over the resumed workspace and are never persisted.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
+source-target reads carry the landing media id as their reading scope, or explicit
+null in another kind of pane. live passage links retain that chosen publication
+even when the viewer can also read the canonical source.
+saved notes outside the body open their retained reference disclosure under the
+child identity; their canonical locator stays unchanged and no progress is written.
 arrival intents remember `Pending`, `Applied` or `Retired`, without storing
 failure presentation. apply returns `Applied`, `Unavailable`, `Cancelled` or
 `FailureHandled`; the last delegates feedback to the reader, preventing duplicate

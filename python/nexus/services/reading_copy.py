@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.reader_document import ReaderPdfFileOut
 from nexus.services import reader_publication
 from nexus.services.html_tree import inner_html
@@ -51,6 +51,10 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
         viewer_id=viewer_id,
         pdf_file=lambda: ReaderPdfFileOut(url="document.pdf", expires_at=None),
     )
+    if document.kind == "text_part":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND, "pieces do not have offline reading copies"
+        )
     objects: list[tuple[str, str]] = []
     if document.kind == "pdf":
         source = db.scalar(

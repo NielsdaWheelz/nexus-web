@@ -24,14 +24,16 @@ from nexus.services.html_tree import inner_html
 from nexus.services.reader_publication import (
     read_publication_source_issues,
 )
+from nexus.services.reader_structure import DocumentPoint, DomCut, NavigationProof, SectionProof
+from nexus.services.reader_text_slice import navigation_proof
 
 
-def read_epub_navigation(
+def read_epub_navigation_proof(
     db: Session,
     *,
     media_id: UUID,
     generation: int,
-) -> MediaNavigationOut:
+) -> NavigationProof:
     """Build navigation from the caller's coherent, authorized publication snapshot."""
     fragment_rows = (
         db.execute(
@@ -49,7 +51,8 @@ def read_epub_navigation(
         db.execute(
             text("""
             SELECT location_id, label, parent_section_id, fragment_idx, start_offset,
-                   end_fragment_idx, end_offset, source, href_fragment
+                   end_fragment_idx, end_offset, source, href_fragment,
+                   start_dom_path, start_dom_edge, end_dom_path, end_dom_edge
             FROM epub_nav_locations WHERE media_id = :mid
             ORDER BY fragment_idx, start_offset, ordinal
         """),
@@ -59,6 +62,7 @@ def read_epub_navigation(
         .all()
     )
     sections: list[ReaderNavigationSectionOut] = []
+    proofs: list[SectionProof] = []
     for row in section_rows:
         target = NavigationTextPointOut(
             fragment_id=fragment_ids[row["fragment_idx"]],
@@ -87,6 +91,24 @@ def read_epub_navigation(
                 anchor_id=row["href_fragment"],
                 extent=extent,
                 source=row["source"],
+            )
+        )
+
+        proofs.append(
+            SectionProof(
+                section_id=row["location_id"],
+                label=row["label"],
+                parent_section_id=row["parent_section_id"],
+                start=DocumentPoint(row["fragment_idx"], row["start_offset"]),
+                end=DocumentPoint(row["end_fragment_idx"], row["end_offset"])
+                if extent is not None
+                else None,
+                start_cut=DomCut(tuple(row["start_dom_path"]), row["start_dom_edge"])
+                if row["start_dom_path"] is not None
+                else None,
+                end_cut=DomCut(tuple(row["end_dom_path"]), row["end_dom_edge"])
+                if row["end_dom_path"] is not None
+                else None,
             )
         )
 
@@ -188,7 +210,7 @@ def read_epub_navigation(
         locations[row["nav_type"]].append(
             ReaderNavigationLocationOut(id=row["node_id"], label=row["label"], target=target)
         )
-    return MediaNavigationOut(
+    navigation = MediaNavigationOut(
         media_id=media_id,
         kind="epub",
         generation=generation,
@@ -206,6 +228,8 @@ def read_epub_navigation(
         landmarks=locations["landmarks"],
         page_list=locations["page_list"],
     )
+
+    return navigation_proof(navigation, proofs)
 
 
 def bind_epub_fragment_link(

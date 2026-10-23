@@ -38,6 +38,7 @@ MEMORY_PLANS: Final = frozenset({"ChatMemoryRead", "ChatMemoryReadSave"})
 # every background operation is strict JSON over Codex Personal.
 _BACKGROUND: tuple[tuple[BackgroundOperation, OwnerKind, str, str, int, int], ...] = (
     ("metadata_enrichment", "media_enrichment", "luna", "xhigh", 300, 32),
+    ("part_discovery", "part_discovery", "luna", "xhigh", 300, 256),
     ("media_title", "media_enrichment", "luna", "low", 120, 256),
     ("media_summary", "media_summary", "luna", "low", 120, 256),
     ("connection_discovery", "connection_discovery_scan", "luna", "low", 120, 256),

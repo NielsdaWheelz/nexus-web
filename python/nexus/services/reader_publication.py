@@ -1,4 +1,10 @@
-"""Reader content publication and generation fencing; titles are mutable metadata."""
+"""reader publication generations and source pin fences; titles remain metadata.
+
+pieces own ordinary readable generations but cannot own source replacement. an
+accepted definition pins its root generation until final source-family teardown.
+source replacement/composition refuses while pinned; index and metadata work do
+not advance this clock. publishers share the complete root/child media barrier.
+"""
 
 from __future__ import annotations
 
@@ -32,7 +38,8 @@ from nexus.schemas.source_issues import (
 )
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
-_ELIGIBLE_KINDS = frozenset({"pdf", "epub", "web_article"})
+_SOURCE_KINDS = frozenset({"pdf", "epub", "web_article"})
+_READABLE_KINDS = _SOURCE_KINDS | {"text_part"}
 
 
 @dataclass(frozen=True)
@@ -57,7 +64,10 @@ def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> No
     A canonical source and every rendering parent advance once in the same commit;
     the existing media stream observes even an otherwise idle parent's new generation.
     """
+    from nexus.services.media_parts import require_unpinned_source
+
     for media_id in sorted(set(media_ids)):
+        require_unpinned_source(db, media_id=media_id)
         publication = db.scalar(
             select(ReaderPublication)
             .where(ReaderPublication.media_id == media_id)
@@ -89,7 +99,7 @@ def read_publication_source_issues(
 
 def ready_publication_rows_sql() -> str:
     """Eligible, currently readable publications shared by readers and capabilities."""
-    kinds = ", ".join(f"'{kind}'" for kind in sorted(_ELIGIBLE_KINDS))
+    kinds = ", ".join(f"'{kind}'" for kind in sorted(_READABLE_KINDS))
     return f"""
         SELECT rp.media_id, rp.generation
         FROM reader_publications rp JOIN media m ON m.id = rp.media_id
@@ -142,7 +152,12 @@ def replace_reader_publication[T](
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> T:
     """Lock media, then the publication row, then install the source pointer and bump."""
-    if expected_kind not in _ELIGIBLE_KINDS:
+    from nexus.services import library_entries
+    from nexus.services.media_parts import require_unpinned_source
+
+    library_entries.lock_media_rows_in_order(db, [media_id])
+    require_unpinned_source(db, media_id=media_id)
+    if expected_kind not in _SOURCE_KINDS:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND,
             "Reader publication requires PDF, EPUB, or web article media.",
@@ -199,7 +214,7 @@ def replace_reader_publication[T](
 def replace_reader_document_title(db: Session, *, media: Media, title: str) -> bool:
     """Update the label without changing content identity; false without a publication."""
     kind = str(media.kind)
-    if kind not in _ELIGIBLE_KINDS:
+    if kind not in _SOURCE_KINDS:
         return False
     locked_id = db.scalar(
         select(Media.id).where(Media.id == media.id).with_for_update(key_share=True)
@@ -216,7 +231,7 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
 def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
     """Publish one eligible ready document at generation 1; an existing row is left as is."""
     media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
-    if media is None or str(media.kind) not in _ELIGIBLE_KINDS:
+    if media is None or str(media.kind) not in _SOURCE_KINDS:
         return False
     if media.processing_status != ProcessingStatus.ready_for_reading:
         return False

@@ -2,20 +2,22 @@
 
 // The publisher's contents, the current section marked; and the notice that
 // names a publication's recorded defects.
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { useReaderState, type Reader } from "../DocumentReader";
-import type { SourceIssue, TocNode } from "../model";
+import { sourceTarget, type SourceIssue, type TocNode } from "../model";
 import { ReaderLink } from "../navigation";
 import type { ReaderDestination } from "../location";
 import styles from "./chrome.module.css";
 
 export function Contents({
   reader,
+  actions,
 }: {
   readonly reader: Reader;
+  readonly actions?: (sectionId: string) => ReactNode;
 }): ReactElement | null {
   const ready = useReaderState(reader, (state) =>
     state.document.status === "ready" && state.document.doc.kind === "text"
@@ -35,7 +37,8 @@ export function Contents({
         const chapter = ready.doc.kind === "text" ? ready.doc.transcriptNavigation?.chapters.find((chapter) => chapter.id === id) ?? null : null;
         const target: ReaderDestination["target"] | null = !at ? null : chapter ? { kind: "time", ms: chapter.startMs }
           : { kind: "point", point: { kind: "text", ...at } };
-        const destination = target && { source_identity: ready.doc.identity, target };
+        const portable = target && sourceTarget(ready.doc, target);
+        const destination = portable && { source_identity: ready.doc.identity, target: portable };
         const href = destination ? reader.navigation?.href(destination) ?? null : null;
         return <li key={id}>
           <div className={styles.tocRow}>
@@ -68,6 +71,7 @@ export function Contents({
               },
             }] }] },
           }} /> : null}
+          {sectionId !== null ? actions?.(sectionId) : null}
           </div>
           {children.length > 0 ? list(children) : null}
         </li>;

@@ -25,6 +25,7 @@ from nexus.services import (
     reader_evidence,
 )
 from nexus.services.capabilities import is_document_status_ready
+from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
 from nexus.services.reader_document import transcript_identity
 from nexus.services.reader_publication import read_publication_generation
 from nexus.services.resource_graph.refs import ResourceRef
@@ -52,6 +53,8 @@ def get_reader_document_map(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     media_kind = str(media["kind"])
     page_count = int(media["page_count"]) if media["page_count"] is not None else None
+    scope = read_media_text_scope(db, media_id) if media_kind == "text_part" else None
+    source_media_id = scope.source_media_id if scope is not None else media_id
 
     # Reading order, as the reader document mounts it (transcripts by time).
     fragments = (
@@ -65,11 +68,14 @@ def get_reader_document_map(
                 ORDER BY t_start_ms ASC NULLS LAST, idx ASC
                 """
             ),
-            {"media_id": media_id},
+            {"media_id": source_media_id},
         )
         .mappings()
         .all()
     )
+    if scope is not None:
+        admitted = {interval.fragment_id for interval in scope.fragment_intervals}
+        fragments = [row for row in fragments if row["id"] in admitted]
     fragment_indexes = {str(row["id"]): index for index, row in enumerate(fragments)}
     fragment_ranges: dict[str, tuple[int, int]] = {}
     fragment_times = {
@@ -82,10 +88,21 @@ def get_reader_document_map(
     total_fragment_chars = 0
     for row in fragments:
         char_count = int(row["char_count"] or 0)
-        fragment_ranges[str(row["id"])] = (total_fragment_chars, char_count)
+        if scope is not None:
+            interval = next(
+                item for item in scope.fragment_intervals if item.fragment_id == row["id"]
+            )
+            sliced = read_scope_fragment(db, scope, interval)
+            char_count = len(sliced.canonical_text)
+            fragment_ranges[str(row["id"])] = (
+                total_fragment_chars - sliced.source_start_offset,
+                sliced.source_start_offset + char_count,
+            )
+        else:
+            fragment_ranges[str(row["id"])] = (total_fragment_chars, char_count)
         total_fragment_chars += char_count
 
-    if media_kind in ("epub", "web_article", "pdf"):
+    if media_kind in ("epub", "web_article", "pdf", "text_part"):
         generation = read_publication_generation(db, media_id=media_id)
         if generation is None:
             if is_document_status_ready(str(media["processing_status"])):
@@ -134,7 +151,9 @@ def get_reader_document_map(
         db,
         viewer_id=viewer_id,
         media_id=media_id,
-        media_kind=media_kind,
+        canonical_media_id=source_media_id,
+        reading_identity=identity,
+        media_kind=scope.source_format if scope is not None else media_kind,
         embeds=embed_rows,
         highlights=highlights.list_highlights_for_media(
             db=db, viewer_id=viewer_id, media_id=media_id, mine_only=False

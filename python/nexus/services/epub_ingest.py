@@ -17,7 +17,7 @@ import sqlite3
 import time
 import unicodedata
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -49,7 +49,7 @@ from nexus.ids import new_uuid7
 from nexus.logging import get_logger
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
-from nexus.schemas.reader_apparatus import NotesGroup
+from nexus.schemas.reader_apparatus import NoteRegion, NotesGroup
 from nexus.schemas.source_issues import (
     MissingImage,
     SourceIssue,
@@ -101,6 +101,7 @@ from nexus.services.parser_temp import (
     utf8_byte_length,
 )
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
+from nexus.services.reader_structure import DocumentPoint, DomCut, SectionProof
 from nexus.services.sanitize_html import (
     element_id,
     local_name,
@@ -283,6 +284,93 @@ class _TocWalk:
 
 class _InvalidEpub(Exception):
     """The archive's content is unusable; `prepare_epub_source` reports E_INVALID_FILE_TYPE."""
+
+
+@dataclass(frozen=True)
+class RetainedEpubFragment:
+    fragment_id: UUID
+    fragment_idx: int
+    package_href: str
+    html_sanitized: str
+    canonical_text: str
+
+
+def derive_epub_section_witnesses(
+    *,
+    epub_path: Path,
+    media_id: UUID,
+    fragments: Sequence[RetainedEpubFragment],
+    sections: Sequence[SectionProof],
+    note_regions: Sequence[NoteRegion],
+) -> dict[str, tuple[DomCut | None, DomCut | None]]:
+    """Reprove retained sections from verified package bytes, without reimporting.
+
+    The caller verifies stored size/hash before opening this path. Existing
+    archive/parser limits apply. Only exact identity, ancestry and coordinate
+    matches receive witnesses; detector differences remain unavailable.
+    """
+    started = time.monotonic()
+    with zipfile.ZipFile(epub_path) as zf:
+        _check_archive_safety(zf)
+        opf_path = _find_opf_path(zf)
+        if opf_path is None:
+            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, "Cannot locate OPF rootfile")
+        opf = _parse_xml_entry(zf, opf_path, decoded_bytes_limit=None)
+        if opf is None:
+            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, "Failed to parse OPF")
+        manifest = _parse_manifest(opf, posixpath.dirname(opf_path))
+        href_to_idx = {fragment.package_href: fragment.fragment_idx for fragment in fragments}
+        toc = _materialize_toc(zf, opf, manifest, href_to_idx, media_id, opf_path)
+        retained: list[EpubStructureFragment] = []
+        rendered_bytes = 0
+        for fragment in fragments:
+            if (time.monotonic() - started) * 1000 > _ARCHIVE_MAX_PARSE_MS:
+                raise ResourceLimitError(
+                    "Section preparation exceeded archive parse time", dimension="Time"
+                )
+            if zf.getinfo(fragment.package_href).file_size > EPUB_XHTML_MAX_DECODED_BYTES:
+                raise ResourceLimitError(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
+            rendered_bytes += utf8_byte_length(fragment.html_sanitized) + utf8_byte_length(
+                fragment.canonical_text
+            )
+            if rendered_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
+                raise ResourceLimitError(
+                    "Section preparation exceeds rendered text limit", dimension="Output"
+                )
+            canonical = canonicalize_structure(fragment.html_sanitized)
+            if canonical.text != fragment.canonical_text:
+                raise ValueError("Retained EPUB canonical text disagrees with its rich body")
+            canonical = bind_epub_source_structure(
+                structure=canonical,
+                source_html=_decode_epub_text(zf.read(fragment.package_href)),
+            )
+            retained.append(
+                EpubStructureFragment(
+                    fragment.fragment_id, fragment.fragment_idx, fragment.package_href, canonical
+                )
+            )
+        detected = build_epub_structure(
+            media_id=media_id, fragments=retained, toc_nodes=toc, note_regions=note_regions
+        )
+    existing = {section.section_id: section for section in sections}
+    detected_by_id = {section.location_id: section for section in detected.sections}
+    result: dict[str, tuple[DomCut | None, DomCut | None]] = {}
+    for section in detected.sections:
+        current: EpubStructureSection | None = section
+        while current is not None:
+            previous = existing.get(current.location_id)
+            if previous is None or (
+                previous.parent_section_id != current.parent_section_id
+                or previous.start != DocumentPoint(current.fragment_idx, current.start_offset)
+                or previous.end != current.end
+            ):
+                break
+            current = (
+                detected_by_id[current.parent_section_id] if current.parent_section_id else None
+            )
+        else:
+            result[section.location_id] = section.start_cut, section.end_cut
+    return result
 
 
 def prepare_epub_source(
@@ -652,6 +740,10 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
                 end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
                 end_offset=nav.end.offset if nav.end is not None else None,
                 source=nav.source,
+                start_dom_path=list(nav.start_cut.path) if nav.start_cut is not None else None,
+                start_dom_edge=nav.start_cut.edge if nav.start_cut is not None else None,
+                end_dom_path=list(nav.end_cut.path) if nav.end_cut is not None else None,
+                end_dom_edge=nav.end_cut.edge if nav.end_cut is not None else None,
                 created_at=plan.created_at,
             )
         )
@@ -1485,14 +1577,14 @@ def _rewrite_resource_url(
 
 def _rewrite_srcset(value: str, base_dir: str, package: _Package, missing_paths: list[str]) -> str:
     parts: list[str] = []
-    for url, descriptor in _srcset_candidates(value):
+    for url, descriptor in srcset_candidates(value):
         rewritten = _rewrite_image_resource_url(url, base_dir, package, missing_paths)
         if rewritten:
             parts.append(f"{rewritten} {descriptor}" if descriptor else rewritten)
     return ", ".join(parts)
 
 
-def _srcset_candidates(value: str) -> Iterator[tuple[str, str]]:
+def srcset_candidates(value: str) -> Iterator[tuple[str, str]]:
     """Read HTML image candidates; commas inside a URL are not separators."""
     whitespace = "\t\n\f\r "
     position = 0

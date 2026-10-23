@@ -80,6 +80,7 @@ class _JobPayload(_Frozen):
 
 
 class BibliographyMetadataJobPayload(_JobPayload):
+    part_definition_version: int | None
     purpose: Literal["bibliography"]
 
 

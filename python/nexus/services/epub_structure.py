@@ -31,9 +31,10 @@ from nexus.services.canonicalize import (
 from nexus.services.html_tree import parse_html_document, serialize_html
 from nexus.services.reader_structure import (
     DocumentPoint,
+    DomCut,
     NavigationNoteIndex,
     SectionRangeInput,
-    resolve_section_ends,
+    resolve_section_extents,
 )
 from nexus.services.sanitize_html import element_id, sanitize_epub_chapter
 from nexus.text import normalize_whitespace
@@ -90,6 +91,8 @@ class EpubStructureSection:
     parent_section_id: str | None
     end: DocumentPoint | None
     source: SectionSource
+    start_cut: DomCut | None
+    end_cut: DomCut | None
 
 
 @dataclass(frozen=True)
@@ -113,6 +116,8 @@ class _Section:
     boundary_scope: str
     owns_container: bool = False
     publisher_parent: str | None = None
+    start_cut: DomCut | None = None
+    container_end_cut: DomCut | None = None
 
 
 def bind_epub_source_structure(
@@ -260,7 +265,7 @@ def bind_epub_source_structure(
                 raise ValueError("EPUB authored body boundary disagrees with its retained anchor")
         elif same_text:
             anchors[body_id] = len(elements)
-            elements.append(CanonicalElement("span", 0, 0, None, None, (), False))
+            elements.append(CanonicalElement("span", 0, 0, None, None, (), False, dom_path=()))
     body_roles = frozenset(
         token
         for attribute in ("role", "epub:type", "{http://www.idpf.org/2007/ops}type", "type")
@@ -605,6 +610,16 @@ def build_epub_structure(
         by_element,
         note_index,
     )
+    for section in sections:
+        element = (
+            section.fragment.canonical.elements[section.element_index]
+            if section.element_index is not None
+            else None
+        )
+        if element is not None and element.dom_path is not None:
+            section.start_cut = DomCut(element.dom_path, "before")
+        elif section.element_index is None and section.target.offset == 0:
+            section.start_cut = DomCut((), "before")
     by_container = _bind_containers(fragments, sections, by_element)
     _assign_parents(sections, by_container)
     by_section_id = {section.location_id: section for section in sections}
@@ -636,6 +651,7 @@ def build_epub_structure(
                 # A proved child beyond a title-page container disproves that
                 # physical wrapper as the whole reading division's ceiling.
                 ancestor.container_end = None
+                ancestor.container_end_cut = None
                 ancestor.owns_container = False
             ancestor_id = ancestor.parent
     for section in sections:
@@ -646,6 +662,7 @@ def build_epub_structure(
             owner = by_container.get((section.fragment.fragment_idx, ancestor))
             if owner is not None and owner.owns_container:
                 section.container_end = owner.container_end
+                section.container_end_cut = owner.container_end_cut
                 break
             ancestor = section.fragment.canonical.elements[ancestor].parent_element
 
@@ -676,7 +693,8 @@ def build_epub_structure(
         ):
             continue
         section.container_end = DocumentPoint(last.fragment_idx, len(last.canonical.text))
-    ends = resolve_section_ends(
+        section.container_end_cut = DomCut((), "after")
+    ends = resolve_section_extents(
         [
             SectionRangeInput(
                 section.location_id,
@@ -685,6 +703,8 @@ def build_epub_structure(
                 section.container_end,
                 section.owns_container,
                 section.boundary_scope,
+                section.start_cut,
+                section.container_end_cut,
             )
             for section in sections
         ],
@@ -704,20 +724,24 @@ def build_epub_structure(
             ancestor = by_section_id[ancestor].parent
         if ancestor is None and not by_section_id[section.publisher_parent].owns_container:
             ends[section.publisher_parent] = None
-    published_sections = [
-        EpubStructureSection(
-            location_id=section.location_id,
-            label=section.label,
-            fragment_idx=section.fragment.fragment_idx,
-            href_path=section.fragment.package_href,
-            href_fragment=section.href_fragment,
-            start_offset=section.target.offset,
-            parent_section_id=section.parent,
-            end=ends[section.location_id],
-            source=section.source,
+    published_sections: list[EpubStructureSection] = []
+    for section in sections:
+        end = ends[section.location_id]
+        published_sections.append(
+            EpubStructureSection(
+                location_id=section.location_id,
+                label=section.label,
+                fragment_idx=section.fragment.fragment_idx,
+                href_path=section.fragment.package_href,
+                href_fragment=section.href_fragment,
+                start_offset=section.target.offset,
+                parent_section_id=section.parent,
+                end=end.point if end is not None else None,
+                source=section.source,
+                start_cut=section.start_cut,
+                end_cut=end.cut if end is not None else None,
+            )
         )
-        for section in sections
-    ]
     return EpubStructureResult(
         published_sections,
         _supplemental_toc_nodes(media_id, fragments, toc_nodes, sections, note_regions, note_index),
@@ -1161,24 +1185,33 @@ def _bind_containers(
             owner = next((section for section in owners if section.source == "Both"), owners[0])
             by_container[(fragment.fragment_idx, index)] = owner
             owner.owns_container = True
+            excluded = min(
+                (
+                    element
+                    for element in elements
+                    if opening_end <= element.start_offset < container.end_offset
+                    and (
+                        element.tag == "footer"
+                        or (element.roles - container.roles) & _PARATEXT_ROLES
+                    )
+                ),
+                key=lambda element: element.start_offset,
+                default=None,
+            )
             end = DocumentPoint(
                 fragment.fragment_idx,
-                min(
-                    (
-                        element.start_offset
-                        for element in elements
-                        if opening_end <= element.start_offset < container.end_offset
-                        and (
-                            element.tag == "footer"
-                            or (element.roles - container.roles) & _PARATEXT_ROLES
-                        )
-                    ),
-                    default=container.end_offset,
-                ),
+                excluded.start_offset if excluded is not None else container.end_offset,
             )
-            owner.container_end = (
-                max(owner.container_end, end) if owner.container_end is not None else end
-            )
+            boundary = excluded if excluded is not None else container
+            if owner.container_end is None or end > owner.container_end:
+                owner.container_end = end
+                owner.container_end_cut = (
+                    DomCut(boundary.dom_path, "before" if excluded is not None else "after")
+                    if boundary.dom_path is not None
+                    else None
+                )
+            if container.start_offset == owner.target.offset and container.dom_path is not None:
+                owner.start_cut = DomCut(container.dom_path, "before")
     return by_container
 
 

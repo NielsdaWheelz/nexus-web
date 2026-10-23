@@ -43,7 +43,13 @@ def embed_text(q: str) -> Embedding | None:
 
 
 def nearest_chunks(
-    db: Session, embedding: Embedding, *, owner: str, params: Mapping[str, Any], limit: int
+    db: Session,
+    embedding: Embedding,
+    *,
+    owner: str,
+    params: Mapping[str, Any],
+    limit: int,
+    ctes: str,
 ) -> list[tuple[UUID, float]]:
     """``(chunk_id, cosine)`` nearest first, ties by chunk id, among the embedded chunks of
     ready indexes on the query's model.
@@ -56,7 +62,7 @@ def nearest_chunks(
     query_vector = f"CAST(:embedding AS vector({EMBEDDING_DIMENSIONS}))"
     db.execute(text("SET LOCAL ivfflat.probes = 10"))
     rows = db.execute(
-        text(f"""SELECT ce.chunk_id, 1 - (ce.embedding_vector <=> {query_vector})
+        text(f"""{ctes} SELECT ce.chunk_id, 1 - (ce.embedding_vector <=> {query_vector})
             FROM content_embeddings ce
             JOIN content_chunks cc ON cc.id = ce.chunk_id
             JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind

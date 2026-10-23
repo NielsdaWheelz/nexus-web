@@ -61,6 +61,7 @@ def media_word_count_rows_sql() -> str:
                        SELECT SUM(f.words)
                        FROM displayed_fragments f WHERE f.media_id = m.id
                    ), 0)
+                   WHEN m.kind = 'text_part' THEN (SELECT p.word_count FROM media_parts p WHERE p.media_id=m.id)::bigint
                    WHEN m.kind = 'pdf' THEN m.plain_text_word_count::bigint
                    ELSE NULL
                END AS word_count
@@ -73,7 +74,7 @@ def load_media_summary_metrics(db: Session, media_id: UUID) -> MediaSummaryMetri
     row = db.execute(
         text(
             f"""
-            SELECT CASE WHEN m.kind IN ('web_article', 'epub', 'pdf') THEN counts.word_count
+            SELECT CASE WHEN m.kind IN ('web_article', 'epub', 'pdf', 'text_part') THEN counts.word_count
                         ELSE COALESCE(SUM(f.canonical_text_word_count), 0)
                    END AS word_count,
                    CASE

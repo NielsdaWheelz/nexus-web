@@ -12,6 +12,7 @@ import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
+import { sourceTarget } from "@/lib/documentReader/model";
 import { readerLinkTarget } from "@/lib/documentReader/text/linkTarget";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { activateReaderDestination } from "@/lib/documentReader/navigation";
@@ -131,9 +132,10 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
       const mounted = current.status === "ready" && current.doc.kind === "text" ? current.doc.units.find((candidate) =>
         candidate.xPost?.owner?.media_id === mediaId && candidate.xPost.owner.fragment_id === canonicalUnit && `g${candidate.xPost.owner.generation}` === identity ||
         candidate.id === canonicalUnit && current.doc.identity === identity) : null;
-      const destination: ReaderDestination | null = mounted && current.status === "ready" ? {
-        source_identity: current.doc.identity,
-        target: target.kind === "point" ? { ...target, point: { ...target.point, unit: mounted.id } } : { ...target, unit: mounted.id },
+      const mapped = mounted ? target.kind === "point" ? { ...target, point: { ...target.point, unit: mounted.id } } : { ...target, unit: mounted.id } : null;
+      const portable = mapped !== null && current.status === "ready" ? sourceTarget(current.doc,mapped) : null;
+      const destination: ReaderDestination | null = portable !== null && current.status === "ready" ? {
+        source_identity: current.doc.identity, target: portable,
       } : null;
       changed.push({ anchor, href: anchor.getAttribute("href")!, rich: anchor.getAttribute("data-workspace-rich-target"), role: anchor.getAttribute("role"), tabIndex: anchor.getAttribute("tabindex") });
       anchor.setAttribute("data-workspace-rich-target", "true");
