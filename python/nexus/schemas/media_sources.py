@@ -7,8 +7,10 @@ from uuid import UUID
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 
 from nexus.db.models import ProcessingStatus
+from nexus.schemas.acquisition import AcquisitionGuard
 from nexus.schemas.import_history import UploadVerificationFailureCode
 from nexus.schemas.import_refs import ImportRef
+from nexus.schemas.library import LibraryPlacementsOut
 
 
 class _Strict(BaseModel):
@@ -46,7 +48,7 @@ class CreateUploadRequest(_Strict):
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class ConfirmUploadRequest(_Strict):
+class ConfirmUploadRequest(AcquisitionGuard):
     generation: int = Field(ge=1)
 
 
@@ -68,6 +70,7 @@ class Published(_Strict):
     import_ref: ImportRef
     session_id: UUID
     media_id: UUID
+    current_placements: LibraryPlacementsOut | None
     created: bool
     """The session's own media (false: a capture reused identical bytes, I8)."""
 
@@ -140,7 +143,7 @@ MediaRepairAdmission = Annotated[
 ]
 
 
-class FromUrlRequest(_Strict):
+class FromUrlRequest(AcquisitionGuard):
     """``id`` is the client-minted attempt id: resending it answers the same acceptance.
 
     Version 4 only: successor and system ids are version 5 (``uuid5``), so a client id
@@ -151,7 +154,6 @@ class FromUrlRequest(_Strict):
         min_length=1,
         description="The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.",
     )
-    library_ids: list[UUID] = Field(default_factory=list)
 
 
 class FromUrlOut(_Strict):

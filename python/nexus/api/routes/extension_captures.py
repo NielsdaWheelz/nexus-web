@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_request_id
 from nexus.responses import Data
@@ -22,7 +22,7 @@ from nexus.schemas.extension_capture import (
     CreateCaptureRequest,
     RequestedUrl,
 )
-from nexus.schemas.library import LibraryDestinationOut
+from nexus.schemas.library import LibraryDestinationsOut
 from nexus.schemas.media_sources import ConfirmUploadRequest, Published, UploadSessionOut
 from nexus.services import libraries, media_upload_sessions
 
@@ -43,8 +43,8 @@ def capture_target(
 
 @router.get("/library-destinations")
 def list_library_destinations(
-    request: Request, viewer: ExtensionViewer, db: DbSession
-) -> Data[list[LibraryDestinationOut]]:
+    request: Request, viewer: ExtensionViewer, db: RepeatableReadDbSession
+) -> Data[LibraryDestinationsOut]:
     """The viewer's writable named libraries; the extension cannot create one."""
     if request.query_params:
         raise InvalidRequestError(
@@ -78,6 +78,8 @@ def confirm_capture(
             origin_kind="BrowserCapture",
             session_id=session_id,
             generation=body.generation,
+            expected_removal_revision=int(body.expected_removal_revision),
+            destinations=body.destinations,
             request_id=get_request_id(),
         )
     )

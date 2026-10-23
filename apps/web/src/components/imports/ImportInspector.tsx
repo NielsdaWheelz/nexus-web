@@ -5,7 +5,7 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feed
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
-import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -155,7 +155,7 @@ export default function ImportInspector({
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportInspector");
   const { observation } = useImports();
   const detail = usePaneFreeServerValue({
-    key: importRef,
+    key: `/imports/${encodeURIComponent(importRef)}`,
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });
@@ -242,13 +242,11 @@ export default function ImportInspector({
             }} announcement="None" />
             <div className={styles.inspectorActions}>
               <ImportOpenAction item={sibling} />
-              <Button variant="ghost" size="sm" asChild>
-                <a href={target.href} data-workspace-rich-target="true"
-                  onClick={event => activateTargetLink({ event, runtime, target })}
-                  onKeyDown={event => activateTargetLink({ event, runtime, target })}>
-                  view {relation} import
-                </a>
-              </Button>
+              <ButtonLink href={target.href} data-workspace-rich-target="true"
+                onClick={event => activateTargetLink({ event, runtime, target })}
+                onKeyDown={event => activateTargetLink({ event, runtime, target })}>
+                view {relation} import
+              </ButtonLink>
             </div>
           </section>
         );

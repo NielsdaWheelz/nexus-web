@@ -3,6 +3,7 @@
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Captions } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
@@ -60,12 +61,12 @@ export function TranscriptState({ media, announcement, returnFocus, holdFocus }:
     // The button becomes disabled, then disappears at queued. The pane root survives both.
     if (active.current && document.activeElement === control) holdFocus();
     setBusy(true);
-    setFailure(null);
     try {
       await apiFetch<ApiJson<"/media/{media_id}/transcript/request", "post">>(
         `/api/media/${media.id}/transcript/request`,
         { method: "POST", body: JSON.stringify({ reason: "episode_open" }) },
       );
+      setFailure(null);
     } catch (error) {
       if (!handleUnauthenticatedApiError(error)) {
         if (!isApiError(error) || isSameSystemApiDefect(error)) throwLater({ error });
@@ -81,7 +82,7 @@ export function TranscriptState({ media, announcement, returnFocus, holdFocus }:
   return <div ref={owner}>
     {requestable ? <>
       {state === "failed_provider" ? <FeedbackStatus content={{ tone: "Danger", title: "transcription failed" }} announcement={announcement} /> : null}
-      <Button variant="secondary" size="sm" loading={busy} onClick={(event) => void request(event.currentTarget)}>
+      <Button icon={<Captions />} aria-busy={busy} aria-disabled={busy} onClick={(event) => void request(event.currentTarget)}>
         {state === "failed_provider" || failure ? "retry transcription" : "transcribe"}
       </Button>
       <span className="sr-only" role="status" aria-live={announcement === "None" ? "off" : "polite"}>
@@ -129,7 +130,7 @@ function PlaybackPosition({ mediaId, reader, transcriptReaderKey }: {
   const reasonId = useId();
   if (!loaded) return null;
   return <div>
-    <Button variant="ghost" size="sm" disabled={playback === null} aria-describedby={playback === null ? reasonId : undefined}
+    <Button disabled={playback === null} aria-describedby={playback === null ? reasonId : undefined}
       onClick={() => {
         if (playback !== null) void reader.inspect({ target: { kind: "point", point: { kind: "text", unit: playback.unit, offset: 0 } } });
       }}>

@@ -6,20 +6,16 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   useFeedback,
-  type FeedbackOffer,
 } from "@/components/feedback/Feedback";
 import { assertNever } from "@/lib/assertNever";
 import {
   ApiError,
   isApiError,
-  isSameSystemApiDefect,
-  isStaleBuild,
-  STALE_BUILD_FEEDBACK,
 } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  bodyHasContent,
   docFromBody,
   emptyBody,
   parseBody,
@@ -28,22 +24,15 @@ import {
 } from "./noteBody";
 import * as model from "./outline";
 import * as store from "./texts";
-import {
-  enqueueWrite,
-  captureWriteSerial,
-  advanceLinksVersion,
-  sealOutlinePosition,
-  nudgeWrites,
-} from "./writes";
+import { admitWriting, captureLane, readDraft, readWriting, subscribeWritingBindings, type AuthoredSnapshot, type LaneDependency, type WritingAck, type WritingCommand, type WritingPosition, type Publication, type RestoreNoteProof, type ReferenceConsumption } from "./journal";
 import {
   isDeletedResource,
   subscribeLinkMutations,
-  acknowledgeGraphCommands,
   endpointForResource,
-  announceLinkDeletions,
   type Position,
   type InsertionSource,
-  type InsertionOut,
+  type WritingInsertion,
+  insertionTarget,
 } from "@/lib/resourceGraph/links";
 import { queueReferenceInsertion } from "@/lib/resourceGraph/useReferenceInput";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -59,13 +48,96 @@ import type {
   OutlineTarget,
 } from "@/lib/resources/outlineProjection";
 import { enterOutlineOccurrence } from "@/lib/resources/outlineProjection";
-type Reply = Schema<"OutlineCommandsOut">;
+type Reply = WritingAck;
+type Admission = { intent_id: string; draft_id: string | null };
+type Restore = Extract<WritingCommand, { kind: "restore_note" }>["removed_by"];
+/** Exact pending deletion owners retain their own inverse; foreign histories expire. */
+const historyDeletionOwners = new Map<string, Set<Item>>();
+function holdHistoryDeletions(item: Item | null, keys: readonly string[], owned: WeakSet<Item>): (ack?: Reply) => void {
+  if (item === null) return () => undefined;
+  owned.add(item);
+  for (const key of keys) {
+    let owners = historyDeletionOwners.get(key);
+    if (!owners) { owners = new Set(); historyDeletionOwners.set(key, owners); }
+    owners.add(item);
+  }
+  return (ack) => {
+    const awaiting = ack ? new Set([...ack.removed_link_ids.map(id => `link:${id}`), ...ack.deleted_refs]) : null;
+    for (const key of keys) {
+      if (awaiting?.has(key)) continue;
+      const owners = historyDeletionOwners.get(key);
+      owners?.delete(item);
+      if (owners?.size === 0) historyDeletionOwners.delete(key);
+    }
+  };
+}
+function removalProofs(refs: Iterable<string>, reply: Reply): ReadonlyMap<string, RestoreNoteProof> {
+  const proofs = new Map<string, RestoreNoteProof>();
+  for (const ref of refs) {
+    if (!ref.startsWith("note_block:")) continue;
+    const original_note_id = model.noteIdOf(ref);
+    if (reply.deleted_refs.includes(ref)) proofs.set(original_note_id, { kind: "observed", original_note_id, outcome: { kind: "deleted" } });
+    else {
+      const note = reply.notes.find(note => note.id === original_note_id);
+      if (note) proofs.set(original_note_id, { kind: "observed", original_note_id,
+        outcome: { kind: "retained", note: { id: note.id, body_pm_json: note.body_pm_json, body_version: note.body_version } } });
+    }
+  }
+  return proofs;
+}
+function remapKey(key: string, refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string, string>): string {
+  return key.split("/").map(part => refs.get(part) ?? edges.get(part) ?? part).join("/");
+}
+function remapEdit(edit: model.Edit, refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string, string>): model.Edit {
+  const ref = (value: string) => refs.get(value) ?? value;
+  const edge = (value: string) => edges.get(value) ?? value;
+  const position = (value: model.OutlinePosition | null): model.OutlinePosition | null => {
+    if (value === null) return null;
+    return value.expected_links_version === null ? { ...value, after: edge(value.after) } : { ...value, after: value.after === null ? null : edge(value.after) };
+  };
+  const source = (value: InsertionSource): InsertionSource => value.kind === "resource" ? { ...value, ref: ref(value.ref) } : value;
+  switch (edit.kind) {
+    case "set_body": return { ...edit, note_id: model.noteIdOf(ref(model.noteRef(edit.note_id))) };
+    case "set_title": return edit;
+    case "ensure_daily": return edit;
+    case "insert_note": return { ...edit, endpoint: ref(edit.endpoint), source: source(edit.source), note_id: model.noteIdOf(ref(model.noteRef(edit.note_id))), link_id: edge(edit.link_id), position: position(edit.position) };
+    case "insert_link": return { ...edit, endpoint: ref(edit.endpoint), source: source(edit.source), target: ref(edit.target), link_id: edge(edit.link_id), position: position(edit.position) };
+    case "move": return { ...edit, endpoint: ref(edit.endpoint), link_id: edge(edit.link_id), after: edit.after === null ? null : edge(edit.after) };
+    case "relink": return { ...edit, endpoint: ref(edit.endpoint), destination: ref(edit.destination), link_id: edge(edit.link_id), new_link_id: edge(edit.new_link_id), position: position(edit.position) };
+    case "remove": case "consume_note": return { ...edit, endpoint: ref(edit.endpoint), link_id: edge(edit.link_id) };
+  }
+}
+function remapResource(item: ResourceItem, refs: ReadonlyMap<string, string>): ResourceItem {
+  const ref = refs.get(item.ref);
+  if (!ref) return item;
+  return { ...item, ref, action_ref: refs.get(item.action_ref) ?? item.action_ref,
+    activation: { ...item.activation, resource_ref: ref, href: ref.startsWith("note_block:") ? `/notes/${model.noteIdOf(ref)}` : item.activation.href } };
+}
+function remapGraph(refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string, string>): void {
+  for (const [ref, outline] of [...graph]) {
+    const targetRef = refs.get(ref) ?? ref;
+    const source = { ...outline.source, item: remapResource(outline.source.item, refs) };
+    const links = outline.links.map(link => ({ ...link, link_id: edges.get(link.link_id) ?? link.link_id, target: { ...link.target, item: remapResource(link.target.item, refs) } }));
+    if (targetRef !== ref) graph.delete(ref);
+    const canonical = targetRef !== ref ? graph.get(targetRef) : undefined;
+    graph.set(targetRef, canonical ? { ...canonical, links: [...canonical.links, ...links.filter(link => !canonical.links.some(existing => existing.link_id === link.link_id))] } : { ...outline, source, links });
+  }
+  for (const pending of pendingOccurrences.values()) {
+    pending.ref = refs.get(pending.ref) ?? pending.ref;
+    pending.sourceRef = refs.get(pending.sourceRef) ?? pending.sourceRef;
+    pending.item = remapResource(pending.item, refs);
+  }
+}
+
 // A source edge introduced by an earlier queued intent supplies its own receipt
 // fence. Keeping that cell live does not change the bytes once the head is sealed.
-type CapturedLinksVersion = number | model.PendingPositionProof;
+type CapturedLinksVersion = number | (Admission & { version: number });
 const graph: model.Graph = new Map();
 const latest = new Map<string, model.OutlineData>();
+const insertionCapabilities = new Map<string, InsertionSource | null>();
 const reviewedRefs = new Set<string>();
+/** A surface may undo only its own uninterrupted title/body history. */
+const textHistoryOwners = new Map<string, string>();
 type Invalidation =
   | {
       kind: "resources";
@@ -89,7 +161,6 @@ const carried = new Map<
   {
     texts: ReadonlySet<string>;
     refs: ReadonlySet<string>;
-    refused: (error: unknown) => void;
   }
 >();
 function hasCarriedStructure(ref: string): boolean {
@@ -97,7 +168,6 @@ function hasCarriedStructure(ref: string): boolean {
 }
 let observingLinks = false;
 let jobSerial = 0;
-let cancelledBefore = 0;
 export interface PendingOccurrence {
   key: string;
   ref: string;
@@ -117,7 +187,6 @@ type PendingRecord = PendingOccurrence & {
   authoredPosition?: {
     after: string | null;
     linksVersion: number;
-    serial: number;
   };
 };
 const pendingRemovals = new Map<string, PendingRemoval>();
@@ -209,6 +278,7 @@ function observeLinks() {
         }
       }
       publish({ kind: "resources", refs: new Set([mutation.ref]) });
+      historyDeletionOwners.delete(mutation.ref);
       return;
     }
     if (mutation.kind === "deleted") {
@@ -217,6 +287,7 @@ function observeLinks() {
       const endpoints = linkedEndpoints(ids);
       dropLinks(ids, endpoints);
       publish({ kind: "links", ids, preserve: null });
+      historyDeletionOwners.delete(`link:${mutation.linkId}`);
       return;
     }
     if (mutation.kind === "created" || mutation.kind === "context_detached")
@@ -255,7 +326,7 @@ function adopt(outline: model.OutlineData) {
     const body = bodyOf(node);
     if (body && node.content.kind === "note")
       store.adoptText(node.item.ref, body, node.content.body_version);
-    else if (node.content.kind === "page" && node === live.source)
+    else if (node.content.kind === "page")
       store.adoptText(
         node.item.ref,
         node.content.title,
@@ -273,7 +344,6 @@ function adoptBranch(
   if (!isResourceOutlineReadCurrent(source.item.ref, generation)) return;
   const links = items.map(({ connection, content }) => ({
     link_id: connection.edge_id,
-    has_link_note: connection.link_note !== null,
     target: { item: connection.other, content },
     connection,
   }));
@@ -305,7 +375,6 @@ const textBody = (noteId: string): NoteBody => {
   const value = store.readText(model.noteRef(noteId))?.value;
   return typeof value === "object" ? value : emptyBody();
 };
-const version = (ref: string) => store.readText(ref)?.acked?.version ?? 1;
 /** Capture link targets before an optimistic edit can remove or move them. */
 function editReferences(edits: readonly model.Edit[]): Set<string> {
   const refs = new Set<string>();
@@ -341,35 +410,34 @@ function editReferences(edits: readonly model.Edit[]): Set<string> {
 /** The single adapter from local structural intent to graph commands. */
 function wireEdits(
   edits: readonly model.Edit[],
-  checked: (ref: string, position?: model.OutlinePosition | null) => number,
+  checked: (ref: string, position?: model.OutlinePosition | null) => LaneDependency,
   removed: ReadonlyMap<string, string> = new Map(),
   bodyBases: Map<string, number | null> = new Map(),
   removalBodies: ReadonlyMap<string, NoteBody> = new Map(),
-): Schema<"OutlineCommandsRequest">["commands"] {
-  const position = (
-    ref: string,
-    captured: model.OutlinePosition | null,
-  ): Position | null => {
+  restores: ReadonlyMap<string, Restore> = new Map(),
+): WritingCommand[] {
+  const position = (ref: string, captured: model.OutlinePosition | null): WritingPosition | null => {
     if (captured === null) return null;
-    const version = checked(ref, captured);
-    // checked resolves the originating acknowledgement before using its edge id.
-    const after =
-      captured.expected_links_version === null &&
-      captured.after === captured.proof.requestedEdgeId
-        ? captured.proof.acknowledged!.edgeId
-        : captured.after;
-    return { after, expected_links_version: version };
+    if (captured.expected_links_version === null) return {
+      after: captured.after,
+      predecessor: { kind: "insertion", ...captured.proof },
+    };
+    return { after: captured.after, expected_links_version: checked(ref, captured) };
   };
-  return edits.map((edit) => {
+  return edits.map((edit): WritingCommand => {
     switch (edit.kind) {
       case "insert_note":
+        if (restores.has(edit.note_id)) return {
+          kind: "restore_note", removed_by: restores.get(edit.note_id)!, note_id: edit.note_id, link_id: edit.link_id,
+          source: edit.source, body_pm_json: edit.body_pm_json, position: position(edit.endpoint, edit.position),
+        };
         return {
           kind: "insert_note",
           link_id: edit.link_id,
           note_id: edit.note_id,
           source:
             edit.position?.expected_links_version === null
-              ? { kind: "resource", ref: edit.position.proof.sourceRef }
+              ? { kind: "resource", ref: edit.position.proof.source_ref }
               : edit.source,
           body_pm_json: edit.body_pm_json,
           position: position(edit.endpoint, edit.position),
@@ -388,7 +456,7 @@ function wireEdits(
           link_id: edit.link_id,
           source:
             edit.position?.expected_links_version === null
-              ? { kind: "resource", ref: edit.position.proof.sourceRef }
+              ? { kind: "resource", ref: edit.position.proof.source_ref }
               : edit.source,
           target,
           position: position(edit.endpoint, edit.position),
@@ -410,12 +478,18 @@ function wireEdits(
         };
       case "set_body": {
         const ref = model.noteRef(edit.note_id);
-        const expected_version = version(ref);
-        bodyBases.set(ref, expected_version);
+        const base = store.readText(ref)?.acked?.version ?? null;
+        bodyBases.set(ref, base);
+        const expected_version = store.textDependency(ref, "body");
+        if (expected_version === null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "this note has no confirmed or pending body version");
         return { ...edit, expected_version };
       }
       case "set_title":
-        return { ...edit, expected_version: version(`page:${edit.page_id}`) };
+        {
+        const expected_version = store.textDependency(`page:${edit.page_id}`, "title");
+        if (expected_version === null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "this page has no confirmed or pending title version");
+        return { ...edit, expected_version };
+      }
       case "consume_note":
       case "remove": {
         const note = removed.get(edit.link_id);
@@ -431,16 +505,18 @@ function wireEdits(
           : note
             ? (bodyBases.get(note) ?? null)
             : null;
+        const expected = (note ? store.textDependency(note, "body") : null) ??
+          (expected_body_version === null ? null : { kind: "observed" as const, ref: note!, lane: "body" as const, version: expected_body_version });
         if (edit.kind === "consume_note") {
-          if (expected_body_version === null)
+          if (expected === null)
             throw new ApiError(
               409,
               "E_RESOURCE_CONFLICT",
               "the consumed note version is unavailable",
             );
-          return { ...edit, kind: "consume_note", expected_body_version };
+          return { ...edit, kind: "consume_note", expected_links_version: checked(edit.endpoint), expected_body_version: expected };
         }
-        return { ...edit, kind: "remove", expected_body_version };
+        return { ...edit, kind: "remove", expected_links_version: checked(edit.endpoint), expected_body_version: expected };
       }
       case "ensure_daily":
         return edit;
@@ -457,162 +533,67 @@ function sendEdits(
   removed: ReadonlyMap<string, string>,
   texts: ReadonlySet<string>,
   refs: ReadonlySet<string>,
-  captured: ReadonlyMap<string, CapturedLinksVersion> = new Map(
-    [...graph].map(([ref, value]) => [ref, value.links_version]),
-  ),
-  dependency = captureWriteSerial(),
+  captured: ReadonlyMap<string, CapturedLinksVersion> = new Map([...graph].map(([ref, value]) => [ref, value.links_version])),
   onRefused: (error: unknown) => void = () => undefined,
   bodyBases: Map<string, number | null> = new Map(),
   removalBodies: ReadonlyMap<string, NoteBody> = new Map(),
-  onAcknowledged: (reply: Reply, serial: number) => void = () => undefined,
-) {
+  onAcknowledged: (reply: Reply) => void = () => undefined,
+  restores: ReadonlyMap<string, Restore> = new Map(),
+  consumed_reference: ReferenceConsumption | null = null,
+): { intent_id: string; draft_id: string | null } | null {
   const serial = ++jobSerial;
-  carried.set(serial, { texts, refs, refused: onRefused });
-  const release = () => {
-    carried.delete(serial);
-  };
-  enqueueWrite<Reply>({
-    cancelled: () => [...refs].some(isDeletedResource),
-    cancel() {
-      refuse(
-        new ApiError(
-          404,
-          "E_NOT_FOUND",
-          "a resource used by this change is no longer available",
-        ),
-        serial,
-      );
-    },
-    build() {
-      if (serial <= cancelledBefore) return null;
-      const checked = (
-        ref: string,
-        position?: model.OutlinePosition | null,
-      ) => {
-        if (position !== undefined && position !== null)
-          return sealOutlinePosition(ref, position, dependency).position
-            .expected_links_version;
-        const minted = edits.some(
-          (edit) =>
-            edit.kind === "insert_note" && model.noteRef(edit.note_id) === ref,
-        );
-        const observed = captured.get(ref);
-        if (typeof observed === "object")
-          return sealOutlinePosition(
-            ref,
-            {
-              after: observed.requestedEdgeId,
-              expected_links_version: null,
-              proof: observed,
-            },
-            dependency,
-          ).position.expected_links_version;
-        const base = observed ?? (minted ? 1 : null);
-        if (base === null)
-          throw new ApiError(
-            409,
-            "E_RESOURCE_CONFLICT",
-            "the insertion position is no longer loaded",
-          );
-        const advanced = advanceLinksVersion(ref, base, dependency);
-        if (advanced === null)
-          throw new ApiError(
-            409,
-            "E_RESOURCE_CONFLICT",
-            "placement changed; refresh before trying this edit again",
-          );
-        return advanced;
+  carried.set(serial, { texts, refs });
+  const release = () => carried.delete(serial);
+  try {
+    const checked = (ref: string, position?: model.OutlinePosition | null): LaneDependency => {
+      if (position?.expected_links_version === null) return {
+        kind: "result", intent_id: position.proof.intent_id, draft_id: position.proof.draft_id, ref, lane: "links", version: position.proof.version,
       };
-      const commands = wireEdits(
-        edits,
-        checked,
-        removed,
-        bodyBases,
-        removalBodies,
-      );
-      return {
-        path: "/api/resource-graph/commands",
-        method: "POST",
-        body: { commands },
+      const observed = captured.get(ref) ?? position?.expected_links_version;
+      if (typeof observed === "object" && observed !== null) return {
+        kind: "result", intent_id: observed.intent_id, draft_id: observed.draft_id, ref, lane: "links", version: observed.version,
       };
-    },
-    settle(reply, writeSerial) {
+      const minted = edits.some(edit => edit.kind === "insert_note" && model.noteRef(edit.note_id) === ref);
+      const base = observed ?? (minted ? 1 : null);
+      if (base === null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "the insertion position is no longer loaded");
+      return captureLane(ref, "links", base);
+    };
+    const commands = wireEdits(edits, checked, removed, bodyBases, removalBodies, restores);
+    const admitted = admitWriting({ kind: "outline", commands }, Promise.all([...texts].map(store.snapshotText)), consumed_reference);
+    void admitted.settled.then(reply => {
       release();
       acknowledge(reply, edits);
-      onAcknowledged(reply, writeSerial);
-      acknowledgeGraphCommands(reply);
-      receive(reply.outlines);
-      publishChange("Notes");
-      publish();
-    },
-    fail(error) {
-      handleUnauthenticatedApiError(error);
-      // The queue calls fail only after an unsent build failure or a definitive
-      // rejection. Uncertain writes stay queued and retain their projection.
-      refuse(error, serial);
-    },
-    finalize() {
-      release();
+      onAcknowledged(reply);
       receive([]);
       publish();
-    },
-  });
+    }, error => {
+      release();
+      handleUnauthenticatedApiError(error);
+      onRefused(error);
+      publish({ kind: "refused", refs, texts });
+    });
+    void admitted.durable.catch(() => publish());
+    const anchor = [...texts].map(ref => store.textDraft(ref)?.draft_id).find(id => id !== undefined) ?? null;
+    return { intent_id: admitted.intent_id, draft_id: anchor };
+  } catch (error) {
+    release();
+    onRefused(error);
+    publish({ kind: "refused", refs, texts });
+    return null;
+  }
 }
 /** Only carried body writes are acknowledged. Canonical nodes merely read or reused
  * by an insertion are adopted, preserving dirty drafts and opening unopened texts.
  * Deleted notes stop saving unless a later queued write recreates them. */
 function acknowledge(reply: Reply, edits: readonly model.Edit[]) {
-  const later = [...carried.values()];
-  for (const ref of reply.deleted)
-    if (!later.some((entry) => entry.texts.has(ref))) store.setGone(ref);
-  const inserted = new Set(
-    edits.flatMap((e) =>
-      e.kind === "insert_note" ? [model.noteRef(e.note_id)] : [],
-    ),
-  );
-  const written = new Set(
-    edits.flatMap((edit) =>
-      edit.kind === "set_body" || edit.kind === "insert_note"
-        ? [model.noteRef(edit.note_id)]
-        : [],
-    ),
-  );
-  const targets = reply.outlines.flatMap((outline) =>
-    outline.items.map(({ connection, content }) => ({
-      item: connection.other,
-      content,
-    })),
-  );
-  for (const node of [
-    ...reply.nodes,
-    ...targets.filter((t) => inserted.has(t.item.ref)),
-  ]) {
-    if (isDeletedResource(node.item.ref)) continue;
-    const body = bodyOf(node);
-    if (body && node.content.kind === "note") {
-      if (written.has(node.item.ref))
-        store.acknowledgeText(node.item.ref, body, node.content.body_version);
-      else store.adoptText(node.item.ref, body, node.content.body_version);
-    }
+  const written = new Set(edits.flatMap(edit => edit.kind === "set_body" || edit.kind === "insert_note" ? [model.noteRef(edit.note_id)] : []));
+  for (const note of reply.notes) {
+    const ref = model.noteRef(note.id);
+    const value = { body_pm_json: note.body_pm_json, body_text: note.body_text };
+    if (written.has(ref)) store.acknowledgeText(ref, value, note.body_version);
+    else store.adoptText(ref, value, note.body_version);
   }
-}
-/** Cancel this write and every queued structure write; reload; reset their texts. */
-function refuse(error: unknown, serial: number) {
-  const texts = new Set<string>();
-  const refs = new Set<string>();
-  for (const [at, entry] of [...carried].reverse()) {
-    if (at < serial) continue;
-    entry.refused(error);
-    entry.texts.forEach((ref) => texts.add(ref));
-    entry.refs.forEach((ref) => refs.add(ref));
-  }
-  carried.clear();
-  reviewedRefs.clear();
-  cancelledBefore = jobSerial;
-  latest.clear();
-  for (const ref of texts) store.resetText(ref);
-  publishChange("Notes");
-  publish({ kind: "refused", refs, texts });
+  for (const page of reply.pages) store.adoptText(`page:${page.id}`, page.title, page.title_version);
 }
 function retirePendingOccurrences({
   endpoint,
@@ -674,6 +655,7 @@ function adoptReadEvidence(
     !isResourceOutlineReadCurrent(read.source.item.ref, read.generation)
   )
     return;
+  insertionCapabilities.set(read.source.item.ref, read.insertionSource);
   // A materialized owner stays projected until the original candidate's own
   // post-ack read exposes that owner. Its exact connections remain separate.
   let aliasesRetired = false;
@@ -710,6 +692,51 @@ function adoptReadEvidence(
       complete: true,
     });
 }
+/** A latent day is a frozen creation capability, never a canonical page/version. */
+export function openLatentDaily(outline: model.WireOutline): void {
+  const ref = outline.source.item.ref;
+  if (graph.has(ref)) return;
+  graph.set(ref, { source: outline.source, links: [], links_version: outline.links_version, complete: true });
+  if (outline.source.content.kind === "page") store.adoptText(ref, outline.source.content.title, null);
+  reviewedRefs.add(ref);
+  publish();
+}
+export interface PageCreation {
+  page_id: string;
+  note_id: string;
+  link_id: string;
+  title: string;
+}
+export function pagePublication(creation: PageCreation): Extract<Publication, { kind: "page" }> {
+  const title = store.readText(`page:${creation.page_id}`)?.value;
+  return { kind: "page", request: {
+    id: creation.page_id, title: typeof title === "string" && title.trim() ? title : "untitled",
+    initial_item: { kind: "note", note_id: creation.note_id, link_id: creation.link_id, body_pm_json: textBody(creation.note_id).body_pm_json },
+  } };
+}
+/** An unpublished page starts in the SAME outline and editor tree it will publish. */
+export function openPageDraft(creation: PageCreation): void {
+  const ref = `page:${creation.page_id}`;
+  if (graph.has(ref)) return;
+  const body = emptyBody();
+  const note = model.newNoteNode(creation.note_id, body);
+  const source: model.OutlineNode = {
+    item: { ref, action_ref: ref, label: creation.title || "untitled", missing: false,
+      activation: { resource_ref: ref, kind: "route", href: `/pages/${creation.page_id}`, unavailable_reason: null },
+      preview: { body: { kind: "named", title: creation.title, media_kind: null, contributors: null, image_url: null }, source: null, annotation: null } },
+    content: { kind: "page", title: creation.title, title_version: 1, daily_date: null },
+  };
+  store.adoptText(ref, creation.title, null);
+  store.createText(note.item.ref, body, null);
+  const publication = pagePublication(creation);
+  store.setCreator(ref, publication);
+  store.setCreator(note.item.ref, publication);
+  const link = { link_id: creation.link_id, target: note, connection: null, noteAuthority: "local" as const };
+  graph.set(ref, { source, links: [link], links_version: 1, complete: true });
+  graph.set(note.item.ref, { source: note, links: [{ ...link, target: source }], links_version: 1, complete: false });
+  reviewedRefs.add(ref);
+  publish();
+}
 /** A host-owned unpublished draft is a genuine client-minted occurrence. Opening
  * it changes no server state and claims no complete adjacency for its note. */
 export function openOutlineDraft({
@@ -723,14 +750,13 @@ export function openOutlineDraft({
   linkId: string;
   noteId: string;
   body: NoteBody;
-  creator: store.Creator;
+  creator: Publication;
 }) {
   const parent = graph.get(endpoint);
   if (!parent || parent.links.length) return;
   const target = model.newNoteNode(noteId, body);
   const link = {
     link_id: linkId,
-    has_link_note: false,
     target,
     connection: null,
   };
@@ -744,12 +770,31 @@ export function openOutlineDraft({
   store.createText(target.item.ref, body, creator);
   publish();
 }
+
+interface DirectOccurrence {
+  destination: OutlineDestination | null;
+  placement: OutlinePlacement | null;
+  indentDestination: (OutlineDestination & {source: Schema<"LinkResourceEndpoint">}) | null;
+  editable: boolean;
+  unlink: (() => void) | null;
+}
+export type OutlineCommand = "insert" | "indent" | "outdent" | "move_up" | "move_down" | "undo" | "redo";
+export type OutlineCommandState = { enabled: boolean; reason: string | null };
+export interface OutlineEditorCommands {
+  key: string;
+  insertLabel: string;
+  commandState(command: OutlineCommand): OutlineCommandState;
+  executeCommand(command: OutlineCommand): void;
+}
+const sameTextValue = (a: store.TextValue, b: store.TextValue): boolean =>
+  typeof a === "string" || typeof b === "string" ? a === b : sameBody(a, b);
 export type Selection =
   | {
       kind: "text";
       key: string;
       anchor: number;
       head: number;
+      direction?: "forward" | "backward" | "none";
     }
   | {
       kind: "blocks";
@@ -758,7 +803,7 @@ export type Selection =
     }
   | null;
 export interface NoteEdit {
-  referenceBase?: store.ReferenceBase;
+  editBase?: store.TextEditBase;
   before: NoteBody;
   after: NoteBody;
   selectionBefore: {
@@ -775,6 +820,7 @@ export type FocusSelection =
   | {
       anchor: number;
       head: number;
+      direction?: "forward" | "backward" | "none";
     }
   | "end";
 export interface FocusRequest {
@@ -829,14 +875,17 @@ type BodySides = {
   after: NoteBody;
 }[];
 type Item = {
+  lastAdmission?: Admission;
+  removalProofs?: ReadonlyMap<string, RestoreNoteProof>;
   selBefore: Selection;
   selAfter: Selection;
 } & (
   | {
       kind: "text";
       ref: string;
-      before: NoteBody;
-      after: NoteBody;
+      before: store.TextValue;
+      after: store.TextValue;
+      write?: (value: string, editBase?: store.TextEditBase) => void;
       at: number;
     }
   | {
@@ -847,7 +896,6 @@ type Item = {
       occurrences: readonly OccurrenceIntent[];
       bodies: BodySides;
       versions: ReadonlyMap<string, CapturedLinksVersion>;
-      dependency: number;
     }
   | {
       kind: "creation";
@@ -888,6 +936,9 @@ type ChildAction = {
   body: NoteBody;
   left: NoteBody | null;
   target: Schema<"InsertLink">["target"] | null;
+  targetItem: ResourceItem | null;
+  authored: Promise<AuthoredSnapshot[]> | null;
+  consumed_reference: ReferenceConsumption | null;
   noteId: string;
   linkId: string;
   publication: DailyPublication | null;
@@ -970,16 +1021,16 @@ export function useOutlineSession({
   const retained = useResourceDraft(`Notes.Session:${scope}`, () => ({
     view: {
       folds: new Map<string, boolean>(),
-      zoom: [] as string[],
-      focused: null as string | null,
     },
     history: { current: { items: [], index: 0 } as History },
+    focusSerial: { current: 0 },
   }));
   const owner = retained.owner;
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
   const view = retained.value.view;
   const history = retained.value.history;
+  const deletionItems = useRef(new WeakSet<Item>());
   const failed = useResourceDraft<readonly FailedIntent[]>(
     `Notes.FailedStructure:${scope}`,
     () => [],
@@ -990,8 +1041,38 @@ export function useOutlineSession({
   );
   const [selection, setSelection] = useState<Selection>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
-  const focusSerial = useRef(0);
+  const focusSerial = retained.value.focusSerial;
   const [activeReference, setActiveReference] = useState<string | null>(null);
+  const directOccurrences = useRef(new Map<string, DirectOccurrence>());
+  const [commandOwner, setCommandOwner] = useState(false);
+  const editorCommands = useRef<OutlineEditorCommands | null>(null);
+  const surfaces = useRef(new Map<object, {
+    rows: readonly model.Row[];
+    rootEndpoint: string;
+    editable: boolean;
+    destination(row: model.Row): OutlineDestination | null;
+    publication?: DailyPublication;
+  }>());
+  const composerDraft = useResourceDraft<{
+    destination: OutlineDestination; publication?: DailyPublication; serial: number;
+    displayAfter: string | null;
+    body: NoteBody; selection: {anchor: number; head: number}; problem: string | null;
+  } | null>(`Notes.Composer:${scope}`, () => null, value => ({
+    changed: value !== null && bodyHasContent(value.body), unconfirmed: false, stopsBrowserWork: false,
+  }));
+  const composer = composerDraft.value;
+  const setComposer = composerDraft.set;
+  function adoptComposerPredecessor(reply: WritingAck) {
+    const current = composerDraft.read();
+    const position = current?.destination.position;
+    if (!current || position?.expected_links_version !== null || position.after !== position.proof.requested_link_id) return;
+    const insertion = reply.insertions.find(value => value.requested_link_id === position.proof.requested_link_id &&
+      value.source_ref === position.proof.source_ref);
+    if (!insertion) return;
+    // Only the display follows canonical identity; admission retains the original proof.
+    setComposer(value => value?.serial === current.serial
+      ? { ...value, displayAfter: insertion.canonical_link_id } : value);
+  }
   const selectedNow = useRef(selection);
   selectedNow.current = selection;
   const boundaryNext = useRef(true);
@@ -999,8 +1080,13 @@ export function useOutlineSession({
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
+    const heldItems = deletionItems.current;
     return () => {
       live.current = false;
+      for (const [key, owners] of historyDeletionOwners) {
+        for (const item of owners) if (heldItems.has(item)) owners.delete(item);
+        if (owners.size === 0) historyDeletionOwners.delete(key);
+      }
       history.current = { items: [], index: 0 };
     };
   }, [history, owner]);
@@ -1014,7 +1100,7 @@ export function useOutlineSession({
       setFocus({ key, target, selection: at, serial: ++focusSerial.current });
       setSelection(null);
     },
-    [],
+    [focusSerial],
   );
   const markInteraction = useCallback(
     (
@@ -1035,22 +1121,25 @@ export function useOutlineSession({
   useEffect(() => {
     observeLinks();
     const changed = (invalidated: Invalidation | null) => {
+      const preserved = new Set(invalidated?.kind === "links"
+        ? [...invalidated.ids].flatMap(id => [...historyDeletionOwners.get(`link:${id}`) ?? []])
+        : invalidated?.kind === "resources" ? [...invalidated.refs].flatMap(ref => [...historyDeletionOwners.get(ref) ?? []]) : []);
       if (invalidated?.kind === "links")
         history.current = retainHistory(
           history.current,
           (item) =>
-            item === invalidated.preserve ||
+            item === invalidated.preserve || preserved.has(item) ||
             !dependsOnEdges(item, invalidated.ids),
         );
       if (invalidated?.kind === "resources" || invalidated?.kind === "refused")
         history.current = retainHistory(history.current, (item) =>
-          item.kind === "text"
+          preserved.has(item) || (item.kind === "text"
             ? !(
                 invalidated.kind === "refused"
                   ? invalidated.texts
                   : invalidated.refs
               ).has(item.ref)
-            : ![...item.refs].some((ref) => invalidated.refs.has(ref)),
+            : ![...item.refs].some((ref) => invalidated.refs.has(ref))),
         );
       if (invalidated) boundaryNext.current = true;
       rerender();
@@ -1082,13 +1171,18 @@ export function useOutlineSession({
     options: {
       publication?: DailyPublication;
       captured?: ReadonlyMap<string, CapturedLinksVersion>;
-      dependency?: number;
-      onAcknowledged?: (reply: Reply, serial: number) => void;
+      restores?: ReadonlyMap<string, Restore>;
+      preserve?: Item;
+      consumed_reference?: ReferenceConsumption | null;
+      freshNotes?: ReadonlySet<string>;
+      onAdmitted?: (admission: Admission) => void;
+      onAcknowledged?: (reply: Reply) => void;
       inverse?: readonly model.Edit[];
       resources?: ReadonlyMap<string, ResourceItem>;
       occurrences?: readonly OccurrenceIntent[];
     } = {},
   ) {
+    if (readWriting().paused) return false;
     if (!edits.length && !options.publication) return false;
     const occurrences = options.occurrences ?? [];
     const refs = editReferences(edits);
@@ -1121,9 +1215,7 @@ export function useOutlineSession({
     const captured = new Map<string, CapturedLinksVersion>(
       [...graph].map(([ref, value]) => [ref, value.links_version]),
     );
-    const dependency = options.dependency ?? captureWriteSerial();
-    for (const [ref, version] of options.captured ?? [])
-      captured.set(ref, version);
+
     for (const edit of edits)
       if (
         "position" in edit &&
@@ -1134,6 +1226,7 @@ export function useOutlineSession({
           edit.kind === "relink" ? edit.destination : edit.endpoint,
           edit.position.expected_links_version,
         );
+    for (const [ref, version] of options.captured ?? []) captured.set(ref, version);
     for (const edit of edits) {
       if (
         edit.kind !== "move" &&
@@ -1153,9 +1246,9 @@ export function useOutlineSession({
         continue;
       const observed = captured.get(edit.endpoint);
       if (
-        proof.acknowledged === null ||
+        !pending.acknowledged ||
         typeof observed !== "number" ||
-        proof.acknowledged.linksVersion > observed
+        (pending.authoredPosition?.linksVersion ?? 0) > observed
       )
         captured.set(edit.endpoint, proof);
     }
@@ -1212,10 +1305,22 @@ export function useOutlineSession({
         const ref = model.noteRef(edit.note_id);
         const body = parseBody(edit.body_pm_json);
         if (edit.kind === "set_body") store.carryText(ref, body);
+        else if (options.freshNotes?.has(edit.note_id) && !store.readText(ref)) store.createFreshText(ref, body, null);
         else store.createText(ref, body, null);
         texts.add(ref);
       }
     }
+    // A pending insertion must not reappear while its inverse removal waits.
+    // The marker belongs to this exact operation; an older callback cannot
+    // clear a later removal or restore an already retired occurrence.
+    const removals = edits.flatMap(edit => {
+      if (edit.kind !== "remove" && edit.kind !== "consume_note") return [];
+      const marker: PendingRemoval = { sourceRef: edit.endpoint, generation: null };
+      const previous = pendingRemovals.get(edit.link_id);
+      const occurrence = pendingOccurrences.get(edit.link_id);
+      pendingRemovals.set(edit.link_id, marker);
+      return [{ edgeId: edit.link_id, marker, previous, occurrence }];
+    });
     const admissions: {
       edgeId: string;
       pending: PendingRecord;
@@ -1264,15 +1369,9 @@ export function useOutlineSession({
             ? {
                 after: edit.position.after,
                 linksVersion: edit.position.expected_links_version,
-                serial: dependency,
               }
             : undefined,
-        proof: {
-          requestedEdgeId: edgeId,
-          originSourceRef: occurrence.originSourceRef,
-          sourceRef: endpoint,
-          acknowledged: null,
-        },
+
       };
       const removal: PendingRemoval | null =
         edit.kind === "relink"
@@ -1330,18 +1429,78 @@ export function useOutlineSession({
         kind: "text";
       }
     > | null = null;
+    const previousHistory = history.current;
+    if (record) {
+      const items = history.current.items.slice(0, history.current.index);
+      const context = {
+        refs: new Set([...refs, ...editReferences(inverse)]),
+        selBefore: before,
+        selAfter: after,
+        occurrences,
+      };
+      recorded =
+        edits.length > 0 &&
+        edits.every(
+          (edit) => edit.kind === "insert_note" || edit.kind === "insert_link",
+        )
+          ? {
+              kind: "creation",
+              forward: edits.map((edit) =>
+                edit.kind === "insert_link"
+                  ? { ...edit, require_created: true }
+                  : {
+                      kind: "insert_link",
+                      endpoint: edit.endpoint,
+                      link_id: edit.link_id,
+                      target: model.noteRef(edit.note_id),
+                      source: edit.source,
+                      position: edit.position,
+                      require_created: true,
+                    },
+              ),
+              inverse: edits.map(edit => {
+                const observed = captured.get(edit.endpoint);
+                const version = typeof observed === "number" ? observed : observed?.version;
+                return {
+                  kind: "unlink", link_id: edit.link_id,
+                  expected: version === undefined ? null : { endpoint: edit.endpoint, links_version: version },
+                };
+              }),
+              ...context,
+            }
+          : {
+              kind: "structure",
+              forward: edits,
+              inverse,
+              bodies,
+              versions: new Map(captured),
+              ...context,
+            };
+      items.push(recorded);
+      history.current = { ...history.current, items, index: items.length };
+    }
+    const protectedItem = recorded ?? options.preserve ?? null;
+    const releaseHistory = holdHistoryDeletions(protectedItem, [
+      ...edits.flatMap(edit => edit.kind === "remove" || edit.kind === "consume_note" || edit.kind === "relink" ? [`link:${edit.link_id}`] : []),
+      ...removed.values(),
+    ], deletionItems.current);
     // Reversed refusal rollback keeps overlays causal; insert this batch's
     // recovery at its captured boundary so retries remain in submission order.
     const failedBefore = failed.read().length;
-    sendEdits(
+    const admission = sendEdits(
       commands,
       removed,
       texts,
       refs,
       captured,
-      dependency,
       (error) => {
+        releaseHistory();
         reportRefusal(error);
+        for (const removal of [...removals].reverse()) {
+          if (pendingRemovals.get(removal.edgeId) !== removal.marker) continue;
+          if (removal.previous) pendingRemovals.set(removal.edgeId, removal.previous);
+          else pendingRemovals.delete(removal.edgeId);
+        }
         for (const admission of [...admissions].reverse()) {
           if (pendingOccurrences.get(admission.edgeId) === admission.pending) {
             if (admission.previousPending)
@@ -1392,22 +1551,20 @@ export function useOutlineSession({
       },
       bodyBases,
       removalBodies,
-      (reply, writeSerial) => {
+      (reply) => {
+        adoptComposerPredecessor(reply);
         invalidateResourceOutlines(refs);
         const generation = captureResourceOutlineRead();
+        for (const removal of removals) {
+          if (pendingRemovals.get(removal.edgeId) !== removal.marker) continue;
+          removal.marker.generation = generation;
+          if (pendingOccurrences.get(removal.edgeId) === removal.occurrence)
+            pendingOccurrences.delete(removal.edgeId);
+        }
         for (const admission of admissions) {
           const pending = admission.pending;
           pending.acknowledged = true;
           pending.generation = generation;
-          const fact = reply.link_versions.find(
-            (value) => value.ref === pending.sourceRef,
-          );
-          if (fact && pending.proof)
-            pending.proof.acknowledged = {
-              edgeId: pending.edgeId,
-              linksVersion: fact.links_version,
-              serial: writeSerial,
-            };
           if (admission.sourceEdgeId !== null) {
             if (
               pendingOccurrences.get(admission.sourceEdgeId) ===
@@ -1417,83 +1574,38 @@ export function useOutlineSession({
             if (admission.removal) admission.removal.generation = generation;
           }
         }
-        const insertions = commands.filter(
-          (edit) => edit.kind === "insert_note" || edit.kind === "insert_link",
-        );
         const reused = new Set<string>();
-        reply.insertions.forEach((result, index) => {
-          const edit = insertions[index];
-          if (!edit) return;
+        for (const result of reply.insertions) {
+          const edit = commands.find(edit => (edit.kind === "insert_note" || edit.kind === "insert_link") && edit.link_id === result.requested_link_id);
+          if (!edit || (edit.kind !== "insert_note" && edit.kind !== "insert_link")) continue;
           if (!result.created) reused.add(edit.link_id);
-          const connection = result.connection;
-          const owner =
-            connection.source.ref === connection.other.ref
-              ? connection.target.ref
-              : connection.source.ref;
-          const occurrence = occurrences.find(
-            (value) => value.edgeId === edit.link_id,
-          );
-          const actualKey = occurrence?.projection
-            ? createdKey(
-                occurrence.projection,
-                connection.other.ref,
-                connection.edge_id,
-              )
-            : occurrence?.key;
-          const pending = admissions.find(
-            (value) => value.edgeId === edit.link_id,
-          )?.pending;
+          const link = reply.links.find(link => link.link_id === result.canonical_link_id);
+          if (!link) continue;
+          const owner = result.source_ref;
+          const targetRef = link.source_ref === owner ? link.target_ref : link.source_ref;
+          const occurrence = occurrences.find(value => value.edgeId === edit.link_id);
+          const pending = admissions.find(value => value.edgeId === edit.link_id)?.pending;
+          const priorItem = node(targetRef)?.item ?? pending?.item ?? occurrence?.item;
+          if (!priorItem) continue;
+          const item = priorItem.ref === targetRef ? priorItem : {
+            ...priorItem, ref: targetRef,
+            action_ref: priorItem.action_ref === priorItem.ref ? targetRef : priorItem.action_ref,
+            activation: { ...priorItem.activation, resource_ref: targetRef },
+          };
+          const actualKey = occurrence?.projection ? createdKey(occurrence.projection, targetRef, result.canonical_link_id) : occurrence?.key;
           if (pending) {
             pending.sourceRef = owner;
-            pending.item = connection.other;
-            pending.ref = connection.other.ref;
-            pending.edgeId = connection.edge_id;
+            pending.item = item;
+            pending.ref = targetRef;
+            pending.edgeId = result.canonical_link_id;
             if (actualKey) pending.key = actualKey;
-            const fact = reply.link_versions.find(
-              (value) => value.ref === owner,
-            );
-            if (fact && pending.proof) {
-              pending.proof.sourceRef = owner;
-              pending.proof.acknowledged = {
-                edgeId: connection.edge_id,
-                linksVersion: fact.links_version,
-                serial: writeSerial,
-              };
-            }
-            const outline = reply.outlines.find(
-              (value) => value.source.item.ref === owner,
-            );
-            const at =
-              outline?.items.findIndex(
-                (value) => value.connection.edge_id === connection.edge_id,
-              ) ?? -1;
-            if (
-              connection.origin === "user" &&
-              connection.link_note === null &&
-              connection.mutation?.kind === "unlink" &&
-              outline &&
-              at >= 0
-            ) {
-              pending.authoredPosition = {
-                after: outline.items[at - 1]?.connection.edge_id ?? null,
-                linksVersion: outline.links_version,
-                serial: writeSerial,
-              };
-            }
-            if (!result.created)
-              pending.position = pending.authoredPosition
-                ? {
-                    after: pending.authoredPosition.after,
-                    expected_links_version:
-                      pending.authoredPosition.linksVersion,
-                  }
-                : null;
-            if (
-              connection.edge_id !== edit.link_id &&
-              pendingOccurrences.get(edit.link_id) === pending
-            ) {
+            const fact = reply.lanes.find(value => value.ref === owner && value.lane === "links");
+            const placement = reply.placements.find(value => value.endpoint === owner && value.link_id === result.canonical_link_id);
+            pending.authoredPosition = fact && fact.checked_from_version !== null && placement ? { after: placement.after_link_id, linksVersion: fact.version } : undefined;
+            pending.position = pending.authoredPosition ? { after: pending.authoredPosition.after, expected_links_version: pending.authoredPosition.linksVersion } : null;
+            if (result.canonical_link_id !== edit.link_id && pendingOccurrences.get(edit.link_id) === pending) {
               pendingOccurrences.delete(edit.link_id);
-              pendingOccurrences.set(connection.edge_id, pending);
+              pendingOccurrences.set(result.canonical_link_id, pending);
             }
           }
           const rewrite = (command: model.Edit): model.Edit => {
@@ -1508,7 +1620,7 @@ export function useOutlineSession({
                 endpoint: owner,
                 source: { kind: "resource", ref: owner },
                 ...(command.kind === "insert_link"
-                  ? { target: connection.other.ref }
+                  ? { target: targetRef }
                   : {}),
               };
             return { ...command, endpoint: owner };
@@ -1518,16 +1630,16 @@ export function useOutlineSession({
               value.edgeId === edit.link_id
                 ? {
                     ...value,
-                    edgeId: connection.edge_id,
+                    edgeId: result.canonical_link_id,
                     key: actualKey ?? value.key,
-                    item: connection.other,
+                    item,
                   }
                 : value,
             );
             recorded.refs = new Set([
               ...recorded.refs,
               owner,
-              connection.other.ref,
+              targetRef,
             ]);
             if (recorded.kind === "creation")
               recorded.forward = recorded.forward.map(
@@ -1542,9 +1654,12 @@ export function useOutlineSession({
               recorded.inverse = recorded.inverse.map(rewrite);
             }
           }
-        });
-        if (recorded) advanceHistoryPositions(recorded, reply, writeSerial);
-        options.onAcknowledged?.(reply, writeSerial);
+        }
+        if (recorded) advanceHistoryPositions(recorded, reply);
+        if (protectedItem && protectedItem.lastAdmission?.intent_id === admission?.intent_id)
+          protectedItem.removalProofs = removalProofs(removed.values(), reply);
+        options.onAcknowledged?.(reply);
+        releaseHistory(reply);
         if (!recorded || reused.size === 0) return;
         const keep = (edit: model.Edit | model.Unlink) =>
           !("link_id" in edit && reused.has(edit.link_id));
@@ -1570,53 +1685,18 @@ export function useOutlineSession({
           };
         }
       },
+      options.restores,
+      options.consumed_reference,
     );
-    if (record) {
-      const items = history.current.items.slice(0, history.current.index);
-      const context = {
-        refs: new Set([...refs, ...editReferences(inverse)]),
-        selBefore: before,
-        selAfter: after,
-        occurrences,
+    if (!admission) { releaseHistory(); history.current = previousHistory; return false; }
+    if (recorded) recorded.lastAdmission = admission;
+    options.onAdmitted?.(admission);
+    if (admission) for (const value of admissions) {
+      const capturedVersion = captured.get(value.pending.sourceRef);
+      const version = typeof capturedVersion === "number" ? capturedVersion : capturedVersion?.version;
+      if (version !== undefined) value.pending.proof = {
+        ...admission, requested_link_id: value.edgeId, source_ref: value.pending.sourceRef, version,
       };
-      recorded =
-        edits.length > 0 &&
-        edits.every(
-          (edit) => edit.kind === "insert_note" || edit.kind === "insert_link",
-        )
-          ? {
-              kind: "creation",
-              forward: edits.map((edit) =>
-                edit.kind === "insert_link"
-                  ? { ...edit, require_created: true }
-                  : {
-                      kind: "insert_link",
-                      endpoint: edit.endpoint,
-                      link_id: edit.link_id,
-                      target: model.noteRef(edit.note_id),
-                      source: edit.source,
-                      position: edit.position,
-                      require_created: true,
-                    },
-              ),
-              inverse: edits.map((edit) => ({
-                kind: "unlink",
-                link_id: edit.link_id,
-                require_unannotated: true,
-              })),
-              ...context,
-            }
-          : {
-              kind: "structure",
-              forward: edits,
-              inverse,
-              bodies,
-              versions: new Map(captured),
-              dependency,
-              ...context,
-            };
-      items.push(recorded);
-      history.current = { ...history.current, items, index: items.length };
     }
     boundaryNext.current = true;
     publish();
@@ -1630,32 +1710,34 @@ export function useOutlineSession({
       }
     >,
     reply: Reply,
-    writeSerial: number,
   ) {
     const advance = (edit: model.Edit): model.Edit => {
       if (!("position" in edit) || edit.position === null) return edit;
       const endpoint =
         edit.kind === "relink" ? edit.destination : edit.endpoint;
-      const fact = reply.link_versions.find((value) => value.ref === endpoint);
-      return fact
+      const fact = reply.lanes.find((value) => value.ref === endpoint && value.lane === "links");
+      const base = edit.position.expected_links_version === null ? edit.position.proof.version : edit.position.expected_links_version;
+      return fact && (fact.checked_from_version === base || fact.version === base)
         ? {
             ...edit,
             position: {
               ...edit.position,
-              expected_links_version: fact.links_version,
+              expected_links_version: fact.version,
             },
           }
         : edit;
     };
     if (item.kind === "structure") {
       const versions = new Map(item.versions);
-      for (const fact of reply.link_versions)
-        versions.set(fact.ref, fact.links_version);
+      for (const fact of reply.lanes) {
+        const original = versions.get(fact.ref);
+        const base = typeof original === "number" ? original : original?.version;
+        if (fact.lane === "links" && base !== undefined && (fact.checked_from_version === base || fact.version === base)) versions.set(fact.ref, fact.version);
+      }
       item.versions = versions;
-      item.dependency = writeSerial;
       item.forward = item.forward.map(advance);
       item.inverse = item.inverse.map(advance);
-    } else
+    } else {
       item.forward = item.forward.map(
         (edit) =>
           advance(edit) as Extract<
@@ -1665,11 +1747,20 @@ export function useOutlineSession({
             }
           >,
       );
+      item.inverse = item.inverse.map(edit => {
+        if (edit.expected === null) return edit;
+        const captured = edit.expected;
+        const fact = reply.lanes.find(value => value.ref === captured.endpoint && value.lane === "links");
+        return fact && (fact.checked_from_version === captured.links_version || fact.version === captured.links_version)
+          ? { ...edit, expected: { ...captured, links_version: fact.version } }
+          : edit;
+      });
+    }
   }
   function restoreSelection(selected: Selection) {
     if (!ownsSurface()) return;
     if (selected?.kind === "text")
-      focusRow(selected.key, { anchor: selected.anchor, head: selected.head });
+      focusRow(selected.key, { anchor: selected.anchor, head: selected.head, direction: selected.direction });
     else setSelection(selected);
   }
   function sendUnlink({
@@ -1681,6 +1772,7 @@ export function useOutlineSession({
     preserve: Item | null;
     rows?: readonly model.Row[];
   }): boolean {
+    if (readWriting().paused) return false;
     const ids = new Set(commands.map((command) => command.link_id));
     if (
       !ids.size ||
@@ -1689,125 +1781,88 @@ export function useOutlineSession({
     )
       return false;
     const endpoints = linkedEndpoints(ids);
-    const before = selectedNow.current;
-    const generation = interaction.current;
     ids.forEach((id) => pendingUnlinks.add(id));
-    const release = () => ids.forEach((id) => pendingUnlinks.delete(id));
-    let uncertainty: FeedbackOffer | null = null;
-    enqueueWrite<Reply>({
-      build: () => ({
-        path: "/api/resource-graph/commands",
-        method: "POST",
-        body: { commands },
-        link_refs: [...endpoints],
-      }),
-      settle() {
-        uncertainty?.withdraw();
-        dropLinks(ids, endpoints);
-        release();
-        for (const id of ids) pendingOccurrences.delete(id);
-        publish({ kind: "links", ids, preserve });
-        announceLinkDeletions({ linkIds: [...ids], origin: graph });
-        publishChange("Notes");
-        if (
-          ownsSurface() &&
-          selectedNow.current === before &&
-          interaction.current === generation
-        ) {
-          const at = rows.findIndex((row) => ids.has(row.link.link_id));
-          const next = [
-            ...rows.slice(Math.max(0, at)),
-            ...rows.slice(0, Math.max(0, at)).reverse(),
-          ].find((row) => !ids.has(row.link.link_id));
-          setSelection(null);
-          if (next) focusRow(next.key, "end", "control");
-        }
-        feedback.receipt({
-          tone: "Success",
-          title:
-            ids.size === 1
-              ? "link removed; notes kept"
-              : `${ids.size} links removed; notes kept`,
-        });
+    const releaseHistory = holdHistoryDeletions(preserve, [...ids].map(id => `link:${id}`), deletionItems.current);
+    const release = () => { ids.forEach((id) => pendingUnlinks.delete(id)); };
+    dropLinks(ids, endpoints);
+    const admitted = admitWriting({ kind: "outline", commands: commands.map(command => ({
+      ...command,
+      expected: command.expected === null ? null : {
+        endpoint: command.expected.endpoint,
+        links_version: captureLane(command.expected.endpoint, "links", command.expected.links_version),
       },
-      fail(error) {
-        if (preserve)
-          history.current = retainHistory(
-            history.current,
-            (item) => item !== preserve,
-          );
-        if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        if (
-          !isStaleBuild(error) &&
-          ![
-            "E_RESOURCE_CONFLICT",
-            "E_FORBIDDEN",
-            "E_NOT_FOUND",
-            "E_INVALID_REQUEST",
-          ].includes(error.code)
-        )
-          throw error;
-        const ordinarySingle =
-          ids.size === 1 &&
-          !commands.some((command) => command.require_unannotated);
-        const content = isStaleBuild(error)
-          ? STALE_BUILD_FEEDBACK
-          : ordinarySingle
-            ? ({
-                tone: "Warning",
-                requestId: error.requestId,
-                title: "this connection can’t be removed here",
-              } as const)
-            : ({
-                tone: "Warning",
-                requestId: error.requestId,
-                title:
-                  commands.some((command) => command.require_unannotated) &&
-                  error.code === "E_RESOURCE_CONFLICT"
-                    ? "this link has a note. use remove link to disconnect it."
-                    : "some selected items cannot be unlinked. nothing was removed.",
-              } as const);
-        feedback.offer({
-          key: `outline-unlink:${owner}`,
-          announcement: "Polite",
-          content,
-          actions:
-            ordinarySingle && !isStaleBuild(error)
-              ? [
-                  {
-                    label: "refresh connections",
-                    onClick: () => publishChange("Notes"),
-                  },
-                ]
-              : undefined,
-        });
-        publishChange("Notes");
-      },
-      finalize() {
-        uncertainty?.withdraw();
-        release();
-        publish();
-      },
-      retrying(error) {
-        if (uncertainty !== null) return;
-        uncertainty = feedback.offer({
-          key: `connection-remove:${[...ids].join(":")}`,
-          announcement: "Polite",
-          content: {
-            tone: "Warning",
-            title: "couldn’t confirm removal",
-            requestId: isApiError(error) ? error.requestId : undefined,
-          },
-          actions: [{ label: "retry removal", onClick: nudgeWrites }],
-        });
-      },
-    });
+    })) }, []);
+    if (preserve) preserve.lastAdmission = { intent_id: admitted.intent_id, draft_id: null };
+    void admitted.settled.then(reply => {
+      if (preserve && preserve.kind !== "text") {
+        advanceHistoryPositions(preserve, reply);
+        if (preserve.lastAdmission?.intent_id === admitted.intent_id) preserve.removalProofs = removalProofs(endpoints, reply);
+      }
+      for (const id of ids) pendingOccurrences.delete(id);
+      publish({ kind: "links", ids, preserve });
+      releaseHistory(reply);
+    }, error => {
+      releaseHistory();
+      if (preserve) history.current = retainHistory(history.current, item => item !== preserve);
+      if (!handleUnauthenticatedApiError(error)) reportRefusal(error);
+      invalidateResourceOutlines(endpoints);
+      publish({ kind: "refused", refs: endpoints, texts: new Set() });
+    }).finally(() => { release(); publish(); });
+    void admitted.durable.catch(error => { reportRefusal(error); publish(); });
     boundaryNext.current = true;
+    if (ownsSurface() && rows.length > 0) {
+      const at = rows.findIndex(row => ids.has(row.link.link_id));
+      const next = [...rows.slice(Math.max(0, at)), ...rows.slice(0, Math.max(0, at)).reverse()].find(row => !ids.has(row.link.link_id));
+      setSelection(null);
+      if (next) focusRow(next.key, "end", "control");
+    }
     publish();
     return true;
   }
+  const remapHistory = useCallback((refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string, string>): void => {
+    const selection = (value: Selection): Selection => value === null ? null : value.kind === "text" ? { ...value, key: remapKey(value.key, refs, edges) } : {
+      ...value, anchor: remapKey(value.anchor, refs, edges), keys: value.keys.map(key => remapKey(key, refs, edges)),
+    };
+    for (const item of history.current.items) {
+      item.selBefore = selection(item.selBefore);
+      item.selAfter = selection(item.selAfter);
+      if (item.kind === "text") { item.ref = refs.get(item.ref) ?? item.ref; continue; }
+      item.refs = new Set([...item.refs].map(ref => refs.get(ref) ?? ref));
+      item.occurrences = item.occurrences.map(value => ({ ...value,
+        edgeId: edges.get(value.edgeId) ?? value.edgeId, key: remapKey(value.key, refs, edges), item: remapResource(value.item, refs), originSourceRef: refs.get(value.originSourceRef) ?? value.originSourceRef,
+        ...(value.projection ? { projection: { ...value.projection, path: value.projection.path.map(edge => edges.get(edge) ?? edge), occurrencePrefix: remapKey(value.projection.occurrencePrefix, refs, edges) } } : {}),
+      }));
+      if (item.kind === "structure") {
+        item.forward = item.forward.map(edit => remapEdit(edit, refs, edges));
+        item.inverse = item.inverse.map(edit => remapEdit(edit, refs, edges));
+        item.bodies = item.bodies.map(body => ({ ...body, ref: refs.get(body.ref) ?? body.ref }));
+        item.versions = new Map([...item.versions].map(([ref, value]) => [refs.get(ref) ?? ref, value]));
+      } else {
+        item.forward = item.forward.map(edit => ({ ...edit, endpoint: refs.get(edit.endpoint) ?? edit.endpoint, target: refs.get(edit.target) ?? edit.target, link_id: edges.get(edit.link_id) ?? edit.link_id,
+          source: edit.source.kind === "resource" ? { ...edit.source, ref: refs.get(edit.source.ref) ?? edit.source.ref } : edit.source,
+          position: edit.position === null ? null : edit.position.expected_links_version === null ? { ...edit.position, after: edges.get(edit.position.after) ?? edit.position.after } : { ...edit.position, after: edit.position.after === null ? null : edges.get(edit.position.after) ?? edit.position.after },
+        }));
+        item.inverse = item.inverse.map(edit => ({ ...edit, link_id: edges.get(edit.link_id) ?? edit.link_id,
+          expected: edit.expected === null ? null : { ...edit.expected, endpoint: refs.get(edit.expected.endpoint) ?? edit.expected.endpoint },
+        }));
+      }
+    }
+  }, [history]);
+  const readActions = actions.read;
+  useEffect(() => subscribeWritingBindings(bindings => {
+    const refs = new Map(bindings.map(binding => [binding.from_ref, binding.to_ref]));
+    remapGraph(refs, new Map());
+    remapHistory(refs, new Map());
+    for (const action of readActions()) {
+      if (action.creator) action.creator.noteRef = refs.get(action.creator.noteRef) ?? action.creator.noteRef;
+      if (action.occurrence) action.occurrence.noteRef = refs.get(action.occurrence.noteRef) ?? action.occurrence.noteRef;
+      const ref = refs.get(model.noteRef(action.noteId));
+      if (ref) action.noteId = model.noteIdOf(ref);
+    }
+    publish();
+  }), [readActions, remapHistory]);
   function step(redo: boolean) {
+    if (readWriting().paused) return;
     const { items, index } = history.current;
     const item = redo ? items[index] : items[index - 1];
     if (!item) return;
@@ -1832,8 +1887,9 @@ export function useOutlineSession({
     const changed = new Set(
       bodies.flatMap((body) => {
         const current = store.readText(body.ref)?.value;
-        return typeof current !== "object" ||
-          !sameBody(current, redo ? body.before : body.after)
+        return current === undefined ||
+          (item.kind === "text" && textHistoryOwners.get(body.ref) !== owner) ||
+          !sameTextValue(current, redo ? body.before : body.after)
           ? [body.ref]
           : [];
       }),
@@ -1851,9 +1907,29 @@ export function useOutlineSession({
       });
       return;
     }
+    const restores = new Map<string, Restore>();
+    if (item.kind !== "text" && (item.kind === "structure" || redo)) {
+      const next = redo ? item.forward : item.kind === "structure" ? item.inverse : [];
+      const refs = new Map<string, string>();
+      const edges = new Map<string, string>();
+      for (const edit of next) {
+        if (edit.kind === "insert_note") {
+          if (!item.lastAdmission) { reportRefusal(null); return; }
+          const id = crypto.randomUUID();
+          refs.set(model.noteRef(edit.note_id), model.noteRef(id));
+          restores.set(id, item.removalProofs?.get(edit.note_id) ?? { kind: "pending", ...item.lastAdmission, original_note_id: edit.note_id });
+          edges.set(edit.link_id, crypto.randomUUID());
+        } else if (edit.kind === "insert_link") edges.set(edit.link_id, crypto.randomUUID());
+        else if (edit.kind === "relink") edges.set(edit.new_link_id, crypto.randomUUID());
+      }
+      remapHistory(refs, edges);
+    }
     const selected = redo ? item.selAfter : item.selBefore;
-    if (item.kind === "text")
-      store.replaceText(item.ref, redo ? item.after : item.before);
+    if (item.kind === "text") {
+      const value = redo ? item.after : item.before;
+      if (typeof value === "string" && item.write) item.write(value);
+      else store.replaceText(item.ref, value);
+    }
     else if (item.kind === "structure") {
       if (
         !commit(
@@ -1863,10 +1939,12 @@ export function useOutlineSession({
           selection,
           {
             occurrences: item.occurrences,
+            preserve: item,
             captured: item.versions,
-            dependency: item.dependency,
-            onAcknowledged: (reply, serial) =>
-              advanceHistoryPositions(item, reply, serial),
+            restores,
+            freshNotes: new Set(restores.keys()),
+            onAdmitted: admission => { item.lastAdmission = admission; },
+            onAcknowledged: reply => advanceHistoryPositions(item, reply),
           },
         )
       )
@@ -1902,8 +1980,9 @@ export function useOutlineSession({
       if (
         !commit(forward, selected, false, selection, {
           occurrences: item.occurrences,
-          onAcknowledged: (reply, serial) =>
-            advanceHistoryPositions(item, reply, serial),
+          preserve: item,
+          onAdmitted: admission => { item.lastAdmission = admission; },
+          onAcknowledged: reply => advanceHistoryPositions(item, reply),
         })
       )
         return;
@@ -1925,7 +2004,7 @@ export function useOutlineSession({
         ?.links.some((link) => link.link_id === row.link.link_id) === true
     );
   }
-  function unlinkOccurrences(rows: readonly model.Row[]): boolean {
+  function unlinkOccurrences(rows: readonly model.Row[], focusRows: readonly model.Row[] = rows): boolean {
     if (!rows.length || !rows.every(canUnlink)) {
       feedback.receipt({
         tone: "Warning",
@@ -1934,11 +2013,12 @@ export function useOutlineSession({
       return false;
     }
     return sendUnlink({
-      commands: [...new Set(rows.map((row) => row.link.link_id))].map(
-        (link_id) => ({ kind: "unlink", link_id, require_unannotated: false }),
-      ),
+      commands: [...new Map(rows.map(row => [row.link.link_id, row])).values()].map(row => ({
+        kind: "unlink", link_id: row.link.link_id,
+        expected: { endpoint: row.endpoint, links_version: graph.get(row.endpoint)!.links_version },
+      })),
       preserve: null,
-      rows,
+      rows: focusRows,
     });
   }
   function position({
@@ -1996,13 +2076,7 @@ export function useOutlineSession({
       return null;
     const captured = pending.authoredPosition;
     if (!captured) return null;
-    const receipt = pending.proof?.acknowledged;
-    const version = advanceLinksVersion(
-      pending.sourceRef,
-      receipt?.linksVersion ?? captured.linksVersion,
-      receipt?.serial ?? captured.serial,
-    );
-    if (version === null) return null;
+    const version = captured.linksVersion;
     return {
       endpoint: pending.sourceRef,
       link_id: pending.edgeId,
@@ -2091,51 +2165,21 @@ export function useOutlineSession({
       : model.resourceOccurrenceKey(destination.rootOccurrencePrefix, ref);
   }
   function rememberReference(
-    result: InsertionOut,
-    source: string,
-    captured: Position | null,
-    outlines: readonly model.WireOutline[],
+    result: WritingInsertion,
+    item: ResourceItem,
+    reply: WritingAck,
     key: string,
-    writeSerial: number,
   ) {
-    receive(outlines);
-    const connection = result.connection;
-    const item =
-      connection.source.ref === source ? connection.target : connection.source;
-    const outline = outlines.find((value) => value.source.item.ref === source);
-    const at =
-      outline?.items.findIndex(
-        (value) => value.connection.edge_id === connection.edge_id,
-      ) ?? -1;
-    const authorized =
-      connection.origin === "user" &&
-      connection.link_note === null &&
-      connection.mutation?.kind === "unlink";
-    const authoredPosition =
-      authorized && at >= 0 && outline
-        ? {
-            after: outline.items[at - 1]?.connection.edge_id ?? null,
-            linksVersion: outline.links_version,
-            serial: writeSerial,
-          }
-        : authorized && result.created && captured !== null
-          ? {
-              after: captured.after,
-              linksVersion: captured.expected_links_version,
-              serial: writeSerial,
-            }
-          : undefined;
-    pendingOccurrences.set(connection.edge_id, {
-      key,
-      ref: item.ref,
-      edgeId: connection.edge_id,
-      sourceRef: source,
-      item,
-      body: null,
-      position: captured,
-      acknowledged: true,
+    adoptComposerPredecessor(reply);
+    const source = result.source_ref;
+    const fact = reply.lanes.find(value => value.ref === source && value.lane === "links");
+    const placement = reply.placements.find(value => value.endpoint === source && value.link_id === result.canonical_link_id);
+    const captured = fact && fact.checked_from_version !== null && placement ? { after: placement.after_link_id, expected_links_version: fact.version } : null;
+    pendingOccurrences.set(result.canonical_link_id, {
+      key, ref: item.ref, edgeId: result.canonical_link_id, sourceRef: source,
+      item, body: null, position: captured, acknowledged: true,
       generation: captureResourceOutlineRead(),
-      authoredPosition,
+      authoredPosition: captured ? { after: captured.after, linksVersion: captured.expected_links_version } : undefined,
     });
     if (result.created) {
       if (ownsSurface()) {
@@ -2149,7 +2193,7 @@ export function useOutlineSession({
           endpoint: source,
           source: { kind: "resource", ref: source },
           target: item.ref,
-          link_id: connection.edge_id,
+          link_id: result.canonical_link_id,
           position: captured,
           require_created: true,
         };
@@ -2157,14 +2201,15 @@ export function useOutlineSession({
         items.push({
           kind: "creation",
           occurrences: [
-            { edgeId: connection.edge_id, key, item, originSourceRef: source },
+            { edgeId: result.canonical_link_id, key, item, originSourceRef: source },
           ],
           forward: [forward],
           inverse: [
             {
               kind: "unlink",
-              link_id: connection.edge_id,
-              require_unannotated: true,
+              link_id: result.canonical_link_id,
+
+              expected: captured ? { endpoint: source, links_version: captured.expected_links_version } : null,
             },
           ],
           refs: new Set([source, item.ref]),
@@ -2183,137 +2228,107 @@ export function useOutlineSession({
     edgeId: string;
     sourceRef: string;
   } | null> {
+    if (readWriting().paused) return null;
     const creator = action.creator;
     const canFocus = ownsSurface();
     const generation = interaction.current;
     const focused = document.activeElement;
+    if (creator && action.kind === "reference" && store.readText(creator.noteRef)?.acked === null) {
+      await store.snapshotText(creator.noteRef);
+      const handle = store.textDraft(creator.noteRef);
+      const context = handle ? readDraft(handle.draft_id)?.context : null;
+      const publication = context?.kind === "body" ? context.publication : null;
+      if (publication?.kind === "page" && publication.request.initial_item.kind === "note" && action.target && action.targetItem) {
+        const request = publication.request;
+        const pageRef = `page:${request.id}`;
+        const title = store.readText(pageRef)?.value;
+        const item = action.targetItem;
+        const linkId = request.initial_item.link_id;
+        const endpoint = graph.get(pageRef);
+        if (!endpoint) return null;
+        const key = createdKey(action.destination, item.ref, linkId);
+        graph.set(pageRef, { ...endpoint, links: [{ link_id: linkId, target: node(item.ref) ?? { item, content: { kind: "resource" } }, connection: null }] });
+        store.setCreator(creator.noteRef, null);
+        const pending: PendingRecord = { key, ref: item.ref, edgeId: linkId, sourceRef: pageRef, item, body: null, position: { after: null, expected_links_version: 1 }, acknowledged: false, generation: null };
+        pendingOccurrences.set(linkId, pending);
+        const firstPage: Extract<Publication, { kind: "page" }> = { kind: "page", request: { ...request, title: typeof title === "string" && title.trim() ? title : "untitled", initial_item: { kind: "resource", link_id: linkId, target: action.target } } };
+        const admitted = admitWriting(firstPage, Promise.all([store.snapshotPageTitle(firstPage), ...(action.authored ? [action.authored] : [])]).then(parts => parts.flat()));
+        pending.proof = { intent_id: admitted.intent_id, draft_id: handle?.draft_id ?? null, requested_link_id: linkId, source_ref: pageRef, version: 1 };
+        actions.set(prior => prior.filter(item => item !== action));
+        publish();
+        void admitted.settled.then(reply => {
+          const result = reply.insertions.find(value => value.requested_link_id === linkId);
+          if (!result) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "the saved first item is no longer available");
+          const targetRef = insertionTarget(reply, result);
+          const actual = item.ref === targetRef ? item : { ...item, ref: targetRef, activation: { ...item.activation, resource_ref: targetRef } };
+          pendingOccurrences.delete(linkId);
+          rememberReference(result, actual, reply, createdKey(action.destination, targetRef, result.canonical_link_id));
+        }, error => { action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
+        void admitted.durable.catch(reportRefusal);
+        return { key, noteRef: item.ref, ref: item.ref, edgeId: linkId, sourceRef: pageRef };
+      }
+    }
+    let parentAdmission: Admission | null = null;
     if (creator && store.readText(creator.noteRef)?.acked === null) {
-      const made = await store.materializeText({
+      const made = store.materializeText({
         ref: creator.noteRef,
         body: creator.base,
-        cancelled: () => action.cancelled,
       });
-      const current = store.readText(creator.noteRef)?.value;
-      if (
-        action.cancelled ||
-        typeof current !== "object" ||
-        !sameBody(current, creator.base)
-      ) {
-        actions.set((prior) => prior.filter((item) => item !== action));
-        return null;
-      }
       if (!made) {
         action.phase = "failed";
         actions.set((prior) => [...prior]);
         reportRefusal(null);
         return null;
       }
+      parentAdmission = { intent_id: made.intent_id, draft_id: store.textDraft(creator.noteRef)?.draft_id ?? null };
+      void made.durable.catch(reportRefusal);
+      void made.settled.catch(reportRefusal);
     }
     if (action.cancelled) return null;
     const endpoint = sourceRef(action.destination.source);
+    const parentVersion = action.destination.position?.expected_links_version ?? graph.get(endpoint)?.links_version;
+    const parentDependency: LaneDependency | null = parentAdmission && parentVersion !== undefined && parentVersion !== null
+      ? { kind: "result", ...parentAdmission, ref: endpoint, lane: "links", version: parentVersion }
+      : null;
     const ref = model.noteRef(action.noteId);
     const key = createdKey(action.destination, ref, action.linkId);
     if (action.kind === "reference") {
       const target = action.target;
       if (target === null) return null;
-      return new Promise((resolve) =>
-        queueReferenceInsertion({
-          input: {
-            kind: "insert_link",
-            require_created: false,
-            source: action.destination.source,
-            target,
-            position: action.destination.position,
-            link_id: action.linkId,
-          },
-          prelude: action.publication
-            ? wireEdits(publicationEdits(action.publication), () => 1)
-            : [],
-          serial: captureWriteSerial(),
-          settle(reply, writeSerial) {
-            acknowledge(reply, []);
-            const result = reply.insertions.at(-1)!;
-            const connection = result.connection;
-            const actualSource =
-              connection.source.ref === connection.other.ref
-                ? connection.target.ref
-                : connection.source.ref;
-            const actual = connection.other;
-            const actualKey = createdKey(
-              action.destination,
-              actual.ref,
-              result.connection.edge_id,
-            );
-            rememberReference(
-              result,
-              actualSource,
-              action.destination.position === null
-                ? null
-                : {
-                    after: action.destination.position.after,
-                    expected_links_version: reply.link_versions.find(
-                      (fact) => fact.ref === actualSource,
-                    )!.links_version,
-                  },
-              reply.outlines,
-              actualKey,
-              writeSerial,
-            );
-            const pending = pendingOccurrences.get(result.connection.edge_id);
-            invalidateResourceOutlines(new Set([endpoint, actualSource]));
-            if (pending) {
-              pending.originSourceRef = endpoint;
-              pending.generation = captureResourceOutlineRead();
-              const fact = reply.link_versions.find(
-                (value) => value.ref === actualSource,
-              );
-              if (fact)
-                pending.proof = {
-                  requestedEdgeId: connection.edge_id,
-                  originSourceRef: endpoint,
-                  sourceRef: actualSource,
-                  acknowledged: {
-                    edgeId: connection.edge_id,
-                    linksVersion: fact.links_version,
-                    serial: writeSerial,
-                  },
-                };
-            }
-            actions.set((prior) => prior.filter((item) => item !== action));
-            if (
-              canFocus &&
-              ownsSurface() &&
-              interaction.current === generation &&
-              (document.activeElement === focused ||
-                (focused !== null &&
-                  !focused.isConnected &&
-                  document.activeElement === document.body))
-            )
-              focusRow(actualKey, "end", "reference");
-            feedback.receipt({
-              tone: result.created ? "Success" : "Info",
-              title: result.created ? "linked" : "already linked",
-            });
-            resolve({
-              key: actualKey,
-              noteRef: actual.ref,
-              ref: actual.ref,
-              edgeId: result.connection.edge_id,
-              sourceRef: actualSource,
-            });
-          },
-          fail(error) {
-            action.phase = "failed";
-            actions.set((prior) => [...prior]);
-            reportRefusal(error);
-            resolve(null);
-          },
-          retrying() {
-            publish();
-          },
-        }),
-      );
+      const item = action.targetItem;
+      if (!item) return null;
+      const provisionalKey = createdKey(action.destination, item.ref, action.linkId);
+      const pending: PendingRecord = {
+        key: provisionalKey, ref: item.ref, edgeId: action.linkId,
+        sourceRef: endpoint, item, body: null, position: action.destination.position,
+        acknowledged: false, generation: null,
+      };
+      pendingOccurrences.set(action.linkId, pending);
+      const admitted = queueReferenceInsertion({
+        input: { kind: "insert_link", require_created: false, source: action.destination.source, target, position: action.destination.position, link_id: action.linkId },
+        prelude: action.publication ? wireEdits(publicationEdits(action.publication), ref => ({ kind: "observed", ref, lane: "links", version: 1 })) : [],
+        authored: action.authored ?? [],
+        dependency: parentDependency,
+      });
+      const sourceVersion = graph.get(endpoint)?.links_version;
+      if (sourceVersion !== undefined) pending.proof = { intent_id: admitted.intent_id, draft_id: null, requested_link_id: action.linkId, source_ref: endpoint, version: sourceVersion };
+      publish();
+      actions.set(prior => prior.filter(item => item !== action));
+      void admitted.settled.then(reply => {
+        const result = reply.insertions.find(value => value.requested_link_id === action.linkId);
+        if (!result) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "the saved link is no longer available");
+        const targetRef = insertionTarget(reply, result);
+        const actual = item.ref === targetRef ? item : { ...item, ref: targetRef, action_ref: item.action_ref === item.ref ? targetRef : item.action_ref, activation: { ...item.activation, resource_ref: targetRef } };
+        const actualKey = createdKey(action.destination, targetRef, result.canonical_link_id);
+        pendingOccurrences.delete(action.linkId);
+        rememberReference(result, actual, reply, actualKey);
+        invalidateResourceOutlines(new Set([endpoint, result.source_ref]));
+      }, error => { action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
+      void admitted.durable.catch(reportRefusal);
+      if (canFocus && ownsSurface() && interaction.current === generation) focusRow(provisionalKey, "end", "reference");
+      return { key: provisionalKey, noteRef: item.ref, ref: item.ref, edgeId: action.linkId, sourceRef: endpoint };
     }
+
     const body = action.body;
     const newNode = model.newNoteNode(action.noteId, body);
     const edits: model.Edit[] = [];
@@ -2356,6 +2371,11 @@ export function useOutlineSession({
         : selection,
       {
         publication: action.publication ?? undefined,
+        consumed_reference: action.consumed_reference,
+        freshNotes: new Set([action.noteId]),
+        captured: parentDependency?.kind === "result" ? new Map([[endpoint, {
+          ...parentAdmission!, version: parentDependency.version,
+        }]]) : undefined,
         occurrences: [
           {
             edgeId: action.linkId,
@@ -2390,6 +2410,9 @@ export function useOutlineSession({
     body?: NoteBody;
     left?: NoteBody;
     target?: Schema<"InsertLink">["target"];
+    targetItem?: ResourceItem;
+    authored?: Promise<AuthoredSnapshot[]>;
+    consumed_reference?: ReferenceConsumption | null;
     creator?: BodyCreator;
     publication?: DailyPublication;
   }) {
@@ -2401,6 +2424,9 @@ export function useOutlineSession({
       body: structuredClone(input.body ?? emptyBody()),
       left: input.left ? structuredClone(input.left) : null,
       target: input.target ? structuredClone(input.target) : null,
+      targetItem: input.targetItem ?? null,
+      authored: input.authored ?? null,
+      consumed_reference: input.consumed_reference ?? null,
       noteId: crypto.randomUUID(),
       linkId: crypto.randomUUID(),
       publication: input.publication ?? null,
@@ -2434,7 +2460,8 @@ export function useOutlineSession({
       typeof body === "object"
         ? docFromBody(body).firstChild!.content.size + 1
         : 1;
-    const after: Selection = source.item.ref.startsWith("note_block:")
+    const activeText = selection?.kind === "text" && selection.key === source.key ? selection : null;
+    const after: Selection = activeText ? {...activeText, key} : source.item.ref.startsWith("note_block:")
       ? { kind: "text", key, anchor: end, head: end }
       : { kind: "blocks", anchor: key, keys: [key] };
     const before: Selection =
@@ -2495,11 +2522,9 @@ export function useOutlineSession({
         model.occurrenceKey(destination.occurrencePrefix, destination.path),
         true,
       );
-      focusRow(
-        key,
-        "end",
-        source.item.ref.startsWith("note_block:") ? "text" : "reference",
-      );
+      if (after.kind === "text") focusRow(key, {anchor: after.anchor, head: after.head, direction: after.direction});
+      else {setSelection(after); setFocus(null);}
+
     }
     return admitted;
   }
@@ -2667,7 +2692,6 @@ export function useOutlineSession({
               : "local"
             : null,
           link_id: pending.edgeId,
-          has_link_note: false,
           target,
           connection: null,
         };
@@ -2694,22 +2718,177 @@ export function useOutlineSession({
               : { kind: "root" },
             edgeIds: [],
           });
-      const actual =
-        view.focused !== null &&
-        view.focused === model.occurrenceKey(occurrencePrefix, path)
-          ? {
-              ancestors: new Map([[endpoint, { kind: "root" as const }]]),
-              traversedEdgeIds: new Set<string>(),
-            }
-          : inherited;
       return model.outlineRows({
         graph: projection,
         endpoint,
         occurrencePrefix,
         path,
         view,
-        branch: actual,
+        branch: inherited,
       });
+    },
+    commandOwner,
+    composer,
+    get insertLabel() { return editorCommands.current?.insertLabel ?? "insert item"; },
+    insertionCapability: (ref: string) => insertionCapabilities.get(ref) ?? null,
+    registerOccurrence(key: string, occurrence: DirectOccurrence) {
+      directOccurrences.current.set(key, occurrence);
+      return () => {if (directOccurrences.current.get(key) === occurrence) directOccurrences.current.delete(key);};
+    },
+    unlinkSelectedOccurrence() {
+      if (selection?.kind !== "blocks" || selection.keys.length !== 1) return;
+      directOccurrences.current.get(selection.keys[0]!)?.unlink?.();
+    },
+    registerSurface(owner: object, surface: {
+      rows: readonly model.Row[]; rootEndpoint: string; editable: boolean;
+      destination(row: model.Row): OutlineDestination | null; publication?: DailyPublication;
+    }) {
+      surfaces.current.set(owner, surface);
+      return () => { surfaces.current.delete(owner); };
+    },
+    bindEditor(commands: OutlineEditorCommands) {
+      editorCommands.current = commands;
+      setSelection(prior => prior?.kind === "blocks" ? null : prior);
+      setCommandOwner(true);
+    },
+    releaseEditor(commands: OutlineEditorCommands) {
+      if (editorCommands.current === commands) editorCommands.current = null;
+    },
+    refreshCommands() { rerender(); },
+    revokeCommands() {
+      setCommandOwner(false);
+      setSelection(null);
+      setFocus(null);
+      editorCommands.current = null;
+    },
+    openComposer(destination: OutlineDestination, publication?: DailyPublication) {
+      if (activeReference !== null) return;
+      if (composer !== null) {
+        setCommandOwner(true);
+        setFocus({key: `insertion:${scope}`, target: "text", selection: "end", serial: ++focusSerial.current});
+        return;
+      }
+      setSelection(null);
+      editorCommands.current = null;
+      setComposer({ destination: captureDestination(destination), publication, serial: ++focusSerial.current,
+        displayAfter: destination.position?.after ?? null,
+        body: emptyBody(), selection: {anchor: 1, head: 1}, problem: null });
+      setCommandOwner(true);
+    },
+    closeComposer() { setComposer(null); },
+    isActiveEditor(key: string) {return ownsSurface() && editorCommands.current?.key === key;},
+    editComposer(body: NoteBody, selection: {anchor: number; head: number}) {
+      setComposer(prior => prior ? {...prior, body, selection, problem: null} : null);
+    },
+    composerProblem(problem: string) {setComposer(prior => prior ? {...prior, problem} : null);},
+    readComposer: composerDraft.read,
+
+    commandState(command: OutlineCommand): OutlineCommandState {
+      if (!ownsSurface() || !commandOwner) return {enabled: false, reason: "select an item or edit text first"};
+      if (editorCommands.current && selection?.kind !== "blocks")
+        return editorCommands.current.commandState(command);
+      if (activeReference !== null) return {enabled: false, reason: "finish linking or return to prose first"};
+      if (command === "undo" || command === "redo") return session.historyState(command);
+      if (selection?.kind !== "blocks" || selection.keys.length !== 1)
+        return {enabled: false, reason: "select one occurrence"};
+      return session.occurrenceCommandState(selection.keys[0]!, command);
+    },
+    historyState(command: "undo" | "redo"): OutlineCommandState {
+      const enabled = command === "undo" ? history.current.index > 0 : history.current.index < history.current.items.length;
+      return {enabled, reason: enabled ? null : `nothing to ${command}`};
+    },
+    occurrenceCommandState(key: string, command: Exclude<OutlineCommand, "undo" | "redo">): OutlineCommandState {
+      if (activeReference !== null) return {enabled: false, reason: "finish linking or return to prose first"};
+      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const row = surface?.rows.find(row => row.key === key);
+      if (!surface || !row) {
+        const direct = directOccurrences.current.get(key);
+        if (!direct?.editable) return {enabled: false, reason: "this outline is read only"};
+        const enabled = command === "insert" ? direct.destination !== null
+          : command === "indent" ? direct.placement !== null && direct.indentDestination !== null : false;
+        return {enabled, reason: enabled ? null : "open the complete source outline to arrange this occurrence"};
+      }
+      if (!surface.editable) return {enabled: false, reason: "this outline is read only"};
+      if (command === "insert") return {enabled: surface.destination(row) !== null, reason: surface.destination(row) ? null : "the insertion position is unavailable"};
+      if (!placement(row)) return {enabled: false, reason: "this occurrence cannot be rearranged"};
+      const enabled = command === "indent" ? model.indentParent(surface.rows, row) !== null
+        : command === "outdent" ? model.outdentEdits(graph, surface.rootEndpoint, row) !== null
+        : model.moveEdits(graph, surface.rows, row, command === "move_up" ? -1 : 1) !== null;
+      return {enabled, reason: enabled ? null : "no complete permitted position in this direction"};
+    },
+    executeCommand(command: OutlineCommand) {
+      if (!session.commandState(command).enabled) return;
+      if (editorCommands.current && selection?.kind !== "blocks") {
+        editorCommands.current.executeCommand(command); return;
+      }
+      if (command === "undo") { session.undo(); return; }
+      if (command === "redo") { session.redo(); return; }
+      if (selection?.kind !== "blocks" || selection.keys.length !== 1) return;
+      session.executeOccurrenceCommand(selection.keys[0]!, command);
+    },
+    executeOccurrenceCommand(key: string, command: Exclude<OutlineCommand, "undo" | "redo">) {
+      if (!session.occurrenceCommandState(key, command).enabled) return;
+      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const row = surface?.rows.find(row => row.key === key);
+      if (!surface || !row) {
+        const direct = directOccurrences.current.get(key);
+        if (command === "insert" && direct?.destination) session.openComposer(direct.destination);
+        else if (command === "indent" && direct?.placement && direct.indentDestination)
+          session.relinkPlacement({placement: direct.placement, destination: direct.indentDestination});
+        return;
+      }
+      if (command === "insert") {
+        const target = surface.destination(row);
+        if (target) session.openComposer(target, surface.publication);
+      } else if (command === "indent") session.indent({row, rows: surface.rows});
+      else if (command === "outdent") session.outdent({row, rootEndpoint: surface.rootEndpoint});
+      else session.move({row, rows: surface.rows, direction: command === "move_up" ? -1 : 1});
+    },
+    setTextSelection(key: string, at: {anchor: number; head: number; direction?: "forward" | "backward" | "none"}) {
+      // Blur/native selection can arrive after structural selection took ownership.
+      if (editorCommands.current?.key !== key) return;
+      setSelection({kind: "text", key, ...at});
+    },
+    selectOccurrence(key: string, extend = false, siblingKeys: readonly string[] = [key]) {
+      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      if (surface) session.select({key, rows: surface.rows, extend});
+      else if (directOccurrences.current.has(key)) {
+        const prior = selection?.kind === "blocks" ? selection : null;
+        const anchor = extend && prior ? prior.anchor : key;
+        const [a,b] = [siblingKeys.indexOf(anchor), siblingKeys.indexOf(key)];
+        setSelection({kind: "blocks", anchor, keys: a >= 0 && b >= 0 ? siblingKeys.slice(Math.min(a,b), Math.max(a,b)+1) : [key]});
+        editorCommands.current = null;
+        setCommandOwner(true);
+        boundaryNext.current = true;
+      }
+    },
+    editTitle({ occurrence, before, after, selectionBefore, selectionAfter, editBase, write }: {
+      occurrence: BodyOccurrence; before: string; after: string;
+      selectionBefore: {anchor: number; head: number; direction?: "forward" | "backward" | "none"}; selectionAfter: {anchor: number; head: number; direction?: "forward" | "backward" | "none"};
+      editBase?: store.TextEditBase; write?: (value: string, editBase?: store.TextEditBase) => void;
+    }) {
+      if (readWriting().paused) return;
+      if (textHistoryOwners.get(occurrence.noteRef) !== owner)
+        history.current = retainHistory(history.current, item => item.kind !== "text" || item.ref !== occurrence.noteRef);
+      textHistoryOwners.set(occurrence.noteRef, owner);
+      const {items, index} = history.current;
+      const top = items[index - 1];
+      const now = Date.now();
+      const selAfter: Selection = {kind: "text", key: occurrence.key, ...selectionAfter};
+      if (!boundaryNext.current && top?.kind === "text" && top.ref === occurrence.noteRef && sameTextValue(top.after, before) && now-top.at < 1000)
+        Object.assign(top, {after, at: now, selAfter, write});
+      else {
+        const next = items.slice(0,index);
+        next.push({kind: "text", ref: occurrence.noteRef, before, after, at: now, write,
+          selBefore: {kind: "text", key: occurrence.key, ...selectionBefore}, selAfter});
+        history.current = {items: next, index: next.length};
+      }
+      boundaryNext.current = false;
+      setSelection(selAfter);
+      if (write) write(after, editBase);
+      else store.editText(occurrence.noteRef, after, editBase, selectionAfter.direction === "backward"
+        ? { anchor: selectionAfter.head, head: selectionAfter.anchor }
+        : { anchor: selectionAfter.anchor, head: selectionAfter.head });
     },
     editBody({
       occurrence,
@@ -2718,8 +2897,12 @@ export function useOutlineSession({
       occurrence: BodyOccurrence;
       edit: NoteEdit;
     }) {
+      if (readWriting().paused) return;
       const ref = occurrence.noteRef;
       if (isDeletedResource(ref)) return;
+      if (textHistoryOwners.get(ref) !== owner)
+        history.current = retainHistory(history.current, item => item.kind !== "text" || item.ref !== ref);
+      textHistoryOwners.set(ref, owner);
       for (const action of actions.read())
         if (action.creator?.noteRef === ref) action.cancelled = true;
       actions.set((prior) => prior.filter((action) => !action.cancelled));
@@ -2737,7 +2920,7 @@ export function useOutlineSession({
         top?.kind === "text" &&
         top.ref === ref &&
         now - top.at < 1000 &&
-        sameBody(top.after, edit.before)
+        sameTextValue(top.after, edit.before)
       )
         Object.assign(top, { after: edit.after, at: now, selAfter });
       else {
@@ -2762,7 +2945,7 @@ export function useOutlineSession({
         };
       }
       boundaryNext.current = edit.source !== "input";
-      store.editText(ref, edit.after, edit.referenceBase);
+      store.editText(ref, edit.after, edit.editBase, edit.selectionAfter);
     },
     splitNote({
       occurrence,
@@ -2800,11 +2983,13 @@ export function useOutlineSession({
     insertNote({
       destination,
       body = emptyBody(),
+      consumed_reference,
       creator,
       publication,
     }: {
       destination: OutlineDestination;
       body?: NoteBody;
+      consumed_reference?: ReferenceConsumption | null;
       creator?: BodyCreator;
       publication?: DailyPublication;
     }) {
@@ -2812,6 +2997,7 @@ export function useOutlineSession({
         kind: "note",
         destination,
         body,
+        consumed_reference,
         creator,
         publication,
       });
@@ -2819,11 +3005,15 @@ export function useOutlineSession({
     insertReference({
       destination,
       target,
+      targetItem,
+      authored,
       creator,
       publication,
     }: {
       destination: OutlineDestination;
       target: Schema<"InsertLink">["target"];
+      targetItem: ResourceItem;
+      authored: Promise<AuthoredSnapshot[]>;
       creator?: BodyCreator;
       publication?: DailyPublication;
     }) {
@@ -2831,6 +3021,8 @@ export function useOutlineSession({
         kind: "reference",
         destination,
         target,
+        targetItem,
+        authored,
         creator,
         publication,
       });
@@ -2859,8 +3051,11 @@ export function useOutlineSession({
         });
       } else setSelection({ kind: "blocks", anchor: key, keys: [key] });
       boundaryNext.current = true;
+      editorCommands.current = null;
+      setCommandOwner(true);
     },
     clearSelection() {
+      setCommandOwner(false);
       setSelection(null);
       setFocus(null);
     },
@@ -2875,28 +3070,8 @@ export function useOutlineSession({
       view.folds.set(key, open);
       rerender();
     },
-    focusBranch(key: string) {
-      if (activeReference !== null) return;
-      view.focused = key;
-      rerender();
-    },
-    showAll() {
-      if (activeReference !== null) return;
-      view.focused = null;
-      rerender();
-    },
     reveal(target: OutlineTarget) {
       focusRow(target.kind === "root" ? "" : target.key);
-    },
-    zoom(row: model.Row) {
-      view.zoom = [...row.path];
-      focusRow("");
-      rerender();
-    },
-    zoomOut() {
-      view.zoom = view.zoom.slice(0, -1);
-      focusRow("");
-      rerender();
     },
     join({
       row,
@@ -2915,7 +3090,12 @@ export function useOutlineSession({
       }
       const at = { anchor: joined.caret, head: joined.caret };
       if (
-        commit(joined.edits, { kind: "text", key: joined.earlier.key, ...at })
+        commit(joined.edits, { kind: "text", key: joined.earlier.key, ...at }, true, selection, {
+          occurrences: rows.filter(candidate => joined.edits.some(edit => edit.kind === "consume_note" && edit.link_id === candidate.link.link_id)).map(candidate => ({
+            edgeId: candidate.link.link_id, key: candidate.key,
+            item: candidate.link.target.item, originSourceRef: candidate.endpoint,
+          })),
+        })
       )
         focusRow(joined.earlier.key, at);
     },
@@ -2961,33 +3141,6 @@ export function useOutlineSession({
       const edits = model.moveEdits(graph, rows, row, direction);
       if (edits && placement(row)) commit(edits, selection);
     },
-    drop({
-      row,
-      target,
-      placement: side,
-    }: {
-      row: model.Row;
-      target: model.Row;
-      placement: "before" | "after" | "inside";
-    }) {
-      const edits = model.dropEdits(graph, row, target, side);
-      const source = placement(row);
-      const edit = edits?.[0];
-      if (!source || !edit) return;
-      if (edit.kind === "move") commit(edits!, selection);
-      else if (edit.kind === "relink") {
-        if (side === "inside") view.folds.set(target.key, true);
-        session.relinkPlacement({
-          placement: source,
-          destination: {
-            source: { kind: "resource", ref: edit.destination },
-            position: edit.position,
-            occurrencePrefix: target.occurrencePrefix,
-            path: side === "inside" ? target.path : target.path.slice(0, -1),
-          },
-        });
-      }
-    },
     consume(row: model.Row) {
       if (
         model.structuralRow(row) &&
@@ -3003,6 +3156,12 @@ export function useOutlineSession({
             },
           ],
           null,
+          true,
+          selection,
+          { occurrences: [{
+            edgeId: row.link.link_id, key: row.key,
+            item: row.link.target.item, originSourceRef: row.endpoint,
+          }] },
         );
     },
     persisted(ref: string) {
@@ -3036,7 +3195,6 @@ export function useOutlineSession({
       const generation = interaction.current;
       const origin = ownsSurface();
       const before = selection;
-      const dependency = captureWriteSerial();
       const resolvedItems = await resources;
       if (!origin || !ownsSurface() || !items.length) return false;
       const endpoint = sourceRef(destination.source);
@@ -3114,7 +3272,7 @@ export function useOutlineSession({
         ? { kind: "text", key: last.key, anchor: end, head: end }
         : { kind: "blocks", anchor: last.key, keys: [last.key] };
       const admitted = commit(edits, after, true, before, {
-        dependency,
+        freshNotes: new Set(edits.flatMap(edit => edit.kind === "insert_note" ? [edit.note_id] : [])),
         captured:
           destination.position === null ||
           destination.position.expected_links_version === null
@@ -3174,6 +3332,14 @@ export function useOutlineSession({
           .read()
           .find((action) => action.phase === "failed");
         if (action) {
+          // its failed write broke the position chain: it goes again at the reviewed position.
+          const { position, source } = action.destination;
+          const version = graph.get(sourceRef(source))?.links_version;
+          if (position !== null && version !== undefined)
+            action.destination = {
+              ...action.destination,
+              position: { ...position, expected_links_version: version },
+            };
           action.phase = "creating";
           void admitAction(action);
         }

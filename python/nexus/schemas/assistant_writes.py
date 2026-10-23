@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from nexus.schemas.collection_order import OrderRevision
 
 _INT32 = (1 << 31) - 1
 TargetKind = Literal["library_entry", "note_block", "highlight", "resource_edge", "queue_item"]
@@ -39,11 +41,25 @@ class CreatedRefOut(BaseModel):
     """A target one write inserted; its undo removes exactly these."""
 
     # a library entry's ref also carries what undo needs (library, target).
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(
+        extra="ignore", frozen=True, json_schema_serialization_defaults_required=True
+    )
 
     kind: Literal["entry", "note_block", "highlight", "edge", "queue"]
     id: UUID
     label: str
+    order_revision: OrderRevision | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def entry_revision_required(cls, value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and value.get("kind") == "entry"
+            and "order_revision" not in value
+        ):
+            raise ValueError("Library entry receipts require order_revision")
+        return value
 
 
 class AssistantWriteOut(_Out):

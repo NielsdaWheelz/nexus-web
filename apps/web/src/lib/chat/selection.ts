@@ -162,6 +162,9 @@ export function unavailability(
   catalog: Catalog,
   draft: SelectionEditor,
 ): string | null {
+  const route = editorRoute(catalog, draft);
+  const row = route ? catalogRoute(catalog, route) : null;
+  if (row && row.readiness.kind !== "Ready") return row.readiness.explanation;
   if (draft.kind === "EffortRequired") {
     if (!catalogRoute(catalog, draft.route)) return "provider unavailable. choose provider.";
     const variant = editorVariant(catalog, draft);

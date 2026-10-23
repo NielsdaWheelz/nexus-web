@@ -4,6 +4,8 @@
  * The Imports summary observer (docs/modules/imports.md). Wakes and polls read
  * the observation clock; manual refresh and mutations also advance the strict
  * collection revision. Collections coalesce clock advances through revalidate.
+ * Panes and pending media continuations retain observation without expiry;
+ * attaching an observer wakes the summary without resetting collections.
  */
 
 import {
@@ -28,7 +30,7 @@ import {
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const POLL_MS = 5_000;
-/** With no pane open, polling lasts this long after the last wake. */
+/** With no retained observer, polling lasts this long after the last wake. */
 const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
 
 interface ImportsContextValue {
@@ -40,10 +42,10 @@ interface ImportsContextValue {
   /** Strictly refresh collections and wake the summary. */
   refresh(): void;
   /**
-   * A mounted Imports pane: polling needs no window while any pane is open, and
-   * opening one wakes. Returns the close.
+   * A pane or pending continuation retains observation and wakes the read.
+   * Polling needs no expiry window while an observer is retained.
    */
-  paneOpened(): () => void;
+  retainObserver(): () => void;
 }
 
 const ImportsContext = createContext<ImportsContextValue | null>(null);
@@ -51,7 +53,7 @@ const ImportsContext = createContext<ImportsContextValue | null>(null);
 export function ImportsProvider({ children }: { children: ReactNode }) {
   const [wake, setWake] = useState(() => ({ count: 0, at: Date.now() }));
   const [revision, setRevision] = useState(0);
-  const [openPanes, setOpenPanes] = useState(0);
+  const [observers, setObservers] = useState(0);
   const [visible, setVisible] = useState(true);
   const [windowOpen, setWindowOpen] = useState(true);
   const summary = usePaneFreeServerValue({
@@ -67,10 +69,10 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     setRevision((last) => last + 1);
     observe();
   }, [observe]);
-  const paneOpened = useCallback(() => {
-    setOpenPanes((count) => count + 1);
+  const retainObserver = useCallback(() => {
+    setObservers((count) => count + 1);
     observe();
-    return () => setOpenPanes((count) => count - 1);
+    return () => setObservers((count) => count - 1);
   }, [observe]);
 
   useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
@@ -135,7 +137,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
       !ready.refreshing &&
       ready.data.unfinished_work_count > 0 &&
       visible &&
-      (openPanes > 0 || windowOpen),
+      (observers > 0 || windowOpen),
     pollIntervalMs: POLL_MS,
     onPoll: summary.refetch,
   });
@@ -145,7 +147,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     observation: ready?.data.observed_at ?? "",
     revision: String(revision),
     refresh,
-    paneOpened,
+    retainObserver,
   };
   return <ImportsContext value={value}>{children}</ImportsContext>;
 }

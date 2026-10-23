@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { useCollectionLayout } from "@/lib/ui/collection";
 import { X } from "lucide-react";
 import { cx } from "@/lib/ui/cx";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
@@ -19,6 +20,8 @@ export default function Dialog({
   readonly className?: string;
   readonly children: ReactNode;
 }) {
+  const body = useRef<HTMLDivElement>(null);
+  useCollectionLayout(body, modal.open);
   return (
     <ModalFrame
       {...modal}
@@ -40,7 +43,7 @@ export default function Dialog({
               <X size={16} />
             </button>
           </header>
-          <div className={styles.body}>{children}</div>
+          <div ref={body} className={styles.body}>{children}</div>
         </>
       )}
     </ModalFrame>

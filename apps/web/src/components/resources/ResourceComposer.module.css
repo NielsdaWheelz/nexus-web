@@ -1,0 +1,14 @@
+.composer {
+  margin-block: var(--space-2);
+  min-width: 0;
+}
+
+.status {
+  margin: var(--space-1) 0;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.textButton {
+  --control-min-size: var(--size-lg);
+}

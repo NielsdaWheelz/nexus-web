@@ -4,8 +4,10 @@ import { useId, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import { FieldFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import ActionMenu from "@/components/ui/ActionMenu";
+import Tooltip from "@/components/ui/Tooltip";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { workspaceTargetActivationIntent, type OpenIntent } from "@/lib/ui/targetActivation";
 import { useReaderState, type Reader } from "../DocumentReader";
@@ -70,16 +72,16 @@ function Sections({ reader }: { readonly reader: Reader }) {
     <div className={styles.sections}>
       <div className={styles.row}>
         <div className={styles.position}>
-          {previous ? <Button variant="ghost" size="sm" iconOnly asChild>
-            <ReaderLink reader={reader} target={previous} aria-label={`Previous ${noun}`} title={`Previous ${noun}`}><ChevronLeft size={16} aria-hidden="true" /></ReaderLink>
-          </Button> : <Button variant="ghost" size="sm" iconOnly disabled aria-label={`Previous ${noun}`}><ChevronLeft size={16} aria-hidden="true" /></Button>}
+          {previous ? <Tooltip text={`Previous ${noun}`} renderTrigger={(help) => (
+            <ReaderLink {...help} reader={reader} target={previous} className={buttonClassName({ iconOnly: true })} aria-label={`Previous ${noun}`}><ChevronLeft size={20} aria-hidden="true" /></ReaderLink>
+          )} /> : <Button iconOnly icon={<ChevronLeft />} disabled aria-label={`Previous ${noun}`} />}
           <span className={styles.count}>
             <span className="sr-only">{index < 0 ? transcript ? "chapters" : `Before the first of ${sections.length} sections` : `${noun} ${index + 1} of ${sections.length}`}</span>
             <span aria-hidden="true">{index < 0 ? "—" : index + 1}<span className={styles.countTotal}> / {sections.length}</span></span>
           </span>
-          {next ? <Button variant="ghost" size="sm" iconOnly asChild>
-            <ReaderLink reader={reader} target={next} aria-label={`Next ${noun}`} title={`Next ${noun}`}><ChevronRight size={16} aria-hidden="true" /></ReaderLink>
-          </Button> : <Button variant="ghost" size="sm" iconOnly disabled aria-label={`Next ${noun}`}><ChevronRight size={16} aria-hidden="true" /></Button>}
+          {next ? <Tooltip text={`Next ${noun}`} renderTrigger={(help) => (
+            <ReaderLink {...help} reader={reader} target={next} className={buttonClassName({ iconOnly: true })} aria-label={`Next ${noun}`}><ChevronRight size={20} aria-hidden="true" /></ReaderLink>
+          )} /> : <Button iconOnly icon={<ChevronRight />} disabled aria-label={`Next ${noun}`} />}
         </div>
         <ActionMenu
           label={index < 0 ? label : `${label}; select ${noun}`}
@@ -87,11 +89,11 @@ function Sections({ reader }: { readonly reader: Reader }) {
           source={{ kind: "Immediate", subjectKey: `reader-sections:${ready!.doc.identity}`, title: `${noun}s`,
             content: { sections: [{ id: "Sections", label: null, options }] } }}
           renderTrigger={(props) => (
-            <Button variant="ghost" size="sm" className={styles.sectionTrigger} asChild>
-              <button {...props}>
+            <Button {...props} className={styles.sectionTrigger}>
+              <span className={styles.sectionContent}>
                 <span className={styles.sectionTitle}>{label}</span>
                 <ChevronDown size={14} className={styles.sectionChevron} aria-hidden="true" />
-              </button>
+              </span>
             </Button>
           )}
         />
@@ -129,9 +131,9 @@ function Pages({ reader }: { readonly reader: Reader }) {
     <div className={styles.navigation}>
       <div className={styles.row}>
         <div className={styles.position}>
-          <Button variant="ghost" size="sm" iconOnly asChild>
-            <ReaderLink reader={reader} target={target(Math.max(1, pdf.page - 1))} aria-label="Previous page" title="Previous page" disabled={pdf.page <= 1}><ChevronLeft size={16} aria-hidden="true" /></ReaderLink>
-          </Button>
+          <Tooltip text="Previous page" renderTrigger={(help) => (
+            <ReaderLink {...help} reader={reader} target={target(Math.max(1, pdf.page - 1))} className={buttonClassName({ iconOnly: true })} aria-label="Previous page" disabled={pdf.page <= 1}><ChevronLeft size={20} aria-hidden="true" /></ReaderLink>
+          )} />
           <label className={styles.page}>
             <span>Page</span>
             <Input
@@ -167,20 +169,16 @@ function Pages({ reader }: { readonly reader: Reader }) {
             />
             <span id={totalId}>/ {pdf.pages}</span>
           </label>
-          <Button variant="ghost" size="sm" iconOnly asChild>
-            <ReaderLink reader={reader} target={target(Math.min(pdf.pages, pdf.page + 1))} aria-label="Next page" title="Next page" disabled={pdf.page >= pdf.pages || atEnd}><ChevronRight size={16} aria-hidden="true" /></ReaderLink>
-          </Button>
+          <Tooltip text="Next page" renderTrigger={(help) => (
+            <ReaderLink {...help} reader={reader} target={target(Math.min(pdf.pages, pdf.page + 1))} className={buttonClassName({ iconOnly: true })} aria-label="Next page" disabled={pdf.page >= pdf.pages || atEnd}><ChevronRight size={20} aria-hidden="true" /></ReaderLink>
+          )} />
         </div>
         <div className={styles.zoom} role="group" aria-label="pdf zoom">
-          <Button variant="ghost" size="sm" iconOnly aria-label="zoom out" title="zoom out" disabled={pdf.scale <= PDF_ZOOM.min} onClick={() => reader.setZoom(pdf.scale - PDF_ZOOM.step)}>
-            <Minus size={16} aria-hidden="true" />
-          </Button>
-          <Button variant="ghost" size="sm" aria-label={`fit pdf to width; current zoom ${Math.round(pdf.scale * 100)} percent`} onClick={() => reader.setZoom(null)}>
+          <Button iconOnly icon={<Minus />} aria-label="zoom out" disabled={pdf.scale <= PDF_ZOOM.min} onClick={() => reader.setZoom(pdf.scale - PDF_ZOOM.step)} />
+          <Button aria-label={`fit pdf to width; current zoom ${Math.round(pdf.scale * 100)} percent`} onClick={() => reader.setZoom(null)}>
             {pdf.zoom === null ? "fit width" : `${Math.round(pdf.scale * 100)}% · fit width`}
           </Button>
-          <Button variant="ghost" size="sm" iconOnly aria-label="zoom in" title="zoom in" disabled={pdf.scale >= PDF_ZOOM.max} onClick={() => reader.setZoom(pdf.scale + PDF_ZOOM.step)}>
-            <Plus size={16} aria-hidden="true" />
-          </Button>
+          <Button iconOnly icon={<Plus />} aria-label="zoom in" disabled={pdf.scale >= PDF_ZOOM.max} onClick={() => reader.setZoom(pdf.scale + PDF_ZOOM.step)} />
         </div>
       </div>
       {current?.error ? <FieldFeedback id={errorId} content={{ tone: "Danger", title: current.error }} /> : null}

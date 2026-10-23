@@ -21,11 +21,13 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import and_, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, ResourceVersion
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import NoteBlockOut
+from nexus.services import authored_identities, writing
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import retention
@@ -180,17 +182,44 @@ def ensure_note(
     db: Session, *, viewer_id: UUID, note_id: UUID, body_pm_json: dict[str, Any], reason: str
 ) -> None:
     """Create the note under its client id; an existing own note is reused unchanged."""
-    if note_exists(db, viewer_id=viewer_id, note_id=note_id):
+    binding = authored_identities.recognize(db, viewer_id=viewer_id, kind="note_block", id=note_id)
+    if binding is not None:
+        writing.identity(db, binding.out())
+        authored_identities.require_live(binding)
         return
-    block = NoteBlock(
-        id=note_id,
-        user_id=viewer_id,
-        body_pm_json=body_pm_json,
-        body_text=text_from_pm_json(body_pm_json),
+    created = db.scalar(
+        insert(NoteBlock)
+        .values(
+            id=note_id,
+            user_id=viewer_id,
+            body_pm_json=body_pm_json,
+            body_text=text_from_pm_json(body_pm_json),
+        )
+        .on_conflict_do_nothing(index_elements=["id"])
+        .returning(NoteBlock.id)
     )
-    db.add(block)
-    db.flush()
+    block = db.get(NoteBlock, note_id)
+    if block is None:
+        binding = authored_identities.recognize(
+            db, viewer_id=viewer_id, kind="note_block", id=note_id
+        )
+        if binding is not None:
+            authored_identities.require_live(binding)
+        raise RuntimeError("Accepted note insert has no row")
+    if block.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note id is taken")
+    binding = authored_identities.register(db, viewer_id=viewer_id, kind="note_block", id=note_id)
+    authored_identities.require_live(binding)
+    writing.identity(db, binding.out())
+    if created is None:
+        if binding.newly_registered:
+            raise RuntimeError("Existing note has no authored identity")
+        return
+    writing.changed(db, viewer_id)
     for lane in ("body", "links"):
+        writing.lane(
+            db, viewer_id=viewer_id, ref=note_ref(note_id), name=lane, before=None, checked=1
+        )
         versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane=lane)
     _changed(db, viewer_id, block, reason)
 
@@ -213,6 +242,7 @@ def write_body(
     )
     if block is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
+    writing.effects(db).addressed.add(note_ref(note_id))
     if block.body_pm_json == body_pm_json:
         return False
     require_version(db, viewer_id=viewer_id, note_id=note_id, version=expected_version)
@@ -234,6 +264,9 @@ def require_version(db: Session, *, viewer_id: UUID, note_id: UUID, version: int
             "Note changed elsewhere",
             details={"current": current.model_dump(mode="json")},
         )
+    writing.lane(
+        db, viewer_id=viewer_id, ref=note_ref(note_id), name="body", before=version, checked=version
+    )
 
 
 def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
@@ -247,8 +280,13 @@ def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if block is None or block.user_id != viewer_id:
+    if block is not None and block.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note id is taken")
+    binding = authored_identities.retire(db, viewer_id=viewer_id, kind="note_block", id=note_id)
+    writing.identity(db, binding.out())
+    if block is None:
         return
+    writing.changed(db, viewer_id)
     ref = note_ref(note_id)
     dossier_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref, remove_inbound_citations=True)

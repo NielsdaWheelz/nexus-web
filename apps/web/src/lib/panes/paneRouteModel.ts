@@ -391,6 +391,7 @@ export function paneMountKey(
   route: ResolvedPaneRouteModel,
   visitId: string,
 ): string {
+  if (route.id === "pageNew" || route.id === "page") return `${visitId}:page-authoring`;
   if (route.queryNavigation) return `${visitId}:${route.id}:${route.pathname}`;
   if (route.returnKind === "ShellScroll") return `${visitId}:${route.routeKey}`;
   return route.resourceKey ? `${route.id}:${route.resourceKey}` : route.routeKey;

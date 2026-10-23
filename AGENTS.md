@@ -24,11 +24,12 @@ Binding owner decisions for every new or changed line.
   version, so a retry that already landed sees current = desired. A delete is
   idempotent. Ingest dedupes by source. Each write's module doc states its retry
   rule.
-- **Server reads (web).** `useServerValue`, `useServerList`, `usePagePrefix` and
-  `apiFetch`. browser storage holds only per-viewer conveniences (a remembered
-  tab, a collapsed rail), never app data, authored drafts or admission requests.
-  unsaved authoring and live request identity belong to their memory owners;
-  `WorkGuard` protects actual loss without promising persistence.
+- **server reads (web).** `useServerValue`, `useServerList`, `usePagePrefix` and
+  `apiFetch`. browser storage may hold per-viewer conveniences and the
+  account-scoped writing journal: authored drafts, exact bases/context and pending
+  delivery facts. clean server data stays in owned memory. other unsaved forms
+  and request identity remain with their memory owners; the common `WorkGuard`
+  protects actual loss. there is no persistent corpus replica.
 - **Hard cutover.** No compatibility arms, legacy readers or fallbacks. A schema
   change is one alembic migration after head; it states its data effects and
   raises on data it cannot convert.

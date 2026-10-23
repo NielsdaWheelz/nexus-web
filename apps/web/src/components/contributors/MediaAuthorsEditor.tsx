@@ -306,8 +306,6 @@ function Editor({
             onDismiss={() => abandon(row.id, row.revert)}
           />
           <Button
-            variant="ghost"
-            size="sm"
             aria-label={
               row.revert ? "Cancel changing author" : "Remove new author row"
             }
@@ -346,28 +344,18 @@ function Editor({
         </div>
         <div className={styles.rowControls}>
           <Button
-            variant="ghost"
-            size="sm"
             iconOnly
             aria-label={`Move ${row.creditedName} up`}
             disabled={draft.value.request !== null || position === 0}
             onClick={() => move(row, -1)}
-          >
-            <ArrowUp size={16} aria-hidden="true" />
-          </Button>
+            icon={<ArrowUp size={16} aria-hidden="true" />} />
           <Button
-            variant="ghost"
-            size="sm"
             iconOnly
             aria-label={`Move ${row.creditedName} down`}
             disabled={draft.value.request !== null || position === boundRows.length - 1}
             onClick={() => move(row, 1)}
-          >
-            <ArrowDown size={16} aria-hidden="true" />
-          </Button>
+            icon={<ArrowDown size={16} aria-hidden="true" />} />
           <Button
-            variant="ghost"
-            size="sm"
             aria-label={`Change author for ${row.creditedName}`}
             disabled={draft.value.request !== null}
             onClick={() =>
@@ -377,8 +365,6 @@ function Editor({
             Change
           </Button>
           <Button
-            variant="ghost"
-            size="sm"
             aria-label={`Remove ${row.creditedName}`}
             disabled={draft.value.request !== null}
             onClick={() => remove(row)}
@@ -401,8 +387,6 @@ function Editor({
         <div className={styles.pinned}>
           <span>Authors edited manually</span>
           <Button
-            variant="ghost"
-            size="sm"
             disabled={saving || draft.value.request !== null}
             onClick={() => void submit({ mode: "automatic" })}
           >
@@ -424,9 +408,7 @@ function Editor({
       ) : null}
       <Button
         ref={addRef}
-        variant="ghost"
-        size="sm"
-        leadingIcon={<Plus size={16} aria-hidden="true" />}
+        icon={<Plus size={16} aria-hidden="true" />}
         // Every row can become one author: no new search past the cap.
         disabled={rows.length >= MAX_AUTHORS || draft.value.request !== null}
         aria-label={atCap ? "Add author (limit reached)" : undefined}
@@ -450,16 +432,12 @@ function Editor({
       </div>
       <div className={styles.footer}>
         <Button
-            variant="secondary"
-            size="sm"
             onClick={() => requestDismiss() === "accepted" && onClose()}
           >
             Cancel
           </Button>
           <Button
-            variant="primary"
-            size="sm"
-            loading={saving}
+            emphasis="strong"
             disabled={!dirty || saving}
             onClick={() =>
               void submit({
@@ -470,6 +448,7 @@ function Editor({
                 })),
               })
             }
+            aria-busy={saving}
           >
             Save
           </Button>

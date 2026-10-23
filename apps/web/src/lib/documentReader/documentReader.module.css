@@ -67,7 +67,7 @@
 }
 
 .choice {
-  --pane-control-size: 32px;
+  --control-min-size: 32px;
   display: inline-flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -75,14 +75,13 @@
 }
 
 .choice > button {
-  min-height: var(--pane-control-size);
   height: auto;
   white-space: normal;
 }
 
 @media (any-pointer: coarse) {
   .choice {
-    --pane-control-size: 44px;
+    --control-min-size: 44px;
   }
 }
 

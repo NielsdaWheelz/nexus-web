@@ -73,24 +73,10 @@
 }
 
 .control {
-  min-height: 32px;
-  min-width: 32px;
-  height: auto;
-  padding-block: var(--space-1);
-  white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.control[aria-busy="true"] {
-  color: var(--ink-muted);
-  cursor: progress;
-}
-
-.control[aria-disabled="true"] {
-  opacity: 0.65;
-}
-
-.control svg {
+.chevron {
   vertical-align: middle;
   margin-inline-start: var(--space-1);
 }
@@ -214,13 +200,6 @@
 
 @keyframes feedbackIn {
   from { opacity: 0; }
-}
-
-@media (any-pointer: coarse) {
-  .control {
-    min-height: 44px;
-    min-width: 44px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

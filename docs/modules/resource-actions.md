@@ -5,8 +5,8 @@
 one place answers "what can i do with this resource, now?" for any canonical ref
 (`<scheme>:<uuid>`) and does it. the server says which verbs exist and whether it blocks
 them; the web labels, orders, confirms and runs them through each verb's owner.
-resource subjects share those verbs. a connection occurrence instead exposes
-navigation and its owning relationship/local commands, without resource verbs.
+resource subjects share those verbs. both row families use that same resource
+ellipsis; an outline bullet separately exposes its exact relationship commands.
 
 ## contract
 
@@ -41,16 +41,26 @@ navigation and its owning relationship/local commands, without resource verbs.
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
   the overlays (authors, metadata, library settings, podcast settings, subscribe).
-- a connection/context menu supplies no resource ref, even when its mutation is
-  null. focusing establishes a resource root. when its action owner differs from
-  the displayed passage, the menu shows the authoritative action-owner label in
-  a `source: {label}` section; it never names a book
-  action after an excerpt.
-- `add item` is a local occurrence/root action with an explicit insertion source;
-  it opens that source's shared composer. resource-owned empty composers accept
-  `@` through the shared insertion controller. there is no canonical `LinkResource`
-  verb, global target picker, or dedicated page/reader link control. an action ref
-  never supplies a missing insertion identity.
+  action defects are thrown by `ResourceActionDefect` beneath the existing workspace
+  boundary; the account command owner and its feedback remain above containment.
+  an unconfirmed podcast request and its loss guard therefore survive an action defect.
+- a row ellipsis supplies `action_ref` in either family. when it differs from the
+  displayed passage, management appears in `source: {label}`. row composition
+  omits loaded open/fork; `any-pointer: coarse` adds exactly one local fork from
+  displayed activation, preserving location. that activation participates in menu
+  subject identity, so a changed route retires the open menu.
+- a bullet relationship menu supplies no resource ref/fork. right-click,
+  context-menu key, shift-f10 and stationary touch hold use the shared context
+  anchor. native title link menus stay native. movement, scroll, cancellation,
+  lost subject or overlay/pane ownership aborts the hold; completed hold consumes
+  its activation click, including mobile-sheet retarget. opening never executes.
+  exact unlink/details retain the incoming edge's authority; missing navigation
+  does not erase an authorized relationship.
+- structural insertion/rearrangement/history use the outline session's direct
+  command interface and mobile accessory, never row/header menu shortcuts.
+  independent chat/message admission retains its own composer. no canonical
+  `LinkResource` verb or global picker is added. action refs never supply missing
+  insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
   bounds and delete, message fork, walk and delete) is a pane entry: the
   menu navigates with `paneEntryActivation` and is done; the landing pane claims and serves
@@ -62,16 +72,28 @@ navigation and its owning relationship/local commands, without resource verbs.
   a title blocked on missing x source context reads the media's verbs while blocked and offers
   its first available source remedy (refresh, retry or repair). an import's open reads the
   item's current activation when pressed (`resolveResourceItem`).
-- `useLecternAddAction` projects the additive `LecternMembership` command through the
-  action runtime and shared lectern owner. direct controls never preflight a resource menu.
-  unresolved same-media intent wins over membership and capacity; recovery checks its exact
-  retained command. acknowledged receipts and the single revision-gated read establish
-  positive membership; visibility-filtered absence cannot prove a delayed write failed.
-  direct add stays additive and never becomes remove under the pointer. library media
-  entries and search media results promote only stored `web_article`, `epub` and `pdf`,
-  identified by library `mediaSummary.media_id` or the canonical media-root id in
-  the resource outline; fragments never borrow their owner id. existing quick-read/suggestion/transcript cohorts
-  retain their eligibility and lifecycle. titles remain native links.
+- `useMediaActions` projects episode playback, lectern add/remove and the libraries
+  chooser from supplied media identity and shared account owners. direct controls
+  never preflight resource menus. unresolved lectern intent wins over membership
+  and capacity; recovery checks its exact retained command. newer acknowledgements
+  and the revision-gated read establish membership; unknown never means absent.
+  libraries receives the actual trigger and owning-pane focus fallback. relationship
+  menus retain their occurrence principal; media quick actions retain the media id.
+- external subjects use their sealed target as identity. `mediaContinuation` retains
+  explicit membership intent above row/picker lifetime. acquisition freezes its source,
+  retry identity and removal/destination revisions before provider i/o. unknown
+  admission retries the exact command; refusal needs explicit review and fresh
+  choice. acceptance identity is retained before availability reads. URL settlement
+  supplies the final media id, including deduplication. library admission already
+  filed it; settlement reads current membership and never reapplies an old filing.
+  lectern membership waits for identity, not processing success. failure keeps saved
+  media and retries only the remaining stage; removed receipts claim no current saving.
+  the existing imports observer stays retained while identity resolves. libraries
+  retargets only its still-current picker session; completion never navigates or
+  reopens a dismissed picker. account teardown/reload ends client continuation.
+  pending destination creation blocks competing membership commands for that sealed
+  target through the existing creation owner. acknowledged canonical deletion
+  forgets completed receipts for that media id.
 - destination links and create commands carry explicit opening intent through
   `ActionSelectDetail`. bound links retain full targets and own pointer/keyboard
   handling; shared presenters classify commands and suppress new-pane return focus.
@@ -118,7 +140,8 @@ navigation and its owning relationship/local commands, without resource verbs.
   invalidation; admission and consumption owners guard their own effects. older domain api
   helpers retain their existing internal invalidation behavior. a defect while loading
   breaks the menu's pane (both header projections, the phone bar included, render
-  inside it), while running breaks the shell.
+  inside it), while an action defect stops workspace presentation below the
+  account owner.
 - confirmations substitute the resource's `label` literally into body `{title}`
   tokens (a media's bare title, without authors); label text is never a replacement
   pattern. confirmation precedes execution and busy tracking. `PodcastSubscription`

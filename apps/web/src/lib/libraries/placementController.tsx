@@ -1,24 +1,30 @@
 "use client";
 
-// Accepted edits belong to the mounted account, not its dismissible picker.
-// Each target runs in admission order, with a read after every answer. A lost
-// answer is not replayed: its read releases later explicit edits, but cannot
-// fence an older request still running on the server.
+// The account retains accepted placement work across picker dismissal. A library
+// has one admission queue across all targets. Only an acknowledged predecessor
+// can advance a queued command's precondition. Unknown delivery retains the exact
+// command; reads never settle or rebase it. Creation and initial filing are atomic.
 
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { ChooserError, ChooserRow } from "@/components/libraries/LibraryChooser";
-import PlacementOverlay, { PlacementEditor } from "@/components/libraries/PlacementOverlay";
+import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
 import Dialog from "@/components/ui/Dialog";
+import PickerSurface from "@/components/ui/PickerSurface";
+import DestinationChooser from "@/components/libraries/DestinationChooser";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, isRefusal, isUnauthenticatedApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { addPlacement, placements, removePlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
+import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
 import { CREATION_UNCONFIRMED, sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { pluralize } from "@/lib/text/pluralize";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -34,68 +40,73 @@ export interface LibraryPlacementSession {
   readonly options: LibraryPlacementOpenOptions;
 }
 interface Change {
+  readonly row: Target;
   readonly libraryId: string;
   readonly included: boolean;
-  readonly replaceEpisodes: boolean;
-  readonly creation: Creation | null;
+  readonly removalRevision: string | null;
+  expectedRevision: string;
+  readonly predecessor: Change | null;
+  acknowledgedRevision: string | null;
+  replaceEpisodes: boolean;
+  phase: "Queued" | "Sending" | "Unknown" | "Replacement";
   readonly complete: ((confirmed: boolean) => void) | null;
 }
 interface Failure {
   readonly content: FeedbackContent;
   readonly uncertain: boolean;
-  readonly creation: boolean;
 }
 interface Target {
   readonly target: LibraryPlacementTarget;
   data: LibraryPlacement[] | null;
+  removalRevision: string | null;
   readonly queue: Change[];
   readonly failures: Map<string, Failure>;
+  readonly results: Map<string, "Applied" | "Refused" | "Unknown">;
   visible: number;
-  running: boolean;
   reading: Promise<boolean> | null;
   dirty: boolean;
   readError: FeedbackContent | null;
   unavailable: boolean;
-  reconciling: Change | null;
-  conflict: Change | null;
 }
 interface Creation {
   readonly id: string;
   readonly name: string;
+  readonly initial_items: readonly string[];
+  readonly expected_removal_revision: string;
   readonly targets: readonly Target[];
   running: boolean;
-  createdName: string | null;
   error: FeedbackContent | null;
 }
-
 const REQUEST_TIMEOUT_MS = 30_000;
 const BLOCKED: Record<NonNullable<LibraryPlacement["blocked"]>, string> = {
   RequiresAdmin: "only a library admin can change this placement",
   RequiresSubscription: "subscribe to this podcast before adding it to a library",
   SystemManaged: "this system library is managed automatically",
 };
+const CHANGED: FeedbackContent = { tone: "Warning", title: "library changed. review it and choose again." };
 const keyOf = (target: LibraryPlacementTarget) => `${target.kind}:${target.id}`;
-const named = (row: LibraryPlacement) => row.is_default ? "Saved in Nexus" : row.name;
+const resourceRef = (target: LibraryPlacementTarget) => `${target.kind === "Media" ? "media" : "podcast"}:${target.id}`;
 
 function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   const targets = new Map<string, Target>();
   const creations = new Map<string, Creation>();
+  const lanes = new Map<string, Change[]>();
+  const running = new Set<string>();
   let active = false;
   let lifetime = new AbortController();
   let defect: { error: unknown } | null = null;
   const fail = (value: { error: unknown }) => { defect = value; emit(); };
   const signal = () => AbortSignal.any([lifetime.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
   const report = (error: unknown, title: string) => {
-    if (isUnauthenticatedApiError(error)) active = false;
+    if (isUnauthenticatedApiError(error)) { signIn(error); return null; }
     return libraryErrorFeedback(error, title, fail, signIn);
   };
   const get = (target: LibraryPlacementTarget): Target => {
     const key = keyOf(target);
     let row = targets.get(key);
     if (!row) {
-      row = { target, data: null, queue: [], failures: new Map(), visible: 0,
-        running: false, reading: null, dirty: true, readError: null,
-        unavailable: false, reconciling: null, conflict: null };
+      row = { target, data: null, removalRevision: null, queue: [], failures: new Map(), results: new Map(),
+        visible: 0, reading: null, dirty: true, readError: null, unavailable: false };
       targets.set(key, row);
     }
     return row;
@@ -103,265 +114,233 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   const unique = (scope: readonly LibraryPlacementTarget[]) => [...new Map(scope.map(target => [keyOf(target), target])).values()];
   const held = (scope: readonly LibraryPlacementTarget[]) => unique(scope).flatMap(target => targets.get(keyOf(target)) ?? []);
   const included = (row: Target, libraryId: string) => {
-    const cell = row.data?.find(item => item.library_id === libraryId);
-    let value = cell !== undefined && cell.relation !== "Absent";
-    if (row.reconciling?.libraryId === libraryId) value = row.reconciling.included;
-    for (const change of row.queue) if (change.libraryId === libraryId) value = change.included;
-    return value;
+    const command = row.queue.findLast(change => change.libraryId === libraryId);
+    return command?.included ?? (row.data?.find(item => item.library_id === libraryId)?.relation !== "Absent"
+      && row.data?.some(item => item.library_id === libraryId) === true);
   };
-
   async function read(row: Target): Promise<boolean> {
     if (row.reading !== null) return row.reading;
     if (!active || defect !== null) return false;
     const run = lifetime;
-    const request = async () => {
+    row.reading = (async () => {
       try {
         while (active && lifetime === run) {
           row.dirty = false;
-          const data = await requestWithRetry(s => placements(row.target, s), signal());
+          const snapshot = await requestWithRetry(s => placements(row.target, s), signal());
           if (!active || lifetime !== run) return false;
           if (row.dirty) continue;
-          row.data = data;
+          row.data = snapshot.placements;
+          row.removalRevision = snapshot.removal_revision;
           row.readError = null;
-          row.dirty = false;
           row.unavailable = false;
-          row.reconciling = null;
           return true;
         }
       } catch (error) {
         if (!active || lifetime !== run || run.signal.aborted) return false;
         row.dirty = true;
         row.readError = isAbortError(error)
-          ? { tone: "Warning", title: "libraries couldn’t be loaded", message: "the request timed out. reload libraries to continue." }
+          ? { tone: "Warning", title: "libraries couldn’t be loaded", message: "reload libraries to continue." }
           : report(error, "libraries couldn’t be loaded");
-        if (isApiError(error) && error.status === 404) {
-          row.unavailable = true;
-          row.data = null;
-          row.queue.splice(0).forEach(change => change.complete?.(false));
-          row.conflict?.complete?.(false);
-          row.conflict = null;
-        }
+        if (isApiError(error) && error.status === 404) { row.unavailable = true; row.data = null; }
       }
       return false;
-    };
-    row.reading = request().finally(() => {
+    })().finally(() => {
       row.reading = null;
       emit();
+      if (active && lifetime !== run && row.visible > 0) void read(row);
     });
     emit();
     return row.reading;
   }
-
-  async function drain(row: Target) {
-    if (row.running || !active || defect !== null || row.unavailable) return;
-    row.running = true;
+  const remove = (change: Change) => {
+    const index = change.row.queue.indexOf(change);
+    if (index !== -1) change.row.queue.splice(index, 1);
+    const lane = lanes.get(change.libraryId)!;
+    lane.splice(lane.indexOf(change), 1);
+  };
+  const refuseLane = (libraryId: string) => {
+    for (const next of [...(lanes.get(libraryId) ?? [])]) {
+      next.row.failures.set(libraryId, { content: CHANGED, uncertain: false });
+      next.row.results.set(libraryId, "Refused");
+      next.complete?.(false);
+      remove(next);
+      next.row.dirty = true;
+      void read(next.row);
+    }
+  };
+  async function drain(libraryId: string) {
+    if (!active || defect !== null || running.has(libraryId)) return;
+    running.add(libraryId);
     const run = lifetime;
     try {
       while (active && lifetime === run && defect === null) {
-        if (row.dirty && !await read(row)) break;
-        const change = row.queue[0];
-        if (!change || (change.creation !== null && change.creation.createdName === null)) break;
+        const change = lanes.get(libraryId)?.[0];
+        if (!change || change.phase !== "Queued") break;
+        if (change.predecessor !== null) {
+          if (change.predecessor.acknowledgedRevision === null) { refuseLane(libraryId); break; }
+          change.expectedRevision = change.predecessor.acknowledgedRevision;
+        }
+        change.phase = "Sending";
         emit();
-        let confirmed = false;
         try {
-          if (change.included) await addPlacement(row.target, change.libraryId, change.replaceEpisodes, signal());
-          else await removePlacement(row.target, change.libraryId, signal());
-          confirmed = true;
-          row.failures.delete(change.libraryId);
+          const result = await setPlacement(change.row.target, libraryId, {
+            included: change.included, expected_order_revision: change.expectedRevision,
+            expected_removal_revision: change.removalRevision, replace_episodes: change.replaceEpisodes,
+          }, signal());
+          if (!active || lifetime !== run) return;
+          change.acknowledgedRevision = result.order_revision;
+          change.row.failures.delete(libraryId);
+          change.row.results.set(libraryId, "Applied");
+          // Every known cell shares this locally acknowledged collection revision.
+          for (const row of targets.values()) {
+            row.data = row.data?.map(cell => cell.library_id !== libraryId ? cell
+              : row === change.row ? result : { ...cell, order_revision: result.order_revision }) ?? null;
+            row.dirty = true;
+          }
+          remove(change);
+          change.complete?.(true);
         } catch (error) {
           if (!active || lifetime !== run || run.signal.aborted) return;
           if (isApiError(error) && error.code === "E_PODCAST_REPLACES_EPISODES") {
-            // A later choice for this library supersedes this confirmation.
-            if (!row.queue.slice(1).some(next => next.libraryId === change.libraryId)) {
-              row.conflict?.complete?.(false);
-              row.conflict = change;
-            }
-          } else {
-            const uncertain = !isRefusal(error);
-            const content = isAbortError(error)
-              ? { tone: "Warning" as const, title: "change not confirmed", message: "check the current membership before changing it again" }
-              : report(error, uncertain ? "change not confirmed" : "library change wasn’t applied");
-            if (content !== null) row.failures.set(change.libraryId, {
-              content: change.creation?.createdName != null
-                ? { ...content, message: `“${change.creation.createdName}” was created. ${content.message ?? ""}` }
-                : content,
-              uncertain,
-              creation: false,
-            });
+            change.phase = "Replacement";
+            break;
           }
+          const uncertain = !isRefusal(error);
+          const content = uncertain
+            ? { tone: "Warning" as const, title: "change not confirmed", message: "check change before choosing again." }
+            : isApiError(error) && error.code === "E_RESOURCE_CONFLICT" ? CHANGED
+              : report(error, "library change wasn’t applied");
+          if (content !== null) change.row.failures.set(libraryId, { content, uncertain });
+          change.row.results.set(libraryId, uncertain ? "Unknown" : "Refused");
+          change.row.dirty = true;
+          change.complete?.(false);
+          if (uncertain) { change.phase = "Unknown"; break; }
+          remove(change);
+          refuseLane(libraryId);
         }
-        if (!active || lifetime !== run) return;
-        row.queue.shift();
-        row.reconciling = confirmed ? change : null;
-        row.dirty = true;
-        // A replacement offer retains this command's acknowledgement until settled.
-        if (row.conflict !== change) change.complete?.(confirmed);
         emit();
-        // Even a refusal can mean permissions or inherited membership changed.
-        // An unknown answer is retired; this read never retries that write.
-        if (!await read(row)) break;
       }
     } finally {
-      row.running = false;
+      running.delete(libraryId);
+      for (const row of targets.values()) if (row.dirty && (row.visible > 0 || row.failures.size > 0)) void read(row);
       emit();
     }
   }
-
-  const retryRead = (rows: readonly Target[]) => {
-    for (const row of rows) {
-      row.dirty = true;
-      row.unavailable = false;
-      void drain(row);
-    }
-  };
-  const enqueue = (row: Target, change: Change) => {
-    row.failures.delete(change.libraryId);
-    if (row.conflict?.libraryId === change.libraryId) {
-      row.conflict.complete?.(false);
-      row.conflict = null;
-    }
+  const enqueue = (row: Target, libraryId: string, desired: boolean, complete: Change["complete"] = null) => {
+    const cell = row.data?.find(item => item.library_id === libraryId);
+    if (!cell || row.removalRevision === null) return;
+    const lane = lanes.get(libraryId) ?? [];
+    const change: Change = { row, libraryId, included: desired, expectedRevision: cell.order_revision,
+      removalRevision: desired ? row.removalRevision : null, predecessor: lane.at(-1) ?? null,
+      acknowledgedRevision: null, replaceEpisodes: false, phase: "Queued", complete };
+    row.failures.delete(libraryId);
+    row.results.delete(libraryId);
     row.queue.push(change);
+    lane.push(change);
+    lanes.set(libraryId, lane);
+    void drain(libraryId);
   };
-
+  const retryRead = (rows: readonly Target[]) => { for (const row of rows) { row.dirty = true; void read(row); } };
+  const check = (change: Change) => {
+    if (!active || change.phase !== "Unknown") return;
+    change.phase = "Queued";
+    void drain(change.libraryId);
+  };
   async function create(attempt: Creation) {
     if (!active || attempt.running || defect !== null) return;
     attempt.running = true;
-    for (const row of attempt.targets) enqueue(row, {
-      libraryId: attempt.id, included: true, replaceEpisodes: false, creation: attempt, complete: null,
-    });
     emit();
     const run = lifetime;
     const outcome = await sendCreation(attempt);
-    attempt.running = false;
     if (!active || lifetime !== run) return;
+    attempt.running = false;
     if (outcome.kind === "Created") {
-      attempt.createdName = outcome.library.name;
       creations.delete(attempt.id);
+      retryRead(attempt.targets);
     } else {
-      attempt.error = report(outcome.error, "library creation wasn’t confirmed") ?? CREATION_UNCONFIRMED;
-      // No dependent placement was sent. A retry keeps the create id and frozen
-      // targets, admitting fresh dependent edits at that time.
-      for (const row of attempt.targets) {
-        for (let i = row.queue.length - 1; i >= 0; i -= 1) {
-          if (row.queue[i].creation === attempt) row.queue.splice(i, 1)[0].complete?.(false);
-        }
-      }
+      attempt.error = isApiError(outcome.error) && outcome.error.code === "E_RESOURCE_CONFLICT" ? CHANGED
+        : report(outcome.error, "library creation wasn’t confirmed") ?? CREATION_UNCONFIRMED;
       if (outcome.kind === "Refused") {
-        for (const row of attempt.targets)
-          row.failures.set(attempt.id, { content: attempt.error, uncertain: false, creation: true });
         creations.delete(attempt.id);
+        for (const row of attempt.targets) row.failures.set(attempt.id, { content: attempt.error, uncertain: false });
+        retryRead(attempt.targets);
       }
     }
-    for (const row of attempt.targets) { row.dirty = true; void drain(row); }
     emit();
   }
-
   function view(scope: readonly LibraryPlacementTarget[]) {
     const all = held(scope);
     const rows = all.filter(row => !row.unavailable);
     const known = rows.length > 0 && all.length === unique(scope).length && rows.every(row => row.data !== null);
     const libraries = new Map<string, { id: string; name: string }>();
-    rows.forEach(row => row.data?.forEach(item => libraries.set(item.library_id, { id: item.library_id, name: named(item) })));
-    rows.forEach(row => row.queue.forEach(change => {
-      if (change.creation !== null) libraries.set(change.libraryId, { id: change.libraryId, name: change.creation.createdName ?? change.creation.name });
-    }));
+    rows.forEach(row => row.data?.filter(item => item.blocked !== "SystemManaged")
+      .forEach(item => libraries.set(item.library_id, { id: item.library_id, name: item.name })));
     const items: ChooserRow[] = [...libraries.values()].map(library => {
       const cells = rows.map(row => row.data?.find(item => item.library_id === library.id));
       const confirmed = cells.filter(cell => cell !== undefined && cell.relation !== "Absent").length;
       const inherited = cells.filter(cell => cell?.relation === "Inherited").length;
       const intended = rows.filter(row => included(row, library.id)).length;
-      const busy = rows.some(row => row.queue.some(change => change.libraryId === library.id));
-      const reconciling = rows.some(row => row.reconciling?.libraryId === library.id);
-      const uncertain = rows.some(row => row.failures.get(library.id)?.uncertain);
+      const lane = lanes.get(library.id) ?? [];
+      const uncertain = lane.some(change => change.phase === "Unknown");
+      const replacement = lane.some(change => change.phase === "Replacement");
       const blocked = cells.find(cell => cell?.blocked)?.blocked;
-      const reason = !known || cells.some(cell => cell === undefined)
-        ? "checking library availability"
-        : rows.some(row => row.readError !== null) ? "reload libraries before changing them"
-          : blocked ? BLOCKED[blocked]
-            : cells.every(cell => cell?.relation === "Inherited") ? "included through its show"
-              : null;
-      return {
-        ...library,
-        confirmed: known ? { included: confirmed, total: rows.length } : null,
+      const reason = !known || cells.some(cell => cell === undefined) ? "checking library availability"
+        : rows.some(row => row.readError !== null || row.dirty || row.reading !== null) ? "checking library availability"
+          : uncertain ? "check change before choosing again"
+            : replacement ? "review the show replacement first"
+              : blocked ? BLOCKED[blocked]
+                : cells.every(cell => cell?.relation === "Inherited") ? "included through its show" : null;
+      const outcomes = rows.map(row => row.results.get(library.id));
+      const details = [inherited > 0 ? rows.length === 1 ? "via show" : `${inherited} via show` : null,
+        blocked === "RequiresAdmin" ? "read only" : blocked === "RequiresSubscription" ? "subscription required" : null,
+        ...(["Applied", "Refused", "Unknown"] as const).flatMap(outcome => {
+          const count = outcomes.filter(value => value === outcome).length;
+          return rows.length > 1 && count > 0 ? [`${count} ${outcome.toLowerCase()}`] : [];
+        })].filter(Boolean).join(" · ");
+      return { ...library, confirmed: known ? { included: confirmed, total: rows.length } : null,
         intended: known ? { included: intended, total: rows.length } : null,
-        progress: busy ? "Pending" : reconciling ? "Reconciling" : uncertain ? "Uncertain" : "Settled",
-        note: inherited > 0 ? `${inherited} included through ${inherited === 1 ? "its show" : "their shows"}` : undefined,
-        action: reason === null
-          ? { kind: "Set", included: intended !== rows.length, label: intended === rows.length ? inherited > 0 ? "remove direct placements" : "remove" : "add" }
-          : { kind: "Blocked", reason },
-      };
+        progress: uncertain ? "Uncertain" : lane.length > 0 ? "Pending" : "Settled",
+        note: details || undefined,
+        action: reason === null ? { kind: "Set", included: intended !== rows.length,
+          label: intended === rows.length ? inherited > 0 ? "remove direct placements" : "remove" : "add" }
+          : { kind: "Blocked", reason } };
     });
     const readFailure = all.find(row => row.readError !== null)?.readError ?? null;
     const creation = [...creations.values()].find(attempt => attempt.error !== null && attempt.targets.some(row => all.includes(row)));
-    const failure = all.flatMap(row => [...row.failures.values()])[0]?.content ?? null;
-    const error: ChooserError | null = readFailure !== null ? { content: readFailure, retry: () => retryRead(all), busy: all.some(row => row.reading !== null), commandKey: `library-read:${all.map(row => keyOf(row.target)).sort().join(",")}` }
+    const unknown = all.flatMap(row => row.queue).find(change => change.phase === "Unknown");
+    let failure = all.flatMap(row => [...row.failures.values()])[0]?.content ?? null;
+    if (failure !== null && all.some(row => [...row.results.values()].includes("Applied")) && all.length > 1)
+      failure = { tone: "Warning", title: "some items changed; remaining changes need review" };
+    const error: ChooserError | null = readFailure !== null ? { content: readFailure, retry: () => retryRead(all), busy: all.some(row => row.reading !== null), commandKey: "library-read" }
       : creation?.error ? { content: creation.error, retry: () => void create(creation), busy: creation.running, commandKey: `library-create:${creation.id}` }
-        : failure !== null ? { content: failure, retry: null } : null;
-    const pending = rows.reduce((count, row) => count + row.queue.length, 0);
-    return {
-      items, error,
-      loading: !known && (all.length === 0 || all.some(row => row.readError === null && !row.unavailable)),
-      summary: `${items.filter(item => item.intended !== null && item.intended.included === item.intended.total).length} libraries selected`,
-      status: pending > 0 ? `${pending} ${pending === 1 ? "change" : "changes"} pending` : undefined,
-      creationAvailable: known && all.every(row => !row.unavailable && row.readError === null && !row.dirty && row.reading === null),
+        : failure !== null ? { content: failure, retry: unknown ? () => check(unknown) : null, retryLabel: "check change", busy: unknown ? running.has(unknown.libraryId) : false } : null;
+    const pending = rows.reduce((count, row) => count + row.queue.filter(change => change.phase === "Queued" || change.phase === "Sending").length, 0);
+    const applied = rows.reduce((count, row) => count + [...row.results.values()].filter(result => result === "Applied").length, 0);
+    return { items, error, loading: !known && (all.length === 0 || all.some(row => row.readError === null && !row.unavailable)),
+      summary: known ? `${pluralize(items.filter(item => item.confirmed !== null && item.confirmed.included === item.confirmed.total).length, "library", "libraries")} included` : "membership unknown",
+      status: [pending > 0 ? `${pending} ${pending === 1 ? "change" : "changes"} pending` : null,
+        applied > 0 ? `${applied} ${applied === 1 ? "change" : "changes"} applied` : null].filter(Boolean).join(" · ") || undefined,
+      creationAvailable: known && all.every(row => !row.unavailable && row.readError === null && !row.dirty && row.reading === null && row.queue.length === 0)
+        && ![...creations.values()].some(attempt => attempt.targets.some(row => all.includes(row))),
       pendingNames: [...creations.values()].map(attempt => attempt.name),
-      conflicts: all.flatMap(row => {
-        const offered = row.conflict;
-        if (offered === null) return [];
-        return [{
-        key: keyOf(row.target),
-        name: row.data?.find(item => item.library_id === row.conflict?.libraryId)?.name ?? "this library",
-        confirm: () => {
-          if (!active || defect !== null || row.conflict !== offered) return;
-          row.conflict = null;
-          enqueue(row, { ...offered, replaceEpisodes: true });
-          emit();
-          void drain(row);
-        },
-        cancel: () => {
-          if (row.conflict === offered) {
-            row.conflict = null;
-            offered.complete?.(false);
-            emit();
-          }
-        },
-      }];
-      }),
+      conflicts: all.flatMap(row => row.queue.filter(change => change.phase === "Replacement").map(change => ({
+        key: `${keyOf(row.target)}:${change.libraryId}`, name: row.data?.find(item => item.library_id === change.libraryId)?.name ?? "this library",
+        confirm: () => { if (change.phase !== "Replacement") return; change.replaceEpisodes = true; change.phase = "Queued"; void drain(change.libraryId); },
+        cancel: () => { if (change.phase !== "Replacement") return; remove(change); change.complete?.(false); refuseLane(change.libraryId); emit(); },
+      }))),
     };
   }
-
-  function show(scope: readonly LibraryPlacementTarget[]) {
+  const show = (scope: readonly LibraryPlacementTarget[]) => {
     const rows = unique(scope).map(get);
-    rows.forEach(row => { row.visible += 1; row.dirty = true; void drain(row); });
+    rows.forEach(row => { row.visible += 1; row.dirty = true; void read(row); });
     emit();
-    return () => {
-      rows.forEach(row => { row.visible -= 1; });
-      emit();
-    };
-  }
-
+    return () => { rows.forEach(row => { row.visible -= 1; }); emit(); };
+  };
   return {
     defect: () => defect,
-    start() {
-      active = true;
-      if (lifetime.signal.aborted) lifetime = new AbortController();
-      targets.forEach(row => { void drain(row); });
-    },
-    stop() {
-      active = false;
-      lifetime.abort();
-      targets.forEach(row => {
-        row.queue.forEach(change => change.complete?.(false));
-        row.conflict?.complete?.(false);
-        row.conflict = null;
-      });
-    },
-    invalidate() {
-      for (const row of targets.values()) {
-        row.dirty = true;
-        if (row.visible > 0 || row.queue.length > 0) void drain(row);
-      }
-    },
+    start() { active = true; if (lifetime.signal.aborted) lifetime = new AbortController(); lanes.forEach((_lane, id) => void drain(id)); },
+    stop() { active = false; lifetime.abort(); targets.forEach(row => row.queue.forEach(change => change.complete?.(false))); },
+    invalidate() { for (const row of targets.values()) { row.dirty = true; if (row.visible > 0) void read(row); } },
     show, view,
     admit(scope: readonly LibraryPlacementTarget[], libraryId: string, desired: boolean): boolean {
       if (!active || defect !== null) return false;
@@ -370,69 +349,59 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       const rows = held(scope).filter(row => !row.unavailable && included(row, libraryId) !== desired
         && (desired || row.data?.find(item => item.library_id === libraryId)?.relation !== "Inherited"));
       if (rows.length === 0) return false;
-      rows.forEach(row => enqueue(row, { libraryId, included: desired, replaceEpisodes: false, creation: null, complete: null }));
+      rows.forEach(row => enqueue(row, libraryId, desired));
       emit();
-      rows.forEach(row => { void drain(row); });
       return true;
     },
     create(scope: readonly LibraryPlacementTarget[], raw: string): boolean {
-      const name = raw.trim();
-      const current = view(scope);
+      const name = raw.trim(), current = view(scope), rows = held(scope);
       if (!active || defect !== null || !current.creationAvailable || libraryNameError(name) !== null
         || current.items.some(row => row.name.toLowerCase() === name.toLowerCase())
         || current.pendingNames.some(pending => pending.toLowerCase() === name.toLowerCase())) return false;
-      const attempt: Creation = { id: crypto.randomUUID(), name, targets: held(scope), running: false, createdName: null, error: null };
-      for (const row of attempt.targets) {
-        for (const [id, failure] of row.failures) if (failure.creation) row.failures.delete(id);
-      }
+      const removal = rows[0]?.removalRevision;
+      if (removal === null || removal === undefined) return false;
+      const attempt: Creation = { id: crypto.randomUUID(), name, initial_items: rows.map(row => resourceRef(row.target)),
+        expected_removal_revision: removal, targets: rows, running: false, error: null };
       creations.set(attempt.id, attempt);
       void create(attempt);
       return true;
     },
     async addToLibrary(target: LibraryPlacementTarget, libraryId: string): Promise<boolean> {
-      if (!active || defect !== null) return false;
       const row = get(target);
-      if (!await read(row)) return false;
-      if (!active || defect !== null || row.unavailable) return false;
+      row.dirty = true;
+      if (!await read(row) || row.unavailable) return false;
       const cell = row.data?.find(item => item.library_id === libraryId);
-      if (cell && cell.relation !== "Absent" && row.queue.length === 0) return true;
-      if (!cell || cell.blocked !== null) {
-        row.failures.set(libraryId, { uncertain: false, creation: false, content: {
-          tone: "Warning", title: "library change wasn’t applied",
-          message: cell?.blocked ? BLOCKED[cell.blocked] : "this library is no longer available",
-        } });
-        emit();
-        return false;
-      }
-      return new Promise<boolean>(resolve => {
-        enqueue(row, { libraryId, included: true, replaceEpisodes: false, creation: null, complete: resolve });
-        emit();
-        void drain(row);
-      });
+      if (!cell || cell.blocked !== null || (lanes.get(libraryId) ?? []).some(change => change.phase === "Unknown" || change.phase === "Replacement")) return false;
+      return new Promise<boolean>(resolve => { enqueue(row, libraryId, true, resolve); emit(); });
     },
     attention() {
-      const hidden = [...targets.values()].filter(row => row.visible === 0);
-      const failed = hidden.filter(row => row.readError !== null || row.failures.size > 0 || row.conflict !== null);
+      const failed = [...targets.values()].filter(row => row.visible === 0 && (row.readError !== null || row.failures.size > 0 || row.queue.some(change => change.phase === "Replacement")));
       const creation = [...creations.values()].find(attempt => attempt.error !== null && attempt.targets.every(row => row.visible === 0));
       if (failed.length === 0 && !creation) return null;
       const scope = [...new Set([...failed, ...(creation?.targets ?? [])])];
-      const count = failed.reduce((n, row) => n + row.failures.size + Number(row.readError !== null) + Number(row.conflict !== null), 0) + Number(creation !== undefined);
-      return {
-        content: { tone: "Warning" as const, title: "library changes need attention", message: `${count} ${count === 1 ? "change needs" : "changes need"} review. Open libraries to see what happened.` },
-        targets: scope.map(row => row.target),
-        busy: creation ? creation.running : failed.some(row => row.reading !== null),
-        commandKey: creation ? `library-create:${creation.id}` : `library-read:${failed.map(row => keyOf(row.target)).sort().join(",")}`,
-        retry: creation ? () => void create(creation)
-          : failed.some(row => row.readError !== null) ? () => retryRead(failed) : null,
-      };
+      return { content: { tone: "Warning" as const, title: "library changes need attention", message: "review the current libraries and any unconfirmed changes." },
+        targets: scope.map(row => row.target), busy: false, commandKey: "library-review", retry: null };
     },
   };
 }
 
 type Owner = ReturnType<typeof createOwner>;
+interface ExternalPlacementSession {
+  readonly key: number;
+  readonly target: string;
+  readonly options: LibraryPlacementOpenOptions;
+  readonly choose: (destination: LibraryDestination, sessionKey: number) => void;
+  readonly pending: boolean;
+}
 interface LibraryPlacementController {
   readonly openLibraryPlacement: (targets: readonly LibraryPlacementTarget[], options: LibraryPlacementOpenOptions) => void;
   readonly addToLibrary: (target: LibraryPlacementTarget, libraryId: string) => Promise<boolean>;
+  readonly openExternalLibraryPlacement: (input: {
+    target: string; pending: boolean;
+    choose: (destination: LibraryDestination, sessionKey: number) => void;
+  }, options: LibraryPlacementOpenOptions) => void;
+  readonly retargetLibraryPlacement: (sessionKey: number, target: LibraryPlacementTarget) => void;
+  readonly hasPendingExternalCreation: (target: string) => boolean;
 }
 const Context = createContext<{ owner: Owner; controller: LibraryPlacementController } | null>(null);
 function useContextValue() {
@@ -446,24 +415,69 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const [, changedOwner] = useReducer((value: number) => value + 1, 0);
   const [owner] = useState(() => createOwner(signIn, changedOwner));
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
+  const [external, setExternal] = useState<ExternalPlacementSession | null>(null);
+  const externalRef = useRef(external);
+  externalRef.current = external;
+  const [destinationCreation] = useState(createDestinationCreation);
+  const creation = useDestinationCreation("external-media", destinationCreation);
+  const workGuard = useWorkGuard();
+  useLayoutEffect(() => workGuard.register({ id: "external-library-creation", scope: { kind: "account" },
+    subscribe: destinationCreation.subscribe,
+    read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
+  }), [workGuard, destinationCreation]);
+  useWorkspaceCondition("external-library-creation", external !== null || (!creation.status && creation.error === null) ? null : {
+    priority: "Write", announcement: "Polite",
+    content: creation.error?.content ?? { tone: "Neutral", title: creation.status ?? "creating library…" },
+    actions: creation.error?.retry ? [{ label: "retry library creation", onClick: creation.error.retry,
+      busy: creation.error.busy, commandKey: creation.error.commandKey }] : undefined,
+  });
   const [reviewTargets, setReviewTargets] = useState<readonly LibraryPlacementTarget[] | null>(null);
   const workspace = useLatestWorkspace();
-  useMobileChromeHold(reviewTargets !== null);
+  useMobileChromeHold(reviewTargets !== null || session !== null || external !== null);
   const lastKey = useRef(0);
   const [controller] = useState<LibraryPlacementController>(() => ({
     openLibraryPlacement(targets, options) {
       lastKey.current += 1;
       setReviewTargets(null);
+      externalRef.current = null;
+      setExternal(null);
       setSession({ key: lastKey.current, targets: [...targets], options });
     },
     addToLibrary: owner.addToLibrary,
+    hasPendingExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target),
+    openExternalLibraryPlacement(input, options) {
+      lastKey.current += 1;
+      setReviewTargets(null);
+      setSession(null);
+      const next = { key: lastKey.current, target: input.target,
+        choose: input.choose, pending: input.pending, options };
+      externalRef.current = next;
+      setExternal(next);
+    },
+    retargetLibraryPlacement(sessionKey, target) {
+      const current = externalRef.current;
+      if (current?.key !== sessionKey) return;
+      externalRef.current = null;
+      setExternal(null);
+      setSession({ key: current.key, targets: [target], options: current.options });
+    },
   }));
+  const chooseExternal = (destination: LibraryDestination, captured: ExternalPlacementSession) => {
+    if (captured.pending || externalRef.current !== captured || controller.hasPendingExternalCreation(captured.target)) return false;
+    const pending = { ...captured, pending: true };
+    externalRef.current = pending;
+    setExternal(pending);
+    captured.choose(destination, captured.key);
+    return true;
+  };
   const changed = useChangeStamp("Libraries", "Entries");
   useLayoutEffect(() => { owner.start(); return owner.stop; }, [owner]);
   useEffect(() => { owner.invalidate(); }, [owner, changed]);
   const attention = owner.attention();
-  const review = { label: "review changes", onClick: () => {
+  const review = { label: "review", onClick: () => {
     setSession(null);
+    externalRef.current = null;
+    setExternal(null);
     setReviewTargets(attention?.targets ?? null);
   } };
   useWorkspaceCondition("library-placement", attention === null ? null : {
@@ -474,7 +488,28 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   if (defect !== null) throw defect.error;
   return <Context.Provider value={{ owner, controller }}>
     {children}
-    <PlacementOverlay session={session} onClose={() => setSession(null)} />
+    <PickerSurface active={external !== null || session !== null} title="libraries"
+      focusKey={session !== null ? `stored:${session.key}` : external?.key}
+      anchor={session?.options.anchor ?? external?.options.anchor ?? (() => null)}
+      returnFocusFallback={session?.options.returnFocusFallback ?? external?.options.returnFocusFallback ?? undefined}
+      onClose={() => { externalRef.current = null; setExternal(null); setSession(null); }}>
+      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
+        disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
+        onSet={({ destination, included }) => included && chooseExternal(destination, external)}
+        status={external.pending ? "saving for this library…" : creation.status}
+        error={creation.error}
+        create={{ available: !external.pending && !controller.hasPendingExternalCreation(external.target), pendingNames: creation.pendingNames,
+          onCreate: name => {
+            const captured = external;
+            if (captured.pending || externalRef.current !== captured || controller.hasPendingExternalCreation(captured.target)) return false;
+            return creation.admit({ name, scope: captured.target,
+              onCreated: destination => {
+                if (externalRef.current === captured) chooseExternal(destination, captured);
+                else captured.choose(destination, captured.key);
+              } });
+          },
+        }} /> : null}
+    </PickerSurface>
     <Dialog open={reviewTargets !== null} onClose={() => setReviewTargets(null)} title="library changes"
       initialFocus={panel => panel.querySelector<HTMLInputElement>("input")}
       returnFocusFallback={() => findPaneLandmarkFocusTarget(workspace().state.active_primary_pane_id)}>

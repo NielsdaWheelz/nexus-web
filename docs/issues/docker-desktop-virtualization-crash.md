@@ -65,7 +65,7 @@ not a durable repair of the underlying host issue.
 - 160 leaked `nexus-lab-*` worker images were present.
 
 these are candidate stressors, not an established cause. see
-[lab-host-budget](lab-host-budget.md) and macbook-capacity d2.
+[deferred write attribution](docker-write-attribution.md) and macbook-capacity d2.
 
 2026-10-20, unsaved-work qualification: an owned store start timed out; the
 backend process then disappeared and the socket refused daemon connections.
@@ -73,3 +73,10 @@ the owner approved a normal desktop restart. engine 29.7.2 answered afterward,
 the six previously running unrelated services resumed, and host availability
 returned to 45 gib. no prune, reset or volume deletion occurred. this establishes
 recovery only; the backend exit's cause remains unproved.
+
+2026-10-22 19:41–19:42 utc, passive write observation: the desktop socket and vm
+process became unavailable; the collectors ended before their deadline. only
+read-only inventory preceded the episode. after owner approval, `docker desktop
+start` reported already running while the api remained unavailable; `open -a
+Docker` restored the api by 19:45 utc. no restart or resize command was issued.
+this establishes unavailability and recovery, not a virtualization panic or cause.

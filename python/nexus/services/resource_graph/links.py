@@ -1,10 +1,10 @@
-"""Flush-only link materialization and exact preserving unlink; serializable note commands.
+"""Flush-only link materialization and exact preserving unlink; transactional commands.
 
 Materialization and unlink compose inside their caller's transaction. Unlink removes
 one owned user/discovery/assistant edge; an absent uuid succeeds without resolving a
-replacement. Only user unlink checks or detaches relationship notes. Every unlink
-preserves endpoint resources, note content and creation history. Note commands are
-idempotent by the client's note id.
+replacement. Accepted authored identities retain their canonical binding across
+retries and retirement. Every unlink preserves endpoint resources, note content
+and creation history. The caller commits or rolls back its complete batch.
 """
 
 from __future__ import annotations
@@ -15,26 +15,28 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyPageBinding, Highlight, ResourceEdge
-from nexus.db.retries import retry_serializable
+from nexus.db.models import DailyPageBinding, ResourceEdge
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.note_bodies import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
     InsertionSource,
     LinkEndpoint,
-    LinkNoteOut,
     LinkPassageEndpoint,
     LinkResourceEndpoint,
 )
-from nexus.services import highlights, note_bodies, notes, passage_anchors, pdf_highlights
+from nexus.services import (
+    authored_identities,
+    highlights,
+    notes,
+    passage_anchors,
+    pdf_highlights,
+    writing,
+)
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph import edges
-from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import visible_refs
-from nexus.services.suggestion_changes import record_input_change
 
 
 def insertion_source_for_ref(
@@ -83,9 +85,8 @@ def materialize_source(
         return notes.ensure_daily_page(
             db, viewer_id, source.local_date, source.page_id
         ), existing is None
-    created = db.get(Highlight, source.highlight_id) is None
     if source.kind == "fragment_selection":
-        highlight = highlights.create_fragment_highlight_in_txn(
+        result = highlights.create_fragment_highlight_in_txn(
             db,
             viewer_id=viewer_id,
             highlight_id=source.highlight_id,
@@ -103,7 +104,7 @@ def materialize_source(
             != source.expected_reader_generation
         ):
             raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
-        highlight = pdf_highlights.create_pdf_highlight_in_txn(
+        result = pdf_highlights.create_pdf_highlight_in_txn(
             db,
             viewer_id=viewer_id,
             highlight_id=source.highlight_id,
@@ -113,89 +114,30 @@ def materialize_source(
             exact=source.exact,
             color=source.color,
         )
-    return ResourceRef("highlight", highlight.id), created
+    return ResourceRef("highlight", result.highlight.id), result.state == "created"
 
 
-def unlink_in_txn(
-    db: Session, *, viewer_id: UUID, link_id: UUID, require_unannotated: bool
-) -> bool:
+def unlink_in_txn(db: Session, *, viewer_id: UUID, link_id: UUID) -> bool:
     """Remove one exact owned user/discovery/assistant edge, preserving resources.
 
-    Absent succeeds; foreign or unsupported origins conflict. For user links, the
-    annotation precondition precedes detachment. Only flushes; the caller retries,
+    Absent succeeds; foreign or unsupported origins conflict. Only flushes; the caller retries,
     notifies once if changed, and commits or rolls back the complete batch.
     """
+    known = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
+    if known is not None:
+        writing.identity(db, known.out())
+        if known.deleted:
+            return False
+        link_id = known.canonical.resource_id
     row = db.get(ResourceEdge, link_id)
     if row is None:
+        binding = authored_identities.retire(db, viewer_id=viewer_id, kind="link", id=link_id)
+        writing.identity(db, binding.out())
         return False
     if row.user_id != viewer_id or row.origin not in ("user", "discovery", "assistant"):
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This connection cannot be removed")
-    edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    assert edge is not None
-    if edge.origin == "user":
-        if require_unannotated:
-            edges.require_unannotated_link(db, viewer_id=viewer_id, edge=edge)
-        edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
     edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
     return True
-
-
-def put_link_note(
-    db: Session, *, viewer_id: UUID, link_id: UUID, request: AnnotationNoteRequest
-) -> LinkNoteOut:
-    """Create the link's one note and attach it to both ends (two ``link_note`` edges).
-    Retry: that note already attached has landed; another note attached, or the note id
-    taken, is 409. Later edits are outline ``set_body`` commands."""
-
-    def op() -> LinkNoteOut:
-        link = _link(db, viewer_id, link_id)
-        attached = _attached_notes(db, viewer_id, link)
-        if request.note_id not in attached:
-            taken = note_bodies.note_exists(db, viewer_id=viewer_id, note_id=request.note_id)
-            if attached or taken:
-                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Link already has a note")
-            note_bodies.ensure_note(
-                db,
-                viewer_id=viewer_id,
-                note_id=request.note_id,
-                body_pm_json=request.body_pm_json,
-                reason="link_note",
-            )
-            note = note_bodies.note_ref(request.note_id)
-            for endpoint in (link.source, link.target):
-                edges.create_edge(
-                    db,
-                    viewer_id=viewer_id,
-                    input=edges.EdgeCreate(note, endpoint, "context", "link_note"),
-                )
-        saved = note_bodies.read_note(db, viewer_id=viewer_id, note_id=request.note_id)
-        out = LinkNoteOut(
-            note_block_id=saved.id,
-            body_pm_json=saved.body_pm_json,
-            body_text=saved.body_text,
-            body_version=saved.body_version,
-            connection=connection_for_edge(
-                db, viewer_id=viewer_id, edge_id=link.id, ref=link.source
-            ),
-        )
-        record_input_change(db)
-        db.commit()
-        return out
-
-    return retry_serializable(db, "put_link_note", op)
-
-
-def detach_link_note(db: Session, *, viewer_id: UUID, link_id: UUID, note_id: UUID) -> None:
-    """Detach the note from both ends (idempotent); the note and the link stay."""
-
-    def op() -> None:
-        link = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-        if link is not None and note_id in _attached_notes(db, viewer_id, link):
-            edges.detach_link_notes(db, viewer_id=viewer_id, link=link, note_block_id=note_id)
-            record_input_change(db)
-        db.commit()
-
-    retry_serializable(db, "detach_link_note", op)
 
 
 def materialize_link_endpoint(
@@ -244,15 +186,3 @@ def count_retained_neutral_links(
     return sum(
         a.uri in visible and b.uri in visible for a, b in zip(refs[::2], refs[1::2], strict=True)
     )
-
-
-def _link(db: Session, viewer_id: UUID, link_id: UUID) -> edges.EdgeOut:
-    edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    if edge is None or edge.origin != "user":
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
-    return edge
-
-
-def _attached_notes(db: Session, viewer_id: UUID, link: edges.EdgeOut) -> list[UUID]:
-    pair = edges.link_pair(link)
-    return edges.link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[pair]).get(pair, [])

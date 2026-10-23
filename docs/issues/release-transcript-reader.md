@@ -7,20 +7,20 @@ the reader/snapshot wire is revision 14. the checked production identity and
 whose wire revision is 13. further breaking changes before the next release
 share this bump; recheck release state before activation.
 
-the native bridge is now `nexusPlayback`, with no `nexusPlayer` alias. the old
-apk must show update required. api, web, workers and the new apk must ship as a
+the native bridge is now `nexusAudioSession`, with no aliases for the historical
+`nexusAudio`, `nexusPlayback` or `nexusPlayer` identities. old apks must show update
+required. api, web, workers and the new apk must ship as a
 paired cutover. unloaded or ended timestamp starts require fresh server state;
 loaded seeking remains available offline.
 
-before activation: migration `0307` adds chapter end-absence provenance:
+before activation: migration `0310`, after `0309`, adds chapter end-absence provenance:
 existing chapter facts and ids survive, but historical null ends stay unverified
 (`end_absence_confirmed = false`). their exact scopes remain unavailable until a
 new publisher observation confirms an absent end. no data is deleted. supplied
 invalid publisher ends now refuse the source observation before persistence.
 apply the deployment controller's migration ancestry preflight, stop writers,
 verify a backup or an explicit durable operator waiver, then verify exact head.
-the populated local `0306` to `0307` rehearsal preserves existing facts and ids;
-it does not establish production migration safety.
+local rehearsals do not establish production migration safety.
 
 qualify loaded offline seeking, fresh unloaded starts, stale-command ordering
 and old-app refusal on the activated builds. local browser and installed emulator

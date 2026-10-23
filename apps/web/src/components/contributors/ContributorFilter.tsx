@@ -70,7 +70,7 @@ export default function ContributorFilter({
   const settled = useSettled(q, 180);
   const live = q !== "" && settled === q;
   const search = usePaneFreeServerList<ContributorSearchItem>({
-    key: live ? q : null,
+    key: live ? `/contributors/search?q=${encodeURIComponent(q)}` : null,
     stale: "",
     pageSize: 10,
     active: active && live,
@@ -106,8 +106,6 @@ export default function ContributorFilter({
           {suggestions.map((item) => (
             <Button
               key={item.handle}
-              variant="secondary"
-              size="sm"
               className={styles.suggestion}
               onClick={() => {
                 onAdd(item);

@@ -37,6 +37,7 @@ from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 from nexus.schemas.suggestions import SuggestionObservationOut
+from nexus.schemas.writing import WritingState
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.search.query import DiscoveryKind
 
@@ -44,6 +45,7 @@ from nexus.services.search.query import DiscoveryKind
 # split by how the stream dumps it. Tool events use their public projections;
 # stored audit models never describe the wire.
 SSE_PAYLOADS_BY_NAME = (
+    WritingState,
     MediaProcessingSnapshotOut,
     MetadataEnrichmentView,
     ChatRunToolCallStartEventOut,

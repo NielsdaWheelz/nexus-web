@@ -1,9 +1,12 @@
-"""Stream the release database backup to private R2 and verify every archive byte.
+"""Stream database backups to private R2, verify every archive byte, and retain them.
 
-The host release controller owns stopped writers and migration admission. This
-one-off owns its PostgreSQL children, multipart upload, and durable completion
-receipt. Only a successful pg_dump can publish that receipt; only its exact
-multipart upload may then become a completed object.
+The release controller backs up with writers stopped, before it migrates. The
+nightly job backs up with writers running: pg_dump reads one consistent
+snapshot, and a host lock keeps it apart from any release. This one-off owns its
+PostgreSQL children, multipart upload, durable completion receipt and archive
+retention. Only a successful pg_dump can publish that receipt; only its exact
+multipart upload may then become a completed object. Each caller prunes only
+after its own backup verifies.
 """
 
 from __future__ import annotations
@@ -11,11 +14,15 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import FrameType
 from typing import Literal
@@ -30,6 +37,7 @@ _PART_BYTES = 16 * 1024 * 1024
 _TIMEOUT_SECONDS = 1800
 _RECEIPT_MAX_BYTES = 2 * 1024 * 1024
 _MANIFEST_MAX_BYTES = 16 * 1024
+_RETENTION = timedelta(days=7)
 
 
 class BackupFailure(RuntimeError):
@@ -83,6 +91,48 @@ class _Receipt(BaseModel):
 
 def _interrupt(_signum: int, _frame: FrameType | None) -> None:
     raise BackupFailure("backup interrupted or exceeded its deadline")
+
+
+def database_identity(psql: Callable[[str], str]) -> str:
+    """The database name and cluster system identifier a backup records.
+
+    `psql` runs one statement as `psql -At` and returns its stripped output: the
+    release reads through the postgres container, the nightly job directly.
+    """
+    return psql("SELECT current_database() || ':' || system_identifier FROM pg_control_system()")
+
+
+def database_revision(psql: Callable[[str], str]) -> str:
+    """The database's single Alembic revision, or "" before its first migration."""
+    if not psql("SELECT COALESCE(to_regclass('public.alembic_version')::text, '')"):
+        return ""
+    rows = [row for row in psql("SELECT version_num FROM alembic_version").splitlines() if row]
+    if not rows:
+        return ""
+    if len(rows) != 1 or re.fullmatch(r"[0-9a-z][0-9a-z_]{0,63}", rows[0]) is None:
+        raise BackupFailure(f"the database has no single well-formed Alembic revision: {rows}")
+    return rows[0]
+
+
+def _pg_environment() -> dict[str, str]:
+    # PostgreSQL children receive only their connection inputs, never R2 keys.
+    environment = {
+        name: os.environ[name]
+        for name in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE")
+    }
+    environment["PGCONNECT_TIMEOUT"] = "10"
+    return environment
+
+
+def _psql(statement: str) -> str:
+    return subprocess.run(
+        ("/usr/lib/postgresql/15/bin/psql", "-At", "--no-password", "--command", statement),
+        env=_pg_environment(),
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=60,
+    ).stdout.strip()
 
 
 def _head_exists(client: BaseClient, *, bucket: str, key: str) -> bool:
@@ -146,15 +196,9 @@ def _create_receipt(
             "starting-revision": starting_revision,
         },
     )["UploadId"]
-    # PostgreSQL children receive only their connection inputs, never R2 keys.
-    pg_environment = {
-        name: os.environ[name]
-        for name in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE")
-    }
-    pg_environment["PGCONNECT_TIMEOUT"] = "10"
     process = subprocess.Popen(
         ("/usr/lib/postgresql/15/bin/pg_dump", "--format=custom", "--no-password"),
-        env=pg_environment,
+        env=_pg_environment(),
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
@@ -291,17 +335,78 @@ def _require_recovery_manifest(
         raise BackupFailure("remote backup recovery manifest differs from the verified archive")
 
 
+def _read_receipt(path: Path) -> _Receipt | None:
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        data = stream.read(_RECEIPT_MAX_BYTES + 1)
+    if len(data) > _RECEIPT_MAX_BYTES:
+        raise BackupFailure("backup receipt exceeds its bound")
+    return _Receipt.model_validate_json(data)
+
+
+def expired_archives(archives: Mapping[str, datetime], now: datetime) -> list[str]:
+    """Name the archives retention deletes, oldest first.
+
+    Keep every archive younger than seven days and the newest one at least seven
+    days old. Keeping the young ones is what refreshes the aged one: each backup
+    crosses seven days in turn and replaces it, so with nightly backups the
+    oldest kept archive is seven to eight days old. The newest archive always stays.
+    """
+    aged = sorted(
+        (created, key) for key, created in archives.items() if now - created >= _RETENTION
+    )
+    return [key for _, key in aged[:-1]]
+
+
+def _archives(client: BaseClient, bucket: str) -> dict[str, datetime]:
+    """Every archive in the bucket, with R2's LastModified for its `.dump` object."""
+    archives: dict[str, datetime] = {}
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket):
+        for item in page.get("Contents", []):
+            if item["Key"].endswith("/database.dump"):
+                archives[item["Key"]] = item["LastModified"]
+    return archives
+
+
+def _prune(client: BaseClient, *, bucket: str, receipt_root: Path) -> list[str]:
+    """Delete each expired archive with its recovery manifest and host receipt."""
+    expired = expired_archives(_archives(client, bucket), datetime.now(UTC))
+    for key in expired:
+        prefix = key.removesuffix("/database.dump")
+        # release.py keeps the receipt of releases/<sha> at <root>/<sha>; the
+        # nightly job keeps nightly/<date> at <root>/nightly/<date>. A
+        # maintenance receipt lives wherever its operator put it.
+        receipt = None
+        if re.fullmatch(r"releases/[0-9a-f]{40}", prefix):
+            receipt = receipt_root / prefix.removeprefix("releases/")
+        elif re.fullmatch(r"nightly/[0-9]{4}-[0-9]{2}-[0-9]{2}", prefix):
+            receipt = receipt_root / prefix
+        if receipt is not None and receipt.exists():
+            shutil.rmtree(receipt)
+        # The archive object goes last: an interrupted prune leaves it listed,
+        # so the next prune finishes what this one started.
+        client.delete_object(Bucket=bucket, Key=f"{prefix}/database.json")
+        client.delete_object(Bucket=bucket, Key=key)
+    return expired
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("check")
     create = commands.add_parser("create")
     verify = commands.add_parser("verify")
+    nightly = commands.add_parser("nightly")
+    prune = commands.add_parser("prune")
     for command in (create, verify):
-        command.add_argument("--source-sha", required=True)
         command.add_argument("--backup-key", required=True)
         command.add_argument("--database-identity", required=True)
         command.add_argument("--starting-revision", required=True)
+    for command in (create, verify, nightly):
+        command.add_argument("--source-sha", required=True)
+    for command in (nightly, prune):
+        command.add_argument("--receipt-root", required=True, type=Path)
     create.add_argument("--state-directory", required=True, type=Path)
     verify.add_argument("--sha256", required=True)
     verify.add_argument("--byte-count", required=True, type=int)
@@ -310,7 +415,23 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _interrupt)
     signal.alarm(_TIMEOUT_SECONDS)
     try:
-        if args.command != "check" and (
+        if args.command == "nightly":
+            # Nightly is `create` with derived inputs: one archive per UTC day.
+            # A rerun that day resumes or verifies it as recorded, even after a
+            # release has since moved the database.
+            day = datetime.now(UTC).strftime("%Y-%m-%d")
+            args.backup_key = f"nightly/{day}/database.dump"
+            args.state_directory = args.receipt_root / "nightly" / day
+            args.state_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            recorded = _read_receipt(args.state_directory / "receipt.json")
+            if recorded is None:
+                args.database_identity = database_identity(_psql)
+                args.starting_revision = database_revision(_psql)
+            else:
+                args.source_sha = recorded.source_sha
+                args.database_identity = recorded.evidence.database_identity
+                args.starting_revision = recorded.evidence.starting_revision
+        if args.command not in {"check", "prune"} and (
             re.fullmatch(r"[0-9a-f]{40}", args.source_sha) is None
             or re.fullmatch(r"[0-9a-z][0-9a-z_]{0,63}", args.starting_revision) is None
             or re.fullmatch(r"[^\r\n]+:[0-9]+", args.database_identity) is None
@@ -355,8 +476,14 @@ def main() -> None:
         )
         try:
             if args.command == "check":
-                client.head_bucket(Bucket=bucket)
-                print('{"status":"ready"}')
+                archives = _archives(client, bucket)
+                newest = max(archives, key=archives.__getitem__, default=None)
+                last_modified = None if newest is None else archives[newest].isoformat()
+                print(json.dumps({"newest_archive": newest, "last_modified": last_modified}))
+                return
+            if args.command == "prune":
+                deleted = _prune(client, bucket=bucket, receipt_root=args.receipt_root)
+                print(json.dumps({"deleted": deleted}))
                 return
             identity = {
                 "endpoint": endpoint,
@@ -365,25 +492,20 @@ def main() -> None:
                 "database_identity": args.database_identity,
                 "starting_revision": args.starting_revision,
             }
-            if args.command == "create":
+            if args.command in {"create", "nightly"}:
                 path = args.state_directory / "receipt.json"
-                if path.exists():
-                    with path.open("rb") as stream:
-                        data = stream.read(_RECEIPT_MAX_BYTES + 1)
-                    if len(data) > _RECEIPT_MAX_BYTES:
-                        raise BackupFailure("backup receipt exceeds its bound")
-                    receipt = _Receipt.model_validate_json(data)
-                    if receipt.source_sha != args.source_sha or any(
-                        getattr(receipt.evidence, name) != value for name, value in identity.items()
-                    ):
-                        raise BackupFailure("backup receipt belongs to a different release input")
-                else:
+                receipt = _read_receipt(path)
+                if receipt is None:
                     receipt = _create_receipt(
                         client,
                         **identity,
                         source_sha=args.source_sha,
                         path=path,
                     )
+                elif receipt.source_sha != args.source_sha or any(
+                    getattr(receipt.evidence, name) != value for name, value in identity.items()
+                ):
+                    raise BackupFailure("backup receipt belongs to a different release input")
                 evidence = receipt.evidence
                 # A prior process may have died after linking its receipt but
                 # before syncing the directory. Replay completes that prefix.
@@ -409,9 +531,13 @@ def main() -> None:
                 client,
                 source_sha=args.source_sha,
                 evidence=evidence,
-                publish=args.command == "create",
+                publish=args.command != "verify",
             )
-            print(evidence.model_dump_json())
+            if args.command == "nightly":
+                deleted = _prune(client, bucket=bucket, receipt_root=args.receipt_root)
+                print(json.dumps({"evidence": evidence.model_dump(), "deleted": deleted}))
+            else:
+                print(evidence.model_dump_json())
         finally:
             client.close()
     except BackupFailure as exc:

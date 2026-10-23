@@ -2,7 +2,6 @@
 
 status: current contract; single-screen add/import.
 scope: the browser-local add task and its existing acquisition/placement owners.
-implementation and qualification: #575.
 
 ## editor
 
@@ -32,8 +31,11 @@ mixed coverage is derived; sent/saved rows are excluded.
 
 `DestinationChooser` adapts item/bulk deltas to `LibraryChooser`, the shared action
 combobox. the complete writable catalog uses the existing keyed read owner;
-matching is local. every query starts inactive until arrow navigation. accepted
-actions clear it and keep input focus. typing remains available during writes.
+matching is local. it uses the [shared search contract](visual-system.md#collections-and-searchable-pickers):
+the first available existing destination highlights automatically; creation needs
+deliberate selection. accepted actions retain the query and input focus. draft
+checks mean chosen for this request, without implying saved membership.
+typing remains available during writes.
 `useDestinationCreation` belongs to the form: a create freezes scope and adds only
 to surviving original drafts, preserving newer selections and queries.
 
@@ -47,17 +49,26 @@ and editing; final submission waits for it. task close retains its loss guard.
 
 ## acceptance and leaving
 
-submission revalidates the ready subset, captures destinations and a new id per
-row synchronously (a url's attempt id or an upload's session id), then admits two at a time within one mutation slot. invalid and
+submission revalidates the ready subset, retains the selected libraries' reviewed
+order revisions and reads one removal revision before any provider or storage i/o.
+each row freezes that guard vector and its request id (a url attempt or an upload
+session), then admits two at a time within one mutation slot. invalid and
 empty drafts send nothing. saved receipts remain in the task; ordinary completion
-neither navigates nor closes it. acceptance proves saving; upload publication
-proves verified bytes. neither proves completed extraction.
+neither navigates nor closes it. acceptance proves a past save; upload publication
+proves verified bytes. before
+showing current saving, url receipts reread media availability and placements;
+upload receipts carry the current named-placement snapshot. removed/unavailable
+receipts say so and offer no current-content open or filing action. neither
+acceptance nor publication proves completed extraction.
 
 known refusals stay on their row, including revoked destination access. auth and
-sent defects retain their frozen request before the existing handoff. check/retry
-replays exactly that intent; edit/new attempt returns to draft and receives a new
-id only on submission. stopped unsent rows return to drafts; started urls remain
-unconfirmed and files retain the existing upload/imports recovery semantics.
+sent defects retain their frozen request before the existing handoff. check save
+replays exactly that intent. an unknown outcome cannot return to an
+editable draft. a known guard refusal requires explicit review, refreshes the
+selected library snapshots and returns to draft. a url then receives a fresh id;
+a live upload retains its session, generation and staged bytes for confirmation
+with reviewed choices. stopped unsent rows return to drafts; started requests
+remain unconfirmed under the same memory owner.
 accepted file rows release browser file handles. stop/reset/discard/unmount fence
 all older callbacks. reload loses browser drafts/files.
 
@@ -79,8 +90,13 @@ the saved-items header's libraries for all… for every accepted media
 choosing files those that lack it, unchoosing unfiles them all, and a partial
 library reads "In n of m"; an item deleted since it was added is left out. reads
 are the shared placement controller's; submitted destinations never substitute
-for inventory. accepted explicit edits are queued per target within that mounted
-owner. every outcome rereads; retry retries a failed read, never an unknown write.
+for inventory. accepted explicit edits are serialized per library across targets
+within the
+account owner. only an acknowledged local predecessor can supply a pending
+command's next revision; external reads never rebase accepted intent. an unknown
+write remains frozen for check change. a stale refusal refreshes inventory and
+requires a fresh explicit choice. create-and-file is one atomic library create,
+with all selected resource refs and the frozen removal revision.
 admission/check closes saved-item pickers. the add session owns no placement state.
 
 ## acquisition boundary
@@ -94,22 +110,26 @@ url receipts name the admitted media import; every upload receipt names its exac
 session import. `uploadIngestFile` publishes the create's ref through `onImportRef`
 before transfer or confirmation can fail. the add owner retains it under the
 existing callback fence through phase changes, uncertain acceptance and stop.
-restaging clears the old key/ref. known identity does not prove acceptance:
-unresolved rows retain check-status/retry.
+a reviewed upload keeps that identity and staged generation; a new url intent
+gets a fresh key. known identity does not prove acceptance: unresolved rows retain
+check save and their original command.
 
 every known-ref row offers `view import`. it uses the existing guarded leave and
 an exact selected imports url with explicit `import-detail` activation. cancellation
 preserves browser work; confirmation may stop/discard it. blocked navigation keeps
-the existing retained-target flow. there is no resumable add session. receipts say
-`saved`; a resend is not evidence of content duplication.
+the existing retained-target flow. there is no resumable add session. a receipt records prior acceptance; a resend
+is not evidence of content duplication.
 
-an upload's id is its session id: the storage put runs until the signed url's
-`expires_at`; a timeout, network failure or non-2xx reads "Upload didn’t complete"
-(`BytesMissing`) and Retry upload sends the same id, which opens a fresh url for a
-new generation; confirmation publishes verified bytes. the size limit is the
-server's (refused at create). storage requests carry no nexus credentials.
-exceptional durable recovery remains in imports. backend source
-execution/publication defects retain their own owners and tickets.
+an upload's live owner retains its id, generation, frozen confirmation and whether
+the byte put completed. after a successful put, check save retries only that exact
+confirmation. a known revision refusal permits review and confirmation with the
+same generation and bytes; it neither creates another session generation nor
+repeats the put. an unpublished read does not settle unknown publication. the
+server decides staging expiry. file reselection replaces the expired row in
+place, keeping its destinations and consuming no additional intake slot.
 
-`./scripts/test` remains the permanent static gate. temporary isolated live tests
-are removed after green and review; the plan links retained observations and limits.
+closing a picker retains accepted work; losing the actual task/visit owner or
+reloading loses the confirmation state. recovery then uses the existing imports
+file-reselection/re-upload flow and says “choose the file again to continue”.
+there is no durable confirmation draft or resumable-upload promise. storage puts
+carry no nexus credentials.

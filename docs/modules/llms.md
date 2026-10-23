@@ -48,6 +48,17 @@ value the source catalog reports. the catalog keeps typed readiness for all
 pairs; the picker offers only selectable pairs and retains an unavailable
 current identity without substitution.
 
+route readiness is independent. before a Codex catalog has loaded, its known
+route carries explicit unreadiness and no model rows; configured API providers
+still expose their actual registry rows. the chat seed always keeps the exact
+developer selection. its presentation is null until source facts exist, and its
+state explains unreadiness (or an absent seed in a ready catalog). neither the
+picker nor admission substitutes a provider model. unavailable Codex selections
+are refused as runtime unavailable before dispatch, including background policy
+selections; they are not mislabeled as invalid merely because facts are unread.
+reads retain the existing synchronous refresh deadline; [latency isolation](../issues/catalog-refresh-blocks-api-reads.md)
+is separate from this readiness contract.
+
 each reasoning row carries required `mode: string | null`, `effort: string`
 and nonnegative `effort_order`. provider-runtime owns these native facts beside
 its dispatch fragment; nexus projects them with readiness and eligibility.
@@ -252,8 +263,8 @@ the hard-cut migration deletes the complete legacy chat aggregate and all
 historical generation/metering rows. users, media, libraries, knowledge,
 resource graph data not owned by conversations, non-conversation artifacts,
 and independent completed-write receipts remain. production crossed 0246 in the
-2026-10-13 release through a reviewed reset; the deleted history survives only in
-its pre-reset backup, `releases/3ea1b8e6e762963ca3cd2d3c9b367ccbe6287dc9/database.dump`.
+2026-10-13 release through a reviewed reset; the deleted history survived only in
+its pre-reset backup, which the owner deleted 2026-10-22.
 there is no legacy eligibility decoder or historical selection translation.
 
 ## Invariants

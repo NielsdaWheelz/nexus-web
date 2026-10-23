@@ -85,6 +85,8 @@ export type NexusHomeSection = "Commands" | "Resources" | "Saved" | "Inside";
 export interface NexusRow {
   /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", …: identity and last tie-break. */
   readonly key: string;
+  /** Existing resources, panes and destinations qualify for automatic highlight. */
+  readonly existing: boolean;
   readonly label: string;
   readonly icon: NexusIcon;
   readonly type?: string;

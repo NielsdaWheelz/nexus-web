@@ -1,11 +1,9 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // The author pane: the person's other names and their visible works. The url
 // owns the works view (`sort`, `direction`) and passes it to the server, which
-// validates it; the text filter stays local. While the pane is active it loads
-// every page, so the filter and the "N works" count cover all works.
+// validates it; the text filter stays local. The filter and count cover the
+// loaded prefix; the list footer owns explicit continuation.
 
 import { useCallback, useId, useMemo } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -38,6 +36,7 @@ import {
 } from "@/lib/api/useServerList";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { browsePreviewHref } from "@/lib/browse/api";
 import {
   getContributor,
   listContributorWorks,
@@ -127,11 +126,21 @@ function presentWork(work: ContributorWork): CollectionRowView {
     return {
       ...row,
       id: work.href,
-      mediaIdentity: "External",
+      primary: { ...row.primary, href: browsePreviewHref(work.target) },
+      media: {
+        subject: {
+          kind: "External",
+          target: work.target,
+          media_kind: "epub",
+          title: work.title,
+          contributors: work.contributors,
+          publication_date: null,
+        },
+        knownDescriptor: null,
+      },
       contributors: selectMediaAuthors(work.contributors),
       context: null,
       resourceRef: null,
-      insertionSource:null,
     };
   }
   const roles = work.role_facts.map((fact) =>
@@ -145,7 +154,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
     contributors: [],
     context: { kind: "Text", text },
     resourceRef,
-    insertionSource:{kind:"resource",ref:work.resource_ref},
   };
 }
 
@@ -167,13 +175,13 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   ]).toString();
   const stale = `${useMediaQueryRevision()}:${useChangeStamp("Podcasts")}`;
   const detail = useServerValue({
-    key: handle,
+    key: `/contributors/${encodeURIComponent(handle)}`,
     stale,
     visit: DETAIL,
     load: (signal) => getContributor(handle, signal),
   });
   const works = useServerList<ContributorWork>({
-    key: `${handle}?${view}`,
+    key: `/contributors/${encodeURIComponent(handle)}/works?${view}`,
     stale,
     pageSize: 100,
     active: active && detail.status === "ready",
@@ -312,9 +320,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     refetchWorks().catch(() => {});
     return { kind: "Complete" as const, announcement: "Refreshing author" };
   }, [refetchDetail, refetchWorks]);
-  const insertion=useResourceComposer(detail.status === "ready" ? {kind:"resource",ref:detail.data.resource_ref} : null,`contributor:${handle}`,"add item");
   usePaneChrome({
-    menuActions:insertion.action ? [insertion.action] : [],
     query: queryControls,
     resourceRef:
       detail.status === "ready"
@@ -374,7 +380,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const { other_names: otherNames } = detail.data;
   return (
     <PaneSurface>
-      {insertion.content}
       <div className={styles.detail}>
         {otherNames.length > 0 ? (
           <section className={styles.otherNames}>

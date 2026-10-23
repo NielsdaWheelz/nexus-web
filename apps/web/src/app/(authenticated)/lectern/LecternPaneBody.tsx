@@ -4,7 +4,6 @@
 // title_asc, title_desc; absent = custom), a local text filter, drag to move one row (custom
 // order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
 
-import { Play } from "lucide-react";
 import { useCallback, useId, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
@@ -16,7 +15,6 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
@@ -51,8 +49,6 @@ import {
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
@@ -101,15 +97,6 @@ function filterFields(item: LecternItem): string[] {
   return fields;
 }
 
-function playbackVerb(item: LecternItem): "Play" | "Resume" | "Replay" {
-  const { state } = item.media_summary.consumption;
-  return state === "InProgress"
-    ? "Resume"
-    : state === "Finished"
-      ? "Replay"
-      : "Play";
-}
-
 /** Modeled failures become notices; anything else is a defect for the boundary. */
 function failure(error: unknown, title: string): FeedbackContent {
   const content =
@@ -125,8 +112,6 @@ export default function LecternPaneBody() {
   const { ensure } = useLecternCommands();
   const order = useLecternOrder();
   const runtime = usePaneRuntime();
-  const { playAudio } = usePlayerCommands();
-  const { run } = useActionRuntime();
   const isActive = usePaneIsActive();
   const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
   const { refresh: refreshSuggestionFeed } = suggestions;
@@ -294,6 +279,7 @@ export default function LecternPaneBody() {
                   id: item.media_summary.media_id,
                 }),
                 selected: false,
+                knownDescriptor: item.activation.kind === "FooterAudio" ? item.activation.descriptor : null,
               }),
             )}
             notice={
@@ -319,34 +305,6 @@ export default function LecternPaneBody() {
                   : "Nothing on the lectern yet."}
               </p>
             }
-            rowControls={Object.fromEntries(
-              visible.flatMap((item) => {
-                const { activation } = item;
-                if (activation.kind !== "FooterAudio") return [];
-                const verb = playbackVerb(item);
-                return [
-                  [
-                    item.media_summary.media_id,
-                    <Button
-                      key="play"
-                      variant="secondary"
-                      size="sm"
-                      className={styles.rowAction}
-                      aria-label={`${verb} ${item.media_summary.title}`}
-                      leadingIcon={<Play size={14} aria-hidden="true" />}
-                      onClick={() => run({ ref: `media:${activation.descriptor.media_id}`,
-                        id: "Playback", label: verb, title: item.media_summary.title,
-                        confirmation: null, tracked: false,
-                        execute: () => playAudio({ mediaId: activation.descriptor.media_id,
-                          knownDescriptor: activation.descriptor, positionMs: null }),
-                      })}
-                    >
-                      {verb}
-                    </Button>,
-                  ],
-                ];
-              }),
-            )}
             rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
             order={ordering}
           />

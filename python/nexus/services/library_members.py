@@ -35,7 +35,7 @@ from nexus.schemas.library_members import (
     SetMemberRoleRequest,
     ViewerInvitationOut,
 )
-from nexus.services import libraries
+from nexus.services import libraries, resource_grants
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
 
@@ -156,6 +156,7 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
                 raise ForbiddenError(
                     ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, "Transfer ownership first"
                 )
+            projections = resource_grants.library_annotation_visibility(db, library_id)
             removed = db.scalar(
                 text("""
                     DELETE FROM memberships WHERE library_id = :library_id AND user_id = :user_id
@@ -166,6 +167,7 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
             if removed is not None:
                 on_visibility_lost(db, user_id=user_id)
                 delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
+                resource_grants.invalidate_annotation_visibility(db, projections)
                 record_input_change(db)
 
     retry_serializable(db, "remove_member", attempt)
@@ -353,6 +355,9 @@ def respond_to_invitation(
                         VALUES (:library_id, :viewer_id, :role) ON CONFLICT DO NOTHING
                     """),
                     {"library_id": row.library_id, "viewer_id": viewer_id, "role": row.role},
+                )
+                resource_grants.invalidate_annotation_visibility(
+                    db, resource_grants.library_annotation_visibility(db, row.library_id)
                 )
                 record_input_change(db)
 

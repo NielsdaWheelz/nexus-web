@@ -13,6 +13,7 @@ import type {
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isStaleBuild } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   openConversationAbout,
@@ -157,25 +158,29 @@ export function projectLecternAction({
 export function projectPlaybackAction({ mediaId, title, descriptor, blocked, ctx, run }: {
   readonly mediaId: string;
   readonly title: string;
-  readonly descriptor: PlayerDescriptor;
+  readonly descriptor: PlayerDescriptor | null;
   readonly blocked: BlockedReason | null;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
-}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly glyph: "Play" | "Pause" } {
   const player = ctx.player.state;
   const loaded = player.kind === "Loaded" && player.source.kind === "Episode" &&
     player.source.descriptor.media_id === mediaId;
-  const phase = !loaded ? "Idle" : player.phase === "Buffering" ? "Playing" : player.phase;
+  const pending = ctx.player.pendingPlayback?.kind === "Episode" && ctx.player.pendingPlayback.mediaId === mediaId;
+  const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
+  const pausing = phase === "Playing" || phase === "Buffering";
   const state = ACTION_CATALOG.Playback.states[phase];
-  const disabledReason = blocked === null ? undefined : BLOCKED_COPY[blocked];
+  const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
+    : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio" : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
+    glyph: pausing ? "Pause" : "Play",
     icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
     onSelect: () => run({
       ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
       confirmation: null, tracked: false,
-      execute: () => phase === "Playing" ? ctx.player.commands.pause() :
+      execute: () => pausing ? ctx.player.commands.pause() :
         ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null }),
     }),
   };
@@ -358,7 +363,7 @@ export function projectResourceActions(
       fallback: () => findPaneLandmarkFocusTarget(originPaneId()),
     };
   };
-  const metadata = (triggerEl: HTMLButtonElement | null) => {
+  const metadata = (triggerEl: HTMLElement | null) => {
     const focused = document.activeElement;
     const pane =
       triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ??
@@ -401,8 +406,10 @@ export function projectResourceActions(
     ],
     ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
-      () => {
-        const { anchor, fallback } = focusReturn();
+      ({ triggerEl }) => {
+        const paneId = triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? originPaneId();
+        const anchor = () => triggerEl;
+        const fallback = () => findPaneLandmarkFocusTarget(paneId);
         ctx.openLibraryPlacement(
           [{ kind: ref.startsWith("podcast:") ? "Podcast" : "Media", id }],
           { anchor, returnFocusFallback: fallback },
@@ -439,10 +446,21 @@ export function projectResourceActions(
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
     ],
-    RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
+    RemoveMedia: deleted(async () => {
+      await deleteMedia(id);
+      if (ctx.isActive()) ctx.mediaContinuations.forgetDeletedMedia(id);
+    }, "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: [deleteChat, { confirmation: null }],
-    DeletePage: deleted(() => deletePage(id), "/notes"),
+    DeletePage: deleted(async () => {
+      const admitted = await deletePage(id);
+      void admitted.settled.catch(error => {
+        if (handleUnauthenticatedApiError(error)) return;
+        ctx.feedback.offer({ key: `page-delete:${id}`, announcement: "Polite", content: {
+          tone: "Warning", title: "page deletion needs review", message: "the queued deletion is kept in writing status.",
+        } });
+      });
+    }, "/notes"),
     LearnHighlight: [
       ({ openIntent }) =>
         openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, create: async () => {

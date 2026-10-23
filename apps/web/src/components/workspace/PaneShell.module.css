@@ -15,7 +15,7 @@
   display: grid;
   container: primaryPane / inline-size;
   flex: 0 0 auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -43,6 +43,7 @@
 }
 
 .chrome {
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -51,6 +52,8 @@
 }
 
 .controlRow {
+  --control-min-size: var(--pane-control-size);
+  --control-font-size: var(--pane-control-font-size);
   --pane-control-size: max(var(--size-md), 2rem);
   --pane-control-font-size: var(--text-sm);
   --pane-control-block-size: auto;
@@ -163,6 +166,7 @@
 }
 
 .primaryContentRow {
+  grid-row: 2;
   position: relative;
   display: grid;
   min-width: 0;
@@ -279,5 +283,22 @@
 
   .refreshIndicatorIcon {
     animation: none !important;
+  }
+}
+
+.outlineAccessory {
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.paneShell[data-mobile="true"] {
+  --effective-pane-header-height: var(--pane-chrome-header-height);
+  padding-top: calc(var(--viewport-safe-top) + var(--effective-pane-header-height));
+}
+
+@media (max-width: 479px) {
+  .paneShell[data-mobile="true"][data-media-route="true"] {
+    --effective-pane-header-height: calc(var(--pane-chrome-header-height) + 48px);
   }
 }

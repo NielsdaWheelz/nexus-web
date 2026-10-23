@@ -126,19 +126,8 @@
 
 
 .selectionIcon {
-  --pane-control-size: var(--size-md);
-  --pane-control-block-size: var(--size-md);
-  position: relative;
+  --control-icon-size: 16px;
   flex: none;
-  border-radius: var(--radius-md);
-}
-
-.selectionIconActive {
-  background: var(--surface-active);
-}
-
-.selectionIconDanger {
-  color: var(--danger);
 }
 
 .selectionStatusMarker {
@@ -245,11 +234,6 @@
   .colour {
     width: var(--size-xl);
     height: var(--size-xl);
-  }
-
-  .selectionIcon {
-    --pane-control-size: var(--size-xl);
-    --pane-control-block-size: var(--size-xl);
   }
 }
 
@@ -363,12 +347,8 @@
   overflow: hidden;
 }
 
-.destinationAction > span {
-  min-inline-size: 0;
-  max-inline-size: 100%;
-}
-
 .destinationLabel {
+  display: block;
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;

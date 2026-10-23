@@ -30,32 +30,18 @@ before release, on the newest production backup brought to the release's head
   the same values for every text under 2^32 boundaries (the 64 MiB output cap
   bounds a fragment far below that), and leaves `html_tree.py` byte-identical.
 
-0293: main's #713 froze 0293 at its historical schema; it imports no application
-module, so nothing here runs inside it. (on a tree without #713, 0293 imports
-`web_article.prepare_article`, whose preparation is byte-identical but for a
-breached apparatus budget, an abort either way: stored web html holds no
-`template`, and both trees prepare a `&#13;` as a line feed.)
-
-after deploy, the owner's smoke: import a standard ebooks epub with endnotes
-(progress, contents, an endnote in the evidence pane); upload an arxiv pdf
-(bibliography markers); add a web article with footnotes and refresh it (its
-notes keep their connections); highlight a passage of an article holding U+FEFF.
-then 24 h of worker logs: no rise in `E_INGEST_FAILED` or `E_WORKER_HANDLER_FAILED`
+after deploy, 24 h of worker logs: no rise in `E_INGEST_FAILED` or `E_WORKER_HANDLER_FAILED`
 on `ingest_media_source`, no `IntegrityError` on `uq_epub_*`.
 
 optional owner check (#660 / #661 on the private book57 originals; the
 campaign never reads them): on the mac, with `<base>` the main sha this branch
 merges onto, `<tip>` a checkout at the branch tip (or the merge) and
-`<originals>` the directory holding the original epubs,
+`<originals>` the directory holding the original epubs.
 
-    mkdir -p /tmp/rpy-base && git -C <tip> archive <base> python content | tar -x -C /tmp/rpy-base
-    python3 -I /Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-20/rpy/harness/offline/identity.py \
-      /tmp/rpy-base <tip> \
-      /Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-20/rpy/harness/offline/expected-none.tsv \
-      /tmp/rpy-book57 --corpus <originals>
-
-it prints one line per book (SAME, or DIFF with the first lines of the
-difference) and writes `/tmp/rpy-book57/report.txt`. a DIFF is acceptable only
+the former `nexus-web-campaign-artifacts/2026-10-20/rpy/harness/offline/`
+command and inputs were owner-retired on 2026-10-22. this optional check has no
+current executable. its required output is one line per book (SAME, or DIFF with
+the first lines of the difference) and a report. a DIFF is acceptable only
 where one of the listed rules applies (a duplicate spine document, an
 undeclared raster image, an ncx over 16 MiB, a `&#13;` reference, inline svg
 text, template content; with the ingest follow-ups, `hidden` or `aria-hidden`
@@ -64,4 +50,4 @@ or `dt` inside an svg, an svg that wraps a missing raster, a sup marker whose
 note returns to the sup or whose label is bracketed); any other DIFF blocks the
 release.
 
-delete this file once that release is smoked.
+delete this file once the counts and the log observation are recorded.

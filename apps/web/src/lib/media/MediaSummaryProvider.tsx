@@ -1,7 +1,9 @@
 "use client";
 
 // The tab's stored-media summaries, keyed by media id (J6). A list retains the summaries
-// it shows, seeded from its own read; a mount reads its rows again, and retained ids are
+// it shows; pane headers and live outline occurrences retain their supplied seeds too.
+// Seeded content renders before the existing batch revalidation; captured evidence
+// never retains a current summary. A list is seeded from its own read; a mount reads its rows again, and retained ids are
 // resolved again when consumption or bibliography changes and when the page returns to
 // the screen (at most once a minute); ids whose resolve failed, also when the network
 // returns. Resolves batch every retain of one commit, up to
@@ -14,6 +16,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -239,7 +242,7 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
     window.addEventListener("online", store.retryFailed);
     return () => window.removeEventListener("online", store.retryFailed);
   }, [store]);
-  useOnChange(useChangeStamp("Consumption"), store.invalidateAll);
+  useOnChange(useChangeStamp("Consumption", "PodcastEpisodes"), store.invalidateAll);
   useOnChange(
     `${useChangeStamp("Metadata")}:${foreground}`,
     store.invalidateQueries,
@@ -249,26 +252,29 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
 
 export function useMediaSummaries(seeds: readonly MediaSummary[]) {
   const store = useStore();
+  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const revision = useSyncExternalStore(
-    store.subscribe,
-    store.revision,
+    key ? store.subscribe : () => () => {},
+    key ? store.revision : () => 0,
     () => 0,
   );
-  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
-  useEffect(() => store.retain(seedsRef.current), [store, key]);
+  useEffect(() => {
+    if (key) return store.retain(seedsRef.current);
+  }, [store, key]);
+  const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");
     return {
       resolve: store.resolve,
       error: store.error(ids),
-      retry: () => store.retry(ids),
+      retry,
       retrying: store.retrying(ids),
       revision,
       queryRevision: store.queryRevision(),
     };
-  }, [store, revision, key]);
+  }, [store, revision, key, retry]);
 }
 
 export function useMediaQueryRevision(): number {

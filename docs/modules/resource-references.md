@@ -18,11 +18,15 @@ conversation messages retain their message layout.
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
-| `components/ui/ResourceRow.tsx` | common disclosure, bullet, selectable body and contextual-action shell |
-| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | resource bodies and occurrence-owned recursive lists |
+| `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | ordinary index geometry and native title links |
+| `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
+| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, gold bullets, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
-| `ResourceComposer.tsx` | resource-owned creation using existing insertion primitives |
+| `ResourceComposer.tsx` | independent chat/message context admission using existing insertion primitives |
+| `OutlineInsertionLine.tsx` | one session-owned insertion draft and captured destination |
+| `PageTitleEditor.tsx` | canonical root/inline title editing and text history |
+| `OutlineCommands.tsx` | accessible icon accessory for the session command interface |
 | `CanonicalNoteEditor.tsx` | canonical body binding shared by outlines, root notes and annotations |
 | `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
 | `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
@@ -61,28 +65,41 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 
 | body | primary content |
 | --- | --- |
-| `named` | title/name; kind and ordered credits are secondary |
+| `named` | title/name, ordered credits and nullable live show artwork |
+| `media` | canonical `MediaSummaryOut`: title, credits, original publication, consumption and time |
 | `passage` | exact words in captured/saved colour with adjacent prefix/suffix |
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
 | `reference` | an embed note's stored label, or `embedded resource` |
 
-row `presentation` is occurrence-owned: `inline_note` omits `note` only around a
-nonmissing structural note editor; `quoted_passage` omits only generic passage
-identity (`evidence_span`, `content_chunk`, `fragment`, `passage_anchor`) in a
-nonmissing passage citation. ordinary references, highlights, source references
-and oracle passages retain their types. open names retain canonical identity.
+two row families compose the same resource facts. indexes serve collection panes,
+search and future chat context: native title links, applicable bibliography,
+consumption and time, existing resource actions, and podcast-show artwork. indexes
+never create outline sessions, disclosure or editors. imports/settings retain their
+command primary. only shows have index artwork; episodes never do.
 
-`resourceMetadata` returns canonical identity separately from visible keyed fields;
-`resourceMetadataText` uses ordinary presentation for spoken launcher labels.
-metadata fields stay ordered: occurrence, identity, role, media kind, source,
-contributors, location, related-match evidence, relationship. focused roots omit
-incoming occurrence labels and relationship reasons. omit blank optional text and
-the empty container; each separator stays with its following field and supplies
-a spoken boundary.
-media kind replaces umbrella `media`; other resources retain both their own
-identity and source kind. shared names are article, book, pdf, episode and video.
-source links and captured attribution remain independent of label omission.
+outlines serve notes, pages and connections: a gold opening bullet, actual
+disclosure, editable note/annotation prose and page titles, and a quiet resource
+ellipsis. immutable references show title, ordered authors and original publication
+in one wrapping flow. no consumption, duration, artwork or inline playback/library
+controls mount in an outline. source/quoted attribution, machine-content marking,
+unavailable/conflict/unsaved state and operation failures remain visible.
+
+`resourceMetadata` projects bibliography separately from occurrence/source facts.
+`MediaIdentity`, `ResourceBody` and `ResourceMetadata` share
+formatting without owning family geometry. publication keeps year/month/day
+precision in semantic time markup. omit unknown facts and their separators; use
+readable secondary text, natural wrapping and full authored bodies. title anchors
+contain only phrasing content, never editors, metadata or controls.
+
+live media bodies use one existing summary batch. adapters retain supplied live
+summaries through `MediaSummaryProvider`: acknowledged facts survive refresh
+failure; null resolution means unavailable. historical bodies remain captured,
+with no live retention/subscription or artwork enrichment. no per-row detail fetch
+or new refresh clock exists. disappearance during hydration removes the old identity
+and activation together. `MediaIdentity` and `ResourceMetadata` render canonical
+bibliography once; index consumption composes separately. occurrence, location,
+evidence and relationship facts keep their own identity.
 
 exact/prose previews have a 600-codepoint budget, each contextual side 48.
 annotations are complete: `{attachment_edge_id, note_ref, body_pm_json,
@@ -99,122 +116,65 @@ an annotation is the first highlight-note attachment in creation/id order. its
 complete rich content appears with contextual highlighted words before expansion;
 the chevron never hides it. other
 annotations remain reachable through disclosure. notes have no invented owning
-page. relationship rationale and link notes belong to the occurrence. captured
+page. relationship rationale belongs to the occurrence. captured
 quotes never borrow today's colour, annotation or attribution; current annotations
 under a historical branch are labelled as current.
 
 ## controls and composition
 
-the resource outline row is `▸ • content`: disclosure expands; bullet and primary
-reference text navigate through canonical activation. an explicitly admitted live
-note's body activates canonical editing; captured evidence remains immutable.
-the anchor is inline inside
-a clamped text cell, with literal line breaks and phrasing-safe body markup.
-metadata, attribution, annotation editors and relationship prose remain separate.
-explicit `body` overrides retain their owner's editing semantics.
+native title/bullet click and enter follow canonical activation; shift-click and
+shift-enter create one fresh pane. other browser modifiers and title context menus
+remain native. immutable references have no editor. unused primary space selects
+the exact occurrence without a soft keyboard. [notes](notes.md) owns structural
+keys, canonical page-title history and the pane command accessory.
 
-native modifiers remain browser-owned except shift-click and shift-enter, which
-create and focus one fresh pane. touch retains open-in-new-pane. native link text
-selection/copy remains available; there is no stretched link or row click handler.
-`primaryLinkRef` gives search its existing return-focus target.
+the resource ellipsis has the same canonical `action_ref` actions in either family.
+loaded open/fork actions are omitted; `any-pointer: coarse` adds one local fork
+from the displayed activation, preserving exact passage location. management of a
+different source is labelled `source: {label}`. changed subject/activation retires
+the open menu. no row-local structural command or relationship removal belongs in
+this menu.
 
-editable outlines retain escape/menu block selection. read-only rows and embeds
-keep their owner's selection semantics. [notes](notes.md) owns unlink admission,
-pending state and history.
+right-click, context-menu key, shift-f10 and stationary touch hold on the bullet
+open the relationship menu through `ActionMenu`'s context anchor. movement, scroll,
+cancel or lost ownership aborts the hold; a completed hold consumes its click.
+opening never executes. authorized exact unlink preserves both resources and all
+other edges. unavailable navigation can retain a focusable context-only bullet.
+provenance details keep useful creation/rationale; routine “linked by” is omitted.
+future chat context uses an independent accessible remove control and its supplied
+aggregate `detach_context` mutation, never one arbitrarily chosen admission edge.
 
-editable outline reference content is an atomic named token. its text remains a
-native link; unused primary space places a caret. enter creates a sibling after
-that exact occurrence; committed prose seeds its note and transfers focus. the
-caret follows its explicit continuation: sibling for ordinary placements, child
-for aligned roots. it never rewrites the reference or persists an `@id` wrapper. source, metadata,
-disclosure and menus retain independent controls. per-row insertion buttons and
-an equivalent menu command are absent. on coarse pointers, deletion at the token
-boundary cannot automatically select a block for structural deletion.
+lists use nested `ul/li` and labelled native controls. branches start collapsed and
+read one bounded exact adjacency hop. root filters never filter children. a
+traversed edge is omitted; a distinct edge to an ancestor remains a terminal
+reference with an upward-return button. refs identify ancestors, edge ids identify
+facts, occurrence paths identify folds. no branch-focus/zoom or internal structural
+drag state remains. one outline-level horizontal scroll owner accommodates extreme
+depth; the command accessory lives outside it.
 
-lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
-branches start collapsed and load one exact, paged adjacency hop, both directions
-and every existing origin; unaccepted suggestions are absent. root filters do not
-filter children. edge paths key folds; a repeated resource elsewhere is independent.
-`lib/resources/outlineProjection.ts` owns branch classification for both shared
-rows and editable notes. a traversed edge is omitted; a distinct edge to an
-ancestor keeps its ordinary preview, evidence and actions, with an upward-return
-button replacing expansion. `show earlier occurrence of {label}` names that
-button for assistive technology and its tooltip; no extra status text is shown.
-resource refs identify ancestors, edge ids identify facts, and occurrence paths
-identify local rows/folds. sibling-list exclusions never enter traversal history.
-highlight and annotation identities each have real local reveal targets. suppress
-only the selected annotation's exact attachment edge. terminal annotation repeats
-retain complete read-only rich bodies, with embed nodeviews reduced to atomic
-`ResourceLink`; read-only mode alone does not terminate embedding cycles.
+highlight annotations remain full canonical bodies before disclosure. suppress
+only the selected annotation's exact attachment edge; parallel facts survive.
+terminal annotation repeats retain read-only rich bodies and atomic embed links.
+annotation child insertion belongs to the annotation note, not the highlight.
+reader roots and source-owned membership never invent an incoming graph mutation.
 
-each shared row has explicit incoming edge, aggregate chat context or null resource
-scope. a null mutation does not change that subject. connection menus contain
-navigation and permitted relationship/local commands; resource lifecycle verbs
-belong to resource roots. mutation targets never come from navigation/action refs.
-notes composes this same menu and retains guarded user-link editing. machine
-removal uses exact graph unlink outside note structural history; mixed machine
-bulk cuts/deletes are refused. discovery removal permits later rediscovery.
-only an acknowledged initiating removal may repair focus while it still owns
-attention. nested removal targets the stable scope list because its ancestor
-may disappear on refresh; direct root rows retain neighbour/list fallback.
-intervening user focus cancels that claim.
+arranged adjacency keeps endpoint-owned rank/version/capabilities. indexes retain
+their own order. embeds share canonical body and batched `embedded_item`, while the
+containing note retains its own identity. only the exact directed nonordinal
+`note_body`/`context` embed edge is suppressed. empty states require settled,
+exhausted reads without visible children or failure. index snippets, inline
+citations, picker options and document matches retain their existing semantics.
 
-focus establishes a new logical root and clears inherited resources and entering
-facts. its header keeps resource content/actions; the former incoming relation
-belongs to adjacency. callers supply `resourceActions`/`resourceDetails` for
-resource-owned controls and status, and `occurrenceActions`/`details` for the
-incoming relation. return restores the previous scope and folds. removing the
-displayed focused occurrence exits focus with folds retained; keyboard focus
-returns locally only when that scope owned it. lazy restoration alone does not
-trigger recovery. incoming relationship editors stay mounted while hidden so a
-pending first save retains its draft identity. reveal targets the current root
-or an exact local occurrence, including a containing editor; it never opens
-another pane. failures retain loaded children and offer local retry.
-expansion never changes prompt scope or writes the graph.
-
-reader roots have no incoming relationship. source-reference detail targets use
-real resource rows and enter their own ancestry before lazy expansion; apparatus
-membership supplies no invented graph edge. per-fact user/context rows expose
-`add note on link` or `edit note on link` against that exact edge. the shared
-`AnnotationNoteHost` also serves native highlights: per-occurrence drafts retain
-the first-save uuid across collapse, filtering and focus; canonical text ownership
-retains body and acknowledgement before adjacency rereads. detaching preserves
-the note resource and gives the next annotation a fresh uuid. incoming editors
-remain mounted while focus hides their relationship controls.
-annotation items and highlight connections are separate endpoint-owned lists.
-both use the shared surface; labels distinguish owners when both contain items.
-annotation enter and accepted `@` insert beneath its note, never the highlight.
-
-arranged lists interleave every incident fact in one endpoint-owned order.
-collection indexes preserve their declared relevance, chronological or source order;
-their typed metadata/status adapters use the same shell without per-row hydration.
-display order grants no structural mutation permission: the relationship's explicit
-capability owns removal; guarded note operations retain their own restrictions.
-editor embeds use the same resource row; full note reads batch their immediate
-`embedded_item`. editors supply acknowledged containing-note identity and a real
-focus target. embed adjacency suppresses only that note's exact directed,
-nonordinal `note_body`/`context` fact; parallel facts remain. resolve that fact from
-current adjacency because body writes replace embed facts. empty states require
-settled reads, exhausted adjacency and no visible children or failure.
-launcher and target-picker options retain native selection
-semantics and share body presentation without nested disclosure/menu controls.
-search titles open whole resources; subordinate excerpt links open exact
-occurrences. read-only note prose navigates through the same anchor. source attribution and
-location availability remain independent of the bounded excerpt.
-
-typing `@` in an empty resource-owned note composer opens in-place target search.
-the input owns visit-local query, selection, source and placement; blur suspends it,
-escape converts its exact text to prose. reference acceptance writes a link without
-a wrapper note or body overwrite. relationship annotations remain prose-only.
-`add item` belongs to the exact local occurrence or root, independently of action
-ownership. transient passage sources save children under the returned durable anchor.
-the exact outline's nullable `insertion_source` identifies this owner on reload.
-candidate connections and durable passage items compose as separate endpoint lists;
-they share occurrence identity without conflating orders, versions or facts.
+a transient insertion composer captures one destination per editing session.
+focus/render writes nothing. typed prose or explicit insert admits existing
+creation; `@` remains query-local until accepted or escaped to literal prose.
+unfinished/uncertain input keeps its original owner, ids and slot. source passage
+candidates and their durable anchor sequence retain separate versions and facts.
+external resource/file admission and flat index sorting retain their existing owners.
 
 reader connections use measured source positions and row heights, packing without
-overlap. expanded children contribute height. the focused root stays mounted beyond
-overscan and holds the focused control's viewport position until focus leaves.
+overlap. expanded children contribute height. the keyboard-focused root stays
+mounted beyond overscan and retains its control position until attention leaves.
 independent list scrolling preserves the explicitly selected view. retained root
 rows keep the same container across follow/browse layout changes, preserving their inline
 editors. follow mode hides offscreen placed roots rather than unmounting them; measurement
@@ -276,3 +236,14 @@ source before paint. message inspection covers complete messages; partial raw-ma
 ranges are unavailable rather than presented as exact rendered selections.
 forks share domain drafts and one durable cursor, but never
 clone pending commands.
+
+## suggestion interaction
+
+`useReferenceInput` keeps the journal's reference intent and insertion context.
+it consumes the [shared search bindings](visual-system.md#collections-and-searchable-pickers)
+for generated option ids, keyed navigation and scoped reveal. `useLinkTargets`
+owns raw-query debounce and exact admission, with endpoint-qualified read keys
+and invalidation after graph/resource changes. the current `NoteEditor` and
+outline insertion line share these bindings; suggestions stay bounded and inline.
+editor transactions, authored snapshots, undo and context review remain with
+the existing journal and outline owners.

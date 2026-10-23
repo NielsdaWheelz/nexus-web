@@ -1,7 +1,7 @@
 # connections and suggestions
 
-connections inspects relationships. empty resource composers author neutral user
-connections through inline `@` target search.
+connections inspects relationships. the shared outline insertion line authors
+neutral user connections through inline `@` target search.
 discovery writes automatic librarian links. suggestions publishes ranked candidate refs
 to read or file; it owns no destination membership.
 
@@ -11,12 +11,13 @@ recursive direct-link disclosure. filters apply only to roots.
 connection reads remain complete and independent of outline ancestry: exact,
 bidirectional, cursor-paged adjacency. branch projection hides only facts already
 traversed on that path; distinct ancestor facts retain their evidence and actions.
-chat context passes its existing aggregate `admission_edge_ids` into the branch;
-exploring never admits context or changes its version. reader roots use exact
+chat context uses index rows with aggregate versioned removal; exploring ordinary
+connections never admits context or changes its version. reader roots use exact
 media adjacency; membership facts do not enter the outline's traversal history.
 
-local add-item menus, drops and empty resource composers retain link creation. source text is primary, attribution secondary, and rationale/link notes
-remain separate.
+keyboard and the pane accessory own structural insertion and rearrangement.
+external resource/file admission keeps its existing owner. source text is primary,
+attribution secondary, and relationship rationale remains separate.
 
 upload-and-link retains its files, current position, upload ids and link ids in
 the actual visit cell. mobile hiding keeps the pipeline running; actual visit
@@ -25,10 +26,10 @@ same ids. uploaded media and links already admitted to the shared write queue
 remain server/tab-owned. the common work guard protects actual task loss.
 
 the librarian is the presentation role for discretionary connections and dossier
-preparation, never a stored actor or command authority. discovery facts say
-`linked automatically by the librarian`; assistant facts say `linked by the
-librarian`. shared row metadata attributes the relationship and its rationale,
-never the quoted source passage. rationales retain inline machine text. original
+preparation, never a stored actor or command authority. routine linked-by prose
+is omitted; relationship details retain useful provenance. shared row metadata
+attributes the rationale, never the quoted source passage. rationales retain
+inline machine text. original
 origins, creation receipts and server-supplied capabilities remain authoritative.
 
 | owner | contract |
@@ -64,12 +65,12 @@ visible as unavailable. placed roots precede `unanchored connections`, whose
 nonempty groups are `whole document` and `location unavailable`.
 unaligned graph roots follow their first incident fact in document order, never
 their label. sibling continuation uses that first fact and the captured document
-links version. a separate authored placement names only an admitted unannotated
+links version. a separate authored placement names only an admitted
 user edge and its own original predecessor. moving it can leave an independent
 root supported by another fact. supported source-aligned and unavailable native
 roots continue beneath their resource and have no authored placement. an explicit
-null child insertion source denies both add-item commands and placement drops,
-independently of sibling continuation. a native passage needs nonempty quoted
+null child insertion source denies child insertion, independently of sibling
+continuation and exact authored placement. a native passage needs nonempty quoted
 words, not a locator: missing or stale locations never retarget insertion to the
 document. native quotes use the body when present, otherwise the label; an empty
 body stays empty. apparatus producers trim canonical text, so the bounded head
@@ -90,7 +91,7 @@ retain activated bodies and sessions. pending creations remain reachable until
 a complete post-acknowledgement read accounts for their exact edges. composite
 maps preserve the chosen source's media, continuation and placement together.
 selection keeps a root in the aligned layout; only a connected control inside
-that root pins its screen position. replacing an add control with an editor
+that root pins its screen position. replacing an insertion line with an editor
 without a live pin uses the normal placement floor.
 
 ## relationships
@@ -133,7 +134,7 @@ selected passage is never replaced by its whole document or a nearby match.
 or versioned `detach_context`, otherwise null. `creation` is one flat record: the
 authorship, `tool_call_id`, `generation_id`, and `conversation_id`/`message_id`
 while the answer exists; it is null unless the viewer's own completed
-`nexus.edge.create` call created the edge. citations, embeds and link-note
+`nexus.edge.create` call created the edge. citations, embeds and highlight-note
 attachments have no generic unlink; detaching a context fact never erases the
 citation occurrence.
 

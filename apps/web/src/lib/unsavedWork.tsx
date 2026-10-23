@@ -3,6 +3,9 @@
 // One account's synchronous loss decision. Owners retain their own input and
 // requests; this registry reads their current risks and never stores either.
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
+import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { readWriting } from "@/lib/notes/journal";
 
 export type WorkRisk = Readonly<{
   changed: boolean;
@@ -24,6 +27,7 @@ export interface WorkGuard {
   register(owner: WorkOwner): () => void;
   confirmLoss(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): boolean;
   confirmDocumentExit(): boolean;
+  hasWork(): boolean;
 }
 
 function matches(scope: WorkScope, owner: WorkScope): boolean {
@@ -67,11 +71,12 @@ function createWorkRegistry() {
       refresh();
       return;
     }
-    if (!risky(risk(() => true))) return;
+    if (securityTeardownStarted() || !risky(risk(() => true))) return;
     event.preventDefault();
     event.returnValue = "";
   }
   const confirm = (value: WorkRisk): boolean => {
+    if (securityTeardownStarted()) return true;
     if (!active) return false;
     if (!risky(value)) return true;
     return window.confirm([
@@ -99,6 +104,7 @@ function createWorkRegistry() {
     confirmLoss: ({ scopes, ownerIds }) => confirm(risk(owner =>
       ownerIds.includes(owner.id) || scopes.some(scope => matches(scope, owner.scope)))),
     confirmDocumentExit: () => confirm(risk(() => true)),
+    hasWork: () => risky(risk(() => true)),
   };
   const restore = () => {
     signingOut = null;
@@ -112,8 +118,8 @@ function createWorkRegistry() {
   };
   return {
     guard,
-    async signOut(purge: () => Promise<void>, submit: () => void): Promise<boolean> {
-      if (!active || signingOut || !guard.confirmDocumentExit()) return false;
+    async signOut(purge: () => Promise<void>, submit: () => void, options?: { reviewedOwnerIds: readonly string[] }): Promise<boolean> {
+      if (!active || signingOut || !confirm(risk(owner => !options?.reviewedOwnerIds.includes(owner.id)))) return false;
       const operation = {};
       signingOut = operation;
       previousInert = document.body.inert;
@@ -166,4 +172,11 @@ export function useGuardedSignOut() {
   const registry = useContext(WorkContext);
   if (!registry) throw new Error("useGuardedSignOut requires WorkProvider");
   return registry.signOut;
+}
+
+/** A new build may not decode this build’s pending requests or journal format. */
+export function reloadStrandsWriting(guard: WorkGuard): boolean {
+  const { outbox, incompatible } = readWriting();
+  return guard.hasWork() || incompatible.length > 0 || outbox.some(row =>
+    row.dispatch.kind === "sealed" && row.dispatch.wire_revision <= WIRE_REVISION);
 }

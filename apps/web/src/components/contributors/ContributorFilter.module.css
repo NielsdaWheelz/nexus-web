@@ -22,7 +22,6 @@
 .suggestion {
   justify-content: flex-start;
   block-size: auto;
-  min-block-size: var(--pane-control-size, var(--size-sm));
   max-inline-size: 100%;
   white-space: normal;
   overflow-wrap: anywhere;

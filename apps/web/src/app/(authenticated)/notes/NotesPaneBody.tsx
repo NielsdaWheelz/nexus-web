@@ -1,16 +1,19 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useSyncExternalStore } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
+import WritingRecovery from "@/components/notes/WritingRecovery";
 import {
   FeedbackNotice,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
+import { useWritingRevision } from "@/lib/api/writingReceive";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
   listRowStatus,
@@ -36,6 +39,8 @@ import { isAbortError } from "@/lib/errors";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
+import { readWriting, subscribeWriting } from "@/lib/notes/journal";
+import { isDeletedResource } from "@/lib/resourceGraph/links";
 import {
   dailyDateFor,
   fetchNotePages,
@@ -54,10 +59,8 @@ import {
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { resourceDraftOwnerId, useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { useLatestWorkspace } from "@/lib/workspace/store";
-import { planWorkspaceTarget, type WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import type { WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import {
   definePaneVisitDataKey,
@@ -70,6 +73,15 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<NotePageSummary>>(
   "Notes.Index",
 );
 const UNIT = { singular: "page", plural: "pages" };
+
+/** Pages this tab's journal durably holds a pending delete for, as one comparable
+ * key; a refused delete is blocked and its page shows again. */
+function pendingPageDeletes(): string {
+  return readWriting().outbox.flatMap((row) =>
+    row.blocked === null && row.intent.kind === "resource_delete" && row.intent.resource_kind === "page"
+      ? [row.intent.resource_id]
+      : []).join(" ");
+}
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
 const VIEW_CODEC = {
   basePath: "/notes",
@@ -92,9 +104,12 @@ export default function NotesPaneBody() {
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
   const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
+  // Writing revisions discover pages other sessions made; Notes, this tab's own.
+  const notesStamp = useChangeStamp("Notes");
+  const writingRevision = useWritingRevision();
   const list = useServerList<NotePageSummary>({
     key: invalid ? null : `/notes/pages?${viewQuery}`,
-    stale: useChangeStamp("Notes"),
+    stale: `${notesStamp}:${writingRevision}`,
     pageSize: 100,
     active: usePaneIsActive(),
     visit: VISIT,
@@ -112,7 +127,14 @@ export default function NotesPaneBody() {
     [captureScroll, setDecoded],
   );
 
-  const rows = useMemo(() => list.items.map(presentNote), [list.items]);
+  // A durable delete hides its page at once; an acknowledged one stays hidden
+  // through the existing deletion fence until the next read omits it.
+  const deleting = useSyncExternalStore(subscribeWriting, pendingPageDeletes, () => "");
+  const items = useMemo(() => {
+    const pending = new Set(deleting.split(" "));
+    return list.items.filter((item) => !pending.has(item.id) && !isDeletedResource(`page:${item.id}`));
+  }, [list.items, deleting]);
+  const rows = useMemo(() => items.map(presentNote), [items]);
   const filterRows = usePaneFilterRows({
     sourceKey: "Notes.Pages",
     getRowStatus: (text) =>
@@ -131,7 +153,7 @@ export default function NotesPaneBody() {
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
     : list.complete
-      ? { kind: "Count", value: list.items.length, unit: "page" }
+      ? { kind: "Count", value: items.length, unit: "page" }
       : { kind: "Pending" };
   const reset = useCallback(() => {
     clearQuery();
@@ -192,7 +214,6 @@ export default function NotesPaneBody() {
   const titleInput = useRef<HTMLInputElement>(null);
   const setTitle = title.set;
   useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
-  const workspace = useLatestWorkspace();
   const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
   const openToday = (event: TargetActivationEvent) =>
     activateTargetLink({
@@ -204,13 +225,7 @@ export default function NotesPaneBody() {
       disposition: { kind: fork ? "Fork" : "Follow" },
       ...(title.read() ? { entry: { kind: "ComposePage", title: title.read() } } : {}),
     };
-    const current = workspace();
-    const plan = planWorkspaceTarget(current.state, current.dailyPageByPaneId, request);
-    const destination = current.state.panes.find(pane => pane.id === plan.paneId);
-    const discardOwnerIds = title.read() && destination && (plan.kind === "Unchanged" || plan.kind === "ActivatedExisting")
-      ? [resourceDraftOwnerId(JSON.stringify([destination.current_visit.id, resolvePaneRouteModel(destination.current_visit.href).routeKey]), "Notes.NewPage")]
-      : [];
-    const result = runtime.activateTarget({ ...request, discardOwnerIds });
+    const result = runtime.activateTarget(request);
     if (result.kind !== "Cancelled") title.set("");
     return result;
   };
@@ -247,6 +262,7 @@ export default function NotesPaneBody() {
   const filtering = query.trim() !== "";
   return (
     <div>
+      <WritingRecovery />
       <CollectionView
         returnScope="Notes.Pages"
         rows={rows.filter((row) =>
@@ -294,13 +310,9 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page" onClick={submitGesture}>
-                <Plus size={16} aria-hidden="true" />
-              </Button>
+              <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Plus size={16} aria-hidden="true" />} />
             </form>
-            <Button variant="secondary" size="sm" asChild>
-              <a href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</a>
-            </Button>
+            <ButtonLink href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
           </>
         }
       />

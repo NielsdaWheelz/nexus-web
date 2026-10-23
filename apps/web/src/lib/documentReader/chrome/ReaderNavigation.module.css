@@ -54,9 +54,14 @@
 
 .sectionTrigger {
   inline-size: 100%;
-  min-inline-size: var(--pane-control-size);
-  gap: var(--space-1);
   padding-inline: var(--space-1);
+}
+
+.sectionContent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-inline-size: 0;
 }
 
 .sectionTitle {
@@ -73,16 +78,6 @@
 @container reader-sections (inline-size < 18em) {
   .countTotal {
     display: none;
-  }
-
-  @media (pointer: coarse) {
-    .position {
-      --pane-control-size: var(--size-xl);
-    }
-
-    .sectionTrigger {
-      min-inline-size: var(--size-xl);
-    }
   }
 }
 

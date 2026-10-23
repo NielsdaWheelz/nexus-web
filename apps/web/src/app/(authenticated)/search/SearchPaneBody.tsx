@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import LecternAddControl from "@/components/collections/LecternAddControl";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -15,7 +14,6 @@ import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -85,8 +83,8 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const admitted = useRef<string | null>(null);
   if (visible) admitted.current = key;
   const list = useServerList<Row, Metadata>({
-    key: admitted.current === key ? key : null,
-    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
+    key: admitted.current === key ? `/search?${key}` : null,
+    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`,
     pageSize: 20,
     active: active && !idle,
     visit: VISIT,
@@ -103,8 +101,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   });
   // Retained rows from a different query are useful only within the same view.
   const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
-  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), {
-  }), [router]);
+  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
@@ -147,20 +144,20 @@ function SearchResults({ query }: { query: SearchQuery }) {
     {list.current && list.metadata?.semantic_status === "unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }} announcement="Polite" /> : null}
     {query.view === "resources" ? resourceSections.filter((section) => section.rows.length > 0).map((section) => <section className={styles.section} key={section.key} aria-label={section.label}>
       <h2 className={styles.sectionHeading}>{section.label}</h2>
-      <ResourceOutlineList scope={`search:${key}:${section.key}`} ariaLabel={section.label} busy={searching}>
+      <ResourceList ariaLabel={section.label} busy={searching}>
         {section.rows.map((row) => <SearchResult key={row.item.ref} row={row} />)}
-      </ResourceOutlineList>
-    </section>) : <ResourceOutlineList scope={`search:${key}`} ariaLabel="Passages" busy={searching}>
+      </ResourceList>
+    </section>) : <ResourceList ariaLabel="Passages" busy={searching}>
       {results.map((row) => <SearchResult key={row.item.ref} row={row} />)}
-    </ResourceOutlineList>}
+    </ResourceList>}
     {count === 0 && !failure ? blank && !unsupported ? <FeedbackNotice
       content={{ tone: "Info", title: query.view === "passages" ? "search inside your sources" : "search your nexus", message: query.view === "passages" ? "type text to find individual passages." : "type a name or text, or open filters to narrow by format or author." }} announcement="None"
     /> : list.current && list.complete ? <div className={styles.empty}>
       <FeedbackNotice content={{ tone: "Neutral", title: unsupported ? "no passages for these content types" : "no results found" }} announcement="None" />
       {unsupported ? <div className={styles.emptyActions}>
-        <Button variant="secondary" size="md" onClick={() => commit({ ...query, view: "resources" })}>Show resources</Button>
-        <Button variant="secondary" size="md" onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
-      </div> : filtered ? <Button variant="secondary" size="md" onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
+        <Button onClick={() => commit({ ...query, view: "resources" })}>Show resources</Button>
+        <Button onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
+      </div> : filtered ? <Button onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
     </div> : null : null}
     <CollectionExhaustionNotice list={list} unit={query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }} returnFocus={() => inputRef.current} />
   </div>;
@@ -169,23 +166,17 @@ function SearchResults({ query }: { query: SearchQuery }) {
 function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
-  const body = item.preview.body;
-  const href = item.activation.href;
-  const ref = parseResourceRef(item.ref);
-  const readable = ref?.scheme === "media" && !item.missing && href !== null &&
-    body.kind === "named" && body.media_kind !== null && ["web_article", "epub", "pdf"].includes(body.media_kind);
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
-  return <ResourceOutlineRow incoming={null}
+  return <ResourceIndexRow
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
-    primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
     nestedContent={passage ? <div className={styles.matchingPassage}>
-      <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">
+      <ResourceList ariaLabel="Matching passage">
         <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />
-      </ResourceOutlineList>
+      </ResourceList>
     </div> : undefined}
   />;
 }

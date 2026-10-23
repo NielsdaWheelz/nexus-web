@@ -21,6 +21,8 @@ technology-ownership, import, and module-boundary model.
 - `scripts/lab`, `python/scripts/disposable_runtime.py` — disposable runtime owner;
   provisioning, private driver context, readiness, diagnostics and scoped teardown.
 - `python/scripts/local_storage.py` — shared local bucket/cors provisioning.
+- `python/scripts/lab_auth_cleanup.py` — exact-project Supabase teardown for the
+  lab and its recorded recovery command, without daemon-wide prune operations.
 - `python/scripts/worker_checkout_image.py` — dependency-hash worker images,
   host cache locking, real container creation and reference-aware tag retention.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
@@ -32,6 +34,9 @@ technology-ownership, import, and module-boundary model.
 packages public and static assets for `.next/standalone/server.js`. production
 builds start without the previous `.next` cache so installed dependency patches
 reach the generated bundles. each build pays the full compilation cost.
+the lab reuses a completed package under its documented source/slot/public-key
+contract and copies a private writable runtime; it uses this same production
+build and packaging command.
 
 ## Imports
 
@@ -60,7 +65,7 @@ reach the generated bundles. each build pays the full compilation cost.
   Android Media3 player, Media Session, native Consumption recording, and
   player notification lifecycle.
 - `apps/android/app/src/main/java/.../playback/PlayerBridge.kt` owns the
-  main-frame, owned-origin `nexusPlayback` WebKit bridge and adapts it to the
+  main-frame, owned-origin `nexusAudioSession` WebKit bridge and adapts it to the
   service-owned MediaController.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
@@ -84,7 +89,7 @@ reach the generated bundles. each build pays the full compilation cost.
   `GoogleSignInController` may make the auth-bootstrap
   `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
   paths above; offline may make only the two direct calls above; and AndroidX
-  WebKit may expose the main-frame `nexusPlayback` listener on the owned origin
+  WebKit may expose the main-frame `nexusAudioSession` listener on the owned origin
   and the main-frame `nexusDownloads` listener on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.

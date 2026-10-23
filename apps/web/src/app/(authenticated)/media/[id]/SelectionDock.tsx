@@ -5,12 +5,12 @@ import { BookOpenText, Copy, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
-import { WritingStatus } from "@/components/notes/NoteNotices";
+import { DraftDecision } from "@/components/notes/NoteNotices";
 import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -40,11 +40,8 @@ function SelectionAction({ action, blockedReason = null, help }: {
   const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
   const reason = blockedReason ?? (action.disabled ? action.disabledReason ?? "this action is unavailable." : null);
   const description = help ?? control.menuLabel;
+  // A blocked control stops activation before this runs.
   const activate = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
-    if (reason) {
-      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
-      return;
-    }
     if (action.kind === "link") {
       if (action.onActivate) action.onActivate(event);
       else activateTargetLink({ event, runtime, target: { href: action.href } });
@@ -53,33 +50,25 @@ function SelectionAction({ action, blockedReason = null, help }: {
     const detail = prepareActionSelect(event, event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
     if (detail) action.onSelect(detail);
   };
-  const className = [styles.selectionIcon, control.active && styles.selectionIconActive,
-    action.tone === "danger" && styles.selectionIconDanger].filter(Boolean).join(" ");
+  const tone = action.tone === "danger" ? "danger" : undefined;
   const icon = <>
-    <span aria-hidden="true">{action.icon}</span>
-    {action.indicator ? <span className={styles.selectionStatusMarker} aria-hidden="true" /> : null}
+    {action.icon}
+    {action.indicator ? <span className={styles.selectionStatusMarker} /> : null}
   </>;
+  const tooltip = { text: reason ? `${description}. ${reason}` : description };
   return <>
-    <Tooltip text={reason ? `${description}. ${reason}` : description} renderTrigger={(tooltip) => {
-      const common = {
-        ...tooltip,
-        "aria-label": action.label,
-        "aria-describedby": tooltip["aria-describedby"] ?? (reason ? reasonId : undefined),
-        "aria-disabled": reason !== null || undefined,
-        "data-action-id": action.id,
-        onKeyDown: activate,
-        onClick: activate,
-      };
-      return action.kind === "link" ? (
-        <Button asChild variant="ghost" size="sm" iconOnly className={className}>
-          <a {...common} href={reason ? undefined : action.href} role="link" tabIndex={0}
-            data-workspace-rich-target="true">{icon}</a>
-        </Button>
-      ) : (
-        <Button {...common} variant="ghost" size="sm" iconOnly className={className}
-          aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}>{icon}</Button>
-      );
-    }} />
+    {action.kind === "link" ? (
+      <ButtonLink href={action.href} aria-disabled={reason !== null || undefined} iconOnly icon={icon} tone={tone}
+        className={styles.selectionIcon} tooltip={tooltip} aria-label={action.label}
+        aria-describedby={reason ? reasonId : undefined} data-action-id={action.id}
+        data-workspace-rich-target="true" onClick={activate} onKeyDown={activate} />
+    ) : (
+      <Button aria-disabled={reason !== null || undefined} iconOnly icon={icon} tone={tone}
+        className={styles.selectionIcon} tooltip={tooltip} aria-label={action.label}
+        aria-describedby={reason ? reasonId : undefined} data-action-id={action.id}
+        aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}
+        onClick={activate} onKeyDown={activate} />
+    )}
     {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
   </>;
 }
@@ -117,7 +106,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const feedback = useFeedback();
   const { draft, opening } = composer;
   const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
-  const sourceChanged = draft !== null && identity !== null && draft.passage.identity !== identity;
+  const sourceChanged = draft?.issue?.kind === "Source" || (draft !== null && identity !== null && draft.passage.identity !== identity);
   const anchor = useCallback(() => {
     if (!draft) return null;
     const measured = reader.measurePassage(draft.passage);
@@ -129,7 +118,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
-  const blocked = !draft || draft.load !== "Ready" || draft.operation !== null || draft.referenceActive;
+  const blocked = composer.paused || !draft || draft.handle === null || draft.load !== "Ready" || draft.operation !== null || draft.referenceActive;
   const deleting = draft?.operation?.kind === "Delete";
   const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
   const dirty = draft && JSON.stringify(draft.body.body_pm_json) !== JSON.stringify(initialBody(draft.base).body_pm_json);
@@ -137,14 +126,15 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const map = store.getState().map;
   const overlapItems = menu && map.status !== "loading" && map.data
     ? map.data.evidence.roots.map((root) => root.content) : [];
-  const size = isMobile ? "lg" : "sm";
+  const size = isMobile ? "comfortable" : undefined;
   return <>
     {draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
       onDismiss={composer.dismiss}>
       {(placed, anchorState) => {
         const unavailable = anchorState === "unavailable";
-        const blockedReason = sourceChanged ? "this post changed. select the passage again."
+        const blockedReason = composer.paused ? "writing is paused." : draft.handle === null ? "preparing your draft…" : sourceChanged ? "the source changed. your words are kept; select the passage again."
+          : draft.issue?.kind === "Conflict" || draft.issue?.kind === "Deleted" ? "review the saved note or choose a new passage before saving."
           : draft.load !== "Ready" ? "load your note before using this action."
           : draft.referenceActive ? "finish linking or press escape to keep this as prose."
           : draft.operation ? "finish or retry the current request first."
@@ -167,7 +157,10 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         return (
           <div data-selection-composer="true" className={styles.selectionComposer}>
             <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
-            {unavailable || sourceChanged ? <FeedbackStatus content={{ tone: "Neutral", title: sourceChanged ? "this post changed. select the passage again." : "this passage is no longer available", message: "your draft is kept." }} announcement="Polite" /> : null}
+            {unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: sourceChanged
+              ? "the source changed. your words are kept; select the passage again."
+              : "this passage is no longer available. your draft is kept." }} announcement="Polite"
+              actions={[{ label: "select passage again", onClick: composer.reselect }]} /> : null}
             <div className={styles.dock}>
               <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
                 disabledReason={highlightReason} onSelect={verbs.highlight} />
@@ -187,7 +180,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
                 containingNoteRef={draft.base.kind === "Present" ? `note_block:${draft.base.id}` : null}
                 body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="note or question"
-                reference={composer.reference()} placeholder="write a note, or @ link something" compact editable={!deleting}
+                reference={composer.reference()} placeholder="write a note, or @ link something" compact editable={!deleting && draft.handle !== null && !composer.paused}
                 focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
                 onEdit={composer.edit} onSelectionChange={composer.selection}
                 history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
@@ -198,12 +191,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             </div>
             {canQuote ? <>
               <div className={styles.chatFooter}>
-                <Button size="sm" variant="secondary" disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked)} onClick={() => composer.newChat("default")}>new chat</Button>
-                <Button size="sm" className={styles.destinationAction} title={selected ? `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` : chatLabel}
+                <Button disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked)} onClick={() => composer.newChat("default")}>new chat</Button>
+                <Button emphasis="strong" className={styles.destinationAction} tooltip={{ text: selected ? `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` : chatLabel }}
                   disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked) || preparing || destination.kind === "Resolving" || Boolean(continuationBlocked)}
                   onClick={() => composer.continueChat()}><span className={styles.destinationLabel}>{chatLabel}</span></Button>
-                <Button size="sm" variant="ghost" aria-label="choose existing chat" title="choose existing chat"
-                  aria-expanded={composer.pickerOpen} disabled={Boolean(blockedReason) || composer.chatLocked} onClick={composer.chooseChat}>choose existing chat</Button>
+                <Button aria-expanded={composer.pickerOpen} disabled={Boolean(blockedReason) || composer.chatLocked} onClick={composer.chooseChat}>choose existing chat</Button>
               </div>
               {composer.branchCue ? <div className={styles.composerHint}>{composer.branchCue}</div> : null}
               {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "send not confirmed" : "this chat changed", message: "your question is kept" }} announcement="Polite"
@@ -224,33 +216,42 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                         : destination.kind === "LookupFailed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t find a recent chat" }} announcement="Polite"
                           actions={[{ label: "retry", onClick: composer.retryDefault }]} /> : null}
             </> : null}
-            {draft.issue ? <>
+            {composer.conflictDraft ? <DraftDecision draft={composer.conflictDraft}
+              resolve={(choice, shown) => composer.resolveConflict(choice === "saved", shown)} retire={composer.retireDraft} /> : draft.issue && draft.issue.kind !== "Source" ? <>
               <FeedbackNotice content={{ tone: "Warning", title: draft.issue.message,
                 message: draft.issue.kind !== "Conflict" && !draft.operation && draft.load === "Ready" ? "review your draft before saving." : undefined,
               }} announcement="Polite" actions={draft.issue.kind === "Conflict" ? [
-                { label: "use saved note", onClick: () => composer.resolveConflict(true) },
-                { label: "save my draft instead", onClick: () => composer.resolveConflict(false) },
-              ] : draft.operation || draft.load !== "Ready" ? [{
+                { label: "use saved note", onClick: () => void composer.resolveConflict(true, composer.conflictShown) },
+                { label: "save my draft instead", onClick: () => void composer.resolveConflict(false, composer.conflictShown) },
+              ] : draft.issue.kind === "Deleted" ? draft.highlightId ? [
+                { label: "save as a new note", onClick: () => void composer.saveAsNewNote(composer.conflictShown) },
+                { label: "select passage again", onClick: composer.reselect },
+              ] : [{ label: "select passage again", onClick: composer.reselect }] : draft.operation || draft.load !== "Ready" ? [{
                 label: draft.operation ? "retry same request" : "reload note", onClick: composer.retry,
                 commandKey: draft.operation?.id, busy: Boolean(draft.operation) || draft.load === "Loading",
               }] : undefined} />
-              {draft.issue.kind === "Conflict" ? draft.issue.saved.kind === "Present"
-                ? <blockquote className={styles.composerHint}>{draft.issue.saved.body.body_text}</blockquote>
-                : <span className={styles.composerHint}>the saved note is absent.</span> : null}
+              {draft.issue.kind === "Conflict" && draft.issue.saved.kind === "Absent"
+                ? <span className={styles.composerHint}>the saved note is absent.</span> : null}
             </> : draft.status || (dirty && !draft.operation) ? <FeedbackStatus
-              content={{ tone: "Neutral", title: draft.status ?? "changes not saved",
-                message: draft.status && dirty && !draft.operation ? "changes not saved" : undefined }} announcement="Polite"
+              content={{ tone: "Neutral", title: draft.status ?? "saving…" }} announcement="None"
             /> : null}
             <div className={styles.composerHint}>{draft.referenceActive ? "enter links · escape keeps literal text" : <>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends in new chat" : "opens a new chat"} · modifier+shift+enter {selected ? "uses the displayed chat" : "chooses existing chat"}</>}</div>
-            {draft.operation ? <WritingStatus /> : null}
             {emptyExisting ? <div className={styles.composerHint}>
               backspace deletes this note and its links. the highlight stays.
-              <Button size={size} variant="ghost" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>
+              <Button size={size} tone="danger" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>
             </div> : null}
           </div>
         );
       }}
     </FloatingActionSurface> : null}
+    {!draft && composer.recoveries.length > 0 ? <details className={styles.composerHint}>
+      <summary>passage drafts · {composer.recoveries.length}</summary>
+      {composer.recoveries.map(saved => <div key={saved.draft_id}>
+        <Button onClick={() => composer.restore(saved.draft_id)}>
+          restore {saved.context.kind === "passage" ? saved.context.passage.quote || "selected passage" : "passage draft"}
+        </Button>
+      </div>)}
+    </details> : null}
     {menu ? <FloatingActionSurface open anchor={chooserAnchor} subscribeAnchor={reader.subscribe} role="group" label="choose highlight" onDismiss={verbs.closeMenu}>
       <div className={styles.chooser}>
         <span>choose highlight</span>
@@ -264,7 +265,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         })}
       </div>
     </FloatingActionSurface> : null}
-    <Dialog open={verbs.recolouring !== null} title="Edit highlight" onClose={() => verbs.recolour(null)}>
+    <Dialog open={verbs.recolouring !== null} title="edit highlight" onClose={() => verbs.recolour(null)}>
       <Colours selected={verbs.recolouring ? store.getState().decorations.marks.find((mark) => mark.id === verbs.recolouring)?.color ?? null : null} onSelect={verbs.recolour} />
     </Dialog>
     {draft ? <ConversationDestinationOverlay open={composer.pickerOpen} mediaId={draft.sourceMediaId} hasSourceChats={draft.sourceHasChats}

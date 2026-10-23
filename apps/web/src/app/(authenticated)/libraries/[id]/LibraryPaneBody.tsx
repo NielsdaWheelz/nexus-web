@@ -1,7 +1,5 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // One library: its entries under the url's view, drag order for those who manage
 // a named library, the Reading Slate, the inspector's Members and Linked items,
 // and Leave for a member who is not its owner. The url owns sort, type, view and
@@ -12,7 +10,6 @@ import { useCallback, useId, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
@@ -80,7 +77,6 @@ import {
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -273,7 +269,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     }
     setLeaving(null);
   };
-  const addContent: PanePrimaryAction | undefined = library?.can_manage
+  const addContent: PanePrimaryAction | undefined = library?.can_add_content
     ? {
       kind: "command",
       id: "ViewAction.Library.AddContent",
@@ -283,12 +279,11 @@ function LibraryPane({ id }: { readonly id: string }) {
       onSelect: () =>
         requestNexusOpen({
           kind: "Add",
-          seed: { kind: "Content", initialDestinations: [{ id, name: library.name }] },
+          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name, order_revision: library.order_revision }] },
         }),
     }
     : undefined;
-  const insertion = useResourceComposer(library ? {kind:"resource",ref:`library:${id}`} : null, `library:${id}`, "add item");
-  const menuActions: ActionDescriptor[] = [...(insertion.action ? [insertion.action] : []), ...(addContent ? [addContent] : [])];
+  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   if (library?.can_leave) {
     menuActions.push({
       kind: "command",
@@ -421,7 +416,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       : null;
 
   return (
-    <> {insertion.content}<PaneSurface
+    <PaneSurface
       state={
         feedback || leaving || loadFailure || summaries.error || ordering !== undefined ? (
           <>
@@ -459,19 +454,6 @@ function LibraryPane({ id }: { readonly id: string }) {
         returnScope="Library.Entries"
         rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry, added),
           id: entry.entry_id ?? libraryEntryId(entry) }))}
-        rowControls={Object.fromEntries(ordered.flatMap((entry) => {
-          if (entry.kind !== "media" ||
-            !["web_article", "epub", "pdf"].includes(entry.media_summary.media_kind)) return [];
-          const rowId = entry.entry_id ?? libraryEntryId(entry);
-          return [[rowId, (
-            <LecternAddControl
-              key={rowId}
-              mediaId={entry.media_summary.media_id}
-              title={entry.media_summary.title}
-              returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, rowId)}
-            />
-          )]];
-        }))}
         empty={empty}
         status={list.status === "failed" ? "error" : list.status}
         error={
@@ -500,6 +482,6 @@ function LibraryPane({ id }: { readonly id: string }) {
             return accepted ? "Accepted" : "Retained";
           }}
         />
-    </PaneSurface></>
+    </PaneSurface>
   );
 }

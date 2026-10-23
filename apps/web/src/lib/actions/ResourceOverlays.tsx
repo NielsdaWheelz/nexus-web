@@ -88,19 +88,19 @@ export function ResourceOverlays({
             <p>Subscribe to this podcast and choose where to file it.</p>
             <AcquisitionControl
               key={overlay.podcastId}
-              kind="Subscribe"
+              scopeKey={overlay.podcastId}
               commit={async (command) => {
                 const result = await subscribeToPodcast({
                   target: { kind: "Canonical", podcast_id: overlay.podcastId },
-                  namedLibraryIds: command.namedLibraryIds,
+                  guard: command.guard,
                   replaceEpisodes: command.replaceEpisodes,
                 });
-                return { href: result.href };
+                return { href: result.href, available: result.available };
               }}
               onCommitted={close}
             />
             <div>
-              <Button variant="ghost" size="sm" onClick={() => { if (mayDismiss()) close(); }}>
+              <Button onClick={() => { if (mayDismiss()) close(); }}>
                 Cancel
               </Button>
             </div>

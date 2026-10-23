@@ -11,6 +11,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import {
@@ -89,9 +90,9 @@ export default function PasswordUpdateForm({
           }}
           announcement="Polite"
         />
-        <Button asChild variant="primary" size="lg">
-          <Link href={nextPath}>Continue</Link>
-        </Button>
+        <Link href={nextPath} className={buttonClassName({ emphasis: "strong", size: "comfortable" })}>
+          Continue
+        </Link>
       </div>
     );
   }
@@ -142,20 +143,13 @@ export default function PasswordUpdateForm({
             />
             <Button
               className={authStyles.reveal}
-              variant="ghost"
-              size="lg"
+              size="comfortable"
               iconOnly
-              type="button"
+              icon={revealed ? <EyeOff /> : <Eye />}
               aria-label={revealed ? "Hide password" : "Show password"}
               aria-controls="password-update-password"
               onClick={() => setRevealed((value) => !value)}
-            >
-              {revealed ? (
-                <EyeOff size={18} aria-hidden="true" />
-              ) : (
-                <Eye size={18} aria-hidden="true" />
-              )}
-            </Button>
+            />
           </span>
           <p id="password-update-help" className={authStyles.help}>
             Use at least 15 characters.
@@ -166,7 +160,7 @@ export default function PasswordUpdateForm({
             </div>
           ) : null}
         </div>
-        <Button variant="primary" size="lg" type="submit" loading={pending}>
+        <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           {pending ? "Saving password…" : "Save password"}
         </Button>
       </form>

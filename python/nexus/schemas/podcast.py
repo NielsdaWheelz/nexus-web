@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import TranscriptState as MediaTranscriptState
+from nexus.schemas.acquisition import AcquisitionGuard
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaProcessingStatus, MediaSummaryOut
@@ -36,20 +37,18 @@ class PodcastCanonicalCommitTarget(BaseModel):
     model_config = _CLOSED
 
 
-class PodcastSubscribeRequest(BaseModel):
+class PodcastSubscribeRequest(AcquisitionGuard):
     target: Annotated[
         PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
     ]
-    named_library_ids: list[UUID] = Field(default_factory=list)
     # confirms that a show replaces episodes some destination files directly.
     replace_episodes: bool
 
     model_config = _CLOSED
 
 
-class PodcastEpisodeFromDiscoveryRequest(BaseModel):
+class PodcastEpisodeFromDiscoveryRequest(AcquisitionGuard):
     target: DiscoveryTargetHandle
-    named_library_ids: list[UUID] = Field(default_factory=list)
 
     model_config = _CLOSED
 
@@ -198,7 +197,6 @@ class PodcastEpisodeListItemOut(BaseModel):
     id: UUID
     media_summary: MediaSummaryOut
     transcript_state: MediaTranscriptState
-    has_show_notes: bool
 
     model_config = ConfigDict(extra="forbid")
 
@@ -209,7 +207,33 @@ class PodcastEpisodeSelection(BaseModel):
     model_config = _SNAKE
 
 
-class PodcastEpisodeMarkPlayedOut(BaseModel):
+class PodcastEpisodeConsumptionItem(BaseModel):
+    media_id: UUID
+    expected_override_revision: int | None = Field(strict=True, ge=1)
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeConsumptionPreparedOut(BaseModel):
+    items: list[PodcastEpisodeConsumptionItem]
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeConsumptionRequest(BaseModel):
+    desired_state: Literal["played", "unplayed"]
+    items: list[PodcastEpisodeConsumptionItem]
+
+    @model_validator(mode="after")
+    def require_unique_media(self) -> "PodcastEpisodeConsumptionRequest":
+        if len({item.media_id for item in self.items}) != len(self.items):
+            raise ValueError("Duplicate episode ids")
+        return self
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeConsumptionOut(BaseModel):
     matched_count: int = Field(ge=0)
     changed_count: int = Field(ge=0)
 

@@ -337,8 +337,7 @@ export function usePaneVisitWorkOwner(owner: WorkOwner | null): void {
 
 /** The owner of visit-local draft cells, including synthetic overlay visits. */
 export function usePaneVisitIdentity(): string {
-  const { visitId, routeKey } = useScope();
-  return JSON.stringify([visitId, routeKey]);
+  return useScope().visitId;
 }
 
 /** PaneShell's scrollport and its route content; a new visit or route restores into it. */

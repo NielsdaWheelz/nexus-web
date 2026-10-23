@@ -15,13 +15,17 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { useCollectionLayout } from "@/lib/ui/collection";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import styles from "@/components/nexus/Nexus.module.css";
+import collection from "@/components/ui/Collection.module.css";
 
 export default function SwitchboardTask({ controller }: { controller: NexusController }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useCollectionLayout(bodyRef, controller.open && controller.page.kind === "Root");
   const composing = useRef(false);
   const taskPointerId = useRef<number | null>(null);
   const previousQuery = useRef(controller.query);
@@ -66,9 +70,9 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const textLabels = ["ask nexus", "add to today", "browse…", "create…"];
 
   const root = (
-    <div className={`${styles.page} ${styles.searchPage}`}>
+    <div ref={bodyRef} className={`${styles.page} ${styles.searchPage}`}>
       <header className={styles.header}>
-        {searching ? <button type="button" className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape}><ArrowLeft size={20} aria-hidden="true" /></button> : null}
+        {searching ? <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape} /> : null}
         <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
           <AccountMenu
@@ -77,7 +81,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             placement="below"
             align="end"
             renderTrigger={(trigger) => (
-              <button {...trigger} type="button" className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account</button>
+              <Button {...trigger} className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account</Button>
             )}
             onNavigate={(event, destination) => {
               const activation = workspaceTargetActivationIntent(event);
@@ -88,7 +92,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               return "handled-destination-focus";
             }}
           />
-          <button type="button" className={styles.textButton} onClick={controller.close}>done</button>
+          <Button className={styles.textButton} onClick={controller.close}>done</Button>
         </div>
       </header>
       <div className={styles.searchInput}>
@@ -125,11 +129,11 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               }
             }}
           />
-          {controller.query ? <button type="button" className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }}><X size={18} aria-hidden="true" /></button> : null}
+          {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
         {searching ? <div className={styles.searchStatus}>{controller.busy ? "searching…" : "\u00a0"}</div> : null}
       </div>
-      <div ref={listRef} className={styles.searchScroll} aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
+      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
         {searching ? <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} searchUnavailable={controller.searchUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
         <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
@@ -140,12 +144,13 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
                 const name = [row.label, rowFacts(row, false), unavailable].filter(Boolean).join(". ");
                 const body = row.item?.preview.body;
-                const hasEvidence = row.matchingPassage || (body && (body.kind !== "named" || (row.match && row.match.excerpt.text !== body.title)));
+                const hasEvidence = row.matchingPassage || (body && ((body.kind !== "named" && body.kind !== "media") || (row.match && row.match.excerpt.text !== (body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : null))));
                 return (
                   <li key={row.key} className={styles.row} data-current={row.state === "Current" || undefined} data-nested={row.parent ? true : undefined} onPointerDown={() => controller.setActive(row.key)}>
                     <button
                       type="button"
-                      className={styles.rowMain}
+                      className={`${collection.row} ${styles.rowMain}`}
+                      data-selected={row.state === "Current" || undefined}
                       data-nexus-control={row.key === "QuickAction:New" ? "New" : row.key}
                       aria-current={row.state === "Current" ? "page" : undefined}
                       aria-disabled={unavailable !== null || undefined}
@@ -158,11 +163,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       <NexusRowBody row={row} desktop={false} />
                     </button>
                     {row.secondary?.kind === "CloseTab" ? (
-                      <Button variant="ghost" size="sm" iconOnly className={styles.rowMenu} aria-label={`close ${row.label}`} title={`close ${row.label}`}
+                      <Button iconOnly className={styles.rowMenu} aria-label={`close ${row.label}`}
                         onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
-                        onClick={() => { if (row.secondary?.kind === "CloseTab") controller.closePane(row.secondary.paneId); }}>
-                        <X size={18} aria-hidden="true" />
-                      </Button>
+                        onClick={() => { if (row.secondary?.kind === "CloseTab") controller.closePane(row.secondary.paneId); }}
+                        icon={<X size={18} aria-hidden="true" />} />
                     ) : row.secondary?.kind === "ResourceMenu" ? (
                       <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} menuProps={{
                         label: `more actions for ${row.label}`,

@@ -9,6 +9,8 @@ import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
+import type { MediaSubject } from "@/lib/media/mediaSummary";
+import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import type { Move, MoveOutcome, OrderRevision } from "./order";
 
 /** A complete manual-order scope. Its owner alone commits and reconciles moves. */
@@ -57,15 +59,10 @@ export type CollectionContext =
   | { readonly kind: "Text"; readonly text: string }
   | { readonly kind: "Snippet"; readonly segments: readonly EmphasisSegment[] };
 
-export type ExceptionalStatus =
-  | {
-      readonly kind: "MediaProcessing";
-      readonly status: "failed";
-    }
-  | {
-      readonly kind: "PodcastSync";
-      readonly status: Extract<Schema<"PodcastSyncStatus">, "Failed">;
-    };
+export type ExceptionalStatus = {
+  readonly kind: "PodcastSync";
+  readonly status: Extract<Schema<"PodcastSyncStatus">, "Failed">;
+};
 
 interface CollectionRowBase {
   readonly id: string;
@@ -84,8 +81,6 @@ interface CollectionRowBase {
    * `null` means a non-resource row, which may contribute only `flatActions`.
    */
   readonly resourceRef: CanonicalResourceRef | null;
-  /** The visible resource and explicit insertion capability; never the action owner. */
-  readonly insertionSource: import("@/lib/resourceGraph/links").InsertionSource | null;
   /**
    * Non-resource actions appended after row occurrence commands. These apply
    * only when `resourceRef` is `null`; a resource row's canonical suffix is
@@ -93,6 +88,7 @@ interface CollectionRowBase {
    */
   readonly flatActions?: readonly ActionDescriptor[];
   readonly selected: boolean;
+  readonly media?: { readonly subject: MediaSubject; readonly knownDescriptor: PlayerDescriptor | null };
 }
 
 export type CollectionRowView = CollectionRowBase & (
@@ -102,8 +98,4 @@ export type CollectionRowView = CollectionRowBase & (
       readonly artwork?: { readonly imageUrl: string | null };
     }
   | { readonly kind: Exclude<CollectionItemKind, "podcast">; readonly artwork?: never }
-) & (
-  | { readonly mediaIdentity: "Stored"; readonly consumption: Schema<"ConsumptionOut"> }
-  | { readonly mediaIdentity: "External"; readonly consumption?: never }
-  | { readonly mediaIdentity?: never; readonly consumption?: never }
 );

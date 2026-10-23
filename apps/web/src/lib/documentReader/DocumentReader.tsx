@@ -387,10 +387,10 @@ function StatusStrip({ reader, announcement, returnFocus }: {
       {handoff ? (
         <div className={styles.choice}>
           <FeedbackNotice content={{ tone: "Warning", title: "a newer reading place is available" }} announcement={announcement} returnFocus={returnFocus} />
-          <Button variant="ghost" size="sm" aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Canonical", event.currentTarget)}>
+          <Button aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Canonical", event.currentTarget)}>
             use newer place
           </Button>
-          <Button variant="ghost" size="sm" aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Device", event.currentTarget)}>
+          <Button aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Device", event.currentTarget)}>
             keep my place
           </Button>
         </div>
@@ -441,7 +441,7 @@ function ReadingOptions({ reader, title, announcement, returnFocus }: {
   return (
     <div className={styles.choice}>
       <FeedbackStatus content={{ tone: "Neutral", title }} announcement={announcement} />
-      <Button variant="ghost" size="sm" aria-expanded={anchor !== null} aria-controls={id} onClick={(event) => setAnchor(anchor ? null : event.currentTarget)}>
+      <Button aria-expanded={anchor !== null} aria-controls={id} onClick={(event) => setAnchor(anchor ? null : event.currentTarget)}>
         reading options
       </Button>
       <FloatingActionSurface open={anchor !== null} anchor={anchor} id={id} disclosure role="group" label="reading options" align="start" placement="below" flip onDismiss={() => setAnchor(null)}>

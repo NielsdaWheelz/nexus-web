@@ -45,14 +45,15 @@ export default function GenerationPicker({
   const route = editorRoute(catalog, value);
   const routeRow = route ? catalogRoute(catalog, route) : null;
   const variant = editorVariant(catalog, value);
-  const routes = catalog.routes.filter((row) => modelVariants(row).some(chatCapable));
+  const routes = catalog.routes.filter((row) => row.readiness.kind !== "Ready" || modelVariants(row).some(chatCapable));
   const providers: ChoiceOption[] = routes.map((row) => {
     const choices = modelVariants(row).filter(chatCapable).flatMap((item) => item.reasoning);
     return {
       id: routeKey(row.route),
       label: row.label,
       detail: row.billing.kind === "Subscription" ? "subscription" : "metered api",
-      unavailable_reason: choices.some((choice) => choice.chat_state.kind === "Selectable")
+      unavailable_reason: row.readiness.kind !== "Ready" ? row.readiness.explanation
+        : choices.some((choice) => choice.chat_state.kind === "Selectable")
         ? null : choiceUnavailable(choices[0]),
     };
   });
@@ -83,7 +84,8 @@ export default function GenerationPicker({
       label = mode === null ? knownModel.label : `${knownModel.label} · ${mode}`;
     }
     models.unshift({ id: modelId, label, detail: null,
-      unavailable_reason: variant ? choiceUnavailable(variant.reasoning[0])
+      unavailable_reason: routeRow && routeRow.readiness.kind !== "Ready" ? routeRow.readiness.explanation
+        : variant ? choiceUnavailable(variant.reasoning[0])
         : "this model or mode is no longer available" });
   }
   const footer = (

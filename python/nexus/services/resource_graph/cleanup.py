@@ -2,8 +2,7 @@
 
 1. A cited (ordinal) edge dies only with its source unless the dying resource's owner
    requests removal of inbound citations too (note deletion).
-2. Every other edge dies with either endpoint, and a dying endpoint takes its whole
-   link-note motif (the sibling attachment targets a survivor).
+2. Every other edge dies with either endpoint; independent links at survivors stay.
 
 View states go before their edges, surviving link and annotation ends get a ``links`` version, and
 external snapshots no longer cited by anything go too. Flush-only; death is global, so
@@ -40,6 +39,7 @@ from nexus.db.models import (
     ResourceViewState,
     XPostSource,
 )
+from nexus.services import authored_identities, writing
 from nexus.services.resource_graph import retention
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items import versions
@@ -76,20 +76,12 @@ def delete_edges_for_deleted_resources(
 
     at_source = at(ResourceEdge.source_scheme, ResourceEdge.source_id)
     at_target = at(ResourceEdge.target_scheme, ResourceEdge.target_id)
-    motif_notes = select(ResourceEdge.source_id).where(
-        ResourceEdge.origin == "link_note", at_target
-    )
     dying = select(ResourceEdge.id).where(
         or_(
             at_source,
             at_target
             if remove_inbound_citations
             else and_(ResourceEdge.ordinal.is_(None), at_target),
-            and_(
-                ResourceEdge.origin == "link_note",
-                ResourceEdge.source_scheme == "note_block",
-                ResourceEdge.source_id.in_(motif_notes),
-            ),
         )
     )
     from nexus.services.library_entries import lock_media_rows_in_order
@@ -114,6 +106,17 @@ def delete_edges_for_deleted_resources(
         ),
     )
     rows = list(db.scalars(select(ResourceEdge).where(ResourceEdge.id.in_(dying))))
+    from nexus.services.resource_graph.edges import retire_edge
+
+    for row in rows:
+        retire_edge(db, row)
+        if row.origin == "highlight_note":
+            from nexus.db.models import Highlight
+            from nexus.services.highlights import annotations_changed
+
+            highlight = db.get(Highlight, row.source_id)
+            if highlight is not None:
+                annotations_changed(db, highlight)
     retention.pin_owners(db, retention.edge_endpoints(rows))
     activity = retention.retaining_owners(db, rows)
     for user_id, *ends in db.execute(
@@ -174,6 +177,16 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
 def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
     """The viewer's versions and view states for a resource that died."""
     pair = (ref.scheme, ref.id)
+    if ref.scheme in ("page", "note_block", "highlight"):
+        from typing import cast
+
+        from nexus.schemas.writing import IdentityKind
+
+        binding = authored_identities.retire(
+            db, viewer_id=viewer_id, kind=cast(IdentityKind, ref.scheme), id=ref.id
+        )
+        writing.identity(db, binding.out())
+        writing.changed(db, viewer_id)
     db.execute(
         delete(ResourceVersion).where(
             ResourceVersion.user_id == viewer_id,

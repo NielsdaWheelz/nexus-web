@@ -55,7 +55,7 @@ export function useLibraryCreation() {
   const [visible, setVisible] = useState(false);
   const open = useRef(false);
   const mounted = useRef(false);
-  const trigger = useRef<HTMLButtonElement | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
   const navigating = useRef(false);
   const composing = useRef(false);
   const flowIntent = useRef<OpenIntent>("default");
@@ -73,7 +73,7 @@ export function useLibraryCreation() {
   }, [readCreation]);
 
   const transition = (creation: Creation) => owner.set(value => ({ ...value, creation }));
-  const show = (triggerEl: HTMLButtonElement | null, intent: OpenIntent) => {
+  const show = (triggerEl: HTMLElement | null, intent: OpenIntent) => {
     trigger.current = triggerEl;
     navigating.current = false;
     flowIntent.current = intent;
@@ -112,7 +112,7 @@ export function useLibraryCreation() {
       mayOpen: () => delivery.mayOpen && open.current,
       onOpened: release,
       create: async () => {
-        const outcome = await sendCreation(attempt);
+        const outcome = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
         const owns = !ctx.sessionSignal().aborted && owner.read().flight === delivery;
         if (owns) owner.set(value => ({ ...value, flight: null }));
         if (outcome.kind === "Created") {
@@ -236,8 +236,8 @@ export function useLibraryCreation() {
             <FeedbackStatus content={feedback} announcement="Polite" />
           ) : <FeedbackNotice content={feedback} announcement="Polite" /> : null}
           <div className={styles.creationActions}>
-            <Button variant="ghost" onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
-            <Button ref={submit} type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
+            <Button onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
+            <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
               {creation.kind === "Unconfirmed" || (sending && creation.wasUnconfirmed) ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
             </Button>
           </div>

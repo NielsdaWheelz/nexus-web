@@ -1,133 +1,49 @@
 "use client";
 
-// Presentation only. The editor remains the combobox and keeps keyboard focus.
+// Inline results borrow their editor's bindings. Journal admission, captured
+// destination review and authored snapshots remain with the reference owner.
 import ResourceBody from "./ResourceBody";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import {
-  parseResourceRef,
-  resourceTypeLabel,
-} from "@/lib/resourceGraph/resourceRef";
+import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
 import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
-import styles from "./ReferencePicker.module.css";
-export default function ReferencePicker({
-  input,
-  id,
-  onReviewPosition,
-  returnFocus,
-}: {
+import collection from "@/components/ui/Collection.module.css";
+
+export default function ReferencePicker({ input, onReviewPosition, returnFocus }: {
   input: ReferenceInput;
-  id: string;
   onReviewPosition(): void;
   returnFocus: () => HTMLElement | null;
 }) {
-  const { state, search, selected } = input;
+  const { state, search, bindings } = input;
   if (!state) return null;
-  const busy = state.phase === "submitting" || state.phase === "unknown";
-  return (
-    <div className={styles.picker}>
-      <div
-        id={id}
-        role="listbox"
-        aria-label={`link from ${state.host.label}`}
-        aria-busy={search.loading || busy}
-      >
-        {search.minimum && !busy ? (
-          <FeedbackStatus
-            content={{ tone: "Neutral", title: "type at least 2 characters" }}
-            announcement="Polite"
-          />
-        ) : null}
-        {search.loading ? (
-          <FeedbackStatus
-            content={{ tone: "Neutral", title: "searching…" }}
-            announcement="Polite"
-          />
-        ) : null}
-        {!search.minimum &&
-        !search.loading &&
-        !search.error &&
-        search.items.length === 0 &&
-        !busy ? (
-          <FeedbackStatus
-            content={{ tone: "Neutral", title: search.list.complete ? "no matching resources" : "no matching resources found so far" }}
-            announcement="Polite"
-          />
-        ) : null}
-        {search.items.map((target) => {
-          const key = targetKey(target),
-            scheme = parseResourceRef(target.item.ref)!.scheme;
-          return (
-            <div
-              key={key}
-              id={`${id}-${key}`}
-              role="option"
-              aria-selected={key === selected}
-              className={styles.option}
-              data-active={key === selected || undefined}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => {
-                if (!busy) input.accept(target);
-              }}
-              onPointerMove={(event) => {
-                if (!busy && event.pointerType !== "touch") input.choose(key);
-              }}
-            >
-              <ResourceBody body={target.item.preview.body} />
-              <span className={styles.meta}>
-                {resourceTypeLabel(scheme)}
-                {target.item.preview.source?.title
-                  ? ` · ${target.item.preview.source.title}`
-                  : ""}
-                {target.existing_link_id ? " · already linked" : ""}
-                {scheme === "conversation" ? " · adds chat context" : ""}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <span className="sr-only" aria-live="polite">
-        {search.items.find((item) => targetKey(item) === selected)?.item
-          .label ?? ""}
-      </span>
-      {search.error ? (
-        <FeedbackNotice
-          content={{
-            tone: "Warning",
-            title: "couldn’t search",
-            requestId: search.error.requestId,
-          }}
-          announcement="Polite"
-          actions={[{ label: "retry", onClick: search.retry, busy: search.list.running !== null }]}
-          returnFocus={returnFocus}
-        />
-      ) : null}
-      {!busy && !search.minimum && search.querySettled ? <CollectionExhaustionNotice list={search.list} unit={{ singular: "resource", plural: "resources" }} returnFocus={returnFocus} /> : null}
-      {state.message ? (
-        <FeedbackNotice
-          content={{
-            tone: state.phase === "rejected" ? "Warning" : "Neutral",
-            title: state.message,
-          }}
-          announcement="Polite"
-          actions={
-            state.phase === "unknown"
-              ? [{ label: "retry same link", onClick: input.retry }]
-              : state.rejectedVersion !== null
-                ? [
-                    {
-                      label: "use this row’s current position",
-                      onClick: onReviewPosition,
-                      disabledReason: input.canReviewPosition
-                        ? undefined
-                        : "waiting for a refreshed row position",
-                    },
-                  ]
-                : undefined
-          }
-        />
-      ) : null}
+  return <div className={collection.surface}>
+    {search.minimum ? <FeedbackStatus content={{ tone: "Neutral", title: "type at least 2 characters" }} announcement="Polite" /> : null}
+    {search.loading ? <FeedbackStatus content={{ tone: "Neutral", title: "searching…" }} announcement="Polite" /> : null}
+    {!search.minimum && !search.loading && !search.error && search.items.length === 0
+      ? <FeedbackStatus content={{ tone: "Neutral", title: search.list.complete ? "no matching resources" : "no matching resources found so far" }} announcement="Polite" /> : null}
+    <div {...bindings.listProps} ref={bindings.listRef} aria-busy={search.loading} className={collection.compactViewport}>
+      {search.items.map(target => {
+        const key = targetKey(target), scheme = parseResourceRef(target.item.ref)!.scheme;
+        const props = bindings.optionProps(key);
+        return <div key={key} {...props} className={collection.row} aria-labelledby={`${props.id}-label`} aria-describedby={`${props.id}-detail`}>
+          <span className={collection.content}>
+            <span id={`${props.id}-label`}><ResourceBody body={target.item.preview.body} /></span>
+            <span id={`${props.id}-detail`} className={collection.detail}>
+              {resourceTypeLabel(scheme)}
+              {target.item.preview.source?.title ? ` · ${target.item.preview.source.title}` : ""}
+              {target.existing_link_id ? " · already linked" : ""}
+              {scheme === "conversation" ? " · adds chat context" : ""}
+              {state.message !== null ? " · review destination before linking" : ""}
+            </span>
+          </span>
+        </div>;
+      })}
     </div>
-  );
+    {search.error ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t search", requestId: search.error.requestId }} announcement="Polite"
+      actions={[{ label: "retry", onClick: search.retry, busy: search.list.running !== null }]} returnFocus={returnFocus} /> : null}
+    {!search.minimum && search.querySettled ? <CollectionExhaustionNotice list={search.list} unit={{ singular: "resource", plural: "resources" }} returnFocus={returnFocus} /> : null}
+    {state.message ? <FeedbackNotice content={{ tone: "Warning", title: state.message }} announcement="Polite"
+      actions={[{ label: "use this row’s current position", onClick: onReviewPosition }]} /> : null}
+  </div>;
 }

@@ -16,6 +16,7 @@ from nexus.services.contributor_taxonomy import (
     ContributorRole,
     clean_contributor_display,
 )
+from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 
 def _nonblank(value: str) -> str:
@@ -143,12 +144,13 @@ class PodcastContributorWorkItemOut(_Out):
 
 
 class ExternalContributorWorkItemOut(_Out):
-    """A catalogue ebook: not a Nexus resource, so it has no action ref."""
+    """External identity: the sealed target acquires it; href retains provenance only."""
 
     kind: Literal["ExternalWork"] = "ExternalWork"
     title: str
     href: str
-    content_kind: str
+    target: DiscoveryTargetHandle
+    content_kind: Literal["project_gutenberg_ebook"]
     contributors: list[ContributorCreditOut]
     role_facts: list[ContributorRoleFactOut]
 

@@ -119,7 +119,7 @@ export default function ForgotPasswordForm({ sent }: { sent: boolean }) {
             </div>
           ) : null}
         </label>
-        <Button variant="primary" size="lg" type="submit" loading={pending}>
+        <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           {pending ? "Sending reset link…" : "Send reset link"}
         </Button>
       </form>

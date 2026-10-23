@@ -87,18 +87,52 @@ while it runs; exit and rerun after edits. one invocation per checkout. no ordin
 web server or static gate concurrently there.
 
 core needs no model credentials. `--live-config FILE` accepts only the documented
-provider settings; no ambient application configuration enters core.
+provider settings as string/null values; no ambient application configuration
+enters core. `provider_endpoint_overrides` is a json-encoded origin map string;
+`provider_ca_pem` contains actual pem certificates, added to normal trust roots.
 `--codex-socket /absolute/existing/app-server.sock` explicitly connects api and a
 host interactive worker to an already authenticated native host, qualified through
 its ordinary health probe. its host/account remain caller-owned; the runtime
 neither copies credentials nor stops that host. the interactive worker's temporary
 directory and heartbeat belong to the run. the background worker stays in linux.
+ordinary `--live-config` and `--codex-socket` may be combined.
+
+`--fake-providers` instead starts owned verified https provider wires and real
+pinned codex hosts for the host api and linux workers, with fresh synthetic
+account state. it cannot combine with either live option. responses use fixed
+text over sse/websocket and deterministic 256-dimensional embeddings; this
+qualifies transport/composition, not tools, structured output or model quality.
+`fake_providers` in the context is normally null, or `{origin, ca_file}` in this
+mode; `/health` publishes only fake identity and request counts. see
+[provider composition](docs/local-rules/testing-standards.md#provider-composition).
+
 model success is a separate qualification. dependency-hash checkout worker images,
-builder caches and private diagnostics remain on disk; runs create no per-run
-images. credentials and sessions are removed
+builder caches, the completed web package, its marker, a checkout public auth
+key and private diagnostics remain on disk; runs create no per-run images.
+clean web source reuses the package at the same sha, slot and public key; each
+run gets fresh data and a private writable standalone tree. credentials and sessions are removed
 after successful cleanup. caller cases survive until their author deletes them
 after red/green/refactor and final qualification.
 hard interruption may require exact scoped recovery from the private recovery note.
+
+campaigns use this same runtime in dedicated checkouts and playwright's
+`--repeat-each`, with temporary cases and seeds. import `test` from
+`apps/web/scripts/lab/test.ts`; its default page and awaited `newPage(context)`
+factory prepare each page before app navigation.
+
+`./scripts/lab --client-throttle N -- COMMAND [ARG ...]` accepts an integer
+`N >= 1` and reserves both host slots. the context publishes
+`client_cpu_throttle: N`, or null ordinarily. the fixture rejects uncontrolled
+popups under throttling. default test/expect/action/navigation deadlines scale
+with `N`; deliberate choreography pauses do not. see
+[client throttling](docs/local-rules/testing-standards.md#client-throttling).
+
+artifacts hold reports, logs, screenshots and history; copied harness
+implementations are retired. docker desktop is the sole lab engine (dev-server
+`docs/macbook-capacity-plan.md`, d1); d2 fixes the budget at 8 gib and 8 cpus and
+requires two concurrent ordinary labs to complete end to end. host cpu burners
+and load-average thresholds are retired. calibration and 20-run repeats require
+explicit owner approval.
 
 ordinary development remains persistent. this command deliberately creates fresh
 stores each time. it uses host api/web toolchains and, without an explicit native

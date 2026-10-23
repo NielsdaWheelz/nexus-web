@@ -346,7 +346,7 @@ def _excluded(db: Session, *, user_id: UUID, ref: ResourceRef) -> set[ResourceRe
             WITH pairs AS (
                 SELECT source_scheme, source_id, target_scheme, target_id
                 FROM resource_edges
-                WHERE user_id = :user_id AND origin <> 'link_note'
+                WHERE user_id = :user_id
                   AND ((source_scheme = :scheme AND source_id = :id)
                        OR (target_scheme = :scheme AND target_id = :id))
                   AND NOT (origin = 'discovery' AND source_scheme = :scheme AND source_id = :id)

@@ -3,7 +3,7 @@
   z-index: var(--z-popover);
   width: min(360px, calc(100vw - var(--space-6)));
   max-width: calc(100vw - var(--space-6));
-  max-height: min(480px, 70vh);
+  max-block-size: min(480px, 70vh, var(--anchored-max-height, 100dvh));
   overflow-y: auto;
   padding: var(--space-2) var(--space-3);
   background: var(--surface-2);
@@ -28,7 +28,7 @@
 .sheet {
   width: calc(100vw - var(--space-4));
   max-width: 480px;
-  max-height: 80dvh;
+  max-block-size: 80dvh;
   overflow-y: auto;
   padding: var(--space-3) var(--space-4);
   margin-bottom: var(--viewport-safe-bottom);

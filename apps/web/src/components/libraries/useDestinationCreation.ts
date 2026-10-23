@@ -69,7 +69,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     const wasUnconfirmed = attempt.failure !== null;
     attempt.sending = true;
     state.publish();
-    const outcome = await sendCreation(attempt);
+    const outcome = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
     if (!owns(attempt)) return;
     attempt.sending = false;
     if (outcome.kind === "Unknown" || outcome.kind === "Refused" && wasUnconfirmed) {
@@ -87,7 +87,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       return;
     }
     state.publish();
-    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name }); }
+    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name, order_revision: outcome.library.order_revision }); }
     catch (error) { fail({ error }); }
   }
   const pending = snapshot.pending.filter(attempt => attempt.form === form);

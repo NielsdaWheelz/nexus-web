@@ -1,22 +1,21 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // Route chrome and page/day publication surround the shared outline surface.
 import { useCallback, useEffect, useId, useMemo, type RefObject } from "react";
-import { Plus } from "lucide-react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import CanonicalNoteEditor from "./CanonicalNoteEditor";
+import PageTitleEditor from "./PageTitleEditor";
 import OutlineSurface from "./OutlineSurface";
 import type { NoteInspection } from "./NoteEditor";
-import { NoteConflict, WritingStatus } from "./NoteNotices";
-import Button from "@/components/ui/Button";
+import { WritingStatus } from "./NoteNotices";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { OutlineSessionScope } from "@/components/resources/ResourceOutlineList";
-import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { Row } from "@/lib/notes/outline";
-import { flushText, useText } from "@/lib/notes/texts";
+import { readText } from "@/lib/notes/texts";
 import type { Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import {
@@ -34,7 +33,10 @@ import styles from "./OutlineEditor.module.css";
 
 const rowFields = (row: Row): string[] => {
   const node = row.link.target;
-  if (node.content.kind === "note") return [node.content.body_text];
+  if (node.content.kind === "note") {
+    const value = readText(node.item.ref)?.value;
+    return [typeof value === "object" ? value.body_text : node.content.body_text];
+  }
   return [
     node.item.label.trim() || node.item.ref.split(":")[0]!.replaceAll("_", " "),
     node.item.preview.source?.title ?? "",
@@ -139,7 +141,7 @@ export default function OutlineEditor({
   outline: Outline;
   filter: string;
   inspection: NoteInspection | null;
-  titleRef: RefObject<HTMLInputElement | null>;
+  titleRef: RefObject<HTMLTextAreaElement | null>;
   activateTarget: (input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
@@ -147,7 +149,6 @@ export default function OutlineEditor({
 }) {
   const source = outline.node(outline.endpoint) ?? outline.root!.source;
   const session = outline.session;
-  const text = useText(source.item.ref);
   const prefix = outline.occurrencePrefix;
   const insertion = endpointForResource(source.item.ref);
   const filtering = filter.trim() !== "";
@@ -163,42 +164,20 @@ export default function OutlineEditor({
       >
         <div className={styles.masthead}>
           {source.content.kind === "page" ? (
-            <>
-              <input
-                ref={titleRef}
-                className={styles.title}
-                aria-label="Page title"
-                value={typeof text?.value === "string" ? text.value : ""}
-                readOnly={filtering || session.activeReference !== null}
-                onBlur={() => flushText(source.item.ref)}
-                onChange={(event) =>
-                  outline.setTitle(event.currentTarget.value)
+            <PageTitleEditor session={session} occurrence={{key: "", noteRef: source.item.ref}}
+              content={source.content} editable={!filtering} label="page title" inputRef={titleRef}
+              write={outline.setTitle} rootEnter={{label: outline.rows.length ? "focus first item" : "insert first item", execute: () => {
+                const row = outline.rows[0];
+                if (row) {
+                  if (row.link.target.content.kind === "note") session.focusRow(row.key);
+                  else session.selectOccurrence(row.key);
+                } else {
+                  const source = outline.insertionSource();
+                  const position = session.position({endpoint: outline.endpoint, edgeId: null, side: "after"});
+                  if (position) session.openComposer({source, position, occurrencePrefix: prefix, path: []}, outline.publication ?? undefined);
                 }
-                onKeyDown={(event) => {
-                  if (
-                    event.key !== "Enter" ||
-                    event.shiftKey ||
-                    event.repeat ||
-                    event.nativeEvent.isComposing ||
-                    filtering ||
-                    session.activeReference !== null
-                  )
-                    return;
-                  event.preventDefault();
-                  const row = outline.rows[0];
-                  if (row)
-                    session.focusRow(
-                      row.key,
-                      "end",
-                      row.link.target.content.kind === "note"
-                        ? "text"
-                        : "reference",
-                    );
-                  else outline.insert("start");
-                }}
-              />
-              <NoteConflict textRef={source.item.ref} />
-            </>
+              }}}/>
+
           ) : (
             <CanonicalNoteEditor
               session={session}
@@ -213,7 +192,7 @@ export default function OutlineEditor({
                     }
                   : null
               }
-              label={`edit note: ${text && typeof text.value !== "string" ? text.value.body_text.split("\n")[0] || "note" : source.item.label}`}
+              label={`edit note: ${source.item.label}`}
               editable={!filtering}
               inspection={inspection}
               embeddedItem={
@@ -223,26 +202,8 @@ export default function OutlineEditor({
               }
             />
           )}
-          {session.view.zoom.length > 0 ? <ContextualActionMenu
-            resourceRef={assumeCanonicalResourceRef(source.item.action_ref)}
-            title={source.item.label}
-            subjectKey={`outline:${outline.endpoint}:${source.item.ref}`}
-            label={`more actions for ${source.item.label}`}
-            sections={[]}
-            commandDisabledReason={session.activeReference !== null ? "finish linking or return to prose first" : undefined}
-          /> : null}
-          <WritingStatus />
+          {source.content.kind === "page" ? <WritingStatus textRef={source.item.ref} /> : null}
         </div>
-        {session.view.zoom.length > 0 ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={session.activeReference !== null}
-            onClick={outline.zoomOut}
-          >
-            back to linked notes
-          </Button>
-        ) : null}
         {filtering ? (
           <FeedbackStatus
             content={{
@@ -259,30 +220,17 @@ export default function OutlineEditor({
           endpoint={outline.endpoint}
           rootEndpoint={outline.endpoint}
           occurrencePrefix={prefix}
-          path={session.view.zoom}
+          path={[]}
+          insertionSource={outline.insertionSource()}
           filter={filter}
           sourceForRow={outline.insertionSource}
           publication={outline.publication ?? undefined}
           onRevealRoot={() => session.reveal({ kind: "root" })}
         />
-        {!filtering &&
-        session.activeReference === null &&
-        !outline.rows.length &&
-        source.content.kind === "page" &&
-        outline.canInsert("start") ? (
-          <button
-            type="button"
-            className={styles.insert}
-            onClick={() => outline.insert("start")}
-          >
-            <Plus size={16} aria-hidden="true" />
-            add a note
-          </button>
-        ) : null}
         {!outline.complete ? (
-          <button type="button" onClick={outline.more}>
+          <Button type="button" onClick={outline.more}>
             show more
-          </button>
+          </Button>
         ) : null}
       </section>
     </OutlineSessionScope>

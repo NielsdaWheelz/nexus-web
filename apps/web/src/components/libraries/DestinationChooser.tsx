@@ -42,7 +42,8 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
 });
 
 /** Local draft selection over one complete writable catalog. Reads belong to serverState. */
-export default function DestinationChooser({ selection, onSet, disabled, create, error, status }: {
+export default function DestinationChooser({ context, selection, onSet, disabled, create, error, status }: {
+  readonly context: string;
   readonly selection: DestinationSelection;
   readonly onSet: (change: DestinationChange) => boolean;
   readonly disabled: boolean;
@@ -58,7 +59,7 @@ export default function DestinationChooser({ selection, onSet, disabled, create,
   const entries = selection.kind === "Item"
     ? selection.chosen.map(destination => ({ destination, included: 1 })) : selection.entries;
   const byId = new Map(entries.map(entry => [entry.destination.id, entry]));
-  const available = new Map(catalog.status === "ready" ? catalog.data.map(destination => [destination.id, destination]) : []);
+  const available = new Map(catalog.status === "ready" ? catalog.data.destinations.map(destination => [destination.id, destination]) : []);
   const all = new Map(available);
   for (const entry of entries) if (!all.has(entry.destination.id)) all.set(entry.destination.id, entry.destination);
   const rows: ChooserRow[] = [...all.values()].map(destination => {
@@ -70,19 +71,19 @@ export default function DestinationChooser({ selection, onSet, disabled, create,
       id: destination.id, name: destination.name, confirmed: count, intended: count, progress: "Settled",
       note: missing && catalog.status === "ready" ? "unavailable" : undefined,
       action: disabled || total === 0 ? { kind: "Blocked", reason: "these items cannot be changed now" }
-        : { kind: "Set", included: desired, label: total === 1 ? desired ? "add" : "remove" : desired ? "add to all" : "remove from all" },
+        : { kind: "Set", included: desired, label: total === 1 ? desired ? "choose destination" : "remove destination" : desired ? "choose for all" : "remove from all" },
     };
   });
   const readError = catalog.status === "failed" ? catalog.error : catalog.status === "ready" ? catalog.error : null;
   const feedback = readError ? libraryErrorFeedback(readError, "libraries couldn’t be loaded", fail, signIn) : null;
   const names = entries.filter(entry => entry.included > 0).map(entry => entry.destination).toSorted(compareLibraryNames).map(destination => destination.name);
-  return <LibraryChooser rows={rows}
+  return <LibraryChooser context={context} membershipKind="Chosen" rows={rows}
     onToggle={({ id, included }) => {
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });
     }}
     loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying || catalog.status === "ready" && catalog.refreshing}
-    summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : `selected libraries: ${names.join(", ") || "none"}`}
+    summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : null}
     status={status}
     error={error ?? (feedback ? { content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch, commandKey: "library-destinations", busy: catalog.status === "failed" ? catalog.retrying : catalog.status === "ready" && catalog.refreshing } : null)}
     create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null }}

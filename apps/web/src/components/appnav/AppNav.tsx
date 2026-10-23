@@ -5,6 +5,8 @@ import { ChevronLeft, ChevronRight, CircleUser, Plus, Search } from "lucide-reac
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
+import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import Tooltip from "@/components/ui/Tooltip";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
@@ -23,7 +25,6 @@ import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActi
 import AccountMenu from "./AccountMenu";
 import {
   isAccountDestinationId,
-  NAV_ACCENT,
   NAV_IMPORTS,
   NAV_RAIL,
   type NavItem,
@@ -108,18 +109,13 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           <AsterismMark size={20} className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
         </Link>
-        <button
-          type="button"
+        <Button
+          iconOnly
+          icon={collapsed ? <ChevronRight /> : <ChevronLeft />}
           className={styles.collapseButton}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
           onClick={onToggle}
-        >
-          {collapsed ? (
-            <ChevronRight size={16} aria-hidden="true" />
-          ) : (
-            <ChevronLeft size={16} aria-hidden="true" />
-          )}
-        </button>
+        />
       </div>
 
       <Tooltip
@@ -131,7 +127,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           <button
             {...tooltip}
             type="button"
-            className={styles.command}
+            className={cx(buttonClassName({}), styles.command)}
             aria-haspopup="dialog"
             aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
             aria-label="Search"
@@ -167,8 +163,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                     <Link
                       {...tooltip}
                       href={item.href}
-                      className={cx(styles.item, active && styles.active)}
-                      data-accent={item.id === NAV_ACCENT || undefined}
+                      className={cx(buttonClassName({}), styles.item)}
                       aria-label={item.label}
                       aria-current={active ? "page" : undefined}
                       onClick={(event) => navigate(event, item)}
@@ -186,34 +181,50 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
 
       <div className={styles.footer}>
-        <Link
-          href={NAV_IMPORTS.href}
-          className={cx(styles.item, styles.imports, section === "imports" && styles.active)}
-          aria-current={section === "imports" ? "page" : undefined}
-          onClick={(event) => navigate(event, NAV_IMPORTS)}
-          onKeyDown={(event) => navigate(event, NAV_IMPORTS)}
-        >
-          <ImportsIcon className={styles.icon} size={20} aria-hidden="true" />
-          {/* Collapsed, the count stays: a chip above the icon, inside this link. */}
-          <span className={collapsed ? styles.importsChip : cx(styles.label, styles.importsLabel)}>
-            <ImportsBadge label={NAV_IMPORTS.label} labelVisible={!collapsed} />
-          </span>
-        </Link>
-        <button
-          type="button"
-          className={cx(styles.item, styles.add)}
-          aria-haspopup="dialog"
-          aria-label="Add content"
-          onClick={() =>
-            requestNexusOpen({
-              kind: "Add",
-              seed: { kind: "Content", initialDestinations: [] },
-            })
-          }
-        >
-          <Plus className={styles.icon} size={20} aria-hidden="true" />
-          <span className={styles.label}>Add</span>
-        </button>
+        <Tooltip
+          text={NAV_IMPORTS.label}
+          placement="right"
+          openDelayMs={0}
+          disabled={!collapsed}
+          renderTrigger={help => (
+            <Link
+              {...help}
+              href={NAV_IMPORTS.href}
+              className={cx(buttonClassName({}), styles.item, styles.imports)}
+              aria-current={section === "imports" ? "page" : undefined}
+              onClick={(event) => navigate(event, NAV_IMPORTS)}
+              onKeyDown={(event) => navigate(event, NAV_IMPORTS)}
+            >
+              <ImportsIcon className={styles.icon} size={20} aria-hidden="true" />
+              {/* Collapsed, the count stays above the icon, inside this link. */}
+              <span className={collapsed ? styles.importsChip : cx(styles.label, styles.importsLabel)}>
+                <ImportsBadge label={NAV_IMPORTS.label} labelVisible={!collapsed} />
+              </span>
+            </Link>
+          )}
+        />
+        <Tooltip
+          text="Add content"
+          placement="right"
+          openDelayMs={0}
+          disabled={!collapsed}
+          renderTrigger={help => (
+            <button
+              {...help}
+              type="button"
+              className={cx(buttonClassName({}), styles.item)}
+              aria-haspopup="dialog"
+              aria-label="Add content"
+              onClick={() => requestNexusOpen({
+                kind: "Add",
+                seed: { kind: "Content", initialDestinations: [] },
+              })}
+            >
+              <Plus className={styles.icon} size={20} aria-hidden="true" />
+              <span className={styles.label}>Add</span>
+            </button>
+          )}
+        />
         <AccountMenu
           activeId={accountActive ? section : null}
           importsActive={section === "imports"}
@@ -221,15 +232,21 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           align="start"
           onNavigate={(event, item) => navigate(event, item, true)}
           renderTrigger={(trigger) => (
-            <button
-              {...trigger}
-              type="button"
-              className={cx(styles.item, accountActive && styles.active)}
-              aria-current={accountActive ? "page" : undefined}
-            >
-              <CircleUser className={styles.icon} size={20} aria-hidden="true" />
-              <span className={styles.label}>Account</span>
-            </button>
+            <Tooltip text="account" placement="right" openDelayMs={0}
+              disabled={!collapsed || trigger["aria-expanded"]} triggerRef={trigger.ref}
+              renderTrigger={help => (
+                <button
+                  {...trigger}
+                  {...help}
+                  type="button"
+                  className={cx(buttonClassName({}), styles.item)}
+                  aria-describedby={cx(help["aria-describedby"], trigger["aria-describedby"]) || undefined}
+                  aria-current={accountActive ? "page" : undefined}
+                >
+                  <CircleUser className={styles.icon} size={20} aria-hidden="true" />
+                  <span className={styles.label}>Account</span>
+                </button>
+              )} />
           )}
         />
       </div>

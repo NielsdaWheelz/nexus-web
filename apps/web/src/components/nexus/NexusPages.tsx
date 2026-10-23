@@ -21,9 +21,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
   return (
     <header className={styles.header}>
       {onBack ? (
-        <button type="button" className={styles.iconButton} aria-label="back" onClick={onBack}>
-          <ArrowLeft size={20} aria-hidden="true" />
-        </button>
+        <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back" onClick={onBack} />
       ) : null}
       <div className={styles.heading}>
         <h2 tabIndex={-1} data-switchboard-heading>
@@ -96,15 +94,11 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
                   }) }] } }}
                 />
                 <Button
-                  variant="ghost"
-                  size="sm"
                   iconOnly
                   tabIndex={mobile ? undefined : -1}
                   aria-label={`${mobile ? "close" : "Close"} ${pane.presentation.title}`}
                   onClick={() => close(pane.id)}
-                >
-                  <X size={18} aria-hidden="true" />
-                </Button>
+                  icon={<X size={18} aria-hidden="true" />} />
               </div>
             </li>
           ))}

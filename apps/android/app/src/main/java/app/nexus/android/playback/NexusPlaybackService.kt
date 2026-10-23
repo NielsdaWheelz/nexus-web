@@ -57,7 +57,7 @@ private const val PAUSES_SAVED_MS = "pause-shortening.saved-on-device-ms"
 /**
  * The device's one audio engine on android: ExoPlayer behind a media session
  * (notification, lock screen, media buttons), driven by the web over
- * `window.nexusPlayback` (PlayerBridge → ACTION_REQUEST), recording through
+ * `window.nexusAudioSession` (PlayerBridge → ACTION_REQUEST), recording through
  * [ListeningRecorder] and pushing a snapshot (ACTION_EVENT) on every change and
  * each second while playing. A downloaded episode plays from its offline file
  * under an [OfflineStore] lease held while it is loaded. Every play, from the
@@ -69,7 +69,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         const val ACTION_REQUEST = "app.nexus.Player.Request"
         const val ACTION_EVENT = "app.nexus.Player.Event"
         const val ARG_JSON = "json"
-        private var nextLoadId = 0L
         private var nextSnapshotId = 0L
     }
 
@@ -83,6 +82,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
     private var account: UUID? = null
     private var source: JSONObject? = null // {kind: "Episode" | "Preview", descriptor} as the web sent it
+    private var loadId: String? = null // a fresh occurrence, including same-media reloads and service restarts
+    private var installingSource = false // suppress reentrant listener snapshots, including same-media installs
     private var leased: UUID? = null
     private var sessionShortenPauses: Boolean? = null
     private var error: String? = null
@@ -91,7 +92,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var installingPosition = false
     private var ticker: Job? = null
     private var playbackIntent = 0L
-    private var loadId = 0L
     private var savedMs = 0L
     private var savedFrom: Pair<Long, Long>? = null // (elapsed, position) where the current shortened stretch began
 
@@ -120,6 +120,16 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 val loaded = loadId
                 val mine = invalidatePlayback()
                 scope.launch { resume(null, key, loaded, mine) }
+            }
+
+            override fun prepare() {
+                val loaded = loadId
+                val mine = invalidatePlayback()
+                scope.launch {
+                    loads.withLock {
+                        if (mine == playbackIntent && loadId == loaded) preparePlayback()
+                    }
+                }
             }
 
             override fun pause() {
@@ -211,8 +221,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 Player.COMMAND_SEEK_TO_DEFAULT_POSITION, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
                 Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD,
                 Player.COMMAND_GET_CURRENT_MEDIA_ITEM, Player.COMMAND_GET_TIMELINE, Player.COMMAND_GET_METADATA,
-                Player.COMMAND_GET_AUDIO_ATTRIBUTES, Player.COMMAND_GET_VOLUME, Player.COMMAND_GET_DEVICE_VOLUME,
-                Player.COMMAND_SET_VOLUME, Player.COMMAND_GET_TRACKS,
+                Player.COMMAND_GET_AUDIO_ATTRIBUTES, Player.COMMAND_GET_DEVICE_VOLUME, Player.COMMAND_GET_TRACKS,
             )
             return ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(commands.build())
@@ -256,12 +265,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             val accountId = UUID.fromString(request.getString("accountId"))
             val switched = account != null && account != accountId
             if (switched) invalidatePlayback()
-            recorder.bind(accountId) // first: nothing of the previous account is written with these cookies
-            account = accountId
-            if (switched) consumptionRevision = 0
-            if (switched) loads.withLock { drop() }
-            publish()
-            return ok()
+            return loads.withLock {
+                recorder.bind(accountId) // first: nothing of the previous account is written with these cookies
+                account = accountId
+                if (switched) consumptionRevision = 0
+                if (switched) drop()
+                publish()
+                ok()
+            }
         }
         if (account == null) return failure("NotConnected")
         val mine = when (op) {
@@ -279,11 +290,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 recorder.stop()
                 drop()
             }
-            "volume" -> player.volume = request.getDouble("value").toFloat()
-            "play" -> resume(request.optJSONObject("descriptor"), request.getString("key"), request.getLong("load_id"), mine)?.let { return failure(it) }
+            "play" -> resume(request.optJSONObject("descriptor"), request.getString("key"), request.getString("expected_load_id"), mine)?.let { return failure(it) }
             else -> loads.withLock {
-                // Identity and ended/fence checks belong to the same lock as source replacement.
-                if (request.getString("key") != key() || request.getLong("load_id") != loadId) return failure("Stale")
+                // Validate the occurrence after any dispatched source replacement drains.
+                if (request.getString("key") != key() || request.getString("expected_load_id") != loadId) return failure("Stale")
                 if (op in setOf("pause", "seekAndPlay", "seek", "skip", "fence") && mine != playbackIntent) return failure("Stale")
                 when (op) {
                     "pause" -> player.pause()
@@ -296,8 +306,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         player.seekTo(minOf(position.toLong(), duration ?: Long.MAX_VALUE))
                         playHere()
                     }
-                    "seek" -> if (!recorder.fenced()) player.seekTo(request.getLong("positionMs"))
-                    "skip" -> if (!recorder.fenced()) player.seekTo(maxOf(0, player.currentPosition + request.getLong("deltaMs")))
+                    "seek", "skip" -> if (!recorder.fenced()) {
+                        val position = if (op == "seek") request.getLong("positionMs")
+                            else player.currentPosition + request.getLong("deltaMs")
+                        player.seekTo(maxOf(0, position))
+                    }
                     "rate" -> {
                         val rate = request.getDouble("value")
                         player.setPlaybackSpeed(rate.toFloat())
@@ -328,11 +341,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     /** OS seeks join native playback ordering without redirecting a stale source's command. */
     private fun seekFromController(positionMs: Long) {
-        val loaded = source
+        val loaded = loadId
         val mine = invalidatePlayback()
         scope.launch {
             loads.withLock {
-                if (mine != playbackIntent || source !== loaded || recorder.fenced()) return@withLock
+                if (mine != playbackIntent || loadId != loaded || recorder.fenced()) return@withLock
                 player.seekTo(maxOf(0, positionMs))
             }
         }
@@ -351,35 +364,40 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     /** Called only while holding loads. */
     private suspend fun install(descriptor: JSONObject, episode: Boolean) {
         val mediaId = if (episode) UUID.fromString(descriptor.getString("media_id")) else null
-        player.stop() // also keeps a pending natural-end advance from taking over (it needs STATE_ENDED)
-        recorder.stop()
-        release()
-        val nextSource = JSONObject().put("kind", if (episode) "Episode" else "Preview").put("descriptor", descriptor)
-        sessionShortenPauses = null
-        error = null
-        val file = mediaId?.let { id -> offline.audioFile(id)?.takeIf { offline.open(id) } }
-        if (file != null) leased = mediaId
-        val metadata = MediaMetadata.Builder()
-            .setTitle(descriptor.getString("title"))
-            .setArtist(if (episode) descriptor.nullableString("subtitle") else descriptor.getString("source"))
-            .setArtworkUri(descriptor.nullableString(if (episode) "artwork_url" else "imageUrl")?.toUri())
-            .build()
-        val uri = file?.toUri() ?: descriptor.getString(if (episode) "stream_url" else "audioUrl").toUri()
-        player.setMediaItem(
-            MediaItem.Builder().setUri(uri).setMediaId(mediaId?.toString() ?: descriptor.getString("target")).setMediaMetadata(metadata).build(),
-            if (episode) descriptor.getLong("position_ms") else 0,
-        )
-        player.setPlaybackSpeed(if (episode) descriptor.getDouble("playback_rate").toFloat() else 1f)
-        player.skipSilenceEnabled = episode && descriptor.nullableString("pause_shortening_mode") == "Natural"
-        // Listener snapshots can only expose the new source once its settings are installed.
-        loadId = ++nextLoadId
-        source = nextSource
-        if (mediaId != null) {
-            val overrideRevision = descriptor.nullableLong("consumption_override_revision")
-            recorder.start(mediaId, descriptor.getLong("reset_epoch"), overrideRevision)
+        installingSource = true
+        try {
+            player.stop() // also keeps a pending natural-end advance from taking over (it needs STATE_ENDED)
+            recorder.stop()
+            release()
+            val nextSource = JSONObject().put("kind", if (episode) "Episode" else "Preview").put("descriptor", descriptor)
+            sessionShortenPauses = null
+            error = null
+            val file = mediaId?.let { id -> offline.audioFile(id)?.takeIf { offline.open(id) } }
+            if (file != null) leased = mediaId
+            val metadata = MediaMetadata.Builder()
+                .setTitle(descriptor.getString("title"))
+                .setArtist(if (episode) descriptor.nullableString("subtitle") else descriptor.getString("source"))
+                .setArtworkUri(descriptor.nullableString(if (episode) "artwork_url" else "imageUrl")?.toUri())
+                .build()
+            val uri = file?.toUri() ?: descriptor.getString(if (episode) "stream_url" else "audioUrl").toUri()
+            player.setMediaItem(
+                MediaItem.Builder().setUri(uri).setMediaId(mediaId?.toString() ?: descriptor.getString("target")).setMediaMetadata(metadata).build(),
+                if (episode) descriptor.getLong("position_ms") else 0,
+            )
+            player.setPlaybackSpeed(if (episode) descriptor.getDouble("playback_rate").toFloat() else 1f)
+            player.skipSilenceEnabled = episode && descriptor.nullableString("pause_shortening_mode") == "Natural"
+            // Listener snapshots can only expose the new source once its settings are installed.
+            source = nextSource
+            loadId = UUID.randomUUID().toString()
+            if (mediaId != null) {
+                val overrideRevision = descriptor.nullableLong("consumption_override_revision")
+                recorder.start(mediaId, descriptor.getLong("reset_epoch"), overrideRevision)
+            }
+            player.prepare()
+            player.play()
+        } finally {
+            installingSource = false
         }
-        player.prepare()
-        player.play()
         publish()
     }
 
@@ -390,7 +408,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
      * the session (another position or epoch, or the end; P1 replays a finished episode from 0)
      * is loaded, else the session resumes here under the answer's override revision.
      */
-    private suspend fun resume(given: JSONObject?, expectedKey: String?, expectedLoadId: Long, mine: Long): String? = loads.withLock {
+    private suspend fun resume(given: JSONObject?, expectedKey: String?, expectedLoadId: String?, mine: Long): String? = loads.withLock {
         if (mine != playbackIntent || expectedKey == null || expectedKey != key() || expectedLoadId != loadId) return "Stale"
         if (recorder.fenced()) return if (reconcile()) "Reconciled" else "Fenced"
         val mediaId = if (isEpisode()) UUID.fromString(key()) else null
@@ -398,21 +416,21 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             playHere()
             return null
         }
-        val loaded = source
+        val loaded = loadId
         val fresh = try {
             withTimeoutOrNull(2_000) { origin.player(mediaId) }
         } catch (_: IOException) {
             // justify-ignore-error: an unanswered ordinary resume retains its approved offline policy.
             null
         } catch (refusal: NexusOriginError) {
-            if (mine != playbackIntent || source !== loaded) return "Stale"
+            if (mine != playbackIntent || loadId != loaded) return "Stale"
             error = if (refusal.status == 401) "sign in to resume playback."
                 else "the server refused this episode’s playback state. reload and try again."
             publish()
             return if (refusal.status == 401) "Unauthenticated" else "AuthorityRefused"
         }
         val epoch = recorder.resetEpoch()
-        if (mine != playbackIntent || source !== loaded || epoch == null) return "Stale"
+        if (mine != playbackIntent || loadId != loaded || epoch == null) return "Stale"
         val best = fresh ?: given?.takeIf { it.getLong("reset_epoch") > epoch }
         if (best != null && (player.playbackState == Player.STATE_ENDED ||
             best.getLong("reset_epoch") != epoch || best.getLong("position_ms") != player.currentPosition)) install(best, episode = true)
@@ -471,16 +489,23 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun playHere() {
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-        player.prepare() // after a playback error this retries the source
+        preparePlayback()
         player.play()
     }
 
+    /** Preparing after stop/error reloads the media, including through a media-session controller. */
+    private fun preparePlayback() {
+        if (player.playbackState == Player.STATE_IDLE && source != null) loadId = UUID.randomUUID().toString()
+        player.prepare()
+        publish()
+    }
+
     /** The recorder settled a natural end; the next lectern episode plays if the ended one is still here. */
-    private fun advance(loaded: JSONObject?, mine: Long, next: JSONObject?) {
+    private fun advance(loaded: String?, mine: Long, next: JSONObject?) {
         if (next == null) return
         scope.launch {
             loads.withLock {
-                if (mine != playbackIntent || source !== loaded || player.playbackState != Player.STATE_ENDED) return@withLock
+                if (mine != playbackIntent || loadId != loaded || player.playbackState != Player.STATE_ENDED) return@withLock
                 install(next, episode = true)
             }
         }
@@ -490,8 +515,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         release()
         player.stop()
         player.clearMediaItems()
-        loadId = ++nextLoadId
         source = null
+        loadId = null
         sessionShortenPauses = null
         error = null
         applyShortenPauses()
@@ -558,7 +583,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             player.pause() // ended means paused, as in the browser: a later seek does not resume by itself
             if (isEpisode()) {
                 val mine = playbackIntent
-                val loaded = source
+                val loaded = loadId
                 recorder.ended { next -> advance(loaded, mine, next) }
             }
         }
@@ -588,14 +613,12 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         publish()
     }
 
-    override fun onVolumeChanged(volume: Float) = publish()
-
     // ---- snapshot ----
 
     private fun snapshot(): JSONObject = JSONObject()
         .put("snapshot_id", ++nextSnapshotId)
-        .put("load_id", loadId)
         .put("source", source ?: JSONObject.NULL)
+        .put("load_id", loadId ?: JSONObject.NULL)
         .put(
             "phase",
             when {
@@ -611,7 +634,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         .put("bufferedMs", maxOf(0, player.bufferedPosition))
         // Keep the float's shortest decimal; widening it directly invents persistence precision.
         .put("rate", player.playbackParameters.speed.toString().toDouble())
-        .put("volume", player.volume.toDouble())
         .put("shortenPauses", player.skipSilenceEnabled)
         .put("shortenPausesSavedMs", savedMs)
         .put("error", error ?: JSONObject.NULL)
@@ -620,7 +642,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun publish() {
         // Source replacement publishes only after the descriptor owns the installed media item.
-        if (key() != player.currentMediaItem?.mediaId) return
+        if (installingSource || key() != player.currentMediaItem?.mediaId) return
         val event = SessionCommand(ACTION_EVENT, Bundle.EMPTY)
         val args = Bundle().apply { putString(ARG_JSON, snapshot().toString()) }
         for (controller in session.connectedControllers) {

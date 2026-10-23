@@ -35,7 +35,11 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     primary_creator_rows_sql,
 )
-from nexus.services.library_entries import library_media_ids_cte_sql
+from nexus.services.library_entries import (
+    library_media_rows_sql,
+    library_podcast_rows_sql,
+    unfiled_media_ids_sql,
+)
 from nexus.services.reading_time import reading_time_rows_sql
 
 
@@ -92,51 +96,37 @@ def parse_entries_query(items: Sequence[tuple[str, str]]) -> tuple[EntryView, Co
     return view, query
 
 
-def _all_membership_sql(*, unfiled: bool) -> str:
-    """The viewer's All, a live union rather than stored rows. A media appears once:
-    its row is the direct All entry if any, else the earliest shared one, and that
-    entry's creation is when it was added. A followed show folds in its episodes and
-    is one row added when followed. Unfiled keeps media filed nowhere but All."""
-    unfiled_only = (
-        """WHERE media_id IN (
-            SELECT media_id FROM candidate GROUP BY media_id HAVING bool_and(is_direct)
-        )"""
-        if unfiled
-        else ""
+def _all_membership_sql(view: EntryView) -> str:
+    """Choose final all rows before ordering, counting and pagination.
+
+    only overview folds followed episodes into their roots. media lenses expose
+    every qualifying physical member, including followed episodes.
+    """
+    media_lens = (
+        view.projection is not None
+        or view.completion is not None
+        or view.entry_type not in (None, "podcast")
     )
-    shows = (
-        ""
-        if unfiled
-        else """UNION ALL
-            SELECT NULL::uuid, NULL::uuid, s.podcast_id, NULL::integer, s.created_at
-            FROM podcast_subscriptions s WHERE s.user_id = :viewer_id"""
-    )
+    media_predicates = ["true"]
+    if view.entry_type == "podcast":
+        media_predicates.append("false")
+    if view.projection == "unfiled":
+        media_predicates.append(f"members.media_id IN ({unfiled_media_ids_sql()})")
+    if not media_lens:
+        media_predicates.append("""NOT EXISTS (
+            SELECT 1 FROM podcast_episodes e
+            JOIN all_shows s ON s.podcast_id = e.podcast_id
+            WHERE e.media_id = members.media_id)""")
     return f"""
-        all_media AS ({library_media_ids_cte_sql()}),
-        candidate AS (
-            SELECT le.id AS entry_id, le.media_id, le.created_at,
-                   (le.library_id = :library_id) AS is_direct
-            FROM library_entries le
-            JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
-            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            WHERE le.media_id IN (SELECT media_id FROM all_media)
-              AND NOT EXISTS (
-                  SELECT 1 FROM podcast_episodes e
-                  JOIN podcast_subscriptions s
-                    ON s.podcast_id = e.podcast_id AND s.user_id = :viewer_id
-                  WHERE e.media_id = le.media_id
-              )
-        ),
-        ranked AS (
-            SELECT DISTINCT ON (media_id) media_id, created_at
-            FROM candidate {unfiled_only}
-            ORDER BY media_id, is_direct DESC, created_at ASC, entry_id ASC
-        ),
+        all_shows AS ({library_podcast_rows_sql()}),
         membership AS MATERIALIZED (
-            SELECT NULL::uuid AS entry_id, media_id, NULL::uuid AS podcast_id,
-                   NULL::integer AS position, created_at AS added_at
-            FROM ranked
-            {shows}
+            SELECT NULL::uuid AS entry_id, members.media_id, NULL::uuid AS podcast_id,
+                   NULL::integer AS position, members.added_at
+            FROM ({library_media_rows_sql()}) members
+            WHERE {" AND ".join(media_predicates)}
+            UNION ALL
+            SELECT NULL::uuid, NULL::uuid, s.podcast_id, NULL::integer, s.added_at
+            FROM all_shows s WHERE {"false" if media_lens else "true"}
         )
     """
 
@@ -210,11 +200,7 @@ def _page_sql(view: EntryView, *, is_default: bool, keyset: str, order: str) -> 
         predicates.append("facts.target_kind = 'podcast'")
     elif view.entry_type is not None:
         predicates.append("facts.media_kind = :entry_type")
-    membership = (
-        _all_membership_sql(unfiled=view.projection == "unfiled")
-        if is_default
-        else _NAMED_MEMBERSHIP_SQL
-    )
+    membership = _all_membership_sql(view) if is_default else _NAMED_MEMBERSHIP_SQL
     return f"""
         WITH {membership},
         facts AS (
@@ -373,6 +359,8 @@ def count_default_root_inventory(db: Session, *, viewer_id: UUID, library_id: UU
     if not libraries.access(db, viewer_id, library_id, lock=False).is_default:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Only All has a root inventory")
     return db.execute(
-        text(f"WITH {_all_membership_sql(unfiled=False)} SELECT count(*) FROM membership"),
+        text(
+            f"WITH {_all_membership_sql(EntryView(None, None, None, None))} SELECT count(*) FROM membership"
+        ),
         {"viewer_id": viewer_id, "library_id": library_id},
     ).scalar_one()

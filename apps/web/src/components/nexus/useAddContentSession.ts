@@ -6,7 +6,7 @@
  * browser-local. What was sent is frozen: an unknown outcome keeps its intent
  * for exact replay; a new attempt gets a key at submission. At most one
  * mutation runs; stop and reset fence every older completion. Accepted items
- * are filed afterwards through the shared "Libraries…" overlay.
+ * can be organized afterwards through the shared "Libraries…" overlay.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -19,16 +19,20 @@ import { isAbortError } from "@/lib/errors";
 import {
   UNCONFIRMED,
   acceptanceFailure,
+  captureErrorFeedback,
   type AcceptanceFailure,
 } from "@/lib/imports/copy";
 import {
   addMediaFromUrl,
+  createUploadAttempt,
+  reviewUploadAttempt,
+  type UploadAttempt,
   uploadIngestFile,
   type AcceptedIngest,
   type UploadFileKind,
   type UploadPhase,
 } from "@/lib/imports/ingest";
-import type { LibraryDestination } from "@/lib/libraries/api";
+import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { AddSeed } from "@/lib/nexus/model";
@@ -42,12 +46,6 @@ import {
 
 export const MAX_ADD_ITEMS = 20;
 const EMPTY_SEED: AddSeed = { kind: "Content", initialDestinations: [] };
-const STOPPED: FeedbackContent = {
-  tone: "Warning",
-  title: "Stopped before completion",
-  message: "Server changes that already committed may remain.",
-};
-
 type FileSummary = {
   kind: "File";
   name: string;
@@ -59,6 +57,8 @@ type AcceptanceIntent = Readonly<{
   destinations: readonly LibraryDestination[];
   /** Minted once per frozen intent: every resend carries it (a url's attempt id). */
   id: string;
+  guard: AcquisitionGuard;
+  upload: UploadAttempt | null;
 }>;
 type FileIntent = AcceptanceIntent & {
   source: Extract<AddSource, { kind: "File" }>;
@@ -75,6 +75,7 @@ export type AddItem =
       readonly source: DraftSource;
       readonly destinations: readonly LibraryDestination[];
       readonly showFeedback: boolean;
+      readonly upload: UploadAttempt | null;
     }
   | { kind: "Queued"; id: string; intent: AcceptanceIntent }
   | {
@@ -162,7 +163,8 @@ export interface AddContentSessionController {
   }): Exclude<UrlPasteResult, { kind: "Native" }>;
   stageFiles(input: { files: readonly File[] }): boolean;
   removeItem(itemId: string): void;
-  restageItem(itemId: string): void;
+  restageItem(itemId: string): Promise<void>;
+  reselectExpiredFile(itemId: string, file: File): void;
   setLibrary(input: { scope: DraftDestinationScope; destination: LibraryDestination; included: boolean }): boolean;
   readonly creation: ReturnType<typeof useDestinationCreation>;
   submit(): Promise<void>;
@@ -189,6 +191,7 @@ function initialState(seed: AddSeed): AddSessionState {
           source: { kind: "Url", text },
           destinations: [...seed.initialDestinations],
           showFeedback: true,
+          upload: null,
         }),
       ),
       { kind: "Insertion", id: createRandomId("add-item") },
@@ -227,6 +230,7 @@ function draftFromIntent(row: {
         : { kind: "File", file: source.file },
     destinations: [...destinations],
     showFeedback: true,
+    upload: row.intent.upload,
   };
 }
 
@@ -325,32 +329,10 @@ export function useAddContentSession(): AddContentSessionController {
       items: snapshot.items.map((row): AddItem => {
         if (row.kind === "Queued") return draftFromIntent(row);
         if (row.kind !== "Submitting") return row;
-        return row.intent.source.kind === "File"
-          ? {
-              kind: "Rejected",
-              id: row.id,
-              intent: row.intent,
-              importRef: row.importRef,
-              feedback: {
-                tone: "Warning",
-                title: "Upload stopped",
-                message: row.importRef === null
-                  ? "check imports for any accepted upload, or edit this item to start a new import."
-                  : "view this import for the available recovery, or edit this item to start a new import.",
-              },
-            }
-          : {
-              kind: "AcceptanceUnresolved",
-              id: row.id,
-              intent: row.intent,
-              importRef: row.importRef,
-              reason: "StatusUnknown",
-              feedback: {
-                tone: "Warning",
-                title: "Stopped · acceptance status unknown",
-                message: STOPPED.message,
-              },
-            };
+        return {
+          kind: "AcceptanceUnresolved", id: row.id, intent: row.intent, importRef: row.importRef,
+          reason: "StatusUnknown", feedback: { tone: "Warning", title: "change not confirmed", message: "check save to retry the original request." },
+        };
       }),
     }));
   }
@@ -427,6 +409,7 @@ export function useAddContentSession(): AddContentSessionController {
           : [...snapshot.newItemDestinations],
       showFeedback:
         origin === "Paste" || (row.kind === "Draft" && row.showFeedback),
+      upload: null,
     };
     update((state) => ({
       ...state,
@@ -475,6 +458,7 @@ export function useAddContentSession(): AddContentSessionController {
         source: { kind: "Url", text },
         destinations: [...destinations],
         showFeedback: true,
+        upload: null,
       }),
     );
     update((snapshot) => ({
@@ -559,6 +543,7 @@ export function useAddContentSession(): AddContentSessionController {
             source: { kind: "File", file },
             destinations: [...snapshot.newItemDestinations],
             showFeedback: true,
+            upload: null,
           }),
         ),
         ...snapshot.items.slice(-1),
@@ -580,18 +565,38 @@ export function useAddContentSession(): AddContentSessionController {
       items: snapshot.items.filter((row) => row.id !== itemId),
     }));
   }
-  function restageItem(itemId: string) {
+  async function restageItem(itemId: string) {
     if (current.current.mutation.kind !== "Idle") return;
     const row = current.current.items.find((next) => next.id === itemId);
-    if (row?.kind !== "Rejected" && row?.kind !== "AcceptanceUnresolved")
-      return;
-    if (row.kind === "AcceptanceUnresolved" && !guard.confirmLoss({ scopes: [], ownerIds: [itemWorkId(itemId)] })) return;
-    const draft = draftFromIntent(row);
-    update((snapshot) => ({
-      ...snapshot,
-      intakeFeedback: undefined,
-      items: snapshot.items.map((next) => (next.id === row.id ? draft : next)),
-    }));
+    if (row?.kind !== "Rejected" || row.intent.upload?.expired) return;
+    const upload = row.intent.upload?.review_required ? row.intent.upload : null;
+    const draft = { ...draftFromIntent(row), upload };
+    running({ kind: "ReconcileAcceptance", itemId });
+    const signal = abort.current.signal;
+    try {
+      const snapshot = await libraryDestinations(signal);
+      if (!active(signal)) return;
+      if (upload !== null) reviewUploadAttempt(upload);
+      const currentDestinations = new Map(snapshot.destinations.map(destination => [destination.id, destination]));
+      update(next => ({ ...next, items: next.items.map(item => item.id === row.id
+        ? { ...draft, destinations: draft.destinations.map(destination => currentDestinations.get(destination.id) ?? destination) } : item) }));
+    } catch (error) {
+      if (!active(signal) || handleUnauthenticatedApiError(error)) return;
+      const feedback = captureErrorFeedback(error, "SaveSource");
+      update(next => ({ ...next, intakeFeedback: feedback }));
+    } finally {
+      if (active(signal)) update(next => ({ ...next, mutation: { kind: "Idle" } }));
+    }
+  }
+  function reselectExpiredFile(itemId: string, file: File) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const row = current.current.items.find(item => item.id === itemId);
+    if (row?.kind !== "Rejected" || !row.intent.upload?.expired) return;
+    const draft: Extract<AddItem, { kind: "Draft" }> = {
+      kind: "Draft", id: row.id, source: { kind: "File", file },
+      destinations: row.intent.destinations, showFeedback: true, upload: null,
+    };
+    item(draft);
   }
   function setLibrary({ scope, destination, included }: {
     scope: DraftDestinationScope;
@@ -619,7 +624,7 @@ export function useAddContentSession(): AddContentSessionController {
     if (!active(signal)) return;
     const { id, intent } = row;
     let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
-    const libraryIds = intent.destinations.map((destination) => destination.id);
+
     try {
       let result: AcceptedIngest;
       const source = intent.source;
@@ -629,7 +634,7 @@ export function useAddContentSession(): AddContentSessionController {
         item({ kind: "Submitting", id, intent: { ...intent, source }, phase, importRef });
         result = await addMediaFromUrl({
           url: source.url,
-          libraryIds,
+          guard: intent.guard,
           id: intent.id,
           signal,
         });
@@ -642,8 +647,8 @@ export function useAddContentSession(): AddContentSessionController {
         onPhaseChange("Preparing");
         result = await uploadIngestFile({
           file: source.file,
-          libraryIds,
-          id: intent.id,
+          guard: intent.guard,
+          attempt: intent.upload!,
           signal,
           onPhaseChange,
           onImportRef: (ref) => {
@@ -699,31 +704,45 @@ export function useAddContentSession(): AddContentSessionController {
           items: snapshot.items.filter((next) => next.id !== id),
         }));
       } else {
-        item({ id, intent, importRef, ...failure });
+        item({ id, intent, importRef, ...failure, ...(failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
+          ? { feedback: { ...failure.feedback, title: "save needs review. review your choices and save again.", message: "your upload is still available." } } : {}) });
       }
     }
   }
   async function submit() {
     const snapshot = current.current;
     if (snapshot.mutation.kind !== "Idle" || creation.creating) return;
+    const signal = abort.current.signal;
+    running({ kind: "Submit", itemIds: [] });
+    let removalRevision: string;
+    try { removalRevision = (await libraryDestinations(signal)).removal_revision; }
+    catch (error) {
+      if (!active(signal)) return;
+      if (handleUnauthenticatedApiError(error)) { update(next => ({ ...next, mutation: { kind: "Idle" } })); return; }
+      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: captureErrorFeedback(error, "SaveSource") }));
+      return;
+    }
+    if (!active(signal)) return;
     const rows: Extract<AddItem, { kind: "Queued" }>[] = [];
     const items = snapshot.items.map((row): AddItem => {
       if (row.kind !== "Draft") return row;
       const validation = validateDraftSource(row.source);
       if (validation.kind !== "Ready") return { ...row, showFeedback: true };
+      const upload = validation.source.kind === "File" ? row.upload ?? createUploadAttempt() : null;
       const queued: Extract<AddItem, { kind: "Queued" }> = {
         kind: "Queued",
         id: row.id,
         intent: {
           source: validation.source,
           destinations: [...row.destinations],
-          id: crypto.randomUUID(),
+          id: upload?.id ?? crypto.randomUUID(),
+          guard: acquisitionGuard(row.destinations, removalRevision),
+          upload,
         },
       };
       rows.push(queued);
       return queued;
     });
-    const signal = abort.current.signal;
     update((next) => ({
       ...next,
       mutation:
@@ -758,6 +777,7 @@ export function useAddContentSession(): AddContentSessionController {
     stageFiles,
     removeItem,
     restageItem,
+    reselectExpiredFile,
     setLibrary,
     creation,
     submit,

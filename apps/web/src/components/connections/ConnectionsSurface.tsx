@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import Button from "@/components/ui/Button";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineList, {OutlineSessionScope, ResourceBranch} from "@/components/resources/ResourceOutlineList";
+import OutlineInsertionLine from "@/components/notes/OutlineInsertionLine";
+import {useOutlineSession} from "@/lib/notes/useOutlineSession";
+import {useResourceOutline} from "@/lib/resourceGraph/useResourceOutline";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -19,7 +22,6 @@ import {
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
-import ResourceComposer from "@/components/resources/ResourceComposer";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -46,13 +48,12 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const section = useRef<HTMLElement>(null);
   const active = usePaneIsActive();
   const attachments = useConnectionAttachments(selfRef);
-  const metadata = useChangeStamp("Notes", "Metadata");
-  const [adding,setAdding] = useState(false);
+  const metadata = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   useEffect(() => subscribeLinkMutations(reload), [reload]);
   const list = usePaneFreeServerList<ConnectionOut>({
-    key: selfRef,
+    key: `connections:both:owner:${selfRef}`,
     stale: `${refreshKey}:${refreshTick}:${metadata}`,
     pageSize: 100,
     active,
@@ -75,9 +76,9 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
         <div className={styles.headerActions}>
-          <ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[{id:"Pane",actions:[{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:()=>setAdding(true)}]}]} />
+          <ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
           {attachments.control}
-          {scannable ? <Button type="button" variant="ghost" size="sm" iconOnly loading={scanning} aria-label="Find connections" title="Find connections" onClick={() => void scan.start()}><Sparkles size={14} aria-hidden="true" /></Button> : null}
+          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={() => void scan.start()} disabled={scanning} aria-busy={scanning} icon={<Sparkles size={14} aria-hidden="true" />} /> : null}
         </div>
       </div>
 
@@ -87,13 +88,32 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
       {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {list.complete && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
-      <ResourceOutlineList scope={`connections:${selfRef}`} ariaLabel="Connections" ancestorRef={selfRef}>
-        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }} historical={connection.origin === "citation" && connection.ordinal !== null} noteAuthority={connection.ordinal === null && !connection.other.missing && connection.other.ref.startsWith("note_block:") ? "current" : undefined} onChanged={reload} />)}
-      </ResourceOutlineList>
+      <ConnectionsItems selfRef={selfRef} items={list.items} reload={reload}/>
       <CollectionExhaustionNotice list={list} unit={{ singular: "connection", plural: "connections" }} returnFocus={() => section.current} />
-      {adding ? <ResourceComposer source={{kind:"resource",ref:selfRef}} occurrenceKey={`connections:${selfRef}`} label="add item" onSaved={reload} /> : null}
     </section>
   );
+}
+
+function ConnectionsItems({selfRef, items, reload}: {selfRef: string; items: readonly ConnectionOut[]; reload(): void}) {
+  const branch = useContext(ResourceBranch);
+  const scope = `connections:${selfRef}`;
+  const session = useOutlineSession({scope, inheritedBranch: branch});
+  const read = useResourceOutline(selfRef);
+  const {source, items: outlineItems, insertionSource, version, generation, complete, status} = read;
+  const adopt = session.adoptOutline;
+  useEffect(() => {adopt({source, items: outlineItems, insertionSource, version, generation, complete, status});},
+    [adopt, source, outlineItems, insertionSource, version, generation, complete, status]);
+  return <OutlineSessionScope session={session}>
+    <ResourceOutlineList scope={scope} ariaLabel="connections" ancestorRef={selfRef}
+      after={insertionSource ? <OutlineInsertionLine session={session} destination={{source: insertionSource,
+        position: null, occurrencePrefix: scope, path: []}}/> : null}>
+      {items.map(connection => <ResourceOutlineRow key={connection.edge_id} item={connection.other}
+        occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection}
+        incoming={{kind: "edge", edge_id: connection.edge_id, origin: connection.origin,
+          mutation: connection.mutation, creation: connection.creation}}
+        historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={reload}/>)}
+    </ResourceOutlineList>
+  </OutlineSessionScope>;
 }
 
 const DISCOVERY_SCAN_POLL_MS = 2000;

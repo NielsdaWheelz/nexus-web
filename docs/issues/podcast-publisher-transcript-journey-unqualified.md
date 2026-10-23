@@ -1,9 +1,15 @@
-# podcast publisher transcript journey remains unqualified
+# publisher transcript find remains unqualified
 
-- status: open
-- origin: 2026-09-26 reader navigation acceptance
-- area: podcast discovery, acquisition, and transcript reading
+problem: the original reader-navigation acceptance included finding text within
+a publisher transcript. that part has not been observed.
 
-the original podcast browse acceptance also called for acquiring an episode and reading/finding a publisher transcript without generated transcription. the unconfigured browse error is a separate classified failure and is resolved by the browse availability change. no configured provider credentials or known episode with a publisher transcript were available in that isolated proof, so the remaining journey has not been observed. this is a manual qualification gap, not evidence that acquisition is defective.
+observed: podcast collection qualification used real darknet diaries discovery,
+feed sync, acquisition and explicit transcription. the result reported
+`transcript_origin=Publisher`, readable content and real reader cursor saves.
+publisher reading is qualified; reader find remains open. discovery-only sidecar
+observation has its own [issue](podcast-discovery-misses-publisher-transcript.md).
 
-prerequisites: task-owned valid podcast index credentials and a known publisher-transcribed episode, with no paid or external call made solely for the availability fix. acceptance: use actual discovery and episode acquisition, then read and find the publisher transcript; record the source and distinguish publisher text from generated transcription.
+resolved when: the real reader finds a passage in that publisher transcript,
+with the source distinguished from generated transcription. use task-owned
+podcast-index credentials and a known publisher transcript; no generated
+transcription is needed for this check.

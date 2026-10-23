@@ -6,6 +6,7 @@ import MetadataResearchActions from "@/components/media/MetadataResearchActions"
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
   useActionRuntime,
@@ -18,7 +19,7 @@ import {
   type MediaRecoveryOffer,
 } from "@/lib/imports/api";
 import { uploadCommandFeedback } from "@/lib/imports/copy";
-import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
+import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolveResourceItem } from "@/lib/resources/items";
@@ -69,21 +70,20 @@ function OpenMedia({
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Unowned") return;
     event.preventDefault();
-    if (activation.kind === "Consume" || busy) return;
+    if (activation.kind === "Consume") return;
     run({ ref: mediaRef, id: "Open", label: "open", title: item.title,
       confirmation: null, tracked: true, execute: () => open(activation.intent) });
   };
   return (
     <>
-    <Button
-      variant="secondary"
-      size="sm"
+    <ButtonLink
+      href={`/media/${item.media_id}`}
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
-      asChild
-    >
-      <a href={`/media/${item.media_id}`} data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}>open</a>
-    </Button>
+      data-workspace-rich-target="true"
+      onClick={activate}
+      onKeyDown={activate}
+    >open</ButtonLink>
     {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
     </>
   );
@@ -107,8 +107,6 @@ function MediaRecovery({
   const label = ACTION_CATALOG[offer.kind].label;
   return (
     <Button
-      variant="secondary"
-      size="sm"
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
       onClick={() =>
@@ -188,28 +186,24 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
             aria-label={
               item.original_filename !== null
                 ? `Choose ${item.original_filename} to retry the upload`
-                : "Choose the original file to retry the upload"
+                : "choose the file again to continue"
             }
             accept=".pdf,.epub,application/pdf,application/epub+zip"
             onChange={(event) => {
               const file = event.currentTarget.files?.[0];
               event.currentTarget.value = "";
               // the session's own id: it advances, or answers what it
-              // published; its destinations are the first create's
+              // published; the confirmation has no named destinations
               if (file !== undefined && !retrying)
                 send("RetryUpload", () =>
-                  uploadIngestFile({ file, libraryIds: [], id: sessionId }),
+                  uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }),
                 );
             }}
           />
           <Button
-            variant="secondary"
-            size="sm"
             aria-disabled={retrying || undefined}
             aria-busy={retrying || undefined}
-            onClick={() => {
-              if (!retrying) inputRef.current?.click();
-            }}
+            onClick={() => inputRef.current?.click()}
           >
             {ACTION_CATALOG.RetryUpload.label}
           </Button>
@@ -235,7 +229,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
 }
 
 /** The speaking obligation's command, then open, then the item's menu. */
-export function ImportActions({ item, onAddItem }: { readonly item: ImportItem; readonly onAddItem?:()=>void }) {
+export function ImportActions({ item }: { readonly item: ImportItem }) {
   const mediaId = item.media_id;
   if (mediaId === null) return <UploadActions item={item} />;
   const offer =
@@ -256,7 +250,8 @@ export function ImportActions({ item, onAddItem }: { readonly item: ImportItem; 
       <ImportOpenAction item={item} />
       <ContextualActionMenu
         title={item.title} subjectKey={`import:${item.ref}:media:${mediaId}`}
-        sections={[{id:"Occurrence",actions:onAddItem ? [{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:onAddItem}] : []}]}
+        sections={[]}
+        displayedActivation={{ kind: item.can_read || item.can_play ? "route" : "none", href: item.can_read || item.can_play ? `/media/${mediaId}` : null, resource_ref: `media:${mediaId}`, unavailable_reason: null }}
         resourceRef={assumeCanonicalResourceRef(`media:${mediaId}`)}
         label={`more actions for ${item.title}`}
       />

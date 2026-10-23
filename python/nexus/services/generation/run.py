@@ -176,14 +176,19 @@ async def _resolve(
 ) -> tuple[tuple[FailureCode, str] | None, Row | None]:
     """Everything that can refuse before dispatch, as a value: (code, detail) or None."""
 
-    from nexus.services.generation.catalog import CatalogUnavailable, ProviderTarget
+    from nexus.services.generation.catalog import (
+        InvalidSelection,
+        ProviderTarget,
+        SelectionUnavailable,
+        selection_row,
+    )
 
+    snapshot = await runtime.catalog.read()
     try:
-        snapshot = await runtime.catalog.read()
-    except CatalogUnavailable as error:
-        return ("runtime_unavailable", str(error)), None
-    row = snapshot.rows.get(chosen)
-    if row is None:
+        row = selection_row(snapshot, chosen)
+    except SelectionUnavailable as error:
+        return ("runtime_unavailable", error.state.explanation), None
+    except InvalidSelection:
         return ("runtime_unavailable", "the selection is not in the current catalog"), None
     if not isinstance(row.readiness, Ready):
         return ("runtime_unavailable", row.readiness.explanation), row

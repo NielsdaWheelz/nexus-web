@@ -11,7 +11,10 @@ losing their place. owners, under `apps/web/src/`:
 - `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
   rect, synchronous source-owned measurement or text-selection lines; element
   placement above/below/right, cross-axis alignment, flip, clamp and re-measure
-  on scroll, resize, visual viewport and source layout notifications). hosted
+  on scroll, resize, visual viewport and source layout notifications). it needs
+  no app provider; content-aware callers supply `subscribeContentClearance`.
+  it publishes available height/width as css constraints before measurement;
+  each actual root composes those with its preferred size. hosted
   reader composers use live source geometry; chat-answer selection rectangles
   remain a [separate issue](../issues/selection-dock-does-not-follow-scroll.md).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
@@ -224,6 +227,11 @@ dismissal, tab continuation and return focus through the existing kernel.
 belongs to `MobileSheet`. inline presentation is a named region with an explicit
 close action and no outside-press dismissal.
 
+collection bodies use the [shared viewport recipes](visual-system.md#collections-and-searchable-pickers).
+search, scope and recovery stay above the result scrollport. when they cannot
+leave one usable result row, the body becomes the sole scrollport and the list
+stops scrolling independently. the sheet header/close remains reachable.
+
 **MobileSheet**: fixed visible title and close x above an independently scrolling
 body; the full title names the dialog and close control. `renderHeader` replaces
 the standard header and receives the frame's guarded `requestDismiss`; specialized
@@ -296,10 +304,15 @@ hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
 
 **Tooltip**: plain-text help for native buttons and links. callers spread its
-callback ref, handlers and description onto the actual control (the inner anchor
-for `Button asChild`), preserving the control's name and activation semantics.
+callback ref, handlers and description onto the actual control, preserving the
+control's name and activation semantics. `triggerRef` composes its native ref
+without dropping react callback cleanup; callers combine existing description
+ids and handlers. shared controls own that composition for their native roots.
 it sits below the trigger, aligned to its end and flipped when it must, or to
-its right, centred (`placement`). mouse/pen hover opens after `openDelayMs`
+its right, centred (`placement`). viewport-only positioning requires no app
+provider; content-aware selection surfaces pass the existing viewport service's
+`subscribeContentBottomClearance` as `subscribeContentClearance`. presence selects
+content-clearance bounds; absence uses viewport/safe-area bounds. mouse/pen hover opens after `openDelayMs`
 (500ms by default); leaving during that delay cancels it. `disabled` never
 opens and closes a visible caption. focus-visible opens at once,
 including in the mobile layout; touch never opens help. while visible, pointer
@@ -338,9 +351,7 @@ webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
 
 verification follows the [repository contract](../local-rules/testing-standards.md).
 real browser probes drive back as history traversal; device and spoken
-assistive-technology claims require their actual platform. pending action-menu
-handset qualification is [tracked separately](../issues/action-menus-physical-handset-qualification.md).
-the [soft keyboard](../issues/mobile-keyboard-inset-has-no-browser-proof.md), ime
+assistive-technology claims require their actual platform. the soft keyboard, ime
 composition and touch preview of a real available source require device checks.
 
 ## rejected hacks

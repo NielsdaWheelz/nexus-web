@@ -41,6 +41,7 @@ import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/playe
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { activateResource } from "@/lib/resources/activation";
 import { searchQueryToParams } from "@/lib/search/searchParams";
+import { reconcileSearchActive } from "@/lib/ui/searchOptions";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { getInteractionGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision, Layer } from "@/lib/ui/overlay";
@@ -59,6 +60,7 @@ const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
   E_INVALID_REQUEST: "Review the request and retry.",
   E_NAME_INVALID: "Enter a non-reserved library name between 1 and 100 characters.",
   E_RESOURCE_CONFLICT: "This create request conflicts with another resource.",
+  E_NOTE_CONFLICT: "This note was saved before and has since left that day, so it wasn’t added again.",
 };
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
@@ -145,7 +147,7 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
-  const listIdentity = parsed.text ? JSON.stringify([searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]) : "";
+  const listIdentity = JSON.stringify([query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
   const find = useNexusFind({ open: finding, query: parsed });
   const panes = useMemo<NexusPane[]>(
@@ -233,14 +235,23 @@ export function useNexusController() {
     desktop: !viewport.isMobile,
     mobileMode: rootMode,
     query: parsed,
-    list,
+    list: list.identity === listIdentity ? list : EMPTY_LIST,
     panes,
     playback: playback && playbackRow(playback.title, playback.subtitle !== null ? playback.subtitle : undefined),
     recent: find.recent,
     frecency: find.frecency,
   });
   const rows = groups.flatMap((group) => group.rows);
-  const activeKey = rows.some((row) => row.key === list.active) ? list.active : parsed.text ? null : (rows[0]?.key ?? null);
+  const searchContext = JSON.stringify([accountId, query, rootMode]);
+  const admitted = finding && list.identity === listIdentity;
+  const currentActive = reconcileSearchActive({
+    context: searchContext, admitted,
+    options: rows.map(row => ({ key: row.key, disabledReason: row.action.kind === "Unavailable" ? row.action.reason : null })),
+    firstExistingKey: rows.find(row => row.existing && row.action.kind === "Available")?.key ?? null,
+    active: list.active,
+  });
+  if (currentActive !== list.active) setList({ ...list, active: currentActive });
+  const activeKey = admitted ? currentActive?.key ?? null : null;
 
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
@@ -434,11 +445,11 @@ export function useNexusController() {
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
     void openCreated(running, async () => {
       await captureToday(running.localDate, running.noteId, running.text);
-      return { target: { href: `/daily/${running.localDate}` }, title: "note added to today", openLabel: "open today",
+      return { target: { href: `/daily/${running.localDate}` }, title: "note kept on this device; queued for today", openLabel: "open today",
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
-        const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES, running.submit.kind === "Running" && running.submit.unconfirmed);
+        const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
       });
   }
@@ -494,7 +505,7 @@ export function useNexusController() {
       submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined,
         unconfirmed: page.submit.kind === "Retryable" && page.submit.unconfirmed } } as const;
     void openCreated(running, async () => {
-      const library = await createLibrary({ id: running.libraryId, name: running.name });
+      const library = await createLibrary({ id: running.libraryId, name: running.name, initial_items: [], expected_removal_revision: null });
       return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
@@ -551,7 +562,8 @@ export function useNexusController() {
   }
 
   function setActive(key: string) {
-    setList((current) => (current.active === key && current.moved ? current : { ...current, active: key, moved: true }));
+    setList((current) => current.active?.context === searchContext && current.active.key === key && current.moved
+      ? current : { ...current, active: { context: searchContext, key }, moved: true });
   }
 
   function back() {

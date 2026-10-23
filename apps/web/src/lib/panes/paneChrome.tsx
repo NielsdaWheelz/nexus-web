@@ -14,6 +14,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import type {OutlineCommand, OutlineCommandState} from "@/lib/notes/useOutlineSession";
 import type { FindController } from "@/lib/find/useFind";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import type {
@@ -21,6 +22,8 @@ import type {
   WorkspaceSecondarySurfaceIdOf,
 } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { MediaSubject } from "@/lib/media/mediaSummary";
+import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 /** Why a pane command holds its place while the fact deciding it loads. */
@@ -87,6 +90,7 @@ export interface PaneChrome {
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly primaryAction?: PanePrimaryAction;
+  readonly mediaActions?: { readonly subject: MediaSubject; readonly knownDescriptor: PlayerDescriptor | null };
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
   readonly resourceRef?: CanonicalResourceRef;
@@ -117,8 +121,18 @@ export interface PaneLayout {
   readonly rail: { readonly widthPx: number; readonly body: ReactNode } | null;
 }
 
+/** Only the interacting outline publishes commands; route chrome keeps its owner. */
+export interface PaneOutlineCommands {
+  readonly session: string;
+  readonly insertLabel: string;
+  commandState(command: OutlineCommand): OutlineCommandState;
+  executeCommand(command: OutlineCommand): void;
+  done(): void;
+}
+
 export interface PaneChromeState {
   readonly chrome: PaneChrome | null;
+  readonly outlineCommands: PaneOutlineCommands | null;
   readonly companion: PaneCompanion | null;
   readonly layout: PaneLayout | null;
   /** Find's transient results in the Companion; never persisted. */
@@ -140,6 +154,7 @@ export interface PaneChromeStore {
 export function createPaneChromeStore(): PaneChromeStore {
   let state: PaneChromeState = {
     chrome: null,
+    outlineCommands: null,
     companion: null,
     layout: null,
     results: null,
@@ -176,6 +191,15 @@ function usePublish<K extends "chrome" | "companion" | "layout">(
       if (store.get()[key] === value) store.set({ [key]: null });
     };
   }, [store, key, value]);
+}
+
+export function usePaneOutlineCommands(commands: PaneOutlineCommands | null): void {
+  const store = useContext(PaneChromeContext);
+  useLayoutEffect(() => {
+    if (!store || commands === null) return;
+    store.set({outlineCommands: commands});
+    return () => {if (store.get().outlineCommands === commands) store.set({outlineCommands: null});};
+  }, [store, commands]);
 }
 
 /** A body's identity, independent navigation and query controls, menu and refresh. */

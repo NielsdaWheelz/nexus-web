@@ -4,9 +4,11 @@ Identity is a set of aliases per show: at most one PodcastIndex ref, at most one
 and any number of canonical enclosure urls. Title, date and random values are never
 identity. An item whose identity is ambiguous is skipped and counted, never guessed.
 
-Lock order, shared by every podcast writer: the caller's own row (subscription or
-backfill), then the batch's alias advisory locks in canonical order, then the show row,
-then media rows and library rows. Two writers of one show (two syncs, a sync and a backfill,
+Lock order, shared by every podcast writer: viewer, the caller's own row
+(subscription or backfill), then the batch's alias advisory locks in canonical
+order, the show row, the complete existing media set in uuid order, then libraries.
+Catalog writes finish before automatic retention. Explicit episode admission
+requests catalog-only ingestion and applies its guards before personal effects. Two writers of one show (two syncs, a sync and a backfill,
 an add) therefore serialize per alias, and a repeated batch converges on the same rows.
 """
 
@@ -103,7 +105,13 @@ def lock_aliases(db: Session, show_identity: str, aliases: Iterable[Alias]) -> N
 
 
 def ingest_episodes(
-    db: Session, *, viewer_id: UUID, podcast_id: UUID, feed_url: str, episodes: list[EpisodeFacts]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    feed_url: str,
+    episodes: list[EpisodeFacts],
+    retain: bool = True,
 ) -> IngestResult:
     """Upsert a batch newest first (undated last); every written episode lands in the
     viewer's All unless explicitly removed. Suppression retains the resolved episode id
@@ -122,6 +130,21 @@ def ingest_episodes(
     ).one()
     lock_aliases(db, f"{show.provider}:{show.provider_podcast_id}", (a for x in aliases for a in x))
     db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": podcast_id})
+    flat_aliases = [alias for item in aliases for alias in item]
+    existing_ids = db.scalars(
+        text("""
+        SELECT DISTINCT episode_media_id FROM podcast_episode_identities
+        WHERE podcast_id=:p AND (scheme,value) IN (
+            SELECT * FROM unnest(CAST(:schemes AS text[]),CAST(:values AS text[]))
+        )
+    """),
+        {
+            "p": podcast_id,
+            "schemes": [a.scheme for a in flat_aliases],
+            "values": [a.value for a in flat_aliases],
+        },
+    ).all()
+    library_entries.lock_media_rows_in_order(db, existing_ids)
     show_authors = [
         credit.credited_name
         for credit in load_contributor_credits_for_podcasts(db, [podcast_id]).get(podcast_id, [])
@@ -188,10 +211,12 @@ def ingest_episodes(
             enqueue_metadata_enrichment(
                 db, media_id=media_id, requester_user_id=viewer_id, request_id=None
             )
-        if library_entries.ensure_media_in_default_library(db, viewer_id, media_id):
-            changed = True
         _replace_chapters(db, media_id, episode.chapters)
         media_ids[i] = media_id
+    if retain:
+        for media_id in sorted({media_id for media_id in media_ids if media_id is not None}):
+            if library_entries.ensure_media_in_default_library(db, viewer_id, media_id):
+                changed = True
     return IngestResult(media_ids=media_ids, changed=changed)
 
 

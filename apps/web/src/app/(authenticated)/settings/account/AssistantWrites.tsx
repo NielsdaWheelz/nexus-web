@@ -98,12 +98,10 @@ export default function AssistantWrites({
       description={
         generationId
           ? "Writes from the generation that created this link."
-          : "Finished assistant write attempts. Undo removes the items created by a successful write."
+          : "finished assistant writes. undo of a filing removes only that named placement; content stays in nexus."
       }
       actions={
         <Button
-          variant="ghost"
-          size="sm"
           onClick={() => setRevision((current) => current + 1)}
           disabled={busyId !== null}
         >
@@ -168,11 +166,11 @@ export default function AssistantWrites({
               <p className={styles.effectProvenance}>
                 Generation {write.generation_id}
               </p>
+              {write.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null) && !write.reverted_at
+                ? <p className={styles.effectStatus}>undo unavailable for this older filing</p> : null}
               {write.undo_allowed ? (
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={busyId === write.id}
+                  aria-busy={busyId === write.id || undefined}
                   disabled={busyId !== null}
                   onClick={() => void undo(write.id)}
                 >

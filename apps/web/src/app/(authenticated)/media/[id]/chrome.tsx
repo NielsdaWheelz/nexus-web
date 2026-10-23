@@ -5,8 +5,9 @@
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Activity } from "lucide-react";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { projectPlaybackAction } from "@/lib/actions/project";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
@@ -14,7 +15,8 @@ import type { ReaderDestination } from "@/lib/documentReader/location";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import type { FindController } from "@/lib/find/useFind";
-import type { MediaDetail } from "@/lib/media/mediaDetail";
+import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import {
   PANE_COMMAND_RESOLVING_REASON,
   usePaneChrome,
@@ -34,7 +36,6 @@ const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", pa
 
 export function useReaderChrome(input: {
   readonly media: MediaDetail | null;
-  readonly addItemAction: ActionDescriptor | null;
   readonly failed: boolean;
   readonly reader: Reader;
   readonly find: FindController | null;
@@ -50,7 +51,7 @@ export function useReaderChrome(input: {
   /** Esc with nothing else to close: drop the active deep-link target. */
 }): void {
   const { media, reader, find, readable, isMobile, paneActive } = input;
-  const { ctx, run } = useActionRuntime();
+  const { ctx } = useActionRuntime();
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
   const { activateTarget, requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
   const { profile, setTheme, setFocusMode } = useReaderContext();
@@ -60,9 +61,6 @@ export function useReaderChrome(input: {
   const widthPx = useReaderState(reader, (s) => s.pdf?.widthPx ?? null);
   const id = media?.id ?? runtime.pathParams.id;
   const pdf = media?.kind === "pdf";
-  const playbackAction = useMemo(() => media?.kind === "podcast_episode" && media.playerDescriptor !== null
-    ? projectPlaybackAction({ mediaId: media.id, title: media.title, descriptor: media.playerDescriptor, blocked: null, ctx, run })
-    : undefined, [ctx, media, run]);
 
   useResourceInspector({
     scheme: "media",
@@ -119,13 +117,29 @@ export function useReaderChrome(input: {
         : [theme("light", "Light"), theme("dark", "Dark")]),
     ];
   }, [activateTarget, media, pdf, profile.theme, setTheme]);
-  const authors = media
-    ? groupContributorCredits(selectMediaAuthors(media.contributors)).find((group) => group.role === "author")
+  const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
+  const summaries = useMediaSummaries(seed === null ? [] : [seed]);
+  const summary = seed === null ? null : summaries.resolve(seed);
+  useWorkspaceCondition(`media-summary:${paneId}:${id}`, summaries.error === null ? null : {
+    priority: "Status",
+    announcement: "Polite",
+    content: {
+      tone: "Warning",
+      title: "couldn’t update items",
+      requestId: summaries.error.requestId,
+    },
+    actions: [{ label: "try again", busy: summaries.retrying, onClick: summaries.retry }],
+    returnFocus: () => findPaneLandmarkFocusTarget(paneId),
+  });
+  const authors = summary
+    ? groupContributorCredits(selectMediaAuthors(summary.contributors)).find((group) => group.role === "author")
     : undefined;
   usePaneChrome(
     useMemo(
       () => ({
-        header: media
+        header: seed !== null && summary === null
+          ? { kind: "Resource" as const, resource: { status: "Unavailable" as const } }
+          : media
           ? {
               kind: "Resource" as const,
               resource: {
@@ -136,17 +150,20 @@ export function useReaderChrome(input: {
           : input.failed
             ? { kind: "Resource" as const, resource: { status: "Failed" as const } }
             : undefined,
+        mediaActions: summary === null ? undefined : {
+          subject: { kind: "Stored" as const, summary },
+          knownDescriptor: media?.playerDescriptor ?? null,
+        },
         navigation,
-        primaryAction: playbackAction,
         query: find
           ? { kind: "Find" as const, find }
           : !input.failed && !documentFailed && (media === null || readable)
             ? { kind: "Find" as const, find: null }
             : undefined,
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
-        menuActions: [...(input.addItemAction ? [input.addItemAction] : []), ...menuActions],
+        menuActions,
       }),
-      [authors, documentFailed, find, id, input.addItemAction, input.failed, navigation, media, menuActions, playbackAction, readable],
+      [authors, seed, summary, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.

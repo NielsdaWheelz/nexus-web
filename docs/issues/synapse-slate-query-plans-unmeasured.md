@@ -76,6 +76,9 @@ local evidence (retained from prior qualification, not rerun in this session):
 - `/tmp/nexus-full-readmodels-20261014T2030/readback/full-readmodels-20261014T2030/artifacts/off-lectern-suggestions/receipt.json` and the `off-quick-reads` sibling;
 - `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-13/release/suggestions-query-qualification/final-source/plan-0.json` and `plan-1.json`.
 
+the owner retired the campaign archive on 2026-10-22; those archived query-plan
+files are unavailable. the recorded measurements remain historical evidence.
+
 implemented serving contract, 2026-10-15: publish a bounded
 candidate shortlist outside the read path; permit stale ranking while
 rechecking current visibility, completion, membership and capacity on delivery.

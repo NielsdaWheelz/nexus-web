@@ -123,18 +123,46 @@ def retaining_owners(db: Session, rows: Sequence[ResourceEdge]) -> list[Resource
     return sorted(retained, key=lambda ref: (ref.scheme, ref.id))
 
 
-_EDGE_OWNERS = owner_rows_sql(
-    "SELECT source_scheme AS scheme, source_id AS id FROM resource_edges UNION SELECT target_scheme, target_id FROM resource_edges"
+_INCIDENT_OWNERS = owner_rows_sql(
+    "SELECT source_scheme AS scheme, source_id AS id FROM incident"
+    " UNION SELECT target_scheme, target_id FROM incident"
 )
 
 
-def retainer_count(
-    db: Session, ref: ResourceRef, *, excluding_edge_ids: Sequence[UUID] = ()
-) -> int:
-    """Complete retaining facts, including snapshots whose derived target disappeared."""
-    return db.execute(
+def retainer_counts(
+    db: Session,
+    owner_id: UUID,
+    refs: Sequence[ResourceRef],
+    *,
+    excluding_edge_ids: Sequence[UUID] = (),
+) -> dict[ResourceRef, int]:
+    """Complete retaining facts per page/note of one owner, including snapshots whose
+    derived target disappeared. Reads only the facts incident to what each ref owns
+    (itself, its passage anchors, evidence spans and content chunks) or captured it;
+    every such fact is its owner's own (census C12), so the owner's edge indexes serve."""
+    if not refs:
+        return {}
+    rows = db.execute(
         text(f"""
-            WITH owners AS ({_EDGE_OWNERS}), edge_owners AS (
+            WITH targets AS (
+                SELECT * FROM unnest(CAST(:schemes AS text[]), CAST(:ids AS uuid[])) AS t(scheme, id)
+            ), owned AS (
+                SELECT scheme, id FROM targets
+                UNION ALL SELECT 'passage_anchor', p.id FROM targets t
+                    JOIN passage_anchors p ON (p.owner_scheme, p.owner_id) = (t.scheme, t.id)
+                UNION ALL SELECT 'evidence_span', s.id FROM targets t
+                    JOIN evidence_spans s ON (s.owner_kind, s.owner_id) = (t.scheme, t.id)
+                UNION ALL SELECT 'content_chunk', c.id FROM targets t
+                    JOIN content_chunks c ON (c.owner_kind, c.owner_id) = (t.scheme, t.id)
+            ), incident AS (
+                SELECT e.* FROM resource_edges e WHERE e.user_id = :owner AND e.id IN (
+                    SELECT e.id FROM resource_edges e JOIN owned o
+                        ON (e.source_scheme, e.source_id) = (o.scheme, o.id) WHERE e.user_id = :owner
+                    UNION SELECT e.id FROM resource_edges e JOIN owned o
+                        ON (e.target_scheme, e.target_id) = (o.scheme, o.id) WHERE e.user_id = :owner
+                    UNION SELECT e.id FROM resource_edges e WHERE e.user_id = :owner
+                        AND e.snapshot #>> '{{evidence,target,owner_ref}}' = ANY(:refs))
+            ), owners AS ({_INCIDENT_OWNERS}), edge_owners AS (
                 SELECT e.id, s.owner_scheme || ':' || s.owner_id AS source_owner,
                     CASE WHEN e.target_scheme IN ('evidence_span', 'content_chunk')
                         AND t.owner_scheme = e.target_scheme
@@ -142,7 +170,7 @@ def retainer_count(
                             t.owner_scheme || ':' || t.owner_id)
                         ELSE t.owner_scheme || ':' || t.owner_id END AS target_owner,
                     e.snapshot #>> '{{evidence,target,owner_ref}}' AS captured_owner
-                FROM resource_edges e
+                FROM incident e
                 JOIN owners s ON (s.scheme, s.id) = (e.source_scheme, e.source_id)
                 JOIN owners t ON (t.scheme, t.id) = (e.target_scheme, e.target_id)
                 WHERE NOT (e.id = ANY(CAST(:excluded AS uuid[])))
@@ -153,14 +181,25 @@ def retainer_count(
             ), retaining AS (
                 SELECT id FROM endpoints GROUP BY id HAVING count(DISTINCT owner_ref) > 1
             )
-            SELECT (SELECT count(DISTINCT e.id) FROM endpoints e JOIN retaining r USING (id)
-                    WHERE e.owner_ref = :ref)
-                + (SELECT count(*) FROM artifacts
-                    WHERE subject_scheme = :scheme AND subject_id = :id)
+            SELECT t.scheme || ':' || t.id AS ref,
+                (SELECT count(DISTINCT e.id) FROM endpoints e JOIN retaining r USING (id)
+                    WHERE e.owner_ref = t.scheme || ':' || t.id)
+                + (SELECT count(*) FROM artifacts a
+                    WHERE (a.subject_scheme, a.subject_id) = (t.scheme, t.id)) AS retainers
+            FROM targets t
         """),
-        {"excluded": list(excluding_edge_ids), "ref": ref.uri, "scheme": ref.scheme, "id": ref.id},
-    ).scalar_one()
+        {
+            "owner": owner_id,
+            "excluded": list(excluding_edge_ids),
+            "refs": [ref.uri for ref in refs],
+            "schemes": [ref.scheme for ref in refs],
+            "ids": [ref.id for ref in refs],
+        },
+    )
+    return {assert_resource_ref(row.ref): row.retainers for row in rows}
 
 
-def has_retainer(db: Session, ref: ResourceRef, *, excluding_edge_ids: Sequence[UUID] = ()) -> bool:
-    return retainer_count(db, ref, excluding_edge_ids=excluding_edge_ids) > 0
+def has_retainer(
+    db: Session, owner_id: UUID, ref: ResourceRef, *, excluding_edge_ids: Sequence[UUID] = ()
+) -> bool:
+    return retainer_counts(db, owner_id, [ref], excluding_edge_ids=excluding_edge_ids)[ref] > 0
