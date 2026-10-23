@@ -1,22 +1,17 @@
-# mobile reader chrome qualification and release
+# deployed mobile reader chrome qualification
 
-status: locally implemented and qualified. production activation is separate
-and must retain [the transcript paired cutover](release-transcript-reader.md)
-and [queue recorder drain](release-playback-queue.md).
+production source `400e7039e` is deployed at schema `0312`, wire `14`, paired with
+signed android `0.3.6` (code `26`). physical-device smoke verified retained login
+and reader state, the compact menu, tap-only chrome and return from downloads.
+this was a same-package installation without clearing storage. existing copies
+need no redownload for layout changes.
 
-hosted reader overlays introduce no native protocol. shared reader assets also
-ship in the apk; existing downloaded copies retain their interaction and do not
-need redownloading for layout changes. publish api/web/workers/apk together under
-the existing wire-14 and migration-0312 release prerequisites (after 0311).
+remaining activated-phone journeys are `NOT_RUN`: text/pdf tap and endpoint
+boundaries, selection, find/keyboard, player clearance and persistent feedback.
+report physical/emulator and gesture/three-button evidence separately; the smoke
+check does not qualify those boundaries. app-link selection is tracked
+[separately](android-app-link-default-selection.md).
 
-before closing: verify the activated served source and installed apk identities,
-then text/pdf actual taps, endpoint access, selection, find/keyboard, player and
-persistent feedback. report physical/emulator and gesture/three-button evidence
-separately; browser emulation alone does not establish native behavior. the owner
-restricted this implementation's device work to an emulator.
-
-local native qualification uses an isolated application id and an official
-chromium snapshot provider on an owned api35 avd. it does not establish the
-production phone, play-stable provider, release signing or app-link/oauth behavior.
-record final observed qualification and exact build identities in the pr; keep
-this issue until paired activation and the owner checks are complete.
+resolve after these journeys pass or receive an explicit owner disposition;
+record proof in the release pr. [reader](../modules/reader-implementation.md) and
+[player](../modules/player.md) own the permanent contracts.
