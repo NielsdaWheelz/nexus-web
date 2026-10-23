@@ -22,7 +22,7 @@ const environment: RenderEnvironment = {
 };
 const OriginalImage = installedHostPolicy.Image;
 function PackagedImage(props: HostImageProps) {
-  const src = props.src.startsWith("/") && !props.src.startsWith("/api/") && !props.src.startsWith("/_nexus/")
+  const src = props.src.startsWith("/brand/") || props.src.startsWith("/oracle-plates/")
     ? `/_nexus/app${props.src}` : props.src;
   return <OriginalImage {...props} src={src} />;
 }
