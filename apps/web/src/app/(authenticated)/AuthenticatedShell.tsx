@@ -18,6 +18,7 @@ import Nexus from "@/components/nexus/Nexus";
 import { downloadWriting } from "@/components/notes/NoteNotices";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
+import { MobileReaderCompositionContext } from "@/components/workspace/PaneShell";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider, { ResourceActionDefect } from "@/lib/actions/ResourceActionsProvider";
@@ -46,6 +47,8 @@ import {
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
 import { connectOffline } from "@/lib/offline/bridge";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
 import {
   ReaderProvider,
@@ -165,13 +168,7 @@ function Workspace(props: {
                                 <MediaContinuationHost />
                                 <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
                                   <Nexus />
-                                  <div className={styles.layout}>
-                                    <AppNav />
-                                    <main className={styles.main}>
-                                      <WorkspaceHost />
-                                      <GlobalPlayerSurfaces />
-                                    </main>
-                                  </div>
+                                  <WorkspaceCanvas />
                                 </WorkspacePresentationsProvider>
                               </ImportsProvider>
                             </AuthenticatedWorkspaceErrorBoundary>
@@ -188,6 +185,24 @@ function Workspace(props: {
       </WorkspaceStoreProvider>
     </>
   );
+}
+
+/** A route selects the shell composition before loading or mounting its reader. */
+function WorkspaceCanvas() {
+  const { state } = useWorkspaceStore();
+  const isMobile = useIsMobileViewport();
+  const active = state.panes.find(pane => pane.id === state.active_primary_pane_id);
+  if (!active) throw new Error("workspace active pane is missing");
+  const readerComposition = isMobile && resolvePaneRouteModel(active.current_visit.href).returnKind === "Reader";
+  return <MobileReaderCompositionContext value={readerComposition}>
+    <div className={styles.layout}>
+      <AppNav />
+      <main className={styles.main} data-reader-composition={readerComposition || undefined}>
+        <WorkspaceHost />
+        <GlobalPlayerSurfaces readerComposition={readerComposition} />
+      </main>
+    </div>
+  </MobileReaderCompositionContext>;
 }
 
 /** Account-wide writing facts that need attention, as one comparable key, so that

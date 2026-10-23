@@ -44,8 +44,12 @@ to show them. scrolling belongs to the browser and never changes that choice.
 new reader entry starts shown. selection, links, marks and dismissal each keep
 their own gesture; one action must not also toggle the shell.
 
-stable layout matters more than reclaiming a few pixels. controls fade with a
-small transform while reading geometry and bottom clearance remain fixed.
+reading uses a stable canvas inside platform protection; controls overlay it.
+controls fade with a small transform, releasing paint and input while document
+extent and passage position stay fixed. shown controls temporarily obscure text;
+scrollable endpoint space makes first and last passages reachable. conservative
+rectangular bounds trade some visible area around floating controls for one
+understandable geometry owner. downloaded reading keeps its existing controls.
 hiding disables controls immediately; showing makes them usable during the
 short entrance. css reverses interrupted transitions without an animation state
 machine. explicit command focus reveals instantly, and a stable native button

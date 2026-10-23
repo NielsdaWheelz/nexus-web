@@ -1,3 +1,7 @@
+.frame {
+  display: contents;
+}
+
 .header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -153,17 +157,22 @@
   );
 }
 
-/* Mobile: the fixed top bar. Reader controls overlay the page; visibility
-   never changes its geometry (the authenticated layout reserves its height). */
-.mobile {
-  --mobile-chrome-offset: calc(-1 * var(--space-2));
+/* The transparent frame retains measured geometry while its header retreats. */
+.mobileFrame {
   position: fixed;
   inset: 0 0 auto;
   z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.mobile {
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
+  position: relative;
+  pointer-events: auto;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  block-size: calc(var(--effective-pane-header-height) + var(--viewport-safe-top));
+  min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
   padding: var(--viewport-safe-top) max(var(--space-2), var(--viewport-safe-right)) 0
     max(var(--space-2), var(--viewport-safe-left));
   background: var(--surface-2);
@@ -197,6 +206,11 @@
   inline-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
   block-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
   border: var(--stroke-hairline) solid var(--surface-2);
+}
+
+/* The shared button is relative; hidden recovery must stay outside pane flow. */
+.readerChromeToggle:not(:focus-visible) {
+  position: absolute;
 }
 
 .readerChromeToggle:focus-visible {
@@ -261,7 +275,7 @@
 @media (max-width: 479px) {
   .mobile[data-media-header] {
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: var(--pane-chrome-header-height) 48px;
+    grid-template-rows: minmax(var(--pane-chrome-header-height), auto) minmax(48px, auto);
   }
   .mobile[data-media-header] .trailing {
     grid-column: 1 / -1;

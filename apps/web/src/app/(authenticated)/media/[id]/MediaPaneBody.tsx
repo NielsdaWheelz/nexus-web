@@ -60,6 +60,7 @@ import { openAsyncResult } from "@/lib/panes/openResult";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
 import { useReaderChrome } from "./chrome";
@@ -190,6 +191,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const savedView = useReaderVisit(readerRef);
   const entry = useMemo(() => ({ fresh: null, cold: null, view: savedView }), [savedView]);
   const chrome = useMobileChrome();
+  const viewport = useMobileViewport();
   const reader = useDocumentReader(
     id,
     useMemo(
@@ -197,7 +199,11 @@ function MediaPane({ id }: { readonly id: string }) {
         source: hostedSource(id),
         progress: hostedProgress(id),
         entry,
-        host: { scrollport: chrome.registerReaderScrollport, navigation: {
+        host: { scrollport: (element: HTMLElement, geometryChanged: (reason: "Occlusion" | "Layout") => void) => {
+          const releaseChrome = chrome.registerReaderScrollport(element);
+          const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
+          return () => { releaseChrome(); releaseViewport(); };
+        }, navigation: {
           href: (destination: ReaderDestination) => readerDestinationHref(id, destination),
           activate: (destination: ReaderDestination, intent: OpenIntent, onDefault: () => void) => {
             setNavigationFailure(null);
@@ -208,7 +214,7 @@ function MediaPane({ id }: { readonly id: string }) {
           },
         } },
       }),
-      [chrome, entry, id],
+      [chrome, viewport, entry, id],
     ),
     readable,
   );

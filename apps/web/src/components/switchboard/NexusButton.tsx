@@ -44,8 +44,8 @@ export default function NexusButton({
   useLayoutEffect(() => {
     const element = wrapperRef.current;
     if (open || !element) return;
-    return mobileViewport.registerBottomSurface("Nexus", element);
-  }, [mobileViewport, open]);
+    return mobileViewport.registerBottomSurface("Nexus", element, buttonRef.current);
+  }, [mobileViewport, open, buttonRef]);
 
   const tracked = (event: PointerEvent) => (press.current?.pointerId === event.pointerId ? press.current : null);
   const cancel = (event: PointerEvent) => {

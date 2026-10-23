@@ -133,7 +133,8 @@ export interface ReaderRuntime extends Reader {
   viewport(
     viewport: Omit<Viewport, "identity" | "intent">,
     placement: Omit<Placement, "identity">,
-    pdf?: PdfState,
+    cause: "Observation" | "Geometry",
+    pdf: PdfState | null,
   ): void;
   /** Genuine user input only. */
   input(direction: "forward" | "backward" | "none"): void;
@@ -408,12 +409,12 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     updateFind(find) {
       if (find.key === surface?.identity && state.find !== find) set({ find });
     },
-    viewport(measured, placement, pdf) {
+    viewport(measured, placement, cause, pdf) {
       const doc = ready();
       if (!doc || surface?.identity !== doc.doc.identity) return;
       const { positioning, mode } = state.navigation;
       const reading =
-        performance.now() - input.at < READER_INTENT_MS && !positioning;
+        cause === "Observation" && performance.now() - input.at < READER_INTENT_MS && !positioning;
       const viewport: Viewport = {
         ...measured,
         identity: doc.doc.identity,

@@ -92,7 +92,9 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior-y: contain;
-  scroll-padding-top: var(--space-12);
+  padding-top: var(--reader-content-inset-top, 0px);
+  padding-bottom: calc(var(--reader-content-inset-bottom, 0px) + var(--reader-feedback-height, 0px));
+  scroll-padding-top: calc(var(--reader-content-inset-top, 0px) + var(--space-12));
 }
 
 .scrollport:focus-visible {
@@ -106,8 +108,8 @@
   --scroll-indicator-width: 0px;
   --scroll-indicator-top: 0px;
   --scroll-indicator-left: 0px;
-  --scroll-indicator-inset-top: var(--mobile-pane-content-offset, 0px);
-  --scroll-indicator-inset-bottom: var(--mobile-content-bottom-clearance, 0px);
+  --scroll-indicator-inset-top: 0px;
+  --scroll-indicator-inset-bottom: 0px;
   display: none;
   position: absolute;
   z-index: 1;
@@ -349,13 +351,38 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  scroll-padding-top: var(--space-4);
+  padding-top: var(--reader-content-inset-top, 0px);
+  padding-bottom: calc(var(--reader-content-inset-bottom, 0px) + var(--reader-feedback-height, 0px));
+  scroll-padding-top: calc(var(--reader-content-inset-top, 0px) + var(--space-4));
 }
 
-/* The open's notes sit above that container, so a pointer reaches Retry. */
-.pdfFrame > .note {
+/* Opening/failure content owns its scroll and clears the shown pane envelope. */
+.readerState {
   position: relative;
   z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pdfFrame > .readerState {
+  position: absolute;
+  inset: 0;
+}
+
+.statusStack {
+  flex: none;
+}
+
+.frame[data-reader-overlay] .statusStack {
+  position: absolute;
+  z-index: 2;
+  inset-inline: 0;
+  background: var(--reader-bg);
+}
+
+.frame[data-reader-overlay] .statusStack:not(:empty) {
+  border-top: 1px solid var(--reader-border, var(--edge));
 }
 
 /* pdf.js sizes its canvas and text layer from the page's content box. */
@@ -365,23 +392,13 @@
 
 @media (max-width: 768px),
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
-  .scrollport,
-  .pdfScrollport {
-    padding-top: var(--mobile-pane-content-offset, 0px);
-    padding-bottom: var(--mobile-content-bottom-clearance, 0px);
-    scroll-padding-top: calc(
-      var(--mobile-pane-content-offset, 0px) + var(--space-4)
-    );
+  .scrollport {
+    scroll-padding-top: calc(var(--reader-content-inset-top, 0px) + var(--space-4));
   }
 
-  /* The pane chrome overlays the top on a phone: the strip floats above the
-   * bottom clearance, in thumb reach and clear of the passage at the reading line. */
-  .status {
-    position: absolute;
-    z-index: 2;
-    inset-inline: 0;
-    bottom: var(--mobile-content-bottom-clearance, 0px);
-    border-top: 1px solid var(--reader-border, var(--edge));
+  .readerState {
+    padding-top: var(--mobile-pane-content-offset, 0px);
+    padding-bottom: var(--mobile-content-bottom-clearance, 0px);
   }
 }
 

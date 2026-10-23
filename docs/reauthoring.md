@@ -8,6 +8,13 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+mobile reader chrome against `51fc75cd9`: +333 authored runtime lines
+(706 added, 373 deleted), across workspace, reader web ui, global css, player
+and feedback registration. measured overlays replace permanent reader header
+and player reservations, the competing top-envelope writer and padding-based
+occlusion inference. only this feature delta is stated here; area counts and
+earlier totals retain their stated bases.
+
 podcast silence skipping against `6da2c2dc4`: -5 authored runtime lines
 (75 added, 80 deleted), all in player; player recounts 3,227 → 3,222 and podcasts
 remain 5,760. browser silence inheritance and the paired preference editor are

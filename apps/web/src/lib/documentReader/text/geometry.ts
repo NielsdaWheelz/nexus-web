@@ -18,7 +18,7 @@ import {
 } from "@/lib/canonicalText/domTextRanges";
 import { transcriptUnitAtTime } from "../model";
 import type { PassageGeometry, TextRange } from "../DocumentReader";
-import { measureScrollport } from "../scrollport";
+import { measureScrollport, readScrollport } from "../scrollport";
 import type {
   Placement,
   ReaderTarget,
@@ -134,10 +134,6 @@ export function createTextGeometry(
     return section(point.unit)?.getBoundingClientRect() ?? null;
   }
 
-  const readingLine = () =>
-    scrollport.getBoundingClientRect().top +
-    (Number.parseFloat(getComputedStyle(scrollport).scrollPaddingTop) || 0);
-
   /** Source boundaries, not enclosing parent boxes: a parent can surround another source. */
   function rangeBelow(y: number): SourceRange | null {
     let [lo, hi] = [0, doc.ranges.length];
@@ -182,23 +178,26 @@ export function createTextGeometry(
   function aim(
     to: ReaderTarget | Placement,
   ): { top: number; want: number } | null {
+    const snapshot = readScrollport(scrollport);
+    if (!snapshot) return null;
+    const line = snapshot.readingLine;
     if ("offsetPx" in to) {
       const rect = to.point.kind === "text" ? rectAt(to.point) : null;
-      return rect && { top: rect.top, want: readingLine() + to.offsetPx };
+      return rect && { top: rect.top, want: line + to.offsetPx };
     }
     if (to.kind === "anchor") {
       const element = anchor(to.unit, to.id);
       return (
         element && {
           top: element.getBoundingClientRect().top,
-          want: readingLine(),
+          want: line,
         }
       );
     }
     if (to.kind === "range" && !entry(to.unit)) return null;
     const point = targetPoint(to);
     const rect = point && units.has(point.unit) ? rectAt(point) : null;
-    return rect && { top: rect.top, want: readingLine() };
+    return rect && { top: rect.top, want: line };
   }
 
   function anchor(unit: string, id: string): HTMLElement | null {
@@ -244,10 +243,11 @@ export function createTextGeometry(
       return release;
     },
     capture() {
-      const view = scrollport.getBoundingClientRect();
-      const line = readingLine();
+      const snapshot = readScrollport(scrollport);
+      if (!snapshot) return null;
+      const { bounds: view, readingLine: line } = snapshot;
       const at = rangeBelow(line);
-      if (view.height <= 0 || !at) return null;
+      if (!at) return null;
       // The first character whose line reaches below the reading line (the
       // unit's end past its text); a unit without a cursor reads from its start.
       // An unrendered offset (a block separator) belongs to the line before it.

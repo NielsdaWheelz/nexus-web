@@ -1,40 +1,72 @@
 // Genuine input on a reader scrollport, and the viewport measured after every
 // scroll. Wheel, single-finger drag, scroll keys and scrollbar drags are the
 // reader's own movement; everything else (positioning, reflow) is not.
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
+import type { Placement } from "./model";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { ReaderRuntime } from "./runtime";
 
 const SCROLL_INDICATOR_IDLE_MS = 400;
 
-/** Visible content bounds, excluding the mobile chrome/keyboard padding. */
-export function measureScrollport(port: HTMLElement | null): DOMRect | null {
+/** One snapshot separates visible obstruction from the stable navigation line. */
+export function readScrollport(port: HTMLElement | null): { bounds: DOMRect; readingLine: number } | null {
   if (!port?.isConnected) return null;
   const rect = port.getBoundingClientRect();
   const style = getComputedStyle(port);
-  const top = Number.parseFloat(style.paddingTop) || 0;
-  const bottom = Number.parseFloat(style.paddingBottom) || 0;
+  const top = Number.parseFloat(style.getPropertyValue("--reader-occlusion-top")) || 0;
+  const bottom = Math.max(
+    Number.parseFloat(style.getPropertyValue("--reader-occlusion-bottom")) || 0,
+    Number.parseFloat(style.getPropertyValue("--reader-feedback-occlusion-bottom")) || 0,
+  );
   const height = port.clientHeight - top - bottom;
-  return port.clientWidth > 0 && height > 0
-    ? new DOMRect(rect.left + port.clientLeft, rect.top + port.clientTop + top, port.clientWidth, height)
-    : null;
+  return port.clientWidth > 0 && height > 0 ? {
+    bounds: new DOMRect(rect.left + port.clientLeft, rect.top + port.clientTop + top, port.clientWidth, height),
+    readingLine: rect.top + port.clientTop + (Number.parseFloat(style.scrollPaddingTop) || 0),
+  } : null;
+}
+
+export function measureScrollport(port: HTMLElement | null): DOMRect | null {
+  return readScrollport(port)?.bounds ?? null;
 }
 
 export function useScrollport(
   ref: RefObject<HTMLElement | null>,
   runtime: ReaderRuntime,
-  measure: () => void,
+  measure: (cause: "Observation" | "Geometry") => void,
+  layout: { readonly placement: RefObject<Placement | null>; change(): void },
   indicatorRef: RefObject<HTMLDivElement | null>,
-): void {
+  feedbackRef: RefObject<HTMLDivElement | null>,
+): (reason: "Occlusion" | "Layout") => void {
   const measureRef = useRef(measure);
   measureRef.current = measure;
-  useEffect(() => {
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const invalidate = useRef<(reason: "Occlusion" | "Layout") => void>(() => {});
+  const geometryChanged = useCallback((reason: "Occlusion" | "Layout") => invalidate.current(reason), []);
+  useLayoutEffect(() => {
     const port = ref.current;
     if (!port) return;
-    const release = runtime.host?.scrollport?.(port);
     // justify-type-assertion: DocumentReader mounts its indicator before surface effects run.
     const indicator = indicatorRef.current!;
     let frame = 0;
+    let scrolled = false;
+    let pending: { reason: "Occlusion" | "Layout"; placement: Placement | null } | null = null;
+    // justify-type-assertion: DocumentReader mounts the feedback stack beside its indicator.
+    const feedback = feedbackRef.current!;
+    // justify-type-assertion: DocumentReader owns the indicator as a direct frame child.
+    const readerFrame = indicator.parentElement!;
+    const syncFeedback = () => {
+      const overlay = port.style.getPropertyValue("--reader-content-inset-top") !== "";
+      readerFrame.toggleAttribute("data-reader-overlay", overlay);
+      const style = getComputedStyle(port);
+      feedback.style.bottom = overlay ? `${Number.parseFloat(style.getPropertyValue("--reader-occlusion-bottom")) || 0}px` : "";
+      const bounds = feedback.getBoundingClientRect();
+      const height = overlay ? bounds.height : 0;
+      const previous = Number.parseFloat(port.style.getPropertyValue("--reader-feedback-height")) || 0;
+      port.style.setProperty("--reader-feedback-height", `${height}px`);
+      port.style.setProperty("--reader-feedback-occlusion-bottom", `${overlay && height > 0 ? Math.max(0, port.getBoundingClientRect().bottom - bounds.top) : 0}px`);
+      return height !== previous;
+    };
     let idle: ReturnType<typeof setTimeout> | null = null;
     let touchY: number | null = null;
     let seek: {
@@ -45,17 +77,17 @@ export function useScrollport(
     // passive overlay reports pixel position; it never changes reading intent.
     const paintIndicator = () => {
       if (indicator.clientHeight === 0) return;
-      // justify-type-assertion: DocumentReader owns the indicator as a direct frame child.
-      const frameBounds = indicator.parentElement!.getBoundingClientRect();
-      const portBounds = port.getBoundingClientRect();
-      const portStyle = getComputedStyle(port);
+      const frameBounds = readerFrame.getBoundingClientRect();
+      const snapshot = readScrollport(port);
+      if (!snapshot) return;
+      const portBounds = snapshot.bounds;
       indicator.style.setProperty(
         "--scroll-indicator-inset-top",
-        `${portBounds.top - frameBounds.top + Number.parseFloat(portStyle.paddingTop)}px`,
+        `${portBounds.top - frameBounds.top}px`,
       );
       indicator.style.setProperty(
         "--scroll-indicator-inset-bottom",
-        `${frameBounds.bottom - portBounds.bottom + Number.parseFloat(portStyle.paddingBottom)}px`,
+        `${frameBounds.bottom - portBounds.bottom}px`,
       );
       const height = port.clientHeight;
       const width = port.clientWidth;
@@ -97,16 +129,52 @@ export function useScrollport(
         indicator.removeAttribute("data-scrolling");
       }, SCROLL_INDICATOR_IDLE_MS);
     };
-    const scroll = () => {
+    const schedule = () => {
       frame ||= requestAnimationFrame(() => {
         frame = 0;
-        measureRef.current();
+        const geometry = pending;
+        pending = null;
+        const observation = scrolled;
+        scrolled = false;
+        if (geometry?.reason === "Layout") {
+          if (geometry.placement !== null) {
+            void runtime.reflow({ placement: geometry.placement, change: () => layoutRef.current.change() });
+          } else {
+            layoutRef.current.change();
+            if (observation) measureRef.current("Observation");
+          }
+        } else {
+          measureRef.current(observation ? "Observation" : "Geometry");
+        }
         paintIndicator();
       });
     };
+    invalidate.current = (reason) => {
+      if (syncFeedback()) reason = "Layout";
+      // Capture once before a later observation can replace the pre-change passage.
+      if (pending?.reason !== "Layout") pending = { reason, placement: layoutRef.current.placement.current };
+      schedule();
+    };
+    const release = runtime.host?.scrollport?.(port, geometryChanged);
+    syncFeedback();
+    const feedbackObserver = new ResizeObserver(() => geometryChanged("Layout"));
+    feedbackObserver.observe(feedback);
+    const scroll = () => {
+      scrolled = true;
+      schedule();
+    };
+    const retirePlacement = () => {
+      // New input owns the passage before the queued layout frame begins.
+      if (pending) pending.placement = null;
+      layoutRef.current.placement.current = null;
+    };
+    const input = (direction: "forward" | "backward") => {
+      retirePlacement();
+      runtime.input(direction);
+    };
     const wheel = (event: WheelEvent) => {
       if (event.isTrusted && !event.ctrlKey && event.deltaY !== 0) {
-        runtime.input(event.deltaY > 0 ? "forward" : "backward");
+        input(event.deltaY > 0 ? "forward" : "backward");
       }
     };
     const touchStart = (event: TouchEvent) => {
@@ -121,7 +189,7 @@ export function useScrollport(
           ? event.touches[0].clientY
           : null;
       if (y !== null && touchY !== null && y !== touchY) {
-        runtime.input(y < touchY ? "forward" : "backward");
+        input(y < touchY ? "forward" : "backward");
       }
       touchY = y;
     };
@@ -139,17 +207,18 @@ export function useScrollport(
       }
       if (event.key === "Home" || event.key === "End") {
         event.preventDefault();
+        retirePlacement();
         void runtime.inspect({
           target: { kind: "edge", edge: event.key === "Home" ? "start" : "end" },
         });
       } else if (event.key === " ") {
         const button =
           event.target instanceof Element && event.target.closest("button");
-        if (!button) runtime.input(event.shiftKey ? "backward" : "forward");
+        if (!button) input(event.shiftKey ? "backward" : "forward");
       } else if (event.key === "ArrowDown" || event.key === "PageDown") {
-        runtime.input("forward");
+        input("forward");
       } else if (event.key === "ArrowUp" || event.key === "PageUp") {
-        runtime.input("backward");
+        input("backward");
       }
     };
     // Scrollbar presses target the scrollport itself; a press that moves nothing settles as Unchanged.
@@ -161,6 +230,7 @@ export function useScrollport(
       )
         return;
       if (event.target !== port) return;
+      retirePlacement();
       const op = runtime.seek();
       if (op) seek = { op, top: port.scrollTop };
     };
@@ -191,13 +261,20 @@ export function useScrollport(
       port.removeEventListener("pointerdown", pointerDown);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
+      release?.();
+      invalidate.current = () => {};
       cancelAnimationFrame(frame);
+      feedbackObserver.disconnect();
+      readerFrame.removeAttribute("data-reader-overlay");
+      feedback.style.removeProperty("bottom");
+      port.style.removeProperty("--reader-feedback-height");
+      port.style.removeProperty("--reader-feedback-occlusion-bottom");
       if (idle !== null) clearTimeout(idle);
       indicator.removeAttribute("data-scrolling");
       finish(true);
-      release?.();
     };
-  }, [ref, runtime, indicatorRef]);
+  }, [ref, runtime, indicatorRef, feedbackRef, geometryChanged]);
+  return geometryChanged;
 }
 
 /** Resolves on the next frame, or at once when aborted. */
