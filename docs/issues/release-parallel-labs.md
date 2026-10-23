@@ -1,21 +1,22 @@
-# activate concurrent lab admission
+# deferred search lab runner cutover
 
-qualification passed; cross-repository integration and activation pending. baseline
-`aa3dfc0863e24e91db8c2bdebc7a4ba2cdb5e306` takes only two slots, including for
-exclusive runs (`python/scripts/disposable_runtime.py:619-635`). mixed old/new
-runners therefore cannot preserve measurement exclusivity.
+the six-slot runtime and host policy are integrated through nexus #770 and
+dev-server #194. current main uses the qualified harness and the unchanged
+docker allocation. one old worktree remains outside the cutover by owner request.
 
-before the first changed-runner invocation, including qualification: finish
-old-runner red cases, drain old invocations and waiters, and verify their owned
-runtimes are gone or recover them explicitly. update participating worktrees to the new
-harness and use one common host state directory/capacity setting. preserve the
-docker cpu, memory and disk limits, unrelated resources and reusable images.
-never remove live slot files or infer process ownership from a saved pid.
+`/Users/nnandal/Documents/code/nexus-web-search-latency`, inspected at head
+`7e55c59ae5cf2b6f398a1e0baf82235fa72fd3c0` with 89 modified tracked files,
+uses a pre-admission `python/scripts/disposable_runtime.py`: dynamic ports,
+no host slot locks or capacity policy, and uncommitted custom postgres build
+and `pg_search` preload changes. its runner can bypass the six-slot budget and
+cannot be excluded by a current runner's all-slot lock.
 
-update nexus verification docs and dev-server's `docs/macbook-capacity-plan.md`
-two-slot policy together. changing capacity later also requires drained labs and
-waiters; there is no live resizing or backward-compatible admission protocol.
+the owner explicitly requested leaving that worktree and runner untouched while
+its feature pr is in progress. no backport, parking wrapper or compatibility
+path was added. host-wide capacity and measurement exclusivity remain unproven
+while that old runner can start; drain it before performance measurements.
 
-resolved when six-run acceptance and scoped teardown pass on the fixed allocation,
-all participating runners use the new contract, and both repositories' policy
-changes are integrated. fewer concurrent labs is an unresolved capacity blocker.
+after the feature work settles, integrate the current harness with its postgres
+requirements and qualify canonical bootstrap, shared admission and teardown.
+delete this record when the old runner is retired or upgraded and all active
+labs use the current admission contract. preserve unrelated work and images.
