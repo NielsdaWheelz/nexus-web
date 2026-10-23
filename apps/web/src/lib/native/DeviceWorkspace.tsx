@@ -96,20 +96,28 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
   const wrong = signInResult === "DifferentAccount";
   const startupCleanup = isApiError(failure?.error) && failure.error.code === "E_LOCAL_CLEANUP" ? failure.error : null;
   const cleanupError = startupCleanup ?? (isApiError(cleanupFailure?.error) ? cleanupFailure.error : null);
-  return <div style={{ height: "100%", overflowY: "auto" }}><main className={styles.error}><FeedbackState
-    content={startupCleanup !== null || cleanupFailure !== null ? { tone: "Warning", title: "sign out not completed", message: cleanupError?.message ?? "local cleanup did not finish. retry to remove this device’s account data." }
-      : failure ? { tone: "Danger", title: "saved workspace couldn’t be opened" }
-      : admission === "UpdateRequired" ? STALE_BUILD_FEEDBACK
-      : startup === undefined ? { tone: "Neutral", title: "opening your workspace…" }
-      : wrong ? { tone: "Warning", title: "use the account already open here", message: "sign out first to switch accounts." }
-      : signInResult === "Failed" ? { tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." }
+  // These are distinct recovery steps, not updates to one published action.
+  const stage = startupCleanup !== null ? "startup-cleanup"
+    : cleanupFailure !== null ? "signout-cleanup"
+    : failure ? "snapshot-failed"
+    : admission === "UpdateRequired" ? "update-required"
+    : startup === undefined ? "opening"
+    : wrong ? "different-account"
+    : signInResult === "Failed" ? "sign-in-failed" : "sign-in";
+  return <div style={{ height: "100%", overflowY: "auto" }}><main className={styles.error}><FeedbackState key={stage}
+    content={stage === "startup-cleanup" || stage === "signout-cleanup" ? { tone: "Warning", title: "sign out not completed", message: cleanupError?.message ?? "local cleanup did not finish. retry to remove this device’s account data." }
+      : stage === "snapshot-failed" ? { tone: "Danger", title: "saved workspace couldn’t be opened" }
+      : stage === "update-required" ? STALE_BUILD_FEEDBACK
+      : stage === "opening" ? { tone: "Neutral", title: "opening your workspace…" }
+      : stage === "different-account" ? { tone: "Warning", title: "use the account already open here", message: "sign out first to switch accounts." }
+      : stage === "sign-in-failed" ? { tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." }
       : { tone: "Neutral", title: "sign in to open your workspace", message: "connect to sign in on this device." }}
     announcement="Polite"
-    actions={startupCleanup !== null ? [{ label: "retry cleanup", onClick: () => void read() }]
-      : cleanupFailure !== null ? [{ label: "retry sign out", busy: signingIn, onClick: clearDevice }]
-      : failure ? [{ label: "retry", onClick: () => void read() }]
-      : admission === "UpdateRequired" || startup === undefined ? undefined
-      : wrong ? [{ label: "retry", busy: signingIn, onClick: signIn }, { label: "cancel", onClick: () => setSignInResult(null) }]
+    actions={stage === "startup-cleanup" ? [{ label: "retry cleanup", onClick: () => void read() }]
+      : stage === "signout-cleanup" ? [{ label: "retry sign out", busy: signingIn, onClick: clearDevice }]
+      : stage === "snapshot-failed" ? [{ label: "retry", onClick: () => void read() }]
+      : stage === "update-required" || stage === "opening" ? undefined
+      : stage === "different-account" ? [{ label: "retry", busy: signingIn, onClick: signIn }, { label: "cancel", onClick: () => setSignInResult(null) }]
       : [{ label: "sign in", busy: signingIn, onClick: signIn }]}
   />
     {wrong ? <Button tone="danger" aria-busy={signingIn || undefined} onClick={clearDevice}>sign out on this device</Button> : null}
