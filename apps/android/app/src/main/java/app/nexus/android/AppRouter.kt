@@ -65,6 +65,12 @@ internal class AppRouter(private val context: Context, private val session: Devi
             // AndroidX matches authority literally, including ports. Origin admission
             // above has already checked the effective port; only asset lookup is canonicalized.
             return assets.shouldInterceptRequest(uri.buildUpon().authority(base.host!!.lowercase()).build())?.takeIf { it.data != null }?.apply {
+                // These bundled formats are absent from older Android MIME tables.
+                mimeType = when (path.substringAfterLast('.')) {
+                    "woff2" -> "font/woff2"
+                    "mjs" -> "text/javascript"
+                    else -> mimeType
+                }
                 responseHeaders = (responseHeaders ?: emptyMap()) + mapOf("Cache-Control" to "public, max-age=31536000, immutable", "X-Content-Type-Options" to "nosniff")
             } ?: response(404, "Not Found", "text/plain", ByteArray(0))
         }
