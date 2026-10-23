@@ -5,6 +5,7 @@
 // navigation snapshots; only their exact object can be acknowledged. Inspection
 // admits its departure before resolving, and only its current request may settle.
 import type { Locator, Placement, ReaderTarget } from "./model";
+import { assertNever } from "@/lib/assertNever";
 
 export type NavFailure =
   | "CaptureUnavailable"
@@ -186,6 +187,8 @@ export function createNavigator(
           state.originUnavailable ||
           (req.kind === "return" && failure === "TargetUnavailable"),
       });
+    } else {
+      assertNever(outcome.kind);
     }
     return outcome;
   }
