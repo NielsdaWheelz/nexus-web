@@ -11,7 +11,8 @@ rollback requires the release backup. implementation baseline is `8124afc10`.
 - deploy api, workers and web together. `0310` invalidates old runnable claims
   before dropping their owners. verify the exact migration head and that no old
   worker remains. there is no compatibility deployment order.
-- retain wire `14` while it is the existing unreleased break; if another release
-  lands first, apply the repository's once-per-release revision rule.
+- ship paired wire `14` with the playback queue cutover. follow its
+  [native drain and api/apk pairing prerequisites](release-playback-queue.md).
+  the combined head is `0312_playback_sessions`, after `0311_chapter_end_provenance`.
 
 delete after the actual coordinated release.

@@ -158,10 +158,6 @@ internal class NexusOriginClient(
         call(Request.Builder().url(api("consumption", "activity")).post(body.toString().toRequestBody(JSON)))
     }
 
-    /** The current ordered lectern, read before a natural end removes its row. */
-    suspend fun lectern(): JSONObject =
-        data(Request.Builder().url(api("lectern")).get())
-
     /** The terminal listening sample and override fence; 204, with no next-row result. */
     suspend fun settleNaturalEnd(mediaId: UUID, body: JSONObject) {
         call(Request.Builder().url(api("media", mediaId.toString(), "natural-end"))

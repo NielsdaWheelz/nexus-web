@@ -355,7 +355,7 @@ function MediaPane({ id }: { readonly id: string }) {
     run({
       ref: `media:${id}`, id: "Playback", label: "play", title: media.title,
       confirmation: null, tracked: false,
-      execute: () => playAudio({ mediaId: id, knownDescriptor: media.playerDescriptor, positionMs: ms }),
+      execute: () => playAudio({ mediaId: id, knownDescriptor: media.playerDescriptor, positionMs: ms, source: null, recapture: false }),
     });
   }, [id, media, playAudio, run]);
 

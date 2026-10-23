@@ -1544,6 +1544,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/playback-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Playback Session */
+        get: operations["get_playback_session_me_playback_session_get"];
+        /** Put Playback Session */
+        put: operations["put_playback_session_me_playback_session_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/reader-profile": {
         parameters: {
             query?: never;
@@ -2445,6 +2463,23 @@ export interface paths {
         get: operations["get_oracle_concordance_oracle_readings__reading_id__concordance_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/playback/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Capture Playback Snapshot */
+        post: operations["capture_playback_snapshot_playback_snapshot_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3521,6 +3556,16 @@ export interface components {
          * @enum {string}
          */
         BrowseSource: "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
+        /** BrowserSessionOut */
+        BrowserSessionOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            revision: components["schemas"]["OrderRevision"];
+            state: components["schemas"]["QueueState"];
+        };
         /**
          * CapabilitiesOut
          * @description What this viewer can do with the media's text now; ``can_retry``: the source owner
@@ -4559,6 +4604,10 @@ export interface components {
         Data_BrowsePreview_: {
             data: components["schemas"]["BrowsePreview"];
         };
+        /** Data[BrowserSessionOut] */
+        Data_BrowserSessionOut_: {
+            data: components["schemas"]["BrowserSessionOut"];
+        };
         /** Data[CaptureTargetOut] */
         Data_CaptureTargetOut_: {
             data: components["schemas"]["CaptureTargetOut"];
@@ -4791,6 +4840,10 @@ export interface components {
         Data_OutlineOut_: {
             data: components["schemas"]["OutlineOut"];
         };
+        /** Data[PlaybackSnapshotOut] */
+        Data_PlaybackSnapshotOut_: {
+            data: components["schemas"]["PlaybackSnapshotOut"];
+        };
         /** Data[PlayerDescriptor] */
         Data_PlayerDescriptor_: {
             data: components["schemas"]["PlayerDescriptor"];
@@ -4930,6 +4983,10 @@ export interface components {
         /** Data[TypedHighlightOut] */
         Data_TypedHighlightOut_: {
             data: components["schemas"]["TypedHighlightOut"];
+        };
+        /** Data[Union[BrowserSessionOut, NoneType]] */
+        Data_Union_BrowserSessionOut__NoneType__: {
+            data: components["schemas"]["BrowserSessionOut"] | null;
         };
         /** Data[Union[ReaderCursorEmpty, ReaderCursorPositioned, ReaderCursorUnresolved]] */
         Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__: {
@@ -6311,6 +6368,20 @@ export interface components {
             items: components["schemas"]["LecternItemOut"][];
             order_revision: components["schemas"]["OrderRevision"];
         };
+        /** LecternQueueSource */
+        LecternQueueSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Lectern";
+            /** Label */
+            label: string;
+            /** Query */
+            query: string;
+            /** Sort */
+            sort: ("added_asc" | "added_desc" | "title_asc" | "title_desc") | null;
+        };
         /** LecternWriteOut */
         LecternWriteOut: {
             order_revision: components["schemas"]["OrderRevision"];
@@ -6512,6 +6583,54 @@ export interface components {
             removal_revision: components["schemas"]["OrderRevision"];
             /** Subscriptions */
             subscriptions: components["schemas"]["PodcastLibraryShowOut"][];
+        };
+        /** LibraryQueueCapture */
+        LibraryQueueCapture: {
+            /** Completion */
+            completion: "unfinished" | null;
+            /** Entry Type */
+            entry_type: ("web_article" | "epub" | "pdf" | "video" | "podcast_episode") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /** Projection */
+            projection: ("unfiled" | "in_progress") | null;
+            /** Query */
+            query: string;
+            /** Sort */
+            sort: ("title_asc" | "title_desc" | "creator_asc" | "creator_desc" | "published_asc" | "published_desc" | "remaining_asc" | "remaining_desc" | "added_asc" | "added_desc") | null;
+        };
+        /** LibraryQueueSource */
+        LibraryQueueSource: {
+            /** Completion */
+            completion: "unfinished" | null;
+            /** Entry Type */
+            entry_type: ("web_article" | "epub" | "pdf" | "video" | "podcast_episode") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            /** Label */
+            label: string;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /** Projection */
+            projection: ("unfiled" | "in_progress") | null;
+            /** Query */
+            query: string;
+            /** Sort */
+            sort: ("title_asc" | "title_desc" | "creator_asc" | "creator_desc" | "published_asc" | "published_desc" | "remaining_asc" | "remaining_desc" | "added_asc" | "added_desc") | null;
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -8228,6 +8347,23 @@ export interface components {
             kind: "Playback";
             player_descriptor: components["schemas"]["PlayerDescriptor"];
         };
+        /** PlaybackSnapshotOut */
+        PlaybackSnapshotOut: {
+            /** Media Ids */
+            media_ids: string[];
+            /** Source */
+            source: components["schemas"]["LibraryQueueSource"] | components["schemas"]["PodcastQueueSource"];
+        };
+        /** PlaybackSnapshotRequest */
+        PlaybackSnapshotRequest: {
+            /**
+             * Selected Media Id
+             * Format: uuid
+             */
+            selected_media_id: string;
+            /** Source */
+            source: components["schemas"]["LibraryQueueCapture"] | components["schemas"]["PodcastQueueCapture"];
+        };
         /** PlaybackSourceOut */
         PlaybackSourceOut: {
             /** Embed Url */
@@ -8779,6 +8915,58 @@ export interface components {
             /** Website Href */
             website_href: string | null;
         };
+        /** PodcastQueueCapture */
+        PodcastQueueCapture: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Query */
+            query: string;
+            /**
+             * Sort
+             * @enum {string}
+             */
+            sort: "newest" | "oldest" | "duration_asc" | "duration_desc";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "all" | "unplayed" | "in_progress" | "played";
+        };
+        /** PodcastQueueSource */
+        PodcastQueueSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /** Label */
+            label: string;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Query */
+            query: string;
+            /**
+             * Sort
+             * @enum {string}
+             */
+            sort: "newest" | "oldest" | "duration_asc" | "duration_desc";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "all" | "unplayed" | "in_progress" | "played";
+        };
         /** PodcastRecurringOut */
         PodcastRecurringOut: {
             /** Error Code */
@@ -9171,6 +9359,44 @@ export interface components {
              * Format: uuid
              */
             session_id: string;
+        };
+        /** PutPlaybackSessionRequest */
+        PutPlaybackSessionRequest: {
+            expected_revision: components["schemas"]["OrderRevision"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            state: components["schemas"]["QueueState"];
+            terminal: components["schemas"]["TerminalEnd"] | null;
+        };
+        /** QueueEntry */
+        QueueEntry: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** QueueState */
+        QueueState: {
+            /** Current Entry Id */
+            current_entry_id: string | null;
+            /** Entries */
+            entries: components["schemas"]["QueueEntry"][];
+            /**
+             * Queue Id
+             * Format: uuid
+             */
+            queue_id: string;
+            /** Source */
+            source: (components["schemas"]["LecternQueueSource"] | components["schemas"]["LibraryQueueSource"] | components["schemas"]["PodcastQueueSource"]) | null;
         };
         /** QuickReadsOut */
         QuickReadsOut: {
@@ -10816,7 +11042,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddPodcast" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "Share";
+            kind: "AddPodcast" | "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "Share";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -11310,6 +11536,17 @@ export interface components {
              * Format: date-time
              */
             last_checked: string;
+        };
+        /** TerminalEnd */
+        TerminalEnd: {
+            /**
+             * Ended Entry Id
+             * Format: uuid
+             */
+            ended_entry_id: string;
+            /** Expected Override Revision */
+            expected_override_revision: number | null;
+            terminal_listening: components["schemas"]["ListeningIn"];
         };
         /**
          * TextHighlightAnchorIn
@@ -15565,6 +15802,72 @@ export interface operations {
             };
         };
     };
+    get_playback_session_me_playback_session_get: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Nexus-Device": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_Union_BrowserSessionOut__NoneType__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_playback_session_me_playback_session_put: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Nexus-Device": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutPlaybackSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_BrowserSessionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_reader_profile_me_reader_profile_get: {
         parameters: {
             query?: never;
@@ -17281,6 +17584,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_list_OracleConcordanceOut__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_playback_snapshot_playback_snapshot_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaybackSnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PlaybackSnapshotOut_"];
                 };
             };
             /** @description Validation Error */

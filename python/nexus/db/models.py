@@ -1125,3 +1125,14 @@ class OracleReading(Base):
     completed_at: Mapped[datetime | None]
     failed_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class PlaybackSession(Base):
+    """One browser device's saved sequence; state has no media retention authority."""
+
+    __tablename__ = "playback_sessions"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    device_id: Mapped[str]
+    revision: Mapped[int] = mapped_column(BigInteger)
+    state: Mapped[dict[str, object]] = mapped_column(JSONB)

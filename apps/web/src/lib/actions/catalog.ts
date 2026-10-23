@@ -90,7 +90,9 @@ export const ACTION_CATALOG = {
       Ended: { label: "replay", icon: RotateCcw },
     },
   },
-  PlayNext: { label: "Play next", icon: ListStart, group: "Consume" },
+  PlayFromHere: { label: "play from here", icon: Play, group: "Consume" },
+  AddToQueue: { label: "add to queue", icon: ListPlus, group: "Consume" },
+  PlayNext: { label: "play next", icon: ListStart, group: "Consume" },
   Consumption: {
     label: "Mark as finished",
     icon: CircleCheck,
@@ -333,7 +335,7 @@ export function actionFailure(
   const recovery =
     id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
   if (
-    (id === "LecternMembership" || id === "PlayNext") &&
+    id === "LecternMembership" &&
     error.code === "E_RESOURCE_CONFLICT"
   )
     return {

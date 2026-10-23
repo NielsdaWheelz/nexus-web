@@ -39,7 +39,8 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
 import { offlineCall } from "@/lib/offline/bridge";
-import { playingEpisode, type PlayerDescriptor } from "@/lib/player/playerRuntime";
+import type { PlaybackSource } from "./playbackSource";
+import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
   requestPodcastRefresh,
 } from "@/lib/podcasts/api";
@@ -107,11 +108,7 @@ export function projectLecternAction({
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const request = ctx.lectern.pending.get(mediaId);
   const currentIntent = request?.intent.kind ?? intent;
-  const state = currentIntent === "Place"
-    ? ACTION_CATALOG.PlayNext
-    : ACTION_CATALOG.LecternMembership.states[
-        currentIntent === "Ensure" ? "Absent" : "Present"
-      ];
+  const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
   const copy = LECTERN_INTENT_COPY[currentIntent];
   const label = request
     ? {
@@ -153,11 +150,12 @@ export function projectLecternAction({
 }
 
 /** The header and menu share one playback action; its descriptor is already owned by the caller. */
-export function projectPlaybackAction({ mediaId, title, descriptor, blocked, ctx, run }: {
+export function projectPlaybackAction({ mediaId, title, descriptor, blocked, playbackSource, ctx, run }: {
   readonly mediaId: string;
   readonly title: string;
   readonly descriptor: PlayerDescriptor | null;
   readonly blocked: BlockedReason | null;
+  readonly playbackSource: PlaybackSource | null;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly glyph: "Play" | "Pause" } {
@@ -179,18 +177,22 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, ctx
       ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
       confirmation: null, tracked: false,
       execute: () => pausing ? ctx.player.commands.pause() :
-        ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null }),
+        ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
     }),
   };
 }
 
-/** One resource's menu: server verbs ordered by the catalog and executed through run. */
+/**
+ * One resource's menu: the server's verbs, labelled, ordered by the catalog,
+ * separated by group and wired to their owners. Commands run only through `run`.
+ */
 export function projectResourceActions(
   facts: ResourceActions,
   ctx: ActionContext,
   busy: ReadonlySet<ActionId>,
   run: (command: ActionCommand) => void,
-  boundPaneId?: string,
+  boundPaneId: string | null,
+  playbackSource: PlaybackSource | null,
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
   const id = ref.slice(ref.indexOf(":") + 1);
@@ -377,6 +379,20 @@ export function projectResourceActions(
     });
   };
 
+  const queueDisabled = ctx.player.queue.phase === "Ready" ? undefined
+    : ctx.player.queue.phase === "Uncertain" ? "check the unconfirmed queue change first"
+    : ctx.player.queue.phase === "Preparing" ? "finish preparing this queue first"
+    : ctx.player.queue.phase === "Saving" ? "saving queue…" : "player unavailable";
+  const append = (next: boolean) => {
+    const entry = { id: crypto.randomUUID(), media_id: id };
+    const header = ctx.player.queue.header;
+    if (header === null) return ctx.player.commands.replaceQueue({
+      state: { queue_id: crypto.randomUUID(), entries: [entry], current_entry_id: entry.id, source: null },
+      knownDescriptor: null, play: false, positionMs: null,
+    });
+    return ctx.player.commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
+      command: { kind: next ? "insert-next" : "append", entry } });
+  };
   const verbs: Record<SimpleKind, Verb> = {
     Open: [follow("Follow"), { tracked: false }],
     OpenInNewPane: [follow("Fork"), { tracked: false }],
@@ -384,24 +400,8 @@ export function projectResourceActions(
       ({ triggerEl }) => metadata(triggerEl),
       { tracked: false },
     ],
-    PlayNext: [
-      () => {
-        // After the playing episode's row (the server puts it first without one).
-        const playing = playingEpisode(ctx.player.state)?.media_id;
-        return ctx.lectern.place({ mediaId: id, title: facts.label,
-          placement: playing !== undefined && playing !== id
-            ? { kind: "After", media_id: playing }
-            : { kind: "First" },
-        });
-      },
-      {
-        disabledReason: ctx.lectern.pending.has(id)
-          ? "finish checking the pending lectern change first."
-          : ctx.lectern.revision === null
-            ? "load the current lectern before changing it."
-            : undefined,
-      },
-    ],
+    AddToQueue: [() => append(false), { disabledReason: queueDisabled }],
+    PlayNext: [() => append(true), { disabledReason: queueDisabled }],
     ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
       ({ triggerEl }) => {
@@ -607,7 +607,7 @@ export function projectResourceActions(
       }
       case "Playback":
         return projectPlaybackAction({ mediaId: id, title: facts.label,
-          descriptor: action.player_descriptor, blocked, ctx, run });
+          descriptor: action.player_descriptor, blocked, playbackSource, ctx, run });
       case "Consumption": {
         const { finished, episode } = action;
         const states = ACTION_CATALOG.Consumption.states;
@@ -762,6 +762,12 @@ export function projectResourceActions(
       return [descriptor.id, descriptor] as const;
     }),
   );
+  const playback = facts.actions.find(action => action.kind === "Playback");
+  if (playback !== undefined && playback.kind === "Playback" && playbackSource !== null) {
+    byId.set("PlayFromHere", make("PlayFromHere", playback.blocked, () => ctx.player.commands.playAudio({
+      mediaId: id, knownDescriptor: playback.player_descriptor, positionMs: null, source: () => playbackSource(id), recapture: true,
+    })));
+  }
   const menu: ActionDescriptor[] = [];
   let group: string | undefined;
   for (const [actionId, catalogEntry] of Object.entries(ACTION_CATALOG)) {

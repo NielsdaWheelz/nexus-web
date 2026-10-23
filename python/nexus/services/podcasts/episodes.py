@@ -6,7 +6,6 @@ explicit desired override are inert, and other stale revisions refuse the whole 
 """
 
 from hashlib import sha256
-from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -22,7 +21,6 @@ from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_pa
 from nexus.services.consumption import projection, state, viewer_txn
 from nexus.services.suggestion_changes import record_input_change
 
-EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
 _TRANSCRIBABLE = (
     "COALESCE(mts.transcript_state, 'not_requested') IN ('not_requested', 'failed_provider')"
 )
@@ -138,7 +136,7 @@ def set_consumption(
     return viewer_txn("set_podcast_episode_consumption", viewer_id, run)
 
 
-def _plan(sort: EpisodeSort) -> list[SortKey]:
+def _plan(sort: wire.EpisodeSort) -> list[SortKey]:
     """The one total order behind the listing's ORDER BY, predicate and cursor."""
     direction = "asc" if sort == "oldest" else "desc"
     published = [
@@ -163,7 +161,7 @@ def list_episodes(
     limit: int,
     cursor: str | None,
     state: str,
-    sort: EpisodeSort,
+    sort: wire.EpisodeSort,
 ) -> CollectionPage[wire.PodcastEpisodeListItemOut]:
     if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": podcast_id}) is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
@@ -205,3 +203,30 @@ def list_episodes(
         ],
         next_cursor=next_cursor,
     )
+
+
+def playback_source_ids(
+    db: Session, viewer_id: UUID, podcast_id: UUID, *, state: str, sort: wire.EpisodeSort
+) -> tuple[str, list[UUID]]:
+    """Complete visible episode list in its owner's total order; no live cursor walk."""
+    from nexus.auth.permissions import visible_podcast_ids_cte_sql
+    from nexus.services.collection_keyset import order_by_sql
+
+    label = db.scalar(
+        text(
+            f"SELECT title FROM podcasts WHERE id = :podcast_id "
+            f"AND id IN ({visible_podcast_ids_cte_sql()})"
+        ),
+        {"viewer_id": viewer_id, "podcast_id": podcast_id},
+    )
+    if label is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    columns = """, pe.published_at, COALESCE(pe.duration_seconds, 0) AS duration_sort,
+        (pe.published_at IS NULL)::int AS published_missing,
+        (pe.duration_seconds IS NULL)::int AS duration_missing"""
+    order = order_by_sql(_plan(sort), alias="r")
+    ids = db.scalars(
+        text(f"SELECT media_id FROM ({_episodes_sql(columns)}) r ORDER BY {order}"),
+        {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state},
+    )
+    return label, list(ids)

@@ -206,7 +206,7 @@ def append_missing_in_txn(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> list[tuple[UUID, UUID]]:
     """Append absent media at the absolute end without moving present rows, in the caller's
-    transaction (the assistant, podcast sync); the inserted ``(media_id, item_id)`` pairs."""
+    transaction (the assistant); the inserted ``(media_id, item_id)`` pairs."""
     lock_viewer(db, viewer_id)
     media_ids = list(dict.fromkeys(media_ids))
     if not media_ids:

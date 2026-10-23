@@ -49,6 +49,7 @@ import { usePodcastCommands } from "@/lib/podcasts/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
+import { QueueCommandError } from "@/lib/player/queue";
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
@@ -85,6 +86,7 @@ export interface ActionContext {
     readonly read: ReturnType<typeof useLectern>;
   } & ReturnType<typeof useLecternCommands>;
   readonly player: {
+    readonly queue: ReturnType<typeof usePlayerSession>["queue"];
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly pendingPlayback: ReturnType<typeof usePlayerSession>["pendingPlayback"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
@@ -255,7 +257,7 @@ export default function ResourceActionsProvider({
           ? { kind: "Loading" }
           : { kind: "Ready", items: offlineSnapshot.items },
       lectern,
-      player: { state: playerSession.state, pendingPlayback: playerSession.pendingPlayback, commands: playerCommands },
+      player: { queue: playerSession.queue, state: playerSession.state, pendingPlayback: playerSession.pendingPlayback, commands: playerCommands },
       workspace,
       sessionSignal: () => session.controller.signal,
       feedback,
@@ -276,6 +278,7 @@ export default function ResourceActionsProvider({
       online,
       offlineSnapshot,
       lectern,
+      playerSession.queue,
       playerSession.state,
       playerSession.pendingPlayback,
       playerCommands,
@@ -311,6 +314,11 @@ export default function ResourceActionsProvider({
           await command.execute();
         } catch (error) {
           if (signal.aborted) return;
+          if (error instanceof QueueCommandError) {
+            feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite",
+              content: { tone: "Warning", title: error.message } });
+            return;
+          }
           if (error instanceof ProgressPreparationError) {
             feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." } });
             return;

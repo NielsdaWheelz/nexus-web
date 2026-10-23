@@ -6,19 +6,16 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import android.util.Log
-import androidx.core.util.AtomicFile
 import app.nexus.android.NexusOriginClient
 import app.nexus.android.NexusOriginError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileNotFoundException
-import java.io.FileOutputStream
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
@@ -30,8 +27,8 @@ private val RETRY_MS = longArrayOf(2_000, 5_000, 15_000, 60_000)
 /**
  * Records listening positions (epoch-fenced, newest sample wins), activity
  * spans and natural ends with the WebView's cookies, without needing the page.
- * Activity spans and the ordered position/settle lane each persist in an atomic
- * file. Every method and callback runs on the service's main thread.
+ * Activity spans keep their outbox; the ordered position/settle lane commits
+ * in the account playback envelope alongside queue transitions. Every method and callback runs on the service's main thread.
  */
 internal class ListeningRecorder(
     context: Context,
@@ -42,6 +39,9 @@ internal class ListeningRecorder(
     private val onAdopt: (position: JSONObject) -> Unit,
     private val onAccepted: () -> Unit,
     private val onSynced: (Boolean) -> Unit,
+    private val onTerminal: (saveLane: (JSONObject) -> Unit) -> Unit,
+    private val onRefused: (mediaId: UUID) -> Unit,
+    private val onOnline: () -> Unit,
 ) {
     data class Sample(val positionMs: Long, val durationMs: Long?)
 
@@ -50,67 +50,67 @@ internal class ListeningRecorder(
         var span: Span? = null // open while playing
         var fenced = false
         var active = false
+        var ended = false
     }
 
     private class Span(val startElapsed: Long, val startPositionMs: Long)
 
     /** A listening PUT or a natural-end settle, sent in order, one at a time. */
-    private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean) {
-        var nextSelected = false
-        var next: JSONObject? = null
-        var onSettled: ((JSONObject?) -> Unit)? = null // live continuation only; never restored from disk
-    }
+    private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean)
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val wallOffsetMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()
     private var account: UUID? = null
     private var episode: Episode? = null
     private var tick: Job? = null
-    private val laneFile = AtomicFile(File(context.filesDir, "player/listening.json"))
+    private var store: PlaybackStore? = null
     private val lane = ArrayDeque<Write>()
     private var sending: Job? = null
     private var uploading: Job? = null
     private var retry: Job? = null
     private var failures = 0
     private var synced = true
+    private val factRevisions = mutableMapOf<UUID, Long>()
+    private val authorityRevisions = mutableMapOf<UUID, Long>()
 
     private val network = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) scope.launch { kick() }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) scope.launch { kick(); onOnline() }
         }
     }
 
     init {
-        try {
-            val saved = JSONArray(String(laneFile.readFully(), Charsets.UTF_8))
-            for (i in 0 until saved.length()) {
-                val entry = saved.getJSONObject(i)
-                lane.addLast(Write(
-                    UUID.fromString(entry.getString("accountId")),
-                    UUID.fromString(entry.getString("mediaId")),
-                    entry.getJSONObject("body"),
-                    entry.getBoolean("settle"),
-                ).apply {
-                    nextSelected = entry.getBoolean("nextSelected")
-                    next = entry.optJSONObject("next")
-                })
-            }
-        } catch (_: FileNotFoundException) {
-            // justify-ignore-error: this device has no saved listening writes yet.
-        }
         connectivity.registerDefaultNetworkCallback(network)
     }
 
-    /** The account the WebView's cookies belong to; another account's pending writes and spans are dropped. */
-    fun bind(accountId: UUID) {
-        if (account != accountId) {
-            tick?.cancel()
-            episode = null
-            lane.removeAll { it.accountId != accountId }
-            account = accountId
+    /** Cookies may change only after unbind has suspended delivery and retained the old account file. */
+    suspend fun bind(accountId: UUID, playback: PlaybackStore) {
+        if (account == accountId) return kick()
+        unbind()
+        store = playback
+        account = accountId
+        val saved = playback.value.getJSONArray("lane")
+        for (i in 0 until saved.length()) {
+            val item = saved.getJSONObject(i)
+            lane.addLast(Write(accountId, UUID.fromString(item.getString("media_id")),
+                item.getJSONObject("body"), item.getBoolean("settle")))
         }
         outbox.retain(accountId)
         kick()
+    }
+
+    suspend fun unbind() {
+        tick?.cancel()
+        account = null
+        sending?.cancelAndJoin()
+        uploading?.cancelAndJoin()
+        retry?.cancel()
+        episode = null
+        if (store != null && !persistLane()) throw IOException("listening checkpoint was not persisted")
+        lane.clear()
+        factRevisions.clear()
+        authorityRevisions.clear()
+        store = null
     }
 
     fun start(mediaId: UUID, resetEpoch: Long, overrideRevision: Long?) {
@@ -129,7 +129,15 @@ internal class ListeningRecorder(
         return ep.span != null || lane.any { !it.settle && it.mediaId == ep.mediaId }
     }
 
+    fun attached(): Boolean = episode != null
     fun resetEpoch(): Long? = episode?.resetEpoch
+    fun overrideRevision(): Long? = episode?.overrideRevision
+    fun authorityRevision(mediaId: UUID): Long = authorityRevisions[mediaId] ?: 0L
+    fun retireAuthority(mediaId: UUID) { authorityRevisions[mediaId] = authorityRevision(mediaId) + 1 }
+    fun factRevision(mediaId: UUID): Long = factRevisions[mediaId] ?: 0L
+    fun hasPending(mediaId: UUID): Boolean = lane.any { it.mediaId == mediaId } ||
+        episode?.let { it.mediaId == mediaId && it.span != null } == true
+    private fun changedFact(mediaId: UUID) { factRevisions[mediaId] = factRevision(mediaId) + 1 }
     fun fenced(): Boolean = episode?.fenced == true
 
     /** A resume in place under the server's descriptor: its override revision is the end's fence. */
@@ -140,6 +148,7 @@ internal class ListeningRecorder(
     /** A reset elsewhere: later writes carry the new epoch, queued ones are stale. */
     fun adopt(position: JSONObject) {
         val ep = episode ?: return
+        changedFact(ep.mediaId)
         ep.resetEpoch = position.getLong("reset_epoch")
         ep.overrideRevision = position.nullableLong("consumption_override_revision")
         ep.active = false
@@ -155,7 +164,7 @@ internal class ListeningRecorder(
         tick?.cancel()
         closeSpan(ep)
         sending?.join()
-        lane.removeAll { it.mediaId == ep.mediaId }
+        lane.removeAll { !it.settle && it.mediaId == ep.mediaId }
         ep.active = false
         val saved = persistLane()
         if (!saved) retryLater()
@@ -188,6 +197,7 @@ internal class ListeningRecorder(
         val ep = episode ?: return
         if (ep.fenced) return
         ep.active = true
+        ep.ended = false
         val playing = ep.span != null
         closeSpan(ep, fromMs)
         if (playing) ep.span = openSpan()
@@ -195,16 +205,32 @@ internal class ListeningRecorder(
     }
 
     /** Settles the end with the terminal position, fenced by the epoch and the override revision seen at load. */
-    fun ended(onSettled: (JSONObject?) -> Unit) {
-        val ep = episode ?: return
+    fun ended(): Boolean {
+        val ep = episode ?: return false
+        val accountId = account ?: return false
+        if (ep.ended) return true
         tick?.cancel()
         closeSpan(ep)
         val body = JSONObject()
             .put("terminal_listening", listening(ep))
             .put("expected_override_revision", ep.overrideRevision ?: JSONObject.NULL)
-        val accountId = account ?: return
-        lane.addLast(Write(accountId, ep.mediaId, body, settle = true).apply { this.onSettled = onSettled })
-        queueChanged()
+        val write = Write(accountId, ep.mediaId, body, settle = true)
+        lane.addLast(write)
+        changedFact(ep.mediaId)
+        return try {
+            // The service includes the next cursor in THIS atomic recorder save.
+            onTerminal { envelope -> saveLane(envelope) }
+            ep.active = false
+            ep.ended = true
+            setSynced(false)
+            send()
+            true
+        } catch (error: IOException) {
+            lane.remove(write)
+            setSynced(false)
+            Log.w(TAG, "terminal playback state not persisted", error)
+            false
+        }
     }
 
     /**
@@ -213,14 +239,15 @@ internal class ListeningRecorder(
      * A paused episode's position is already written or queued; writing it again would undo a newer position
      * another device wrote since.
      */
-    suspend fun stop() {
-        val ep = episode ?: return
+    suspend fun stop(): Boolean {
+        val ep = episode ?: return store == null || persistLane()
         tick?.cancel()
         val playing = ep.span != null
         closeSpan(ep)
         if (playing) write(ep)
         episode = null
         withTimeoutOrNull(2_000) { sending?.join() }
+        return persistLane()
     }
 
     fun close() {
@@ -238,6 +265,7 @@ internal class ListeningRecorder(
         // newest wins: a queued sample of the same episode is replaced, never reordered past a settle
         if (lane.lastOrNull()?.let { !it.settle && it.mediaId == ep.mediaId } == true) lane.removeLast()
         lane.addLast(Write(accountId, ep.mediaId, listening(ep), settle = false))
+        changedFact(ep.mediaId)
         queueChanged()
     }
 
@@ -246,33 +274,32 @@ internal class ListeningRecorder(
         if (persistLane()) send() else retryLater()
     }
 
-    private fun persistLane(): Boolean {
-        var stream: FileOutputStream? = null
-        try {
-            val saved = JSONArray()
-            for (write in lane) {
-                saved.put(JSONObject()
-                    .put("accountId", write.accountId.toString())
-                    .put("mediaId", write.mediaId.toString())
-                    .put("body", write.body)
-                    .put("settle", write.settle)
-                    .put("nextSelected", write.nextSelected)
-                    .put("next", write.next ?: JSONObject.NULL))
+    private fun saveLane(envelope: JSONObject) {
+        val saved = JSONArray()
+        val descriptors = envelope.getJSONObject("descriptors")
+        for (write in lane) {
+            saved.put(JSONObject().put("media_id", write.mediaId.toString())
+                .put("body", write.body).put("settle", write.settle))
+            val retained = descriptors.optJSONObject(write.mediaId.toString()) ?: continue
+            val listening = if (write.settle) write.body.getJSONObject("terminal_listening") else write.body
+            if (retained.getLong("reset_epoch") <= listening.getLong("expected_reset_epoch")) {
+                retained.put("local_listening", JSONObject(listening.toString()))
+                    .put("locally_completed", write.settle)
             }
-            val bytes = saved.toString().toByteArray(Charsets.UTF_8)
-            stream = laneFile.startWrite()
-            stream.write(bytes)
-            stream.fd.sync()
-            laneFile.finishWrite(stream)
-            // AtomicFile logs some commit failures instead of throwing them.
-            if (!laneFile.readFully().contentEquals(bytes)) throw IOException("listening lane was not replaced")
-            return true
+        }
+        envelope.put("lane", saved)
+    }
+
+    private fun persistLane(): Boolean {
+        val playback = store ?: return false
+        return try {
+            playback.update(::saveLane)
+            true
         } catch (error: IOException) {
             // justify-ignore-error: keep the in-memory lane, but do not send or acknowledge its fence.
-            stream?.let(laneFile::failWrite)
             setSynced(false)
             Log.w(TAG, "listening writes not persisted", error)
-            return false
+            false
         }
     }
 
@@ -314,33 +341,28 @@ internal class ListeningRecorder(
                         queued.body.put("expected_override_revision", override)
                     }
                 }
+                store?.update { envelope ->
+                    envelope.getJSONObject("descriptors").optJSONObject(write.mediaId.toString())
+                        ?.takeIf { it.getLong("reset_epoch") == epoch }
+                        ?.put("consumption_override_revision", override)
+                }
                 if (!persistLane()) return false
+                changedFact(write.mediaId)
                 onAccepted()
                 return true
             }
-            if (!write.nextSelected) {
-                val items = origin.lectern().getJSONArray("items")
-                if (account != write.accountId) return true
-                var afterEnded = false
-                for (i in 0 until items.length()) {
-                    val item = items.getJSONObject(i)
-                    val activation = item.getJSONObject("activation")
-                    if (afterEnded && activation.getString("kind") == "FooterAudio") {
-                        write.next = activation.getJSONObject("descriptor")
-                        break
-                    }
-                    if (item.getJSONObject("media_summary").getString("media_id") == write.mediaId.toString()) {
-                        afterEnded = true
-                    }
-                }
-                // Keep this selection on a lost answer: the settle may already have removed its row.
-                write.nextSelected = true
-            }
-            if (!persistLane()) return false
             origin.settleNaturalEnd(write.mediaId, write.body)
             if (account != write.accountId) return true
+            val epoch = write.body.getJSONObject("terminal_listening").getLong("expected_reset_epoch")
+            val revision = (write.body.nullableLong("expected_override_revision") ?: 0L) + 1
+            store?.update { envelope ->
+                envelope.getJSONObject("descriptors").optJSONObject(write.mediaId.toString())
+                    ?.takeIf { it.getLong("reset_epoch") == epoch }
+                    ?.put("consumption_override_revision", revision)
+            }
+            episode?.takeIf { it.mediaId == write.mediaId && it.resetEpoch == epoch }?.overrideRevision = revision
+            changedFact(write.mediaId)
             onAccepted()
-            write.onSettled?.invoke(write.next)
             return true
         } catch (error: NexusOriginError) {
             if (retryable(error.status)) return false
@@ -354,6 +376,12 @@ internal class ListeningRecorder(
                 lane.removeAll { it !== write && !it.settle && it.mediaId == write.mediaId }
                 onAdopt(current)
             } else {
+                if (write.settle || error.status == 409) try {
+                    onRefused(write.mediaId)
+                    if (!write.settle) lane.removeAll { it !== write && !it.settle && it.mediaId == write.mediaId &&
+                        it.body.getLong("expected_reset_epoch") == write.body.getLong("expected_reset_epoch") }
+                }
+                catch (_: IOException) { return false } // justify-ignore-error: retain the terminal record until authority retirement is durable.
                 Log.w(TAG, "dropped a refused ${if (write.settle) "settle" else "listening write"}", error)
             }
             return true

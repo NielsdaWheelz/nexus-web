@@ -131,12 +131,14 @@ function Row({ item, enabled, dragging, renderItem, nodes, begin, canActivate }:
  * their intent. A physical press outlives semantic cancellation. Rows stay put,
  * and release commits only the painted insertion boundary in its captured order.
  */
-export default function SortableList({ items, order, renderItem, ariaLabel, busy }: {
+export default function SortableList({ items, order, renderItem, ariaLabel, busy, scrollport = null, onAnnouncement = null }: {
   readonly items: readonly CollectionRowView[];
   readonly order: OrderPresentation;
   readonly renderItem: (item: CollectionRowView) => ReactNode;
   readonly ariaLabel: string;
   readonly busy?: boolean;
+  readonly scrollport?: (() => HTMLElement | null) | null;
+  readonly onAnnouncement?: ((message: string) => void) | null;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLLIElement>()).current;
@@ -147,7 +149,13 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
   const active = useRef<Drag | null>(null);
   const [destination, setDestination] = useState<Destination | null>(null);
   const painted = useRef<Destination | null>(null);
-  const [announcement, setAnnouncement] = useState("");
+  const [announcement, publishAnnouncement] = useState("");
+  const announce = useRef(onAnnouncement);
+  announce.current = onAnnouncement;
+  const setAnnouncement = useCallback((message: string) => {
+    if (announce.current !== null) announce.current(message);
+    else publishAnnouncement(message);
+  }, []);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const overlay = useOverlayContainer();
   const sensors = useSensors(
@@ -177,7 +185,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       const target = primary ?? root.current.closest<HTMLElement>("[data-pane-focus-landmark]");
       if (target?.isConnected && !target.closest("[inert]")) target.focus({ preventScroll: true });
     }
-  }, [nodes]);
+  }, [nodes, setAnnouncement]);
 
   const invalidate = useCallback(() => {
     if (held.current) held.current.invalidated = true;
@@ -194,7 +202,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
 
   const begin = (id: string, event: ReactPointerEvent<HTMLLIElement>) => {
     const latest = current.current;
-    const port = root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]');
+    const port = scrollport === null ? root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') : scrollport();
     if (held.current || event.defaultPrevented || !event.isPrimary || event.button !== 0 ||
         event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
         (event.pointerType !== "mouse" && event.pointerType !== "touch") ||
@@ -472,7 +480,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
           </div> : null}
         </DragOverlay>, overlay,
       ) : null}
-      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
+      {onAnnouncement === null ? <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span> : null}
     </DndContext>
   );
 }

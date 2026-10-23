@@ -6,6 +6,7 @@
 // command to the account owner. Observation stops outside the visible pane.
 
 import { useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { PlaybackSourceContext, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { presentMedia } from "@/lib/collections/presenters/media";
@@ -485,6 +486,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             ]}
           />
         ) : known === undefined || ready === null ? null : (
+          <PlaybackSourceContext.Provider value={selected_media_id => {
+            const sourceSort = (["newest", "oldest", "duration_asc", "duration_desc"] as const).find(value => value === sort);
+            if (sourceSort === undefined) throw new Error("invalid podcast queue sort");
+            return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
+          }}>
           <CollectionView
             surface={false}
             returnScope="PodcastDetail.Episodes"
@@ -512,6 +518,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               : `no ${known === "in_progress" ? "in-progress" : known} episodes.`,
             }} announcement="None" />}
           />
+          </PlaybackSourceContext.Provider>
         )}
     </PaneSurface>
   );

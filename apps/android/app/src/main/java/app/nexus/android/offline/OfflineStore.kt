@@ -244,6 +244,12 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         changed()
     }
 
+    /** A complete file eligible for a new playback lease; Removing is never offline-ready. */
+    fun readyAudioFile(mediaId: UUID): File? = synchronized(lock) {
+        val item = items[mediaId] ?: return@synchronized null
+        File(itemDir(mediaId), "audio").takeIf { item.kind == AUDIO && item.state == "Ready" && it.isFile }
+    }
+
     fun audioFile(mediaId: UUID): File? {
         synchronized(lock) {
             val item = items[mediaId] ?: return null
