@@ -118,12 +118,12 @@ export function SkipSilenceField({
 }
 
 /** Chapter navigation is shared by the desktop picker and now-playing sheet. */
-export function ChapterList({ state, compact }: { readonly state: Extract<PlayerState, { kind: "Loaded" }>; readonly compact: boolean }) {
+export function ChapterList({ state, presentation }: { readonly state: Extract<PlayerState, { kind: "Loaded" }>; readonly presentation: "popup" | "embedded" }) {
   const commands = usePlayerCommands();
   const { playbackSubject } = usePlayerSession();
   const { chapter: current } = usePlayerTimeline();
   if (state.source.kind !== "Episode") return null;
-  return <ol className={compact ? collection.compactViewport : styles.chapters} data-collection-viewport={compact ? "" : undefined}>
+  return <ol className={{ popup: collection.contentViewport, embedded: styles.chapters }[presentation]} data-collection-viewport={presentation === "popup" ? "" : undefined}>
     {state.source.descriptor.chapters.map(chapter => <li key={`${chapter.start_ms}:${chapter.title}`}>
       <button type="button" className={`${collection.row} ${styles.chapter}`} aria-current={current?.start_ms === chapter.start_ms ? "true" : undefined}
         disabled={playbackSubject === null} aria-disabled={playbackSubject === null || undefined} onClick={() => { if (playbackSubject !== null) commands.seekTo({ positionMs: chapter.start_ms, expectedSubject: playbackSubject }); }}>

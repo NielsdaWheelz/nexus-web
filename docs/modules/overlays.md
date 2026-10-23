@@ -234,14 +234,18 @@ suppresses command/control+k. its corridor is the 8px inline-start padding.
 ## surfaces
 
 **PickerSurface**: a desktop transient anchored above or below its trigger,
-with flip/clamp, or the existing mobile sheet. the default desktop shell is a
+with flip/clamp while preserving its trigger and gap, or the existing mobile sheet.
+the requested side wins when content fits; otherwise the side with more space
+wins (below on a tie). the default desktop shell is a
 named dialog; a listbox consumer supplies its own named root and sets
 `desktopRole={null}`. `initialFocus(panel)` chooses the focus target after
 placement. the caller owns choice semantics and content; the surface owns
 dismissal, tab continuation and return focus through the existing kernel.
 `--picker-surface-width` sets desktop width (380px by default); mobile geometry
-belongs to `MobileSheet`. inline presentation is a named region with an explicit
-close action and no outside-press dismissal.
+belongs to `MobileSheet`. `heightLimit="available"` removes the desktop preferred
+envelope and forwards the policy to the sheet; content remains intrinsic within
+the available bounds. omission retains preferred sizing. inline presentation is
+a named region with an explicit close action and no outside-press dismissal.
 
 collection bodies use the [shared viewport recipes](visual-system.md#collections-and-searchable-pickers).
 search, scope and recovery stay above the result scrollport. when they cannot
@@ -256,7 +260,11 @@ at least 44px high, with a 36×4px grabber. a drag of 96px asks the same guard a
 x, scrim, escape and back; cancellation restores position. reduced motion removes
 animated travel while retaining dismissal. scrim is `"default"`, or `"soft"` for
 in-context companion sheets. keyboard lift uses `--keyboard-inset` and safe-area
-padding. geometry lives only in `MobileSheet.module.css`.
+padding. `heightLimit="available"` instead projects the backdrop onto the visual
+viewport using `useKeyboardInset`, with a top gap of the larger of `--space-6`
+and the safe top inset. its intrinsic panel clears the keyboard once and keeps
+safe-bottom padding inside its available height. sheet layout and height policies
+live in `MobileSheet.module.css`; the component projects the viewport snapshot.
 
 **MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
 follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
@@ -276,6 +284,9 @@ named transient dialog. retry retains the failure surface, owner, focus and hist
 while taking a fresh signal and budget. mobile uses a titled `MobileSheet` with
 ordinary buttons/links and modal tab order. touch focuses the panel, keyboard the
 requested command edge. `aria-haspopup` matches the displayed role.
+both presentations use natural content height with available-space ceilings;
+mobile selects the sheet's available-height policy. sizing settles before
+publication; published geometry and resize retirement keep their existing owner.
 
 Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
 wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;

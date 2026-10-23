@@ -37,6 +37,7 @@ export default function PickerSurface({
   placement = "below",
   initialFocus,
   desktopRole = "dialog",
+  heightLimit,
   className,
   children,
 }: {
@@ -58,6 +59,8 @@ export default function PickerSurface({
   readonly initialFocus?: (panel: HTMLElement) => HTMLElement | null;
   /** A listbox supplies its own named root inside a neutral desktop shell. */
   readonly desktopRole?: "dialog" | null;
+  /** Omit the preferred height ceiling; still fit beside the trigger. */
+  readonly heightLimit?: "available";
   /** Desktop panel appearance; the mobile sheet keeps its own geometry. */
   readonly className?: string;
   readonly children: ReactNode;
@@ -73,6 +76,7 @@ export default function PickerSurface({
     placement,
     align: "start",
     flip: true,
+    keepAnchorVisible: true,
   });
   useCollectionLayout(regionRef, region);
   useCollectionLayout(panel.ref, desktop);
@@ -141,7 +145,7 @@ export default function PickerSurface({
               role={desktopRole ?? undefined}
               aria-label={desktopRole ? title : undefined}
               tabIndex={desktopRole ? -1 : undefined}
-              className={[collection.surface, styles.surface, className].filter(Boolean).join(" ")}
+              className={[collection.surface, styles.surface, heightLimit === "available" && styles.available, className].filter(Boolean).join(" ")}
               style={panel.style}
             >
               {children}
@@ -159,6 +163,7 @@ export default function PickerSurface({
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}
+        heightLimit={heightLimit}
       >
         {children}
       </MobileSheet>

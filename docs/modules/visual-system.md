@@ -135,9 +135,14 @@ adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
 
-transient results have a six-row preferred budget (32px fine, 44px coarse), not
-a result-count limit. full workspaces retain their larger area. essential names
-wrap. `lib/ui/collection.ts` owns scoped reveal and constrained-body measurement;
+search/catalog results use `compactViewport`'s six-row preferred budget (32px
+fine, 44px coarse), not a result-count limit. actions and standalone chapters use
+`contentViewport`: intrinsic height, capped by anchored bounds and the parent's
+flex allocation, without a measured collection ceiling or minimum viewport row.
+short lists do not stretch. full workspaces retain `fillViewport`'s larger area.
+essential names wrap. `lib/ui/collection.ts` owns constrained-body measurement
+and reveals retained focus after resize within the owned list/body, without
+moving focus or scrolling the host;
 [overlays](overlays.md#surfaces) owns available geometry and dismissal.
 
 `lib/ui/searchOptions.ts` supplies controlled bindings and keyed reconciliation.
