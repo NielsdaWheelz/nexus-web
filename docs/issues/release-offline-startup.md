@@ -19,17 +19,18 @@ verify ordinary assets cannot fall through to remote fetching. give the installe
 build clear manual apk-update instructions; add no distribution service or
 automatic updater. wire mismatch must not offer a reload loop.
 
-the implementation pr owns emulator qualification and its exact limits. before
-release, qualify the physical phone: cold airplane-mode launch after force-stop,
-acknowledged navigation, cookie durability, same-account sign-in preserving open
-text, offline sign-out, downloads exit/return and ordinary online journeys. run
-successful google/github sign-in and identity linking with configured providers.
+the implementation pr owns isolated-device qualification and its exact limits.
+before release, qualify the signed installed upgrade on the physical phone
+against the paired production server: cold airplane-mode launch after
+force-stop, acknowledged navigation, cookie durability, same-account sign-in
+preserving open text, offline sign-out, downloads exit/return and ordinary
+online journeys. verify production https and normal browser-to-app handoff
+dispatch with the installed package. run successful google/github sign-in and
+identity linking with configured providers.
 
 resolved when the paired cutover and these journeys are qualified. episode
 offline playback, catalog and reading parity are separate releases.
 
-owner dispositions: physical-device qualification and successful google/github
-sign-in and identity linking are deferred to release. this change qualifies the
-shared real password
-handoff and provider refusal/cancellation boundaries. retain the released writing
-journal; apk-update draft warnings concern other memory-only forms.
+the installed upgrade and live provider checks remain release work. retain the
+released writing journal; apk-update draft warnings concern other memory-only
+forms.
