@@ -4,6 +4,7 @@
 // admission. Later bootstrap may refresh identity/profile, never live navigation.
 import { useCallback, useEffect, useRef, useState } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
+import styles from "@/app/(authenticated)/layout.module.css";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import Button from "@/components/ui/Button";
 import { isApiError, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
@@ -95,7 +96,7 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
   const wrong = signInResult === "DifferentAccount";
   const startupCleanup = isApiError(failure?.error) && failure.error.code === "E_LOCAL_CLEANUP" ? failure.error : null;
   const cleanupError = startupCleanup ?? (isApiError(cleanupFailure?.error) ? cleanupFailure.error : null);
-  return <main><FeedbackState
+  return <div style={{ height: "100%", overflowY: "auto" }}><main className={styles.error}><FeedbackState
     content={startupCleanup !== null || cleanupFailure !== null ? { tone: "Warning", title: "sign out not completed", message: cleanupError?.message ?? "local cleanup did not finish. retry to remove this device’s account data." }
       : failure ? { tone: "Danger", title: "saved workspace couldn’t be opened" }
       : admission === "UpdateRequired" ? STALE_BUILD_FEEDBACK
@@ -112,6 +113,6 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
       : [{ label: "sign in", busy: signingIn, onClick: signIn }]}
   />
     {wrong ? <Button tone="danger" aria-busy={signingIn || undefined} onClick={clearDevice}>sign out on this device</Button> : null}
-  </main>;
+  </main></div>;
 }
 
