@@ -5,8 +5,6 @@ physical episode entries and library rules. it preserves work and preferences;
 incomplete history restarts with known episodes already processed. irreversible:
 rollback requires the release backup. implementation baseline is `8124afc10`.
 
-- rehearse `0310` against the newest production backup before merge. disposable
-  populated fixtures do not replace this repository release requirement.
 - stop api/worker writers and verify the backup. run the migration's conversion
   preflight. shared, system/default show entries and malformed legacy follows
   abort with identified rows; repair those data explicitly before retrying.
@@ -16,4 +14,4 @@ rollback requires the release backup. implementation baseline is `8124afc10`.
 - retain wire `14` while it is the existing unreleased break; if another release
   lands first, apply the repository's once-per-release revision rule.
 
-delete after the actual coordinated release and required backup rehearsal.
+delete after the actual coordinated release.
