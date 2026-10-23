@@ -53,11 +53,11 @@ const PaneContent = memo(function PaneContent(props: {
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
-  if (!admitted && writingState === "failed") return <FeedbackState content={{ tone: "Warning", title: "writing couldn’t start" }} announcement="Polite" />;
+  if (!admitted && writingState === "failed") return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Warning", title: "writing couldn’t start" }} announcement="Polite" /></div>;
   if (!admitted && !writingReady) return <PaneLoadingState label="opening writing…" announcement="Polite" />;
-  if (!admitted && !canAdmit) return <FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} />;
+  if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
   if (props.routeId !== "unsupported") return renderPane(props.routeId);
-  return <FeedbackState content={{ tone: "Neutral", title: "this destination is unavailable" }} announcement="Polite" />;
+  return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this destination is unavailable" }} announcement="Polite" /></div>;
 });
 
 /**
