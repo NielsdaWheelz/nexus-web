@@ -1,7 +1,9 @@
 // Reading mode: while reading, the viewport feeds the cursor; a deliberate
 // jump enters exploring and holds the departure for return. Later jumps keep
 // the first origin. A failed jump rolls back to its departure. Positioning
-// itself fences progress.
+// itself fences progress. Failure occurrences stay live, outside stable
+// navigation snapshots; only their exact object can be acknowledged. Inspection
+// admits its departure before resolving, and only its current request may settle.
 import type { Locator, Placement, ReaderTarget } from "./model";
 
 export type NavFailure =
@@ -12,6 +14,10 @@ export type NavFailure =
 export type NavOutcome =
   | { readonly kind: "Arrived" | "Unchanged" | "Cancelled" }
   | { readonly kind: "Unavailable"; readonly reason: NavFailure };
+export type NavigationFailure = {
+  readonly operation: "Open" | "Restore" | "Return" | "Reflow" | "Continue";
+  readonly reason: NavFailure;
+};
 export interface NavState {
   readonly mode: "Reading" | "Exploring";
   readonly origin:
@@ -20,8 +26,9 @@ export interface NavState {
     | null;
   readonly originUnavailable: boolean;
   readonly positioning: boolean;
-  readonly failure: NavFailure | null;
+  readonly failure: NavigationFailure | null;
 }
+export type NavSnapshot = Pick<NavState, "mode" | "origin" | "originUnavailable">;
 type To = ReaderTarget | Placement;
 export interface Positioner {
   capture(): Placement | null;
@@ -30,24 +37,28 @@ export interface Positioner {
 export interface Navigator {
   state(): NavState;
   inspect(input: {
-    readonly target: ReaderTarget;
+    readonly target: ReaderTarget | ((signal: AbortSignal) => ReaderTarget | null | Promise<ReaderTarget | null>);
     readonly signal?: AbortSignal;
   }): Promise<NavOutcome>;
   /** A fresh entry (deep link): exploring from the start, origin = the saved cursor. */
   enter(target: ReaderTarget, saved: Locator | null): Promise<NavOutcome>;
-  restore(placement: Placement, state: NavState, signal?: AbortSignal): Promise<NavOutcome>;
+  restore(placement: Placement, state: NavSnapshot, signal?: AbortSignal): Promise<NavOutcome>;
   seek(): { settle(moved: boolean): void; cancel(): void } | null;
   returnToSpot(): Promise<NavOutcome>;
   /** The placement to adopt as the cursor, or null when there is none. */
   continueHere(): Placement | null;
+  /** Adopt an explicitly supplied reading point; its caller owns the cursor. */
+  readFrom(): void;
   /** Restore, remote, reset: fenced, ends Reading. */
-  apply(to: To): Promise<NavOutcome>;
+  apply(to: To, purpose: "Open" | "Restore"): Promise<NavOutcome>;
   /** Preserve the last explicit target, or measured passage, through a layout change. */
   reflow(input: {
     readonly placement: Placement | null;
     change(): void;
   }): Promise<NavOutcome>;
   cancel(): void;
+  dismissNavigationFailure(expected: NavigationFailure): void;
+  retireNavigationAttempt(): void;
   invalidateOrigin(identity: string): void;
 }
 
@@ -63,7 +74,8 @@ interface Request {
   readonly kind: "inspect" | "entry" | "return" | "apply" | "reflow";
   readonly controller: AbortController;
   readonly departure: Placement | null;
-  readonly previous: NavState;
+  readonly previous: NavSnapshot;
+  readonly operation: NavigationFailure["operation"];
 }
 
 export function createNavigator(
@@ -84,13 +96,14 @@ export function createNavigator(
     state = next;
     hooks.changed();
   };
-  const fail = (failure: NavFailure): NavOutcome => {
-    publish({ ...state, failure });
-    return { kind: "Unavailable", reason: failure };
+  const fail = (operation: NavigationFailure["operation"], reason: NavFailure): NavOutcome => {
+    publish({ ...state, positioning: false, failure: { operation, reason } });
+    return { kind: "Unavailable", reason };
   };
 
   function begin(
     kind: Request["kind"],
+    operation: NavigationFailure["operation"],
     saved: Locator | null = null,
   ): Request | null {
     if (kind !== "reflow") reflowTarget = null;
@@ -99,17 +112,25 @@ export function createNavigator(
       kind === "entry" || kind === "apply" || kind === "reflow"
         ? null
         : (surface()?.capture() ?? request?.departure ?? null);
-    if (kind === "inspect" && departure === null) return null;
+    const previous = request?.previous ?? {
+      mode: state.mode, origin: state.origin, originUnavailable: state.originUnavailable,
+    };
+    request?.controller.abort();
+    request = null;
+    // Admission retires the older attempt even when departure capture fails.
+    if (kind === "inspect" && departure === null) {
+      fail(operation, "CaptureUnavailable");
+      return null;
+    }
     if (kind === "inspect" && state.mode === "Reading" && !state.positioning) {
       hooks.beforeExplore();
     }
-    const previous = request?.previous ?? state;
-    request?.controller.abort();
     const next: Request = {
       kind,
       controller: new AbortController(),
       departure,
       previous,
+      operation,
     };
     request = next;
     const origin: NavState["origin"] =
@@ -151,16 +172,16 @@ export function createNavigator(
         req.kind === "return" || req.kind === "apply"
           ? READING
           : outcome.kind === "Unchanged" && req.kind !== "entry" && req.kind !== "inspect"
-            ? { ...req.previous, positioning: false }
+            ? { ...req.previous, positioning: false, failure: state.failure }
             : { ...state, positioning: false },
       );
     } else if (outcome.kind === "Cancelled") {
       publish({ ...state, positioning: false });
-    } else {
+    } else if (outcome.kind === "Unavailable") {
       publish({
         ...(restored ? req.previous : state),
         positioning: false,
-        failure,
+        failure: { operation: req.operation, reason: outcome.reason },
         originUnavailable:
           state.originUnavailable ||
           (req.kind === "return" && failure === "TargetUnavailable"),
@@ -169,35 +190,48 @@ export function createNavigator(
     return outcome;
   }
 
-  async function run(req: Request | null, to: To): Promise<NavOutcome> {
-    if (req === null) return fail("CaptureUnavailable");
-    const handle = surface();
-    const outcome: NavOutcome = handle
-      ? await handle.position(to, req.controller.signal)
-      : { kind: "Unavailable", reason: "PositioningFailed" };
-    if (
-      request === req && !req.controller.signal.aborted &&
-      req.kind !== "reflow" &&
-      (outcome.kind === "Arrived" || outcome.kind === "Unchanged")
-    ) {
-      // PDF commands can focus or depend on mutable viewer state;
-      // reflow uses their measured placement.
-      reflowTarget =
-        "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdf")
-          ? null
-          : to;
+  async function run(req: Request | null, target: To | ((signal: AbortSignal) => ReaderTarget | null | Promise<ReaderTarget | null>)): Promise<NavOutcome> {
+    if (req === null) return { kind: "Unavailable", reason: "CaptureUnavailable" };
+    try {
+      const to = typeof target === "function" ? await target(req.controller.signal) : target;
+      if (request !== req || req.controller.signal.aborted) return { kind: "Cancelled" };
+      const handle = surface();
+      const outcome: NavOutcome = to === null
+        ? { kind: "Unavailable", reason: "TargetUnavailable" }
+        : handle
+          ? await handle.position(to, req.controller.signal)
+          : { kind: "Unavailable", reason: "PositioningFailed" };
+      if (
+        to !== null && request === req && !req.controller.signal.aborted &&
+        req.kind !== "reflow" &&
+        (outcome.kind === "Arrived" || outcome.kind === "Unchanged")
+      ) {
+        // PDF commands can focus or depend on mutable viewer state;
+        // reflow uses their measured placement.
+        reflowTarget =
+          "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdf")
+            ? null
+            : to;
+      }
+      return await settle(req, req.controller.signal.aborted ? { kind: "Cancelled" } : outcome);
+    } catch (error) {
+      if (req.controller.signal.aborted) return { kind: "Cancelled" };
+      if (request === req) navigatorCancel();
+      throw error;
     }
-    return settle(req, req.controller.signal.aborted ? { kind: "Cancelled" } : outcome);
   }
 
   return {
     state: () => state,
     async inspect({ target, signal }) {
       if (signal?.aborted) return { kind: "Cancelled" };
-      const req = begin("inspect");
-      if (req === null) return fail("CaptureUnavailable");
+      const req = begin("inspect", "Open");
+      if (req === null) return { kind: "Unavailable", reason: "CaptureUnavailable" };
       // The signal owns this request, never whichever request is current later.
-      const abort = () => req.controller.abort();
+      const abort = () => {
+        req.controller.abort();
+        if (request === req) navigatorCancel();
+      };
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
       try {
@@ -206,31 +240,35 @@ export function createNavigator(
         signal?.removeEventListener("abort", abort);
       }
     },
-    enter: (target, saved) => run(begin("entry", saved), target),
+    enter: (target, saved) => run(begin("entry", "Open", saved), target),
     async restore(placement, previous, signal) {
       if (signal?.aborted) return { kind: "Cancelled" };
       navigatorCancel();
-      publish({ ...previous, positioning: false, failure: null });
-      const req = begin("reflow");
+      publish({ mode: previous.mode, origin: previous.origin, originUnavailable: previous.originUnavailable, positioning: false, failure: null });
+      const req = begin("reflow", "Restore");
       if (!req) return { kind: "Unavailable", reason: "PositioningFailed" };
-      const abort = () => req.controller.abort();
+      const abort = () => {
+        req.controller.abort();
+        if (request === req) navigatorCancel();
+      };
       signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
       try { return await run(req, placement); }
       finally { signal?.removeEventListener("abort", abort); }
     },
-    apply: (to) => run(begin("apply"), to),
+    apply: (to, purpose) => run(begin("apply", purpose), to),
     reflow({ placement, change }) {
       const to = reflowTarget ?? placement;
       if (state.positioning || to === null) {
         change();
         return Promise.resolve({ kind: "Unchanged" });
       }
-      const req = begin("reflow");
+      const req = begin("reflow", "Reflow");
       change();
       return run(req, to);
     },
     seek() {
-      const req = begin("inspect");
+      const req = begin("inspect", "Open");
       if (req === null) return null;
       return {
         settle: (moved) =>
@@ -242,6 +280,7 @@ export function createNavigator(
       };
     },
     async returnToSpot() {
+      retireNavigationAttempt();
       const { origin } = state;
       if (state.mode !== "Exploring" || origin === null)
         return { kind: "Unchanged" };
@@ -251,9 +290,9 @@ export function createNavigator(
           : hooks.locate(origin.locator);
       if (state.originUnavailable || to === null) {
         publish({ ...state, originUnavailable: true });
-        return { kind: "Unavailable", reason: "SourceChanged" };
+        return fail("Return", "SourceChanged");
       }
-      return run(begin("return"), to);
+      return run(begin("return", "Return"), to);
     },
     continueHere() {
       reflowTarget = null;
@@ -261,13 +300,21 @@ export function createNavigator(
       request = null;
       const placement = surface()?.capture() ?? null;
       if (placement === null) {
-        publish({ ...state, positioning: false, failure: "CaptureUnavailable" });
+        fail("Continue", "CaptureUnavailable");
         return null;
       }
       publish(READING);
       return placement;
     },
+    readFrom() {
+      navigatorCancel();
+      publish(READING);
+    },
     cancel: navigatorCancel,
+    dismissNavigationFailure(expected) {
+      if (state.failure === expected) publish({ ...state, failure: null });
+    },
+    retireNavigationAttempt,
     invalidateOrigin(identity) {
       const { origin } = state;
       if (
@@ -285,5 +332,10 @@ export function createNavigator(
     request.controller.abort();
     request = null;
     publish({ ...state, positioning: false });
+  }
+
+  function retireNavigationAttempt() {
+    navigatorCancel();
+    if (state.failure !== null) publish({ ...state, failure: null });
   }
 }

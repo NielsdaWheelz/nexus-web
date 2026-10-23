@@ -120,7 +120,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     ready,
     sourceIdentity: conversationId,
     apply: async (arrivalTarget, context) => {
-      if (arrivalTarget.kind !== "source") return false;
+      if (arrivalTarget.kind !== "source") return "Unavailable";
       const result = arrivalTarget.source;
       setInvalidatedInspection(false);
       if (result.location.kind === "resource") {
@@ -128,15 +128,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           const transcript = scroll.current?.getTranscriptElement();
           if (transcript) { transcript.tabIndex = -1; transcript.focus({ preventScroll: true }); }
         }
-        return true;
+        return "Applied";
       }
-      if (result.location.kind !== "located" || result.location.locator.type !== "message_offsets") return false;
+      if (result.location.kind !== "located" || result.location.locator.type !== "message_offsets") return "Unavailable";
       const locator = result.location.locator;
       const message = store.getState().messages.get(locator.message_id);
-      if (!message || locator.conversation_id !== conversationId || context.signal.aborted) return false;
-      if (locator.start_offset !== 0 || locator.end_offset !== Array.from(message.content).length) return false;
+      if (!message || locator.conversation_id !== conversationId || context.signal.aborted) return "Unavailable";
+      if (locator.start_offset !== 0 || locator.end_offset !== Array.from(message.content).length) return "Unavailable";
       const exact = message.content;
-      if (locator.text_quote_selector?.exact !== exact) return false;
+      if (locator.text_quote_selector?.exact !== exact) return "Unavailable";
       const inspection = new AbortController();
       const retire = () => inspection.abort();
       const stillCurrent = () => store.getState().messages.get(message.id)?.content === exact;
@@ -156,15 +156,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         const current = latestRuntime.current;
         let destination = latestLeaf.current;
         if (!pathTo(store.getState().messages, destination).some((item) => item.id === message.id)) {
-          if (conversationEndpoint(new URL(current.href, "https://nexus.invalid").searchParams).kind !== "Unspecified") return false;
+          if (conversationEndpoint(new URL(current.href, "https://nexus.invalid").searchParams).kind !== "Unspecified") return "Unavailable";
           destination = leafUnder(indexChildren(store.getState().messages.values()), message.id);
         }
-        if (context.signal.aborted || !persistEndpoint(current, destination)) return false;
+        if (context.signal.aborted || !persistEndpoint(current, destination)) return "Unavailable";
         setEndpoint({ visitId: current.visitId, value: { kind: "Endpoint", messageId: destination } });
         if (!stillCurrent() || context.signal.aborted) retire();
         const applied = !inspection.signal.aborted && await inspectChatMessage(scroll.current, message.id, { ...context, signal: inspection.signal });
         if (!applied) retire();
-        return applied;
+        return applied ? "Applied" : "Unavailable";
       } catch (error) {
         retire();
         throw error;
@@ -383,7 +383,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           announcement="Assertive"
         />
       ) : null}
-      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure ?? "quoted location unavailable" }} announcement="Polite" /> : null}
+      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure?.title ?? "quoted location unavailable" }} announcement="Polite" /> : null}
       {state.error || history === "Unavailable" ? (
         <FeedbackNotice
           content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}

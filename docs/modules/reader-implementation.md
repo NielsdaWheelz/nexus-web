@@ -220,6 +220,20 @@ choosing a transcript
 segment's time stamp is reading from there (`readFrom`): the cursor moves and the
 player seeks and resumes. a click on the text itself only selects (words, marks).
 
+navigation failures are in-memory occurrences `{operation, reason}`. the navigator
+owns them; acknowledgement compares the exact object and changes only feedback.
+new explicit navigation and publication replacement retire old feedback; ordinary
+input cancels active positioning without acknowledging a settled failure. rollback
+and visit snapshots contain only mode, origin and origin availability. they cannot
+restore feedback or positioning. a failed rollback makes no preservation promise.
+
+`inspect` accepts a target or an abort-aware asynchronous target resolver. admission
+captures the departure before resolution; stale completion cannot position or
+publish unavailability. explicit navigation and reading intent also retire pending
+host arrivals, preserving the matching signal during an arrival's own delegated
+inspection. automatic restore/reflow emits no reader intent. explicit transcript
+point adoption needs no viewport capture.
+
 **text surface.** every unit mounts in one scroll; off-screen units skip
 rendering (`content-visibility: auto`) at an estimated height. a viewport is
 measured per scroll frame from boxes, never hit-tests (a sheet or menu over the text
@@ -270,6 +284,11 @@ mode and the first origin, clears earlier input intent and records no progress;
 explicit zoom cancels pending/held navigation before changing scale; saved-zoom
 restoration does not. cancellation retires active positioning synchronously.
 transient find matches and normalized pdf destinations use measured-placement reflow.
+pdf destination resolution is admitted before awaiting pdf.js and captures the
+source view at activation. rendered internal links distinguish preparing, ready
+and unavailable. preparing consumes activation without replay; unavailable
+activation uses the navigator's common failure notice. background preparation
+settles busy state and reports diagnostics without claiming a failed user action.
 `pdf/destination.ts` resolves native named/explicit annotation destinations before
 pdf.js discards the event. public view/scale events bind source-relative null
 coordinates and zoom; resolved links expose canonical hrefs. raw `PdfView`
@@ -379,6 +398,13 @@ ink, accent and surface tokens locally; portaled details use the application the
 the hosted pane supplies announcement permission; inactive panes are silent. public
 and shelf hosts supply their own recovery focus targets and geometry provider.
 
+one operation-aware navigation notice lives in the measured feedback stack,
+independently of progress capability. it is a warning with one factual title and
+an explicit close control; it has no timer or retained retry command. dismissal
+preserves mode, held origin, inspection, viewport and cursor. progress, conflict
+and document recovery keep their independent actions. public shares use this same
+notice and never attribute a later navigation failure to the shared highlight.
+
 readability, document-local find and indexed search/ai availability are separate.
 the reader body does not warn about indexing beside local find. the media inspector's
 availability section states the indexed capability neutrally; actual search/ai
@@ -464,6 +490,18 @@ owner's measured viewport cap.
 `sourceArrival.ts` applies a union of resolved server source and direct reader
 destination through one saved-intent, claim, cancellation and focus fence.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
+arrival intents remember `Pending`, `Applied` or `Retired`, without storing
+failure presentation. apply returns `Applied`, `Unavailable`, `Cancelled` or
+`FailureHandled`; the last delegates feedback to the reader, preventing duplicate
+notices. newer local intent retires waiting/running arrivals before old resolution
+can move the source. acknowledging an arrival's exact failure retires replay
+without aborting its signal or removing mounted inspection. a retired arrival
+is skipped on remount; reopening a reference creates a fresh attempt.
+
+media preserves arrival api errors for the existing transport policy. an observed
+stale build retains canonical reload-only recovery while the document remains
+readable; fresh navigation cannot dismiss that fact. new-pane admission failures
+have their own local occurrence. forking does not supersede source inspection.
 evidence-item arrival opens connections and reveals the grouped root by canonical
 ref, native id or direct edge id. it expands source text when appropriate,
 waiting for the mounted disclosure shell before focus, without awaiting fetched

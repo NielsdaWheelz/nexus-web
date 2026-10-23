@@ -81,8 +81,12 @@ they never replay. account departure retires presentation. an active modal
 suppresses unrelated workspace controls and live announcements; its own failures
 stay inside the modal.
 
-only changed short facts enter separate live regions. inactive panes stay
-silent. actions stay mounted and focusable while busy, with guarded activation;
+only short facts enter separate live regions. local `FeedbackNotice` owners may
+supply an occurrence and exact-occurrence dismissal; other recovery surfaces
+retain their existing contract. replacing an occurrence commits an empty live
+region before publishing even identical text. controls remain mounted; local
+announcement identity does not replace workspace action identity. inactive panes
+stay silent. actions stay mounted and focusable while busy, with guarded activation;
 successful removal returns to an explicit owner destination, then the shell.
 `FeedbackScope` supplies a pane's focus destination and announcement permission
 without a new state owner. disabled reasons remain visible. compact targets are
