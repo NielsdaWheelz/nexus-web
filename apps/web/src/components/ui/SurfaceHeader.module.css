@@ -55,12 +55,8 @@
   flex: 0 0 auto;
 }
 
-.subscription {
-  display: inline-flex;
-  flex: 0 0 20px;
-  inline-size: 20px;
-  block-size: 20px;
-}
+
+
 
 @container primaryPane (max-width: 479px) {
   .header {

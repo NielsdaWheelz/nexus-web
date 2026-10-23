@@ -1,6 +1,0 @@
-/* The Subscribe dialog: its prompt, the library choice and Cancel, stacked. */
-.subscribe {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}

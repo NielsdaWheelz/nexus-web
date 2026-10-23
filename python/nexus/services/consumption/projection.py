@@ -200,7 +200,7 @@ def player_descriptors(
             LEFT JOIN podcast_listening_states pls
               ON pls.user_id = :viewer_id AND pls.media_id = m.id
             LEFT JOIN consumption_overrides co ON co.user_id = :viewer_id AND co.media_id = m.id
-            LEFT JOIN podcast_subscriptions ps
+            LEFT JOIN podcast_playback_settings ps
               ON ps.user_id = :viewer_id AND ps.podcast_id = pe.podcast_id
             WHERE m.id = ANY(:media_ids) AND m.kind = 'podcast_episode'
         """),

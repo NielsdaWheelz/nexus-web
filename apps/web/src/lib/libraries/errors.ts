@@ -22,8 +22,6 @@ const COPY: Readonly<Record<string, string>> = {
   E_NAME_INVALID: "Enter a library name of 1 to 100 characters other than All.",
   E_RESOURCE_CONFLICT: "library changed. review it and choose again.",
   E_MEDIA_DELETING: "This item is being removed and can’t be changed now.",
-  E_PODCAST_SUBSCRIPTION_REQUIRED:
-    "Subscribe to this podcast before adding it to a library.",
   E_INVALID_REQUEST: "That change is no longer valid. Refresh and try again.",
   E_INVALID_CURSOR: "The list changed. Refresh it and try again.",
   E_INVITE_NOT_PENDING: "This invitation is no longer pending.",

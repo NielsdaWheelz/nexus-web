@@ -4,6 +4,8 @@ Recognized creates resolve current authorized canonical content before source
 generation checks, without repeating initialization. Exact-extent aliases retain
 their canonical identity and preserve colour. A fresh passage and its initial
 note either publish together or leave no fresh effects.
+Transcript passages fence on immutable unit ids under the media lock; published
+documents require their exact positive reader generation.
 
 Absolute updates require the highlight hash unless already equal; deletes retire
 before teardown and absent owned ids reserve retirement. Media annotation lanes
@@ -744,6 +746,16 @@ def ensure_highlight(
                 if not can_read_media(db, viewer_id, media_id):
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
                 lock_media_for_reference(db, media_id)
+                kind = db.scalar(select(Media.kind).where(Media.id == media_id))
+                if kind in ("podcast_episode", "video"):
+                    if request.expected_reader_generation is not None:
+                        raise InvalidRequestError(
+                            message="Transcript passages require a null reader generation"
+                        )
+                elif request.expected_reader_generation is None:
+                    raise InvalidRequestError(
+                        message="Document passages require their reader generation"
+                    )
                 _require_text_generation(db, media_id, request.expected_reader_generation)
                 if (
                     db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id))
@@ -763,6 +775,10 @@ def ensure_highlight(
                 )
             else:
                 lock_media_for_reference(db, media_id)
+                if request.expected_reader_generation is None:
+                    raise InvalidRequestError(
+                        message="PDF passages require their reader generation"
+                    )
                 if (
                     lock_publication_generation(db, media_id=media_id)
                     != request.expected_reader_generation

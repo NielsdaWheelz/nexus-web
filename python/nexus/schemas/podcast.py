@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.acquisition import AcquisitionGuard
+from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaProcessingStatus, MediaSummaryOut
@@ -15,11 +16,7 @@ from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 # The web reads exact key sets, so each model's casing is load-bearing.
 _CLOSED = ConfigDict(extra="forbid")
-_SNAKE = ConfigDict(extra="forbid")
-_SNAKE_OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
-# Sync and backfill share one lifecycle vocabulary.
-type PodcastSyncStatus = Literal["Pending", "Running", "Complete", "Failed"]
 EpisodeState = Literal["all", "unplayed", "in_progress", "played"]
 
 
@@ -27,22 +24,12 @@ class PodcastDiscoveryCommitTarget(BaseModel):
     kind: Literal["Discovery"] = "Discovery"
     target: DiscoveryTargetHandle
 
-    model_config = _SNAKE
+    model_config = _CLOSED
 
 
 class PodcastCanonicalCommitTarget(BaseModel):
     kind: Literal["Canonical"] = "Canonical"
     podcast_id: UUID
-
-    model_config = _CLOSED
-
-
-class PodcastSubscribeRequest(AcquisitionGuard):
-    target: Annotated[
-        PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
-    ]
-    # confirms that a show replaces episodes some destination files directly.
-    replace_episodes: bool
 
     model_config = _CLOSED
 
@@ -53,43 +40,9 @@ class PodcastEpisodeFromDiscoveryRequest(AcquisitionGuard):
     model_config = _CLOSED
 
 
-class PodcastBackfillOut(BaseModel):
-    id: UUID
-    state: PodcastSyncStatus
-    updated_at: datetime
-    error_code: str | None
-    error_detail: str | None
-
-    model_config = _CLOSED
-
-
-class PodcastBackfillRetryRequest(BaseModel):
-    expected_backfill_id: UUID
-
-    model_config = _CLOSED
-
-
-class PodcastBackfillRetryOut(BaseModel):
-    podcast_id: UUID
-    outcome: Literal["Retried", "NotEligible"]
-    backfill: PodcastBackfillOut
-
-    model_config = _CLOSED
-
-
 class PodcastDestinationOutcomeOut(BaseModel):
     library_id: UUID
-    outcome: Literal["Added", "AlreadyPresent", "IncludedThroughPodcast"]
-
-    model_config = _CLOSED
-
-
-class PodcastSubscribeOut(BaseModel):
-    href: str = Field(min_length=1)
-    podcast_id: UUID
-    outcome: Literal["Subscribed", "AlreadySubscribed", "DestinationsAdded"]
-    destinations: list[PodcastDestinationOutcomeOut]
-    backfill: PodcastBackfillOut
+    outcome: Literal["Added", "AlreadyPresent"]
 
     model_config = _CLOSED
 
@@ -98,48 +51,6 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
     href: str = Field(min_length=1)
     media_id: UUID
     destination_outcomes: list[PodcastDestinationOutcomeOut]
-
-    model_config = _CLOSED
-
-
-class PodcastSubscriptionSettingsPatchRequest(BaseModel):
-    expected_subscription_id: UUID
-    expected_settings_version: int = Field(strict=True, ge=1, le=2_147_483_647)
-    default_playback_speed: PlaybackRate | None
-    pause_shortening_mode: PauseShorteningMode | None
-
-    model_config = _CLOSED
-
-
-class PodcastSubscriptionStatusOut(BaseModel):
-    subscription_id: UUID
-    settings_version: int = Field(strict=True, ge=1, le=2_147_483_647)
-    user_id: UUID
-    podcast_id: UUID
-    default_playback_speed: PlaybackRate | None
-    pause_shortening_mode: PauseShorteningMode | None
-    sync_had_rejected_items: bool | None
-    sync_status: PodcastSyncStatus
-    sync_error_code: str | None = None
-    sync_error_message: str | None = None
-    sync_attempts: int = Field(ge=0)
-    sync_started_at: datetime | None = None
-    sync_completed_at: datetime | None = None
-    last_checked_at: datetime | None = None
-    updated_at: datetime
-    backfill: PodcastBackfillOut
-
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-
-class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
-    """One viewer-owned subscription's live sync and backfill state (an SSE frame)."""
-
-    podcast_id: UUID
-    subscription_id: UUID
-    sync_status: PodcastSyncStatus
-    sync_completed_at: datetime | None
-    backfill: PodcastBackfillOut
 
     model_config = _CLOSED
 
@@ -173,24 +84,254 @@ class PodcastEpisodeCountsOut(BaseModel):
     model_config = _CLOSED
 
 
-class PodcastDetailOut(BaseModel):
-    podcast: PodcastListItemOut
-    subscription: PodcastSubscriptionStatusOut | None
-    episode_counts: PodcastEpisodeCountsOut
+type PodcastImportState = Literal["pending", "running", "complete", "failed", "cancelled"]
+type PodcastCommitTarget = Annotated[
+    PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
+]
 
 
-class PodcastSubscriptionListItemOut(BaseModel):
+class PodcastImportOut(BaseModel):
+    library_name: str
+    library_is_default: bool
+    podcast_title: str
+    id: UUID
+    library_id: UUID
     podcast_id: UUID
-    title: str
-    image_url: str | None
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    unplayed_count: int = Field(ge=0)
-    latest_episode_published_at: datetime | None
+    run_id: UUID
+    state: PodcastImportState
+    attempt_version: int
+    added_count: int = Field(ge=0)
+    already_present_count: int = Field(ge=0)
+    error_code: str | None
+    error_detail: str | None
+    created_at: datetime
+    updated_at: datetime
+    can_cancel: bool
+    can_retry: bool
+    order_revision: OrderRevision
+
+    model_config = _CLOSED
+
+
+class PodcastSubscriptionOut(BaseModel):
+    id: UUID
+    library_id: UUID
+    podcast_id: UUID
+    initial_import_id: UUID
+    created_at: datetime
+
+    model_config = _CLOSED
+
+
+class PodcastSubscriptionCreateRequest(BaseModel):
+    id: UUID
+    import_id: UUID
+    target: PodcastCommitTarget
+    expected_order_revision: OrderRevision
+    expected_removal_revision: OrderRevision
+
+    model_config = _CLOSED
+
+
+class PodcastImportCreateRequest(BaseModel):
+    id: UUID
+    target: PodcastCommitTarget
+    expected_order_revision: OrderRevision
+    expected_removal_revision: OrderRevision
+
+    model_config = _CLOSED
+
+
+class PodcastImportCancelRequest(BaseModel):
+    expected_attempt_version: int = Field(strict=True, ge=1)
+
+    model_config = _CLOSED
+
+
+class PodcastImportRetryRequest(PodcastImportCancelRequest):
+    expected_order_revision: OrderRevision
+
+
+class PodcastAdmissionOut(BaseModel):
+    podcast_id: UUID
+    href: str
+    subscription: PodcastSubscriptionOut | None
+    import_: PodcastImportOut = Field(alias="import")
+    order_revision: OrderRevision
+    removal_revision: OrderRevision
+
+    model_config = _CLOSED
+
+
+class PodcastDestinationOut(BaseModel):
+    library_id: UUID
+    name: str
+    is_default: bool
+    subscription_id: UUID
+    can_add_content: bool
+
+    model_config = _CLOSED
+
+
+class PodcastRecurringOut(BaseModel):
+    state: Literal["pending", "running", "idle"]
+    last_checked_at: datetime | None
+    had_coverage_gaps: bool | None
+    error_code: str | None
+    error_detail: str | None
+    next_sync_at: datetime | None
+
+    model_config = _CLOSED
+
+
+class PodcastLibraryShowOut(BaseModel):
+    podcast: PodcastListItemOut
+    destinations: list[PodcastDestinationOut]
+    recurring: PodcastRecurringOut
+    imports: list[PodcastImportOut]
+
+    model_config = _CLOSED
+
+
+class LibraryPodcastsOut(BaseModel):
+    order_revision: OrderRevision
+    removal_revision: OrderRevision
+    can_add_content: bool
+    subscriptions: list[PodcastLibraryShowOut]
+    imports: list[PodcastImportOut]
+
+    model_config = _CLOSED
+
+
+class LibraryPodcastOut(BaseModel):
+    library_id: UUID
+    podcast_id: UUID
+    subscription: PodcastSubscriptionOut | None
+    import_: PodcastImportOut | None = Field(alias="import")
+    episode_count: int = Field(ge=0)
+    order_revision: OrderRevision
+    removal_revision: OrderRevision
+    can_add_content: bool
+
+    model_config = _CLOSED
+
+
+type SettingsVersion = Annotated[str, Field(pattern=r"^(0|[1-9][0-9]{0,18})$", strict=True)]
+
+
+class PodcastPlaybackSettingsOut(BaseModel):
+    id: UUID | None
+    podcast_id: UUID
+    settings_version: SettingsVersion
     default_playback_speed: PlaybackRate | None
     pause_shortening_mode: PauseShorteningMode | None
-    sync_status: PodcastSyncStatus
 
-    model_config = _SNAKE_OUT
+    model_config = _CLOSED
+
+
+class PodcastPlaybackSettingsRequest(BaseModel):
+    id: UUID
+    expected_settings_version: SettingsVersion
+    default_playback_speed: PlaybackRate | None
+    pause_shortening_mode: PauseShorteningMode | None
+
+    model_config = _CLOSED
+
+
+class PodcastDetailOut(BaseModel):
+    podcast: PodcastListItemOut
+    destinations: list[PodcastDestinationOut]
+    recurring: PodcastRecurringOut
+    imports: list[PodcastImportOut]
+    playback_settings: PodcastPlaybackSettingsOut
+    episode_counts: PodcastEpisodeCountsOut
+
+    model_config = _CLOSED
+
+
+class PodcastRemovalDestinationOut(BaseModel):
+    library_id: UUID
+    name: str
+    is_default: bool
+    is_shared: bool
+    subscription_id: UUID | None
+    import_id: UUID | None
+    import_attempt_version: int | None
+    order_revision: OrderRevision
+    episode_count: int = Field(ge=0)
+    can_add_content: bool
+
+    model_config = _CLOSED
+
+
+class PodcastRemovalBlockedOut(BaseModel):
+    library_id: UUID
+    name: str
+    reason: Literal["requires_admin"]
+
+    model_config = _CLOSED
+
+
+class PodcastRemovalPreviewOut(BaseModel):
+    scope: Literal["all", "library"]
+    episodes: Literal["keep", "remove"]
+    podcast_id: UUID
+    removal_revision: OrderRevision
+    episode_count: int = Field(ge=0)
+    destinations: list[PodcastRemovalDestinationOut]
+    can_execute: bool
+    blocked: list[PodcastRemovalBlockedOut]
+
+    model_config = _CLOSED
+
+
+class PodcastStopDestinationRequest(BaseModel):
+    library_id: UUID
+    expected_subscription_id: UUID | None
+    expected_import_id: UUID | None
+    expected_import_attempt_version: int | None = Field(strict=True, ge=1)
+    expected_order_revision: OrderRevision | None
+
+    model_config = _CLOSED
+
+
+class PodcastStopRequest(BaseModel):
+    scope: Literal["all", "library"]
+    episodes: Literal["keep", "remove"]
+    expected_removal_revision: OrderRevision
+    destinations: list[PodcastStopDestinationRequest]
+
+    @model_validator(mode="after")
+    def require_guards(self) -> "PodcastStopRequest":
+        if len({d.library_id for d in self.destinations}) != len(self.destinations):
+            raise ValueError("Duplicate destinations")
+        if self.scope == "library" and len(self.destinations) != 1:
+            raise ValueError("Library scope requires exactly one destination")
+        for destination in self.destinations:
+            if (destination.expected_import_id is None) != (
+                destination.expected_import_attempt_version is None
+            ):
+                raise ValueError("Import identity and attempt must be supplied together")
+            if (destination.expected_order_revision is None) != (self.episodes == "keep"):
+                raise ValueError("Keep requires null revisions; remove requires exact revisions")
+        return self
+
+    model_config = _CLOSED
+
+
+class PodcastStoppedDestinationOut(BaseModel):
+    library_id: UUID
+    order_revision: OrderRevision
+
+    model_config = _CLOSED
+
+
+class PodcastStopOut(BaseModel):
+    podcast_id: UUID
+    removal_revision: OrderRevision
+    destinations: list[PodcastStoppedDestinationOut]
+
+    model_config = _CLOSED
 
 
 class PodcastEpisodeListItemOut(BaseModel):
@@ -204,7 +345,7 @@ class PodcastEpisodeListItemOut(BaseModel):
 class PodcastEpisodeSelection(BaseModel):
     state: EpisodeState
 
-    model_config = _SNAKE
+    model_config = _CLOSED
 
 
 class PodcastEpisodeConsumptionItem(BaseModel):
@@ -270,15 +411,6 @@ class PodcastEpisodeQueryTranscriptRequestOut(BaseModel):
     model_config = _CLOSED
 
 
-class PodcastUnsubscribeOut(BaseModel):
-    outcome: Literal["Unsubscribed", "AlreadyUnsubscribed"]
-    podcast_id: UUID
-    removed_placement_count: int = Field(default=0, ge=0)
-    retained_shared_count: int = Field(default=0, ge=0)
-
-    model_config = _SNAKE_OUT
-
-
 class PodcastRefreshPodcastScope(BaseModel):
     kind: Literal["Podcast"] = "Podcast"
     podcast_id: UUID
@@ -289,7 +421,7 @@ class PodcastRefreshPodcastScope(BaseModel):
 class PodcastRefreshPodcastsScope(BaseModel):
     kind: Literal["Podcasts"] = "Podcasts"
 
-    model_config = _SNAKE
+    model_config = _CLOSED
 
 
 class PodcastRefreshLibraryScope(BaseModel):

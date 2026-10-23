@@ -42,15 +42,15 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
     }
     case "PodcastSync":
       switch (activity.status) {
-        case "Pending":
+        case "pending":
           return {
-            visible: "Update queued",
-            accessible: "Podcast update queued",
+            visible: "check queued",
+            accessible: "podcast check queued",
           };
-        case "Running":
+        case "running":
           return {
-            visible: "Checking",
-            accessible: "Checking for new episodes",
+            visible: "checking",
+            accessible: "checking for new episodes",
           };
         default:
           return assertNever(

@@ -83,7 +83,7 @@ export default function CollectionRow({
       : null;
   const exceptionalStatus =
     row.exceptionalStatus !== null
-      ? <Pill tone="danger">Update failed</Pill>
+      ? <Pill tone="danger">last check incomplete</Pill>
       : undefined;
   const status = exceptionalStatus || activity ? (
     <span className={styles.status}>
@@ -132,7 +132,7 @@ export default function CollectionRow({
         "data-media-identity": mediaLayout ? "true" : undefined,
         style: rootStyle,
       }}
-      media={mediaLayout}
+      media={mediaLayout || row.kind === "podcast"}
       title={row.media ? <MediaTitle subject={row.media.subject} /> : title}
       supporting={supporting}
       status={status}

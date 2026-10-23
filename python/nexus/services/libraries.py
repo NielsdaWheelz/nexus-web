@@ -78,6 +78,14 @@ class LibraryAccess:
         if self.owner_user_id != viewer_id:
             raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Only the owner can do this")
 
+    def require_add_content(self, viewer_id: UUID) -> None:
+        """Own default and administered mutable named libraries admit podcasts."""
+        self.require_not_system()
+        if self.is_default:
+            self.require_owner(viewer_id)
+        else:
+            self.require_admin()
+
     def out(self, viewer_id: UUID) -> LibraryOut:
         """The one capability rule: admins manage a mutable library, its owner deletes
         or hands it on, and everyone else may leave it."""
@@ -184,34 +192,16 @@ def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> 
                 return access(db, viewer_id, body.id, lock=False).out(viewer_id)
             name = _valid_name(body.name)
             targets = [library_entries.parse_entry_target(ref) for ref in body.initial_items]
-            if len({(target.kind, target.id) for target in targets}) != len(targets):
+            if len({target.id for target in targets}) != len(targets):
                 raise InvalidRequestError(message="Duplicate initial items")
-            # Subscription identities precede podcast rows. Lock every selected media's
-            # parent as well, so input order cannot change inherited episode filing.
-            show_ids = sorted(target.id for target in targets if target.kind == "podcast")
-            for podcast_id in show_ids:
-                if (
-                    db.scalar(
-                        text(
-                            "SELECT 1 FROM podcast_subscriptions WHERE user_id = :u "
-                            "AND podcast_id = :p FOR UPDATE"
-                        ),
-                        {"u": viewer_id, "p": podcast_id},
-                    )
-                    is None
-                ):
-                    raise ConflictError(
-                        ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED,
-                        "Subscribe to this podcast before adding it to a library",
-                    )
-            media_ids = sorted(target.id for target in targets if target.kind == "media")
+            media_ids = sorted(target.id for target in targets)
             parents = list(
                 db.scalars(
                     text("SELECT podcast_id FROM podcast_episodes WHERE media_id = ANY(:ids)"),
                     {"ids": media_ids},
                 )
             )
-            podcast_ids = sorted(set([*show_ids, *parents]))
+            podcast_ids = sorted(set(parents))
             if podcast_ids:
                 held = list(
                     db.scalars(
@@ -250,14 +240,10 @@ def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> 
                 ),
                 {"id": body.id, "viewer_id": viewer_id},
             )
-            # Retain every selected media before organization; shows precede episodes.
+            # Retain every selected media before organization.
             for media_id in media_ids:
                 library_entries.assign_libraries_for_media_in_current_transaction(
                     db, viewer_id, media_id, []
-                )
-            for podcast_id in show_ids:
-                library_entries.ensure_entry(
-                    db, body.id, library_entries.podcast_target(podcast_id)
                 )
             for media_id in media_ids:
                 library_entries.assign_libraries_for_media_in_current_transaction(
@@ -313,6 +299,29 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         with transaction(db):
             users.lock_viewer(db, viewer_id)
             users.advance_removal_revision(db, viewer_id)
+            from nexus.services.podcasts import imports, sync
+
+            show_ids = list(
+                db.scalars(
+                    text("""
+                SELECT podcast_id FROM library_podcast_subscriptions WHERE library_id=:id
+                UNION SELECT r.podcast_id FROM podcast_library_imports i
+                JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
+                ORDER BY podcast_id
+            """),
+                    {"id": library_id},
+                )
+            )
+            if show_ids:
+                db.execute(
+                    text("SELECT id FROM podcasts WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
+                    {"ids": show_ids},
+                )
+                db.execute(
+                    text("""SELECT r.id FROM podcast_feed_runs r
+                    WHERE r.podcast_id=ANY(:ids) ORDER BY r.id FOR UPDATE"""),
+                    {"ids": show_ids},
+                )
             media_ids = library_entries.media_ids_in_library(db, library_id)
             if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
                 raise TransactionRestart("library media set changed")
@@ -351,6 +360,21 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             )
             for media_id in held:
                 library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
+            current_shows = set(
+                db.scalars(
+                    text("""
+                SELECT podcast_id FROM library_podcast_subscriptions WHERE library_id=:id
+                UNION SELECT r.podcast_id FROM podcast_library_imports i
+                JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
+            """),
+                    {"id": library_id},
+                )
+            )
+            if not current_shows <= set(show_ids):
+                raise TransactionRestart("library podcast set grew")
+            imports.delete_for_libraries(db, library_ids=[library_id])
+            for podcast_id in show_ids:
+                sync.stop_if_unused(db, podcast_id=podcast_id)
             library_entries.delete_library_entries(db, library_id)
             delete_suggestion_feeds(db, library_id=library_id)
             db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})

@@ -12,7 +12,7 @@ import { useSyncExternalStore } from "react";
 //   Consumption  reading or listening state
 //   Lectern      the viewer's Lectern rows or their order
 //   Metadata     resource display metadata: titles, credits, publication, visibility
-//   Podcasts     a followed show, its settings or its backfill
+//   Podcasts     library subscription rules, imports, sync or playback defaults
 //   PodcastEpisodes transcript admission or episode observation uncertainty
 //   Chats        the chats index
 //   Notes        the viewer's pages, page titles and outline structure

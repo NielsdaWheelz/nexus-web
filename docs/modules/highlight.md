@@ -131,10 +131,13 @@ highlight there never blocks the viewer's own.
 
 highlight responses are generated wire types (`TypedHighlightOut`), including the
 viewer's note attachment `links_version`. `POST /media/{id}/highlights` takes
-`{anchor, color}` and returns `{created, highlight}`. it authoritatively reuses
-the viewer's current exact extent or creates it; the map's twin lookup is only
-an optimization. retry converges on current state, without historical receipts:
-if the highlight was deleted, a later ensure may create a new one.
+`{id, anchor, color, expected_reader_generation, initial_note}` and returns the
+writing owner's acknowledgement. recognized ids resolve current canonical state
+without repeating initialization; an exact extent can alias an existing highlight.
+creation and its initial note commit together. the map's twin lookup is only an
+optimization. published documents require their exact positive generation;
+transcripts require a null generation and their current immutable unit id. the
+media lock prevents transcript replacement from crossing that unit check.
 
 ## Mutations And Notes
 

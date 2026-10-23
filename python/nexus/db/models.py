@@ -606,13 +606,12 @@ class DocumentEmbed(Base):
 
 
 class LibraryEntry(Base):
-    """Association between a library and exactly one content target."""
+    """One physical media placement in a library."""
 
     __tablename__ = "library_entries"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     library_id: Mapped[UUID]
-    media_id: Mapped[UUID | None]
-    podcast_id: Mapped[UUID | None]
+    media_id: Mapped[UUID]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     position: Mapped[int] = mapped_column(server_default=FetchedValue())
 
@@ -629,6 +628,83 @@ class Podcast(Base):
     website_url: Mapped[str | None]
     image_url: Mapped[str | None]
     description: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+    sync_run_id: Mapped[UUID | None]
+    next_sync_at: Mapped[datetime | None]
+    consecutive_sync_failures: Mapped[int] = mapped_column(server_default=FetchedValue())
+    last_checked_at: Mapped[datetime | None]
+    last_check_had_coverage_gaps: Mapped[bool | None]
+    last_check_error_code: Mapped[str | None]
+    last_check_error_detail: Mapped[str | None]
+
+
+class PodcastFeedRun(Base):
+    """A finite import or the show's current recurring traversal owns each run."""
+
+    __tablename__ = "podcast_feed_runs"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    podcast_id: Mapped[UUID]
+    attempt_version: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    step_no: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    job_id: Mapped[UUID | None]
+    pending_urls: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    visited_urls: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    had_coverage_gaps: Mapped[bool] = mapped_column(server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    started_at: Mapped[datetime | None]
+    completed_at: Mapped[datetime | None]
+    failed_at: Mapped[datetime | None]
+    cancelled_at: Mapped[datetime | None]
+    error_code: Mapped[str | None]
+    error_detail: Mapped[str | None]
+
+
+class PodcastLibraryImport(Base):
+    """Retained finite-operation identity and honest first-processing counts."""
+
+    __tablename__ = "podcast_library_imports"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    library_id: Mapped[UUID]
+    run_id: Mapped[UUID]
+    added_count: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    already_present_count: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class LibraryPodcastSubscription(Base):
+    """Presence grants ongoing delivery to the library, independent of its creator."""
+
+    __tablename__ = "library_podcast_subscriptions"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    library_id: Mapped[UUID]
+    podcast_id: Mapped[UUID]
+    initial_import_id: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class PodcastImportProcessedEpisode(Base):
+    """An unfinished import has handled this identity, including later removal intent."""
+
+    __tablename__ = "podcast_import_processed_episodes"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    import_id: Mapped[UUID]
+    media_id: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class PodcastPlaybackSettings(Base):
+    """Viewer/show playback defaults survive subscription and membership removal."""
+
+    __tablename__ = "podcast_playback_settings"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    podcast_id: Mapped[UUID]
+    settings_version: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    default_playback_speed: Mapped[float | None]
+    pause_shortening_mode: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
