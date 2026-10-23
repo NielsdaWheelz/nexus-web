@@ -2,7 +2,7 @@
 // and the one name rule. The server validates every value and every combination
 // composes; these are only the options offered.
 
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import type { FeedbackProps } from "@/components/feedback/Feedback";
 import type { ViewChanges } from "@/lib/collections/view";
 
 type Options = readonly { readonly value: string; readonly label: string }[];
@@ -64,7 +64,7 @@ export function offered(options: Options, value: string): Options {
 }
 
 /** A complete view's empty state: what it lacks, and the way back. */
-export function EmptyEntries({
+export function emptyEntriesFeedback({
   params,
   isAll,
   change,
@@ -72,7 +72,7 @@ export function EmptyEntries({
   readonly params: URLSearchParams;
   readonly isAll: boolean;
   readonly change: (changes: ViewChanges) => void;
-}) {
+}): Pick<FeedbackProps, "content" | "actions"> {
   const type = params.get("entry_type");
   const projection = params.get("projection");
   const unfinished = params.get("completion") === "unfinished";
@@ -98,11 +98,5 @@ export function EmptyEntries({
                 { label: "Show finished", onClick: () => change({ completion: null }) },
               ]
             : [isAll ? "No media yet." : "No media in this library yet.", null];
-  return (
-    <FeedbackNotice
-      content={{ tone: "Neutral", title }}
-      announcement="Polite"
-      actions={action ? [action] : undefined}
-    />
-  );
+  return { content: { tone: "Neutral", title }, actions: action ? [action] : undefined };
 }

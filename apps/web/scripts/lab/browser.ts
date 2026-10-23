@@ -15,15 +15,8 @@ export async function login(
   const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
   await form.getByRole("textbox", { name: "Email", exact: true }).fill(input.email);
   await form.getByLabel("Password", { exact: true }).fill(input.password);
-  // the hydrated form owns its continuation; a competing navigation can abort it.
-  const [response] = await Promise.all([
-    page.waitForResponse((response) =>
-      response.url() === `${input.web_origin}/auth/password/sign-in` &&
-      response.request().method() === "POST",
-    ),
-    form.getByRole("button", { name: "Sign in", exact: true }).click(),
-  ]);
-  if (response.status() !== 303)
-    throw new Error(`browser login refused: expected 303, received ${response.status()}`);
+  // The hydrated form owns navigation. Its manual-redirect fetch can appear
+  // aborted after a successful sign-in; callers verify the landed identity.
+  await form.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL(`${input.web_origin}${DEFAULT_RETURN_TARGET}`, { waitUntil: "domcontentloaded" });
 }

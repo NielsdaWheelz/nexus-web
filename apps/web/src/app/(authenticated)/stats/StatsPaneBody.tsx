@@ -11,7 +11,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import Input from "@/components/ui/Input";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
@@ -467,6 +467,10 @@ function Sessions(props: {
 }) {
   const { sessions, correcting } = props;
   const section = useRef<HTMLDivElement>(null);
+  const readFeedback = useCollectionReadFeedback({
+    list: sessions, unit: { singular: "session", plural: "sessions" }, waiting: false, outcome: null,
+    returnFocus: () => section.current,
+  });
   const exclude = (row: Session) =>
     row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu
@@ -511,7 +515,8 @@ function Sessions(props: {
             actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
           />
         ) : null}
-        <CollectionExhaustionNotice list={sessions} unit={{ singular: "session", plural: "sessions" }} returnFocus={() => section.current} />
+        {readFeedback.notice}
+        {readFeedback.announcement}
       </div>
     </Section>
   );

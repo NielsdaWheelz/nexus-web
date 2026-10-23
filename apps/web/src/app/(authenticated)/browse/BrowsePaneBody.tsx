@@ -1,7 +1,7 @@
 "use client";
 
 // Browse fans a query out to independent source sections. Each shared list
-// owns traversal, errors and its pane-visit snapshot; this pane aggregates status.
+// owns traversal, errors and its pane-visit snapshot; the pane tracks first-read readiness.
 
 import {
   useCallback,
@@ -13,7 +13,7 @@ import {
   type RefObject,
 } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
@@ -48,9 +48,7 @@ import {
 import styles from "./browse.module.css";
 
 interface SectionStatus {
-  readonly loaded: number;
   readonly settled: boolean;
-  readonly complete: boolean;
   readonly error: ApiError | null;
 }
 const keyOf = (section: BrowseSection) => `${section.kind}:${section.source}`;
@@ -91,9 +89,8 @@ function sectionErrorMessage(error: ApiError): string {
 }
 
 /** Browse owns submitted text, exclusive kind/source choices and provider order. */
-function BrowseToolbar({ query, summary, inputRef, onQuery }: {
+function BrowseToolbar({ query, inputRef, onQuery }: {
   readonly query: BrowseQuery;
-  readonly summary: string;
   readonly inputRef: RefObject<HTMLInputElement | null>;
   readonly onQuery: (query: BrowseQuery | null) => void;
 }) {
@@ -157,10 +154,10 @@ function BrowseToolbar({ query, summary, inputRef, onQuery }: {
       kind: id === "kind" ? "All" : query.kind,
       source: null,
     })) }}
-    status={{ placement: "Details", id: statusId, visible: true, content: <>
+    status={{ placement: "Details", id: statusId, visible: mixedSources || !youTube || query.text === "", content: <>
       {mixedSources ? <span>Other sources: relevance</span> : null}
       {!youTube ? <span>Order: relevance</span> : null}
-      <span id={statusId}>{query.text ? summary : "Enter a search term to browse sources."}</span>
+      <span id={statusId}>{query.text ? "" : "Enter a search term to browse sources."}</span>
     </> }}
     onReset={draft || browseHref(query) !== "/browse" ? () => { setDraft(""); onQuery(null); } : undefined}
   />;
@@ -181,8 +178,9 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     () => definePaneVisitDataKey<ListSnapshot<BrowseCandidate>>(`Browse.Section.${sectionKey}`),
     [sectionKey],
   );
+  const readKey = JSON.stringify(["browse", text, section.kind, section.source, section.sort]);
   const list = useServerList<BrowseCandidate>({
-    key: JSON.stringify(["browse", text, section.kind, section.source, section.sort]),
+    key: readKey,
     visit,
     stale: "",
     pageSize: 20,
@@ -192,10 +190,9 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
   });
   const error = list.failure?.error ?? null;
   const settled = list.current || error !== null;
-  const loaded = list.current ? list.items.length : 0;
   useEffect(() => {
-    onStatus(sectionKey, { loaded, settled, complete: list.complete, error });
-  }, [queryKey, onStatus, sectionKey, loaded, settled, list.complete, error]);
+    onStatus(sectionKey, { settled, error });
+  }, [queryKey, onStatus, sectionKey, settled, error]);
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
@@ -212,6 +209,10 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
   const label = BROWSE_SOURCE_LABELS[section.source];
   const initialError = list.failure?.op !== "More" ? error : null;
   const invalid = initialError?.code === "E_INVALID_REQUEST" || initialError?.code === "E_INVALID_BROWSE_QUERY";
+  const feedback = useCollectionReadFeedback({
+    list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null,
+    returnFocus: () => sectionRef.current,
+  });
   return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}>
     <h3 id={headingId} className={styles.sourceHeading}>{label}</h3>
     {!list.current && initialError === null ? (
@@ -230,11 +231,13 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
       returnScope={`Browse.${section.kind}.${section.source}`}
       rows={rows}
       status="ready"
+      rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: readKey }}
       ariaLabel={`${label} results`}
       empty={null}
       surface={false}
     />
-    <CollectionExhaustionNotice list={list} unit={{ singular: "result", plural: "results" }} returnFocus={() => sectionRef.current} />
+    {feedback.notice}
+    {feedback.announcement}
   </section>;
 }
 
@@ -257,16 +260,8 @@ export default function BrowsePaneBody() {
     }));
   }, [queryKey]);
   const statuses = sections.map((section) => reports.key === queryKey ? reports.sections[keyOf(section)] : undefined);
-  const surfaced = statuses.reduce((sum, status) => sum + (status?.loaded ?? 0), 0);
   const settled = statuses.filter((status) => status?.settled).length;
-  const finished = statuses.filter((status) => status !== undefined && (status.complete || status.error !== null)).length;
-  const failed = statuses.filter((status) => status !== undefined && status.error !== null).length;
   const invalid = statuses.some((status) => status?.error?.code === "E_INVALID_BROWSE_QUERY" || status?.error?.code === "E_INVALID_REQUEST");
-  const summary = [
-    `${surfaced} ${surfaced === 1 ? "result" : "results"} loaded`,
-    `${finished} of ${sections.length} ${sections.length === 1 ? "search" : "searches"} finished`,
-    ...(failed > 0 ? [`${failed} unavailable`] : []),
-  ].join(" · ");
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
   const onQuery = useCallback(
     (next: BrowseQuery | null) => {
@@ -278,10 +273,10 @@ export default function BrowsePaneBody() {
     () => query === null ? undefined : {
       kind: "Controls" as const,
       label: "Search across sources",
-      content: <BrowseToolbar query={query} summary={summary} inputRef={inputRef} onQuery={onQuery} />,
+      content: <BrowseToolbar query={query} inputRef={inputRef} onQuery={onQuery} />,
       focusInput,
     },
-    [focusInput, inputRef, onQuery, query, summary],
+    [focusInput, inputRef, onQuery, query],
   );
   usePaneChrome({ query: queryControls, header: { kind: "Section", meta: { kind: "None" } } });
   if (query === null || invalid) return <PaneSurface state={

@@ -10,7 +10,7 @@ import {
 } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
@@ -207,10 +207,9 @@ export default function ImportsList({
         state={state}
         inputRef={inputRef}
         chips={chips}
-        resultStatus={<span className={styles.resultStatus}>
-          <PaneFilterRowsStatus status={rowStatus} query={state.q ?? ""} id={statusId} />
-          {matchedCount === null ? null : <span> · {matchedCount} {matchedCount === 1 ? "import" : "imports"} matched at last update</span>}
-        </span>}
+        resultStatus={<PaneFilterRowsStatus status={rowStatus} query={state.q ?? ""} id={statusId} announceQueryChanges={false}>
+          {matchedCount === null ? null : ` ${matchedCount} ${matchedCount === 1 ? "import" : "imports"} matched at last update.`}
+        </PaneFilterRowsStatus>}
         statusId={statusId}
         resetAvailable={resetAvailable}
         onChange={setState}
@@ -284,6 +283,13 @@ export default function ImportsList({
 
   const filtered = chips.some((chip) => chip.id !== "q");
   const empty = emptyCopy(view, state.q !== undefined, filtered);
+  const emptyTitle = rows.complete ? empty.title
+    : state.q !== undefined || filtered ? "no matching import found so far." : "no imports loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list: rows, unit: UNIT, waiting: rows.status === "loading",
+    outcome: items.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   return (
     <div
       ref={listRef}
@@ -310,6 +316,7 @@ export default function ImportsList({
           owned.current = null;
       }}
     >
+      {readFeedback.announcement}
       <PaneSurface
         state={
           <>
@@ -342,11 +349,11 @@ export default function ImportsList({
           </>
         }
         empty={
-          !rows.current || !rows.complete ? undefined : (
+          !rows.current ? undefined : (
             <FeedbackState
-              content={{ tone: "Neutral", title: empty.title, message: empty.body }}
+              content={{ tone: "Neutral", title: emptyTitle, message: rows.complete ? empty.body : undefined }}
               announcement="None"
-              actions={filtered || state.q !== undefined ? [{
+              actions={rows.complete && (filtered || state.q !== undefined) ? [{
                   label: filtered
                     ? state.q === undefined ? "clear filters" : "clear search and filters"
                     : "clear search",
@@ -358,7 +365,7 @@ export default function ImportsList({
             />
           )
         }
-        footer={<CollectionExhaustionNotice list={rows} unit={UNIT} returnFocus={() => inputRef.current} />}
+        footer={readFeedback.notice}
       >
         {items.length > 0 ? (
           <ResourceList ariaLabel={`${VIEW_LABEL[view]} imports`}>

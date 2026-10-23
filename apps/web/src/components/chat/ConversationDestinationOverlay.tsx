@@ -7,11 +7,10 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { useSettled } from "@/lib/api/serverState";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { pageQuery, usePaneFreeServerList } from "@/lib/api/useServerList";
 import { fetchConversationIndex, presentConversationListItem, type ConversationListItem } from "@/lib/chat/conversationIndex";
-import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
@@ -43,7 +42,7 @@ export default function ConversationDestinationOverlay({ open, mediaId, hasSourc
   ) : <Dialog open={open} onClose={onClose} title={TITLE} {...host}>{picker}</Dialog>;
 }
 
-/** Title search and source scope own one paged list; retained rows cannot be picked. */
+/** Title search and source scope admit choices only for the exact settled query. */
 function Picker({ mediaId, hasSourceChats, onSelect }: {
   mediaId: string;
   hasSourceChats: boolean | null;
@@ -92,9 +91,13 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
     onActivate(key) { const item = selectable ? items.find(item => item.id === key) : null; if (item) onSelect(item); },
   });
   const failure = settled !== query || page.failure?.op === "More" ? null : page.failure;
-  const status = failure ? "couldn’t load chats" : !selectable || page.status !== "ready" ? "searching…"
-    : !items.length ? !page.complete ? "no matching chats found so far" : search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet"
-    : `${formatDisplayNumber(items.length, env)} ${items.length === 1 ? "chat" : "chats"}${page.complete ? "" : " loaded; results incomplete"}`;
+  const emptyTitle = !page.complete ? "no matching chats found so far." : search ? "no chats match your search" : view === "Source" ? "no chats for this source" : "no chats yet";
+  const waiting = !selectable && failure === null;
+  const readFeedback = useCollectionReadFeedback({
+    list: page, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !page.current && failure === null,
+    outcome: items.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => input.current,
+  });
   const changeView = (next: "Source" | "All") => { setInitializing(false); setView(next); setActive(null); };
   return <div className={styles.destination}>
     <div className={styles.destinationViews}>
@@ -106,9 +109,10 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       onChange={event => setQuery(event.target.value)}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
       onKeyDown={event => { if (bindings.handleKey(event.nativeEvent, composing.current)) { event.preventDefault(); event.stopPropagation(); } }} />
-    {failure ? <FeedbackNotice content={{ tone: "Warning", title: status, requestId: failure.error.requestId }} announcement="Polite"
+    {failure ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load chats", requestId: failure.error.requestId }} announcement="Polite"
       actions={[{ label: "retry", onClick: page.retry, busy: page.running !== null }]} returnFocus={() => input.current} />
-      : <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement={!selectable ? "Polite" : "None"} />}
+      : waiting ? <FeedbackStatus content={{ tone: "Neutral", title: "searching…" }} announcement={paneActive ? "Polite" : "None"} />
+      : selectable && items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
       {items.map(item => {
         const presentation = presentConversationListItem(item, env);
@@ -122,6 +126,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
         </div>;
       })}
     </div>
-    {settled === query ? <CollectionExhaustionNotice list={page} unit={{ singular: "chat", plural: "chats" }} returnFocus={() => input.current} /> : null}
+    {settled === query ? readFeedback.notice : null}
+    {readFeedback.announcement}
   </div>;
 }
