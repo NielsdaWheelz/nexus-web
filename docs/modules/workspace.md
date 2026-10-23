@@ -332,8 +332,10 @@ focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
-submit, followed by operation actions, inline options disclosure and native
-sort and reset. optional status declares `Inline` or `Details` placement; inline
+submit, followed by operation actions, inline options disclosure, native
+sort/reset and optional trailing actions. options may use the shared icon-only
+contract; their accessible name retains the active-option count. optional status
+declares `Inline` or `Details` placement; inline
 feedback shares the actions group. applied text, chips and details status share
 one compact summary; errors and expanded options remain in its single bounded
 refinement region, capped by the shell. mounted options retain their drafts.
@@ -393,7 +395,11 @@ retires only its disclosure/results; ordinary clear preserves find preferences
 and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar: idle is silent, complete counts are compact, and partial/failure
-details stay explicit. one persistent status region supplies full descriptions.
+details stay explicit. navigation/retry precede icon-only find options, followed
+by icon-only results, optional return and mobile close. applied-option chips
+remain visible. options uses sliders; the results trigger and companion tab use
+the same text-search glyph. results opens its existing column/sheet and never
+toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
 keyboard details are specified in the pane controls plan (#578, revised by #628);
