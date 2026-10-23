@@ -1,7 +1,8 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import MediaActions from "@/components/media/MediaActions";
+import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
@@ -56,6 +57,10 @@ export default function CollectionRow({
 }) {
   const mediaLayout = row.media !== undefined;
   const paneId = usePaneRuntime()?.paneId;
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const setMore = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
+  const returnFocus = () => moreRef.current?.isConnected && moreRef.current.getClientRects().length
+    ? moreRef.current : findPaneCollectionRowFocusTarget(paneId, row.id);
   const title = row.title.segments
     ? (
         <EmphasisSegments
@@ -104,14 +109,20 @@ export default function CollectionRow({
       actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
-  const more = rowActionsAvailable &&
-    (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
+  const more = rowActionsAvailable && row.media?.subject.kind === "External" ? (
+    <ExternalMediaMenu
+      subject={row.media.subject} subjectKey={`collection:${row.id}`}
+      viewActions={row.resourceRef ? [] : row.flatActions ?? []}
+      triggerRef={moreRef} returnFocus={returnFocus}
+    />
+  ) : rowActionsAvailable && (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
       title={row.title.text} subjectKey={`collection:${row.id}`}
       sections={sections}
       resourceRef={row.resourceRef ?? undefined}
       displayedActivation={row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
       label={menuLabel}
+      triggerRef={setMore}
       triggerAttributes={{ "data-row-actions-control": "" }}
     />
   ) : undefined;
@@ -153,7 +164,7 @@ export default function CollectionRow({
               subject={row.media.subject}
               knownDescriptor={row.media.knownDescriptor}
               density="Row"
-              returnFocus={() => findPaneCollectionRowFocusTarget(paneId, row.id)}
+              returnFocus={returnFocus}
             />
           ) : null}
           {more}

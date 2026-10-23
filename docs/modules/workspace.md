@@ -440,9 +440,10 @@ desktop and mobile headers order back/forward, identity, optional primary action
 the shared media action group when published,
 optional passive subscription status, exactly one more trigger when contextual
 commands exist, and the optional typed companion action. identity yields width;
-controls retain whole targets. at primary-pane widths up to 479px, media headers
-put history/identity above media actions/more/inspector. other headers retain one
-line. search/return, refresh, route share,
+controls retain whole targets. at primary-pane widths up to 479px, media shortcuts
+move into the existing more menu; history, identity, more and inspector stay in
+one line. the fixed mobile header uses the same viewport threshold outside the
+desktop containment boundary. search/return, refresh, route share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -454,16 +455,18 @@ paint belong to the [visual system](visual-system.md#overflow-buttons).
 for overflow, headers own only placement and the decorative status marker. the
 menu retains its existing commands, composition, refs and focus policy.
 
-desktop primary headers start with `--pane-chrome-header-height`; narrow media
-headers add their action row through the owning container query. mobile headers
-retain 48px targets; pane controls retain shared-control geometry. both can grow
-naturally. the viewport owner
-measures their stationary frames and places controls with `--mobile-controls-top`;
-`--mobile-pane-content-offset` publishes their shown envelope in each content
-surface. refinement-room measurement consumes that result. the content row
-explicitly occupies grid row two, the declared fill row, so loading content
-cannot determine scrollport height. reader composition is selected from the
-active route before publication loading; mounting a reader does not change layout.
+every primary header starts with `--pane-chrome-header-height`; compact media
+commands move into overflow instead of adding an action row. desktop, coarse-pointer
+and mobile controls retain 32px, 44px and 48px shared-control targets. mobile
+headers can grow naturally. the viewport owner measures their stationary frames
+and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
+publishes their shown envelope in each content surface. routes reserve no extra
+media action row. hidden reader chrome follows the measured overlay contract,
+not a permanent header reservation. refinement-room measurement consumes that
+result. the content row explicitly occupies grid row two, the declared fill row,
+so loading content cannot determine scrollport height. reader composition is
+selected from the active route before publication loading; mounting a reader
+does not change layout.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and

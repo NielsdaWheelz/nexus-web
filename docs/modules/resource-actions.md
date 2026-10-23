@@ -77,8 +77,26 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   never preflight resource menus. unresolved lectern intent wins over membership
   and capacity; recovery checks its exact retained command. newer acknowledgements
   and the revision-gated read establish membership; unknown never means absent.
+  `projectLecternAction` owns checking and failed-read recovery for both direct
+  and prepared commands. an exact pending command and server prohibition precede
+  shared-read recovery. a failed read offers its own refetch when membership or
+  revision cannot authorize a new write.
   libraries receives the actual trigger and owning-pane focus fallback. relationship
   menus retain their occurrence principal; media quick actions retain the media id.
+- prepared nonmissing media facts may omit playback while the player still owns
+  that exact loaded or pending episode. the projector supplements only that
+  current-session transport command with no retained descriptor. a server-offered
+  playback command, including its block, always wins; idle or unrelated players
+  confer no capability.
+- external collection rows compose `ExternalMediaMenu` from the same
+  `useMediaActions` producer and existing view actions. it is immediate at every
+  width and retains the sealed subject after acquisition. canonical saved menus
+  remain prepared. menu selection passes the surviving overflow trigger to the
+  command, not its departing menu item. no resource-action read occurs on row
+  render except the existing metadata source-remedy read.
+  podcast-directory episode rows expose the same playback/more composition; the
+  directory's bounded snapshot limits listing completeness, not sealed-target
+  command authority. find results and stale query rows retain their existing gates.
 - external subjects use their sealed target as identity. `mediaContinuation` retains
   explicit membership intent above row/picker lifetime. acquisition freezes its source,
   retry identity and removal/destination revisions before provider i/o. unknown
@@ -106,8 +124,9 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   creates no pane. success names the returned assistant endpoint; ordinary
   placement retains bare-conversation reuse, while shift always forks.
 - source refresh and metadata research send the expectation the viewer saw. their account
-  admission owner retains an unconfirmed request and offers *confirm request*; checking
-  resends the same expectation. only these two admissions restore recovery after restart
+  admission owner retains an unconfirmed request and offers *retry same request*;
+  retry resends the same expectation. live recovery survives pane departure,
+  not account teardown or browser restart
   ([imports](imports.md), [media metadata](media-metadata.md)). an access failure after an
   unknown outcome cannot prove that the request was refused.
 - `ResourceActionsProvider` mounts the sole consumption command owner. callers use

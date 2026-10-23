@@ -94,20 +94,23 @@ type Verb = readonly [
   options?: Options,
 ];
 
-/** A direct add fixes Ensure; the menu may choose Remove. Pending intent wins. */
+/** Unknown membership cannot choose a write. Retained intent wins over a fresh choice. */
 export function projectLecternAction({
   mediaId, title, intent, blocked, ctx, busy, run,
 }: {
   readonly mediaId: string;
   readonly title: string;
-  readonly intent: "Ensure" | "Remove";
+  readonly intent: "Ensure" | "Remove" | null;
   readonly blocked: BlockedReason | null;
   readonly ctx: ActionContext;
   readonly busy: ReadonlySet<ActionId>;
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const request = ctx.lectern.pending.get(mediaId);
-  const currentIntent = request?.intent.kind ?? intent;
+  const { read, revision } = ctx.lectern;
+  const currentIntent = request?.intent.kind ?? intent ?? "Ensure";
+  const needsRead = intent === null || revision === null;
+  const retry = !request && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
   const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
   const copy = LECTERN_INTENT_COPY[currentIntent];
   const label = request
@@ -116,36 +119,41 @@ export function projectLecternAction({
         Checking: copy.check,
         Unconfirmed: copy.check,
       }[request.phase]
-    : state.label;
+    : retry ? "retry checking lectern"
+    : needsRead && blocked === null ? "checking lectern" : state.label;
   let disabledReason: string | undefined;
   if (request && request.phase !== "Unconfirmed")
     disabledReason = "wait for this lectern change to finish.";
   else if (busy.has("LecternMembership")) disabledReason = BLOCKED_COPY.Busy;
   else if (!request) {
     if (blocked !== null) disabledReason = BLOCKED_COPY[blocked];
-    else if (ctx.lectern.revision === null)
-      disabledReason = "load the current lectern before changing it.";
+    else if (retry) disabledReason = "lectern couldn’t be loaded; retry checking it";
+    else if (needsRead) disabledReason = "checking lectern membership";
   }
   return {
     kind: "command",
     id: "LecternMembership",
     label,
     icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
-    disabled: disabledReason !== undefined || undefined,
+    disabled: retry ? read.retrying || undefined : disabledReason !== undefined || undefined,
     disabledReason,
-    onSelect: () => run({
-      ref: `media:${mediaId}`,
-      id: "LecternMembership",
-      label,
-      title,
-      confirmation: null,
-      tracked: true,
-      execute: () => request
-        ? request.check()
-        : intent === "Ensure"
-          ? ctx.lectern.ensure({ mediaId, title })
-          : ctx.lectern.remove({ mediaId, title }),
-    }),
+    onSelect: () => {
+      if (retry) { if (!read.retrying) read.refetch(); return; }
+      if (disabledReason !== undefined || (!request && intent === null)) return;
+      run({
+        ref: `media:${mediaId}`,
+        id: "LecternMembership",
+        label,
+        title,
+        confirmation: null,
+        tracked: true,
+        execute: () => request
+          ? request.check()
+          : intent === "Ensure"
+            ? ctx.lectern.ensure({ mediaId, title })
+            : ctx.lectern.remove({ mediaId, title }),
+      });
+    },
   };
 }
 
@@ -768,6 +776,12 @@ export function projectResourceActions(
       mediaId: id, knownDescriptor: playback.player_descriptor, positionMs: null, source: () => playbackSource(id), recapture: true,
     })));
   }
+  const player = ctx.player.state;
+  const pendingPlayback = ctx.player.pendingPlayback;
+  if (!facts.missing && ref.startsWith("media:") && !byId.has("Playback") && (
+    player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === id ||
+    pendingPlayback?.kind === "Episode" && pendingPlayback.mediaId === id
+  )) byId.set("Playback", projectPlaybackAction({ mediaId: id, title: facts.label, descriptor: null, blocked: null, playbackSource, ctx, run }));
   const menu: ActionDescriptor[] = [];
   let group: string | undefined;
   for (const [actionId, catalogEntry] of Object.entries(ACTION_CATALOG)) {

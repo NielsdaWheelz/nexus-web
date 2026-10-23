@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useId, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
 import MediaActions from "@/components/media/MediaActions";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -53,7 +53,6 @@ export default function SurfaceHeader({
   identityId,
   primaryAction,
   mediaActions,
-  mediaRoute = false,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -65,7 +64,6 @@ export default function SurfaceHeader({
   header: PaneHeaderModel;
   identityId: string;
   mediaActions?: PaneChrome["mediaActions"];
-  mediaRoute?: boolean;
   primaryAction?: {
     readonly action: PanePrimaryAction;
     readonly onActivate: (event:
@@ -85,6 +83,13 @@ export default function SurfaceHeader({
   const mobile = projection === "Mobile";
   const frameRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLElement>(null);
+  const more = useRef<{ readonly element: HTMLButtonElement; readonly resourceRef: CanonicalResourceRef | null } | null>(null);
+  const setMore = useCallback((node: HTMLButtonElement | null) => {
+    more.current = node ? { element: node, resourceRef: resourceRef ?? null } : null;
+  }, [resourceRef]);
+  const returnFocus = () => more.current?.resourceRef === (resourceRef ?? null) &&
+    more.current.element.isConnected && more.current.element.getClientRects().length
+    ? more.current.element : findPaneLandmarkFocusTarget(paneId);
   const viewport = useMobileViewport();
   const mobileChrome = useMobileChrome();
   const visibility = useMobileChromeState();
@@ -122,7 +127,6 @@ export default function SurfaceHeader({
           ref={ref}
           className={mobile ? styles.mobile : styles.header}
           onMouseDown={onMouseDown}
-          data-media-header={mediaRoute || undefined}
         >
           <div className={styles.navigation}>
             <Button
@@ -155,7 +159,7 @@ export default function SurfaceHeader({
                 subject={mediaActions.subject}
                 knownDescriptor={mediaActions.knownDescriptor}
                 density="Header"
-                returnFocus={() => findPaneLandmarkFocusTarget(paneId)}
+                returnFocus={returnFocus}
               />
             ) : null}
             {primaryAction && primary && primaryState ? (
@@ -208,6 +212,7 @@ export default function SurfaceHeader({
                   { id: "View", actions: menuActions },
                 ]}
                 resourceRef={resourceRef}
+                triggerRef={setMore}
                 triggerAttributes={
                   mobile ? { "data-pane-chrome-focus": "true" } : undefined
                 }

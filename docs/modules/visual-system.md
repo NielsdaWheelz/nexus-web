@@ -205,6 +205,14 @@ resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
 inside a reserved action column that never shifts content.
 
+media index rows use their named `mediaRow` content width: at up to 479px,
+episode playback and one more trigger remain beside identity; other media keep
+only more. expanded rows retain their shortcuts. hosts hide whole
+`data-media-action-id` wrappers within `data-media-actions`; the action component
+does not infer placement from density. standalone preview controls retain their
+own layout. content and feedback may wrap; compact controls create no extra row.
+external media rows expose the same more trigger at every width.
+
 `ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
 44×44px with any coarse pointer, and 2px gaps. outline indentation and creation
 alignment consume the same geometry. note-pane margins follow containing width,

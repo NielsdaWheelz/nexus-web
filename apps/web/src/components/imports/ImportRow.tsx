@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import type { ImportItem } from "@/lib/imports/api";
@@ -13,7 +14,7 @@ import {
   reasonLine,
 } from "@/lib/imports/copy";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { ImportActions } from "./ImportActions";
+import { useImportActions } from "./ImportActions";
 import styles from "./Imports.module.css";
 
 /**
@@ -31,6 +32,13 @@ export default function ImportRow({
   readonly onSelect: (ref: string, triggerElement: HTMLButtonElement) => void;
 }) {
   const display = useRenderEnvironment();
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = () => {
+    const more = moreRef.current;
+    if (more?.isConnected && more.getClientRects().length && !more.closest("[hidden], [inert]")) return more;
+    return more?.closest("[data-import-ref]")?.querySelector<HTMLElement>("[data-row-focusable]") ?? null;
+  };
+  const actions = useImportActions({ item, triggerRef: moreRef, returnFocus });
   const now = new Date();
   const consequence = consequenceLine(item, (at) => momentText(at, display));
   const reason = reasonLine(item);
@@ -75,11 +83,9 @@ export default function ImportRow({
           </span>
         </div>
       }
-      primaryControl={
-        <div className={styles.rowActions}>
-          <ImportActions item={item} />
-        </div>
-      }
+      primaryControl={actions.shortcuts}
+      actions={actions.menu}
+      expanded={actions.feedback}
     />
   );
 }

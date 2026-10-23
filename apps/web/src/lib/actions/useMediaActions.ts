@@ -19,7 +19,7 @@ export interface MediaAction {
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   readonly busy: boolean;
-  readonly invoke: (trigger: HTMLButtonElement, fallback: () => HTMLElement | null) => void;
+  readonly invoke: (trigger: HTMLElement | null, returnFocus: () => HTMLElement | null) => void;
 }
 
 export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDescriptor | null): readonly MediaAction[] {
@@ -65,10 +65,10 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const verb = playing ? "pause" : loaded && state.phase === "Ended" ? "replay" : loaded ? "resume" : "play";
     const available = pending || loaded || (subject.kind === "Stored" ? subject.summary.can_play : true);
     const updateRequired = state.kind === "Unavailable" && state.reason === "UpdateRequired";
-    const label = `${verb}: ${title}`;
+    const label = verb;
     if (mediaId !== null && !loadedPreview) {
       const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, playbackSource: source, ctx, run });
-      actions.push({ id: "Playback", label: `${projected.label}: ${title}`, glyph: projected.glyph, busy: false,
+      actions.push({ id: "Playback", label: projected.label, glyph: projected.glyph, busy: false,
         disabled: projected.disabled === true || !available,
         disabledReason: projected.disabledReason ?? (available ? null : "audio unavailable"),
         invoke: trigger => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
@@ -102,30 +102,28 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     });
   }
   if (mediaId !== null) {
-    const intent = present ? "Remove" : "Ensure";
+    const intent = present === null ? null : present ? "Remove" : "Ensure";
     const projected = projectLecternAction({ mediaId, title, intent, blocked: null, ctx, busy, run });
-    const verb = request !== undefined ? projected.label : present ? "remove from lectern" : "add to lectern";
-    const loading = present === null && request === undefined;
-    const failed = loading && read.status === "failed";
-    actions.push({ id: "LecternMembership", label: `${failed ? "retry checking lectern" : loading ? "checking lectern" : verb}: ${title}`,
+    const label = request === undefined && present !== null && ctx.lectern.revision !== null
+      ? present ? "remove from lectern" : "add to lectern" : projected.label;
+    actions.push({ id: "LecternMembership", label,
       glyph: (request?.intent.kind ?? intent) === "Remove" ? "ListMinus" : "ListPlus",
-      disabled: failed ? read.retrying : loading || projected.disabled === true,
-      disabledReason: failed ? "lectern couldn’t be loaded; retry checking it" : loading ? "checking lectern membership" : projected.disabledReason ?? null,
+      disabled: projected.disabled === true,
+      disabledReason: projected.disabledReason ?? null,
       busy: busy.has("LecternMembership") || (request !== undefined && request.phase !== "Unconfirmed"),
       invoke: trigger => {
-        if (failed) { read.refetch(); return; }
-        if (loading || projected.disabled) return;
+        if (projected.disabled) return;
         projected.onSelect({ triggerEl: trigger, openIntent: "default" });
       },
     });
   } else {
-    const label = `add to lectern: ${title}`;
+    const label = "add to lectern";
     actions.push({ id: "LecternMembership", label, glyph: "ListPlus",
       disabled: holding, disabledReason: holding ? heldReason : null, busy: holding,
       invoke: () => { if (subject.kind === "External" && !holding) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
     });
   }
-  actions.push({ id: "LibraryPlacement", label: `manage libraries: ${title}`, glyph: "Library", disabled: holding,
+  actions.push({ id: "LibraryPlacement", label: "manage libraries", glyph: "Library", disabled: holding,
     disabledReason: holding ? heldReason : null, busy: holding,
     invoke: (trigger, fallback) => {
       if (holding) return;

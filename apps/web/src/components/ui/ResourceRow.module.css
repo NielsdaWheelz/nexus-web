@@ -361,7 +361,7 @@ button.primary:disabled {
 
 .mediaControls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   align-items: center;
   min-width: 0;
@@ -374,15 +374,9 @@ button.primary:disabled {
 }
 
 @container mediaRow (max-width: 479px) {
-  .mediaGrid {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  .mediaGrid.mediaWithoutLeading {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .mediaControls {
-    grid-column: 1 / -1;
-    justify-self: end;
+  .mediaControls :global([data-media-action-id]:not([data-media-action-id="Playback"])),
+  .mediaControls :global([data-media-actions]:not(:has([data-media-action-id="Playback"]))) {
+    display: none;
   }
 }
 

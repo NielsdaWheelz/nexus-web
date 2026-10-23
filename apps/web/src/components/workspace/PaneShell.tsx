@@ -383,7 +383,6 @@ function PaneView({
       projection={isMobile ? "Mobile" : "Desktop"}
       header={header}
       identityId={identityId}
-      mediaRoute={route.id === "media"}
       mediaActions={body?.mediaActions}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}

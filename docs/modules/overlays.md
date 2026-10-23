@@ -138,6 +138,17 @@ opener. nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
 and clicked-highlight composition belong to `FloatingActionSurface`.
 
+return candidates must be connected, visible and enabled; a css-hidden opener
+cannot suppress its surviving fallback. visible but temporarily inert modal
+targets retain the existing uncover retry. closing a presenter retains its last
+active destination callbacks even if that render clears the session; its current
+close policy and focus-return veto remain live. modal tab candidates apply the same
+visibility rule. `useActionFocusRecovery` captures only a focused shortcut inside
+its host and observes that element while owned. when responsive css removes it,
+focus moves without scrolling to the host's surviving more control, then its
+existing row/pane target. another actual focus owner relinquishes the capture;
+widening alone never moves focus. media and import shortcuts share this hook.
+
 ## history
 
 while any modal is open exactly one synthetic entry exists
