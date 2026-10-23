@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 type ReadState =
   | null
@@ -21,7 +22,10 @@ type ReadState =
  * visible lifetime; abort, replacement and departure cancel and forget the read.
  * Projection uses current runtime availability; this reader owns no menu or timer.
  */
-export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void) {
+export function useResourceActions(ref: string | null, { onDefect, capturePodcastRemovalFocus }: {
+  readonly onDefect?: (defect: { readonly error: unknown }) => void;
+  readonly capturePodcastRemovalFocus?: () => ReturnFocusTarget;
+} = {}) {
   const { ctx, run } = useActionRuntime();
   const source = usePlaybackSource();
   const pane = usePaneRuntime();
@@ -74,7 +78,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
   return {
     prepare,
     state: state?.kind === "Ready" ? {
-      ...state, options: projectResourceActions(state.facts, ctx, busy, run, pane?.paneId ?? null, state.source),
+      ...state, options: projectResourceActions(state.facts, ctx, busy, run, pane?.paneId ?? null, state.source, { capturePodcastRemovalFocus }),
     } : state,
   };
 }

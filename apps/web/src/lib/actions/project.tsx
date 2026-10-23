@@ -1,6 +1,6 @@
 import { installedApp } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
-import type { LucideIcon } from "lucide-react";
+import { Minus, type LucideIcon } from "lucide-react";
 import {
   ACTION_CATALOG,
   BLOCKED_COPY,
@@ -55,6 +55,7 @@ import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
@@ -192,11 +193,12 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
 }
 
 /** Loaded aggregate subscription facts choose the same fixed verb in header and menu. */
-export function projectPodcastSubscriptionAction({ podcastId, title, subscribed, blocked, ctx, run }: {
+export function projectPodcastSubscriptionAction({ podcastId, title, subscribed, blocked, captureSuccessFocus, ctx, run }: {
   readonly podcastId: string;
   readonly title: string;
   readonly subscribed: boolean;
   readonly blocked: BlockedReason | null;
+  readonly captureSuccessFocus?: () => ReturnFocusTarget;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
@@ -210,12 +212,45 @@ export function projectPodcastSubscriptionAction({ podcastId, title, subscribed,
     disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: () => {
       if (blocked !== null) return;
+      const successFocus = subscribed ? captureSuccessFocus?.() : undefined;
       run({
         ref: `podcast:${podcastId}`, id, label, title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open(subscribed
-          ? { kind: "UnsubscribePodcast", podcastId, title, libraryId: null }
+          ? { kind: "UnsubscribePodcast", podcastId, title, libraryId: null, successFocus }
           : { kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: podcastId }, title, libraryId: null }),
+      });
+    },
+  };
+}
+
+/** One named destination's removal; the existing review owns scope and acknowledgement. */
+export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId, libraryName, canRemove, blocked, captureSuccessFocus, ctx, run }: {
+  readonly podcastId: string;
+  readonly title: string;
+  readonly libraryId: string;
+  readonly libraryName: string;
+  readonly canRemove: boolean;
+  readonly blocked: BlockedReason | null;
+  readonly captureSuccessFocus: () => ReturnFocusTarget;
+  readonly ctx: ActionContext;
+  readonly run: (command: ActionCommand) => void;
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly accessibleLabel: string } {
+  const label = `remove from ${libraryName}`;
+  const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
+    : !canRemove ? "a library admin must remove this subscription." : undefined;
+  return {
+    kind: "command", id: "PodcastLibraryRemoval", label,
+    accessibleLabel: `remove ${title} from ${libraryName}`,
+    icon: createElement(Minus, { size: 16, "aria-hidden": true }),
+    disabled: disabledReason !== undefined || undefined, disabledReason,
+    onSelect: () => {
+      if (disabledReason !== undefined) return;
+      const successFocus = captureSuccessFocus();
+      run({
+        ref: `podcast:${podcastId}`, id: "UnsubscribePodcast", label, title,
+        confirmation: null, tracked: false,
+        execute: () => ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title, libraryId, successFocus }),
       });
     },
   };
@@ -232,6 +267,7 @@ export function projectResourceActions(
   run: (command: ActionCommand) => void,
   boundPaneId: string | null,
   playbackSource: PlaybackSource | null,
+  { capturePodcastRemovalFocus }: { readonly capturePodcastRemovalFocus?: () => ReturnFocusTarget } = {},
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
   const id = ref.slice(ref.indexOf(":") + 1);
@@ -715,7 +751,8 @@ export function projectResourceActions(
       case "SubscribePodcast":
       case "UnsubscribePodcast":
         return projectPodcastSubscriptionAction({
-          podcastId: id, title: facts.label, subscribed: action.kind === "UnsubscribePodcast", blocked, ctx, run,
+          podcastId: id, title: facts.label, subscribed: action.kind === "UnsubscribePodcast", blocked,
+          captureSuccessFocus: capturePodcastRemovalFocus, ctx, run,
         });
       case "RetryMetadata": {
         const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");

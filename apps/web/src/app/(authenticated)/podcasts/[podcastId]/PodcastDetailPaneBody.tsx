@@ -6,15 +6,15 @@
 // command to the account owner. Observation stops outside the visible pane.
 
 import { useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Minus } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { PlaybackSourceContext, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { presentMedia } from "@/lib/collections/presenters/media";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
-import { projectPodcastSubscriptionAction } from "@/lib/actions/project";
+import { projectPodcastLibraryRemovalAction, projectPodcastSubscriptionAction } from "@/lib/actions/project";
 import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
@@ -146,6 +146,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const detailPanel = useRef<HTMLDivElement>(null);
   const { ctx, run } = useActionRuntime();
   const librariesCard = useRef<HTMLElement>(null);
+  const libraryRemovalReasonId = useId();
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const consumption = useChangeStamp("Consumption");
@@ -476,22 +477,27 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           actions={<PodcastDestinationPicker podcastId={podcastId} title={podcast.title} />}>
           <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
             rows={libraryRows}
-            rowControls={Object.fromEntries(namedDestinations.map((destination, index) => {
-              const label = `remove from library: ${libraryDisplayName(destination)}`;
-              const reason = !destination.can_add_content ? "a library admin must remove this subscription." : null;
-              return [destination.library_id, <Button key={destination.library_id} iconOnly icon={<Minus size={16} aria-hidden="true" />}
-                aria-label={label} aria-haspopup="dialog" aria-disabled={reason !== null || undefined}
-                tooltip={{ text: reason ?? label }}
-                onClick={() => {
-                  if (reason !== null) return;
-                  const after = namedDestinations.slice(index + 1).map(item => item.library_id);
+            rowControls={Object.fromEntries(namedDestinations.map(destination => {
+              const action = projectPodcastLibraryRemovalAction({
+                podcastId, title: podcast.title, libraryId: destination.library_id, libraryName: libraryDisplayName(destination),
+                canRemove: destination.can_add_content, blocked: ready.error !== null || ready.refreshing ? "TemporarilyUnavailable" : null, ctx, run,
+                captureSuccessFocus: () => {
                   const paneId = librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-                  ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title: podcast.title, libraryId: destination.library_id,
-                    successFocus: () => after.map(id => findPaneCollectionRowFocusTarget(paneId, id)).find(target => target !== null)
-                      ?? librariesCard.current?.querySelector<HTMLButtonElement>("header button")
-                      ?? findPaneLandmarkFocusTarget(paneId),
-                  });
-                }} />];
+                  const rows = Array.from(librariesCard.current?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
+                  const after = rows.slice(rows.findIndex(item => item.dataset.collectionRowId === destination.library_id) + 1).map(item => item.dataset.collectionRowId!);
+                  return () => after.map(id => findPaneCollectionRowFocusTarget(paneId, id)).find(target => target !== null)
+                    ?? librariesCard.current?.querySelector<HTMLButtonElement>("header button")
+                    ?? librariesCard.current ?? findPaneLandmarkFocusTarget(paneId);
+                },
+              });
+              const reasonId = `${libraryRemovalReasonId}-${destination.library_id}`;
+              return [destination.library_id, <>
+                <Button iconOnly icon={action.icon} aria-label={action.accessibleLabel} aria-haspopup="dialog"
+                  aria-disabled={action.disabled} aria-describedby={action.disabledReason ? reasonId : undefined}
+                  tooltip={{ text: action.disabledReason ? `${action.accessibleLabel}: ${action.disabledReason}` : action.accessibleLabel }}
+                  onClick={event => { const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
+                {action.disabledReason ? <span className="sr-only" id={reasonId}>{action.disabledReason}</span> : null}
+              </>];
             }))}
             empty={<p>choose a library to receive new episodes.</p>} />
         </PaneSection> : null}

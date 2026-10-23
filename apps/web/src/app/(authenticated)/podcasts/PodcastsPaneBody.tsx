@@ -5,7 +5,6 @@
 // A selected scope owns its label read independently of the closed choices.
 
 import { useCallback, useId, useState } from "react";
-import { Plus } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { viewHref } from "@/lib/collections/view";
@@ -13,7 +12,8 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import { usePaneChrome, type PanePrimaryAction } from "@/lib/panes/paneChrome";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { PODCAST_BROWSE_ACTION } from "@/lib/podcasts/navigation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
@@ -54,13 +54,6 @@ const LIBRARIES = definePaneVisitDataKey<ListSnapshot<Library>>("Podcasts.Librar
 const SELECTED_LIBRARY = definePaneVisitDataKey<Visit<Library>>("Podcasts.SelectedLibrary");
 const REFRESH = podcastRefresh({ kind: "Podcasts" });
 const UNIT = { singular: "show", plural: "shows" };
-const BROWSE: PanePrimaryAction = {
-  kind: "link",
-  id: "Podcasts.Browse",
-  label: "browse podcasts",
-  icon: <Plus size={20} aria-hidden="true" />,
-  href: "/browse?kind=Podcast",
-};
 const SORTS = [
   { value: "recent_episode", label: "Newest episode" },
   { value: "unplayed_count", label: "Most unplayed" },
@@ -200,8 +193,8 @@ export default function PodcastsPaneBody() {
   };
   usePaneChrome({
     header: { kind: "Section", meta: headerMeta },
-    primaryAction: BROWSE,
-    menuActions: [BROWSE],
+    primaryAction: PODCAST_BROWSE_ACTION,
+    menuActions: [PODCAST_BROWSE_ACTION],
     query: queryControls,
     refresh: {
       kind: "Refreshable",
