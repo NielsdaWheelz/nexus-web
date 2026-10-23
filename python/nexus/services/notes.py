@@ -69,6 +69,16 @@ def page_ref(page_id: UUID) -> ResourceRef:
     return ResourceRef(scheme="page", id=page_id)
 
 
+def page_index_rows_sql() -> str:
+    """Complete owned page summaries and their updated/title order facts; binds :viewer."""
+    return """
+                SELECT p.id, p.title, p.updated_at, p.title AS presented_title,
+                    lower(p.title) AS title_key
+                FROM pages p
+                WHERE p.user_id = :viewer
+    """
+
+
 def list_pages(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[NotePageSummaryOut]:
@@ -88,10 +98,7 @@ def list_pages(
         params={"viewer": viewer_id},
         sql=lambda keyset, order: f"""
             WITH facts AS (
-                SELECT p.id, p.title, p.updated_at, p.title AS presented_title,
-                    lower(p.title) AS title_key
-                FROM pages p
-                WHERE p.user_id = :viewer
+                {page_index_rows_sql()}
             )
             SELECT * FROM facts WHERE true {keyset}
             ORDER BY {order}

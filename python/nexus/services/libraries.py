@@ -429,7 +429,7 @@ def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
 # oldest created, so All comes first. Every plan ends in the unique id.
 _PRESENTED = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
 _ID = SortKey("id", "asc", KeysetValueKind.Uuid)
-_INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
+INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
     None: (SortKey("created_at", "asc", KeysetValueKind.DateTime), _ID),
     "created_desc": (
         SortKey("created_at", "desc", KeysetValueKind.DateTime),
@@ -448,28 +448,33 @@ _INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
 }
 
 
+def library_index_rows_sql() -> str:
+    """Every member library with its presented name and canonical index order facts."""
+    return f"""
+                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
+                       lower(btrim({_PRESENTED})) AS name_key
+                FROM libraries l
+                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+    """
+
+
 def list_libraries(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[LibraryOut]:
     """One keyset page of the viewer's libraries in the `sort` view."""
     query = parse_collection_query(items, domain_keys={"sort"})
     sort = query.parameters.get("sort")
-    if sort not in _INDEX_PLANS:
+    if sort not in INDEX_PLANS:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported libraries view")
     rows, next_cursor = keyset_page(
         db,
         binding={"list": "Libraries", "viewer": viewer_id, "sort": sort},
-        plan=_INDEX_PLANS[sort],
+        plan=INDEX_PLANS[sort],
         cursor=query.cursor,
         limit=query.limit,
         params={"viewer_id": viewer_id},
         sql=lambda keyset, order: f"""
-            WITH facts AS (
-                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
-                       lower(btrim({_PRESENTED})) AS name_key
-                FROM libraries l
-                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            )
+            WITH facts AS ({library_index_rows_sql()})
             SELECT * FROM facts WHERE true {keyset} ORDER BY {order} LIMIT :limit
         """,
     )

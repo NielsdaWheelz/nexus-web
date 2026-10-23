@@ -106,6 +106,18 @@ def create(
     )
 
 
+def conversation_index_rows_sql() -> str:
+    """Complete owned chat summaries and canonical updated/title order facts."""
+    return """
+                SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
+                    lower(c.title) AS title_key,
+                    (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
+                        AS message_count
+                FROM conversations c
+                WHERE c.owner_user_id = :viewer_id
+    """
+
+
 def index(
     db: Session, *, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[ConversationListItemOut]:
@@ -160,12 +172,8 @@ def index(
         params={"viewer_id": viewer_id, "search": search, "media_id": media_id},
         sql=lambda keyset, order: f"""
             WITH facts AS (
-                SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
-                    lower(c.title) AS title_key,
-                    (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
-                        AS message_count
-                FROM conversations c
-                WHERE c.owner_user_id = :viewer_id
+                SELECT c.* FROM ({conversation_index_rows_sql()}) c
+                WHERE true
                   AND (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
                   {media_filter}
             )

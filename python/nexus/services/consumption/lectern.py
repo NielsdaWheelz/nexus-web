@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import consumption as wire
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.services.consumption import projection, viewer_txn
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.users import lock_viewer
@@ -37,7 +38,9 @@ class _Row:
     visible: bool
 
 
-def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
+def get_lectern(
+    db: Session, viewer_id: UUID, *, summaries: dict[UUID, MediaSummaryOut] | None = None
+) -> wire.LecternOut:
     """The visible rows in order, each with its summary and how it activates; capacity counts
     every row."""
     from nexus.services.media import media_summaries
@@ -46,7 +49,8 @@ def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
     order = _order_snapshot(db, viewer_id, membership)
     rows = [row for row in membership if row.visible]
     media_ids = order.media_ids
-    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
+    if summaries is None:
+        summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
     descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
     return wire.LecternOut(
         items=[
@@ -315,9 +319,9 @@ def _order_snapshot(db: Session, viewer_id: UUID, rows: list[_Row]) -> wire.Lect
     )
 
 
-def _load(db: Session, viewer_id: UUID) -> list[_Row]:
-    rows = db.execute(
-        text(f"""
+def lectern_rows_sql() -> str:
+    """Whole ordered membership with visibility; hidden rows still determine capacity."""
+    return f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()})
             SELECT q.id, q.media_id, m.kind, q.added_at,
                    (vm.media_id IS NOT NULL AND ti.media_id IS NULL) AS visible
@@ -327,7 +331,12 @@ def _load(db: Session, viewer_id: UUID) -> list[_Row]:
             LEFT JOIN media_teardown_intents ti ON ti.media_id = q.media_id
             WHERE q.user_id = :viewer_id
             ORDER BY q.position, q.added_at, q.id
-        """),
+    """
+
+
+def _load(db: Session, viewer_id: UUID) -> list[_Row]:
+    rows = db.execute(
+        text(lectern_rows_sql()),
         {"viewer_id": viewer_id},
     )
     return [_Row(r.id, r.media_id, r.kind, r.added_at, r.visible) for r in rows]

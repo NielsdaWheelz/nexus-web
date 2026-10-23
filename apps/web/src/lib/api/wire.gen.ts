@@ -2417,6 +2417,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/offline-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Offline Catalog */
+        get: operations["get_offline_catalog_offline_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/oracle/readings": {
         parameters: {
             query?: never;
@@ -3671,6 +3688,91 @@ export interface components {
             /** Owner Ref */
             owner_ref: string | null;
         };
+        /** CatalogChatOut */
+        CatalogChatOut: {
+            order: components["schemas"]["UpdatedTitleOrder"];
+            value: components["schemas"]["ConversationListItemOut"];
+        };
+        /** CatalogEpisodeOut */
+        CatalogEpisodeOut: {
+            /**
+             * Episode State
+             * @enum {string}
+             */
+            episode_state: "unplayed" | "in_progress" | "played";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            order: components["schemas"]["EpisodeOrder"];
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            transcript_state: components["schemas"]["TranscriptState"];
+        };
+        /** CatalogLibraryMediaOut */
+        CatalogLibraryMediaOut: {
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+            /** Entry Id */
+            entry_id: string | null;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            order: components["schemas"]["LibraryEntryOrder"];
+        };
+        /** CatalogLibraryOut */
+        CatalogLibraryOut: {
+            order: components["schemas"]["LibraryIndexOrder"];
+            value: components["schemas"]["LibraryOut"];
+        };
+        /** CatalogLibraryShowsOut */
+        CatalogLibraryShowsOut: {
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            value: components["schemas"]["LibraryPodcastsOut"];
+        };
+        /** CatalogMediaOut */
+        CatalogMediaOut: {
+            /** Is Unfiled */
+            is_unfiled: boolean;
+            order: components["schemas"]["MediaOrder"];
+            summary: components["schemas"]["MediaSummaryOut"];
+        };
+        /** CatalogNoteOut */
+        CatalogNoteOut: {
+            order: components["schemas"]["UpdatedTitleOrder"];
+            value: components["schemas"]["NotePageSummaryOut"];
+        };
+        /** CatalogPodcastIndexOut */
+        CatalogPodcastIndexOut: {
+            /** Has New */
+            has_new: boolean;
+            /** Not In Library */
+            not_in_library: boolean;
+            order: components["schemas"]["PodcastIndexOrder"];
+        };
+        /** CatalogShowOut */
+        CatalogShowOut: {
+            detail: components["schemas"]["PodcastDetailOut"];
+            index: components["schemas"]["CatalogPodcastIndexOut"] | null;
+        };
         /** ChapterOut */
         ChapterOut: {
             /** End Ms */
@@ -4828,6 +4930,10 @@ export interface components {
         Data_NoteBlockOut_: {
             data: components["schemas"]["NoteBlockOut"];
         };
+        /** Data[OfflineCatalogOut] */
+        Data_OfflineCatalogOut_: {
+            data: components["schemas"]["OfflineCatalogOut"];
+        };
         /** Data[OracleReadingCreatedOut] */
         Data_OracleReadingCreatedOut_: {
             data: components["schemas"]["OracleReadingCreatedOut"];
@@ -5399,6 +5505,17 @@ export interface components {
              */
             id: string;
             initial_note: components["schemas"]["InitialHighlightNote"] | null;
+        };
+        /** EpisodeOrder */
+        EpisodeOrder: {
+            /** Duration Asc */
+            duration_asc: number;
+            /** Duration Desc */
+            duration_desc: number;
+            /** Newest */
+            newest: number;
+            /** Oldest */
+            oldest: number;
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -6414,6 +6531,26 @@ export interface components {
             next_cursor: string | null;
             order_revision: components["schemas"]["OrderRevision"] | null;
         };
+        /** LibraryEntryOrder */
+        LibraryEntryOrder: {
+            /** Added Asc */
+            added_asc: number;
+            /** Added Desc */
+            added_desc: number;
+            /** Default */
+            default: number;
+        };
+        /** LibraryIndexOrder */
+        LibraryIndexOrder: {
+            /** Created Desc */
+            created_desc: number;
+            /** Default */
+            default: number;
+            /** Name Asc */
+            name_asc: number;
+            /** Name Desc */
+            name_desc: number;
+        };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
             /**
@@ -7042,6 +7179,25 @@ export interface components {
          * @enum {string}
          */
         MediaKind: "web_article" | "epub" | "pdf" | "video" | "podcast_episode";
+        /** MediaOrder */
+        MediaOrder: {
+            /** Creator Asc */
+            creator_asc: number;
+            /** Creator Desc */
+            creator_desc: number;
+            /** Published Asc */
+            published_asc: number;
+            /** Published Desc */
+            published_desc: number;
+            /** Remaining Asc */
+            remaining_asc: number;
+            /** Remaining Desc */
+            remaining_desc: number;
+            /** Title Asc */
+            title_asc: number;
+            /** Title Desc */
+            title_desc: number;
+        };
         /**
          * MediaOut
          * @description One media as this viewer sees it: bibliography, processing, readability and the
@@ -7886,6 +8042,48 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** OfflineCatalogOut */
+        OfflineCatalogOut: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /** Chats */
+            chats: components["schemas"]["CatalogChatOut"][];
+            /** Episodes */
+            episodes: components["schemas"]["CatalogEpisodeOut"][];
+            /**
+             * Format Version
+             * @constant
+             */
+            format_version: 1;
+            lectern: components["schemas"]["LecternOut"];
+            /** Libraries */
+            libraries: components["schemas"]["CatalogLibraryOut"][];
+            /** Library Media */
+            library_media: components["schemas"]["CatalogLibraryMediaOut"][];
+            /** Library Shows */
+            library_shows: components["schemas"]["CatalogLibraryShowsOut"][];
+            /** Media */
+            media: components["schemas"]["CatalogMediaOut"][];
+            /** Notes */
+            notes: components["schemas"]["CatalogNoteOut"][];
+            /** Shows */
+            shows: components["schemas"]["CatalogShowOut"][];
+            /**
+             * Snapshot Id
+             * Format: uuid
+             */
+            snapshot_id: string;
+            /** Wire Revision */
+            wire_revision: number;
         };
         /** OpenPaneActivation */
         OpenPaneActivation: {
@@ -8778,6 +8976,15 @@ export interface components {
         };
         /** @enum {string} */
         PodcastImportState: "pending" | "running" | "complete" | "failed" | "cancelled";
+        /** PodcastIndexOrder */
+        PodcastIndexOrder: {
+            /** Alpha */
+            alpha: number;
+            /** Recent Episode */
+            recent_episode: number;
+            /** Unplayed Count */
+            unplayed_count: number;
+        };
         /** PodcastLibraryShowOut */
         PodcastLibraryShowOut: {
             /** Destinations */
@@ -11910,6 +12117,17 @@ export interface components {
              * @description Display name (1-100 chars, or null to clear)
              */
             display_name?: string | null;
+        };
+        /** UpdatedTitleOrder */
+        UpdatedTitleOrder: {
+            /** Title Asc */
+            title_asc: number;
+            /** Title Desc */
+            title_desc: number;
+            /** Updated Newest */
+            updated_newest: number;
+            /** Updated Oldest */
+            updated_oldest: number;
         };
         /** UploadAccepted */
         UploadAccepted: {
@@ -17463,6 +17681,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_offline_catalog_offline_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OfflineCatalogOut_"];
                 };
             };
         };
