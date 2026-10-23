@@ -4,4 +4,6 @@ a freshly opened library header menu can retire before its first command, while 
 
 observed in the real shared-controls lab: keyboard opening focused `Delete Library`, then `Library settings…`; enter closed the menu and announced `actions changed. reopen to see current options.` no command ran. `ActionMenu.tsx` snapshots geometry at publication and refuses later changes in `stable()`/`invalidate()`. the exact changing rectangle remains unisolated; fonts and surrounding pane layout are candidates, not established causes.
 
+also observed on android's hosted pdf reader in lab `20261022-171732-f4a5245e1f3d` at source `93f116efb`: opening `more actions for Support-vector networks` immediately retired the dialog with the same warning, before `Download for offline` could be selected. this is not limited to library menus.
+
 reproduce with several restored panes, navigate to a newly created empty library, and immediately open its header menu with arrow-up, arrow-up, enter. inspect native rectangle measurements around publication and activation. resolution requires identifying the movement and showing that a settled menu accepts its first command without relaxing geometry or meaning guards.

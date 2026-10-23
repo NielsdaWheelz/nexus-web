@@ -89,6 +89,9 @@ lease (`store.open`) and plays `file://`, else streams.
 
 ## contracts
 
+ordinary shelf actions use the shared native `Button`; row titles retain their
+content-row anatomy. the shelf owns confirmations, copy leases and focus.
+
 **bridge** `window.nexusDownloads` (both origins, main frame, json string
 frames). request `{id, op, ...args}`; reply `{id, ok: true, ...}` or
 `{id, ok: false, error}`; push `{snapshot}` to the document that last said
