@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="__NEXUS_CHROME__" />
+    <title>Nexus</title>
+    <script nonce="__NEXUS_NONCE__">
+      const room = document.cookie.split(";").map(value => value.trim()).find(value => value.startsWith("nx-theme="))?.slice(9);
+      document.documentElement.dataset.theme = room === "light" || room === "elvish" ? room : "dark";
+    </script>
+  </head>
+  <body>
+    <div id="root" class="app-viewport"></div>
+    <script type="module" nonce="__NEXUS_NONCE__" src="/main.tsx"></script>
+  </body>
+</html>

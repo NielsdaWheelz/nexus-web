@@ -250,6 +250,23 @@ internal class ListeningRecorder(
         return persistLane()
     }
 
+    /** Explicit sign-out retires every pending effect before its files are purged. */
+    suspend fun retire() {
+        tick?.cancel()
+        retry?.cancel()
+        sending?.cancel()
+        uploading?.cancel()
+        sending?.join()
+        uploading?.join()
+        account = null
+        episode = null
+        lane.clear()
+        factRevisions.clear()
+        authorityRevisions.clear()
+        store = null
+        outbox.clear()
+    }
+
     fun close() {
         connectivity.unregisterNetworkCallback(network)
         tick?.cancel()

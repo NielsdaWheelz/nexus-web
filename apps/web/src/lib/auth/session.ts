@@ -1,7 +1,7 @@
 // the session protocol at the response edge, provider-neutral: what a server
 // component may know (verification), what a response owner may do (refresh
 // inline, publish cookie effects), and the private headers every auth
-// response carries. middleware, route handlers and server actions publish
+// response carries. middleware and route handlers publish
 // through the same cookie effects.
 import "server-only";
 
@@ -239,37 +239,14 @@ export async function liveSession(): Promise<LiveSession> {
   return resolve((await cookies()).getAll(), false);
 }
 
-// a server action that calls the provider as the viewer. the action owns its
-// response, so it publishes through next's cookie store: the rotation first
-// (a spent refresh token must never be lost to a later failure), then the
-// operation's writes. "Ended": no live session (an ended one is cleared, with
-// feedback, and so is one the provider ends under the operation);
-// "Unavailable": the provider could not be reached.
-export async function withActionSession<
-  T extends {
-    readonly outcome: string;
-    readonly writes: readonly CookieWrite[];
-  },
->(
-  operation: (cookies: readonly CookieValue[]) => Promise<T>,
-): Promise<T | "Ended" | "Unavailable"> {
-  const store = await cookies();
-  let live: LiveSession;
-  try {
-    live = await liveSession();
-  } catch (error) {
-    if (!(error instanceof AuthUnavailable)) throw error;
-    return "Unavailable";
+// ordinary installed bff calls may verify the presented bearer but cannot
+// rotate or clear native-owned credentials, even inside the renewal margin.
+export async function presentedSession(): Promise<LiveSession> {
+  const presented = (await cookies()).getAll();
+  const accessToken = readBearer(presented);
+  if (accessToken === null || (await verify(accessToken)) === "Rejected") {
+    return { kind: "Anonymous" };
   }
-  if (live.kind === "Ended") applyEffect(store, ended(live.cookieNames));
-  if (live.kind !== "Live") return "Ended";
-  applyEffect(store, { kind: "Write", writes: live.writes });
-  const result = await operation(live.cookies);
-  if (result.outcome === "SessionEnded") {
-    const names = [...live.cookieNames, ...result.writes.map((w) => w.name)];
-    applyEffect(store, ended(names));
-    return "Ended";
-  }
-  applyEffect(store, { kind: "Write", writes: result.writes });
-  return result;
+  return { kind: "Live", accessToken, cookies: presented, writes: [], cookieNames: authCookieNames(presented) };
 }
+

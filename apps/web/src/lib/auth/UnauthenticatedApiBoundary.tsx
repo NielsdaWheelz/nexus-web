@@ -4,6 +4,7 @@
 // that security teardown is never vetoed by an unsaved-writing warning.
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { isUnauthenticatedApiError } from "@/lib/api/client";
+import { installedApp, observeRemoteFailure } from "@/lib/native/admission";
 import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 
 let redirectStarted = false;
@@ -22,6 +23,7 @@ export function beforeSecurityTeardown(pause: () => void): () => void {
 
 export function handleUnauthenticatedApiError(error: unknown): boolean {
   if (!isUnauthenticatedApiError(error)) return false;
+  if (installedApp) { observeRemoteFailure(401); return true; }
   if (redirectStarted) return true;
   if (typeof window === "undefined" || window.location.pathname === "/login") {
     return false;

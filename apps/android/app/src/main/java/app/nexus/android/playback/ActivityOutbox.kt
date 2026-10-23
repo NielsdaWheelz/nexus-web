@@ -37,6 +37,8 @@ internal class ActivityOutbox(file: File) {
         }
     }
 
+    fun clear() { entries.clear() }
+
     fun add(accountId: UUID, mediaId: UUID, span: JSONObject) {
         entries += JSONObject()
             .put("accountId", accountId.toString())

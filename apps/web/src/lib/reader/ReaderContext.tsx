@@ -13,6 +13,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { remoteReady } from "@/lib/native/admission";
+import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -46,6 +48,7 @@ export function ReaderProvider({
   readonly initialProfile: ReaderProfile;
   readonly children: ReactNode;
 }) {
+  const refreshSettings = useSettingsRefresh();
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
@@ -57,10 +60,14 @@ export function ReaderProvider({
   const [busy, setBusy] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
+  useEffect(() => {
+    if (!sending.current) setProfile(current => Object.keys(unsent.current).length === 0 ? initialProfile : { ...initialProfile, ...unsent.current });
+  }, [initialProfile]);
+
   const send = useCallback(async () => {
     window.clearTimeout(timer.current);
     const patch = unsent.current;
-    if (!live.current || sending.current || Object.keys(patch).length === 0) return;
+    if (!remoteReady() || !live.current || sending.current || Object.keys(patch).length === 0) return;
     unsent.current = {};
     sending.current = true;
     setBusy(true);
@@ -70,6 +77,7 @@ export function ReaderProvider({
         { method: "PATCH", body: JSON.stringify(patch), keepalive: true },
       );
       if (!live.current) return;
+      void refreshSettings();
       // Fields changed while this request flew stay as the user set them.
       setProfile({ ...saved.data, ...unsent.current });
       sending.current = false;
@@ -79,17 +87,17 @@ export function ReaderProvider({
       sending.current = false;
       if (!live.current) return;
       unsent.current = { ...patch, ...unsent.current };
-      if (!handleUnauthenticatedApiError(failure)) {
-        if (!isApiError(failure) || isSameSystemApiDefect(failure)) setDefect({ error: failure });
-        else setPersistence({ state: "SaveFailed", failure });
-      }
+      handleUnauthenticatedApiError(failure);
+      if (!isApiError(failure) || isSameSystemApiDefect(failure)) setDefect({ error: failure });
+      else setPersistence({ state: "SaveFailed", failure });
     } finally {
       if (live.current) setBusy(sending.current);
     }
-  }, []);
+  }, [refreshSettings]);
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
+      if (!remoteReady()) return;
       setProfile((current) => ({ ...current, ...patch }));
       unsent.current = { ...unsent.current, ...patch };
       setPersistence((current) => current.state === "SaveFailed" ? current : { state: "Pending" });

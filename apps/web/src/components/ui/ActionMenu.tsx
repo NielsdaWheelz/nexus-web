@@ -16,7 +16,7 @@ import {
   type Ref,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { usePathname } from "next/navigation";
+import { useNavigationIdentity } from "@/lib/host/policy";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
@@ -213,7 +213,7 @@ export default function ActionMenu({
   const reasonId = useId();
   const container = useOverlayContainer();
   const mobile = useIsMobileViewport();
-  const pathname = usePathname();
+  const pathname = useNavigationIdentity();
   useInteractionOwner();
   const prepared = source.kind === "Prepared" && invocation?.attempt &&
     !invocation.attempt.controller.signal.aborted &&

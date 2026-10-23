@@ -2,6 +2,7 @@
 
 // Launcher reads: direct discovery, then content enrichment, then typed history.
 // Exact refs use the existing resource resolver and never enter textual discovery.
+import { remoteReady } from "@/lib/native/admission";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -123,7 +124,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
 
   /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
-    if (!live.current) return;
+    if (!live.current || !remoteReady()) return;
     const body = JSON.stringify(selection);
     const commandKey = crypto.randomUUID();
     let sending: Promise<void> | null = null;

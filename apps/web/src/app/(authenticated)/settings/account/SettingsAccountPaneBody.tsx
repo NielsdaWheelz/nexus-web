@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useState, type ComponentProps, type FormEvent } from "react";
+import { useEffect, useId, useState, type ComponentProps, type FormEvent } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -20,14 +19,17 @@ import {
   type Visit,
 } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
-import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
-import { runSettingsAction } from "../settingsAction";
-import { changeEmailAction } from "./actions";
+import { installedApp } from "@/lib/native/admission";
+import { accountEmailChange } from "@/lib/native/client";
+import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
+import type { EmailChangeResult } from "@/lib/account/settingsWire";
 import AssistantWrites from "./AssistantWrites";
 import styles from "./page.module.css";
 
@@ -78,11 +80,20 @@ function ProfileForm(props: {
   readonly submit: string;
   readonly save: (value: string) => Promise<Outcome>;
 }) {
+  const guard = useWorkGuard();
+  const pane = usePaneRuntime();
+  const ownerId = useId();
   const [draft, setDraft] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const value = draft ?? props.current ?? "";
   const next = (props.normalize ?? String)(value.trim());
+  useEffect(() => guard.register({
+    id: `settings-field:${ownerId}`,
+    scope: pane ? { kind: "visit", visitId: pane.visitId, routeKey: pane.routeKey } : { kind: "account" },
+    read: () => ({ changed: draft !== null && next !== props.current, unconfirmed: pending, stopsBrowserWork: false }),
+    subscribe: () => () => {},
+  }), [guard, ownerId, pane, draft, next, props.current, pending]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPending(true);
@@ -136,7 +147,8 @@ export default function SettingsAccountPaneBody() {
   const params = usePaneSearchParams();
   const generationId = params.get("generation_id");
   const toolCallId = params.get("tool_call_id");
-  const { setCalendarTimeZone } = useAuthenticatedAccount();
+  const refreshSettings = useSettingsRefresh();
+  const { accountId, setCalendarTimeZone } = useAuthenticatedAccount();
   const fail = useThrowLater();
   const account = useServerValue({
     key: "/me",
@@ -175,6 +187,7 @@ export default function SettingsAccountPaneBody() {
       account.refetch();
       if ("calendar_time_zone" in body)
         setCalendarTimeZone(response.data.calendar_time_zone);
+      if ("calendar_time_zone" in body) void refreshSettings();
       return { feedback: null, done: true };
     } catch (error) {
       return failure(error, fail, title, invalid);
@@ -183,7 +196,9 @@ export default function SettingsAccountPaneBody() {
   const changeEmail = async (email: string): Promise<Outcome> => {
     const title = "We couldn't update your email. Please try again.";
     try {
-      const outcome = await runSettingsAction(() => changeEmailAction(email));
+      const { data: { outcome } } = installedApp
+        ? await accountEmailChange(email)
+        : await apiFetch<{ data: EmailChangeResult }>("/api/me/email-change", { method: "POST", body: JSON.stringify({ email }) });
       if (outcome === "Sent")
         return {
           feedback: {
@@ -245,9 +260,9 @@ export default function SettingsAccountPaneBody() {
         <p className={styles.current}>
           Set or replace the password used with your account email.
         </p>
-        <Link href="/account/password?next=%2Fsettings%2Faccount" className={buttonClassName({})}>
+        <a href={installedApp ? `/account/password?expected_account_id=${encodeURIComponent(accountId)}&next=%2Fsettings%2Faccount` : "/account/password?next=%2Fsettings%2Faccount"} className={buttonClassName({})}>
           Set or replace password
-        </Link>
+        </a>
       </PaneSection>
       <ProfileForm
         title="Display name"

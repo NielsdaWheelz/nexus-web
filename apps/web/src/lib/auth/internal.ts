@@ -1,13 +1,13 @@
 // fastapi's internal auth endpoints: handoff codes and extension sessions.
-// every failure (transport, the 5 s deadline, a non-2xx, a body without the
-// field) is one public outcome per caller: null.
+// a rejected/absent code is null. unavailable dependencies throw AuthUnavailable
+// so one-use redemption can distinguish an outage from a spent handoff.
 import "server-only";
 
 import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
-import type { Tokens } from "@/lib/supabase/auth";
+import { AuthUnavailable, type Tokens } from "@/lib/supabase/auth";
 import { isRecord } from "@/lib/validation";
 
 async function post(
@@ -29,12 +29,14 @@ async function post(
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(5_000),
     });
+    if (response.status >= 500) throw new AuthUnavailable();
     if (!response.ok) return null;
     const json: unknown = await response.json();
     return isRecord(json) && isRecord(json.data) ? json.data : null;
   } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return null;
+    if (error instanceof AuthUnavailable) throw error;
+    if (error instanceof TypeError || (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))) throw new AuthUnavailable();
+    throw error;
   }
 }
 
@@ -75,9 +77,11 @@ export async function createExtensionSession(
   accessToken: string,
   requestId: string,
 ): Promise<string | null> {
-  const data = await post("/auth/extension-sessions", null, {
-    accessToken,
-    requestId,
-  });
-  return text(data?.token);
+  try {
+    const data = await post("/auth/extension-sessions", null, { accessToken, requestId });
+    return text(data?.token);
+  } catch (error) {
+    if (!(error instanceof AuthUnavailable)) throw error;
+    return null;
+  }
 }

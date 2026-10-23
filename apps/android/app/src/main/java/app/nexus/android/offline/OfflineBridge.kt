@@ -6,6 +6,7 @@ import android.util.Base64
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import app.nexus.android.BuildConfig
+import app.nexus.android.DeviceSession
 import app.nexus.android.webkit.OwnedOriginWebMessage
 import app.nexus.android.webkit.OwnedWebMessage
 import app.nexus.android.webkit.OwnedOrigin
@@ -109,9 +110,10 @@ internal class OfflineBridge(
     }
 
     private fun dispatch(request: JSONObject, replyProxy: JavaScriptReplyProxy): JSONObject {
+        val session = DeviceSession.get(context)
+        if (session.accountId() == null || session.accountId() != store.account) return failure("NotConnected")
         when (request.getString("op")) {
             "hello" -> {
-                request.string("accountId")?.let { store.bind(UUID.fromString(it)) }
                 subscriber = replyProxy
                 OfflineJobs.scheduleSync(context, 0)
                 return JSONObject().put("ok", true).put("snapshot", store.snapshot())

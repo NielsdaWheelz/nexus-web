@@ -6,6 +6,7 @@
 // present its states; the auth context decides redirect policy (the shell's login
 // navigation, share capture's no-op).
 import { useEffect, useState } from "react";
+import { installedApp, remoteReady } from "@/lib/native/admission";
 import { apiFetch, holdWireReload, isUnauthenticatedApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { beforeSecurityTeardown, useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -58,6 +59,7 @@ export function useWritingRuntime(accountId: string | null): WritingRuntime {
     });
     // The lease rechecks the session's account; an ended session is null.
     const sessionAccountId = async (): Promise<string | null> => {
+      if (installedApp) return accountId;
       try {
         return (await apiFetch<ApiJson<"/me", "get">>("/api/me")).data.user_id;
       } catch (error) {
@@ -69,7 +71,7 @@ export function useWritingRuntime(accountId: string | null): WritingRuntime {
     startWritingRuntime(accountId, sessionAccountId).then(
       () => {
         if (!current) return;
-        nudgeWrites();
+        if (remoteReady()) nudgeWrites();
         setSettled({ accountId, attempt, ready: true });
       },
       () => {

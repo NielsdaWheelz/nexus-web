@@ -67,7 +67,6 @@ function nativeUnavailable(error: unknown): error is Error {
 
 /** `onResponding(false)` when a reply times out, `(true)` again on the next frame. */
 export function createNativeEngine(
-  accountId: string,
   onResponding: (responding: boolean) => void,
 ): Engine {
   if (port === undefined) throw new Error("window.nexusQueueSession is unavailable");
@@ -326,7 +325,7 @@ export function createNativeEngine(
   };
   const unbind = async () => { bound = false; await call("unbind", {}, { timeoutMs: LOAD_TIMEOUT_MS }); };
   activeUnbind = unbind;
-  void call("hello", { account_id: accountId }).catch(() => undefined);
+  void call("hello").catch(() => undefined);
 
   return {
     supportsSilenceSkipping: true,

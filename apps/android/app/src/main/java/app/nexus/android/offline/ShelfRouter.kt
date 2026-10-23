@@ -5,6 +5,7 @@ import android.webkit.MimeTypeMap
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import androidx.webkit.WebViewAssetLoader
+import app.nexus.android.webkit.OwnedOrigin
 import com.google.common.io.ByteStreams
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -23,6 +24,7 @@ private val RANGE = Regex("bytes=(\\d+)-(\\d*)")
  * every other subresource answers 404. Main frames elsewhere are never touched.
  */
 internal class ShelfRouter(context: Context, private val store: OfflineStore) {
+    private val origin = OwnedOrigin(SHELF_ORIGIN)
     private val assets = WebViewAssetLoader.Builder()
         .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
@@ -32,6 +34,7 @@ internal class ShelfRouter(context: Context, private val store: OfflineStore) {
         if (!url.host.equals(SHELF_HOST, ignoreCase = true)) {
             return if (shelfActive && !request.isForMainFrame) notFound() else null
         }
+        if (!origin.matches(url)) return notFound()
         val segments = url.pathSegments
         if (segments.size > 3 && segments[0] == "shelf" && segments[1] == "copies") {
             val mediaId = try {

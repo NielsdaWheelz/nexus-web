@@ -1,0 +1,72 @@
+/* The same immutable faces and ranges as the hosted root's next/font inputs. */
+@font-face {
+  font-family: "Nexus Inter";
+  src: url("../app/fonts/inter-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Mono";
+  src: url("../app/fonts/jetbrains-mono-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Garamond";
+  src: url("../app/fonts/eb-garamond-normal-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Garamond";
+  src: url("../app/fonts/eb-garamond-italic-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Cormorant";
+  src: url("../app/fonts/cormorant-normal-latin.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Cormorant";
+  src: url("../app/fonts/cormorant-italic-latin.woff2") format("woff2");
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Fell";
+  src: url("../app/fonts/im-fell-english-normal-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Fell";
+  src: url("../app/fonts/im-fell-english-italic-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Nexus Unifraktur";
+  src: url("../app/fonts/unifraktur-maguntia-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+  --font-inter: "Nexus Inter";
+  --font-jetbrains-mono: "Nexus Mono";
+  --font-eb-garamond: "Nexus Garamond";
+  --font-cormorant: "Nexus Cormorant";
+  --font-im-fell: "Nexus Fell";
+  --font-unifraktur: "Nexus Unifraktur";
+}

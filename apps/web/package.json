@@ -13,7 +13,9 @@
     "build:shelf": "vite build --config vite.shelf.config.ts",
     "build:extension": "node scripts/build-extension.mjs",
     "gen:wire": "node scripts/gen-wire.mjs",
-    "gen:chat-citations": "node scripts/gen-chat-citations.mjs"
+    "gen:chat-citations": "node scripts/gen-chat-citations.mjs",
+    "build:android": "vite build --config vite.android.config.ts",
+    "build:packaged": "bun run build:shelf && bun run build:android"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

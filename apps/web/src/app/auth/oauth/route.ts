@@ -9,12 +9,14 @@ import {
 } from "@/lib/auth/session";
 import {
   callbackPath,
+  expectedAccountPath,
+  parseHandoffContext,
   isOAuthProvider,
   loginPath,
   parseReturnTarget,
 } from "@/lib/auth/urls";
 import { getEnv } from "@/lib/env";
-import { AuthUnavailable, startOAuth } from "@/lib/supabase/auth";
+import { AuthUnavailable, startOAuth, verify } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
@@ -25,12 +27,12 @@ export async function GET(request: Request): Promise<NextResponse> {
   const params = new URL(request.url).searchParams;
   const provider = params.get("provider");
   const mode = params.get("mode") === "link" ? "link" : "signin";
-  const target = parseReturnTarget(
-    mode === "link" ? "/settings/identities" : params.get("next"),
-  );
+  const expected = params.get("expected_account_id");
+  const target = parseReturnTarget(mode === "link" ? expectedAccountPath(expected ? "/account/identities" : "/settings/identities", expected) : params.get("next"));
+  const handoff = parseHandoffContext(params.get("flow"), params.get("hc"));
   const failed = (effect?: Effect) =>
-    finish(redirectTo(loginPath(target, "oauth_start_failed")), effect);
-  if (!isOAuthProvider(provider)) return failed();
+    finish(redirectTo(loginPath(target, "oauth_start_failed", handoff)), effect);
+  if (!isOAuthProvider(provider) || ((params.has("flow") || params.has("hc")) && !handoff)) return failed();
 
   let jar = (await cookies()).getAll();
   let rotation: Effect = { kind: "Preserve" };
@@ -44,14 +46,19 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
     if (live.kind === "Ended") return failed(ended(live.cookieNames));
     if (live.kind === "Anonymous") return failed();
+    if (expected) {
+      try {
+        const viewer = await verify(live.accessToken);
+        if (viewer === "Rejected" || viewer.userId !== expected) return finish(redirectTo(target), { kind: "Write", writes: live.writes });
+      } catch (error) {
+        if (!(error instanceof AuthUnavailable)) throw error;
+        return failed({ kind: "Write", writes: live.writes });
+      }
+    }
     jar = [...live.cookies];
     rotation = { kind: "Write", writes: live.writes };
   }
-  const hc = params.get("hc") ?? "";
-  const callback = callbackPath(
-    target,
-    params.get("flow") === "handoff" ? { handoff: hc } : undefined,
-  );
+  const callback = expectedAccountPath(callbackPath(target, handoff ? { handoff: handoff.challenge } : undefined), expected);
   const { url, writes } = await startOAuth(
     jar,
     provider,

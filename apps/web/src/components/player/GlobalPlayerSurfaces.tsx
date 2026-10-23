@@ -12,7 +12,6 @@ import {
   type Ref,
 } from "react";
 import * as Icon from "lucide-react";
-import Link from "next/link";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -456,10 +455,10 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         {retained ? <Button onClick={commands.resume} disabled={queue.phase !== "Ready" || queue.header?.current_entry_id === null}>resume</Button> : null}
         {openQueue}
         <Tooltip text="open lectern" triggerRef={idleRef} renderTrigger={help => (
-          <Link {...help} href="/lectern" prefetch={false} className={buttonClassName({ size: "comfortable", iconOnly: true })}
+          <a {...help} href="/lectern" className={buttonClassName({ size: "comfortable", iconOnly: true })}
             aria-label="open lectern" data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>
             <Icon.ListMusic size={20} aria-hidden="true" />
-          </Link>
+          </a>
         )} />
       </div>;
       break;

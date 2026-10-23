@@ -3,6 +3,7 @@
 // the parsed json or throws ApiError. A request sealed under another revision is
 // refused here, never rewritten. A 426 means this tab was built for another
 // wire: the tab reloads itself once per build unless writing holds it.
+import { installedApp, remoteReady, remoteAdmission, observeRemoteFailure } from "@/lib/native/admission";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
 import { isRecord } from "@/lib/validation";
@@ -125,8 +126,8 @@ export function isStaleBuild(error: unknown): error is ApiError & { readonly cod
 /** The update is the whole fact, whatever failed; its only action reloads the page. */
 export const STALE_BUILD_FEEDBACK: FeedbackContent = {
   tone: "Warning",
-  title: "Nexus was updated. Reload this page to continue.",
-  reload: true,
+  title: installedApp ? "update nexus to reconnect" : "Nexus was updated. Reload this page to continue.",
+  ...(installedApp ? { message: "install the current nexus apk, then reopen the app." } : { reload: true }),
 };
 
 /** Copy for the transport failures every command answers alike; null for domain codes. */
@@ -201,6 +202,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
   } catch (error) {
     if (isAbortError(error)) throw error;
     // an incomplete body is transport, whatever the status (#604)
+    observeRemoteFailure(0);
     throw new ApiError(0, "E_NETWORK", "Network request failed", answerId);
   }
   if (ok) {
@@ -229,7 +231,8 @@ export async function readResponse<T>(response: Response): Promise<T> {
     isRecord(error.details) ? error.details : undefined,
     retryAfterMs(response.headers.get("retry-after")),
   );
-  if (status === 426 && typeof window !== "undefined") reloadForNewBuild();
+  observeRemoteFailure(status);
+  if (status === 426 && typeof window !== "undefined" && !installedApp) reloadForNewBuild();
   throw failure;
 }
 
@@ -242,6 +245,10 @@ export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
 ): Promise<T> {
+  if (installedApp && !remoteReady()) {
+    const admission = remoteAdmission();
+    throw new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0, admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK", "remote work is unavailable");
+  }
   const headers = new Headers(init.headers);
   const sealed = headers.get(WIRE_HEADER);
   if (sealed !== null && sealed !== String(WIRE_REVISION))
@@ -255,6 +262,7 @@ export async function apiFetch<T>(
     response = await fetch(path, { ...init, headers });
   } catch (error) {
     if (isAbortError(error)) throw error;
+    observeRemoteFailure(0);
     throw new ApiError(0, "E_NETWORK", "Network request failed");
   }
   return readResponse<T>(response);

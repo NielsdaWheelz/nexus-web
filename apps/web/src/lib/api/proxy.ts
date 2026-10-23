@@ -7,8 +7,9 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
-import { ended, finish, isSameOrigin, liveSession } from "@/lib/auth/session";
+import { ended, finish, isSameOrigin, liveSession, presentedSession } from "@/lib/auth/session";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import { isAbortError } from "@/lib/errors";
@@ -195,9 +196,10 @@ export async function proxySession(
       failure(id, 403, "E_FORBIDDEN", "Cross-origin request rejected"),
     );
   }
+  const passive = isAndroidShellUserAgent(request.headers.get("user-agent") ?? "");
   let live;
   try {
-    live = await liveSession();
+    live = await (passive ? presentedSession() : liveSession());
   } catch (error) {
     if (!(error instanceof AuthUnavailable)) throw error;
     const message = "Authentication service unavailable";
@@ -207,7 +209,7 @@ export async function proxySession(
     failure(id, 401, "E_UNAUTHENTICATED", "Authentication required");
   if (live.kind === "Anonymous") return finish(unauthenticated());
   if (live.kind === "Ended") {
-    return finish(unauthenticated(), ended(live.cookieNames));
+    return finish(unauthenticated(), passive ? { kind: "Preserve" } : ended(live.cookieNames));
   }
   const headers = pick(request.headers, SESSION_IN);
   headers.set("authorization", `Bearer ${live.accessToken}`);
@@ -228,7 +230,7 @@ export async function proxySession(
   });
   if (response.status === 401) {
     void response.body?.cancel();
-    return finish(unauthenticated(), ended(live.cookieNames));
+    return finish(unauthenticated(), passive ? { kind: "Preserve" } : ended(live.cookieNames));
   }
   const cache = response.headers.get("cache-control");
   finish(response, { kind: "Write", writes: live.writes });

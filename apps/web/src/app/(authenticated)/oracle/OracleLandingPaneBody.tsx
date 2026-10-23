@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import {
   FeedbackNotice,
@@ -205,9 +204,9 @@ export default function OracleLandingPaneBody() {
             )
           )}
 
-          <Link className={styles.skyLink} href="/atlas?layer=readings">
+          <a className={styles.skyLink} href="/atlas?layer=readings">
             ✦ View as a sky
-          </Link>
+          </a>
         </div>
       </div>
     </OracleTheme>

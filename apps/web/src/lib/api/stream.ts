@@ -3,6 +3,7 @@
 // the bff's planned cut before the platform's function limit). The server's
 // committed state is the truth: a reconnect replays what was missed (cursor
 // streams) or re-sends the whole snapshot (snapshot streams).
+import { installedApp, remoteReady, subscribeAdmission, observeRemoteFailure } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   ApiError,
@@ -30,6 +31,8 @@ export interface StreamOptions<E, P = unknown> {
    * spent. A 401 sends the tab to login instead.
    */
   readonly onError: (error: Error) => void;
+  /** Installed owners may show the real failure while the same cursor waits for admission. */
+  readonly onSuspended?: (error: ApiError) => void;
   /** Once, final: the terminal event arrived. */
   readonly onComplete?: () => void;
   /** Before each wait after a failed connection (not after a planned cut). */
@@ -77,6 +80,15 @@ export function openStream<E, P = unknown>(
   let terminal = false;
   let failures = 0;
 
+  // Admission waits retain this stream's cursor and owner. They spend no
+  // reconnect budget and submit no application command.
+  const admitted = () => new Promise<void>(resolve => {
+    if (remoteReady() || signal.aborted) return resolve();
+    const done = () => { unsubscribe(); signal.removeEventListener("abort", done); resolve(); };
+    const unsubscribe = subscribeAdmission(() => { if (remoteReady()) done(); });
+    signal.addEventListener("abort", done, { once: true });
+  });
+
   // One connection; true when it delivered an event.
   const connect = async (): Promise<boolean> => {
     const query = cursor ? `?after=${encodeURIComponent(cursor)}` : "";
@@ -119,6 +131,8 @@ export function openStream<E, P = unknown>(
   const run = async (): Promise<void> => {
     while (!signal.aborted) {
       try {
+        await admitted();
+        if (signal.aborted) return;
         const delivered = await connect();
         if (terminal) return options.onComplete?.();
         if (delivered) {
@@ -128,8 +142,22 @@ export function openStream<E, P = unknown>(
       } catch (error) {
         if (signal.aborted) return;
         if (error instanceof Fatal) {
-          if (handleUnauthenticatedApiError(error.reason)) return;
-          return options.onError(error.reason);
+          const reason = error.reason;
+          if (installedApp && isApiError(reason) && (reason.status === 401 || reason.status === 426)) {
+            handleUnauthenticatedApiError(reason);
+            options.onSuspended?.(reason);
+            options.onReconnect?.(failures + 1);
+            continue;
+          }
+          handleUnauthenticatedApiError(reason);
+          return options.onError(reason);
+        }
+        if (installedApp && (error instanceof TypeError || (isApiError(error) && error.status === 0))) {
+          const failure = isApiError(error) ? error : new ApiError(0, "E_NETWORK", "Stream lost");
+          observeRemoteFailure(0);
+          options.onSuspended?.(failure);
+          options.onReconnect?.(failures + 1);
+          continue;
         }
         if (!isApiError(error) && !(error instanceof TypeError)) {
           return options.onError(asError(error));

@@ -12,6 +12,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { installedApp } from "@/lib/native/admission";
+import { useHostPolicy } from "@/lib/host/policy";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
@@ -163,6 +165,7 @@ function createWorkspaceStore(
   memento: PaneReturnMemento,
   guard: WorkGuard,
   timeZone: () => string,
+  projectHref: (href: string, replace?: boolean) => void,
 ) {
   const listeners = new Set<() => void>();
   let mounted = false;
@@ -189,23 +192,9 @@ function createWorkspaceStore(
     for (const listener of listeners) listener();
   }
 
-  // The address bar names the active pane, through Next's patched replaceState
-  // (it keeps Next's router url in step). Next patches it in a passive effect
-  // that can follow the first commit; then write the bare entry, re-project later.
-  function project(force = false): void {
-    const active = find(data.state.active_primary_pane_id);
-    const href = active?.current_visit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
-    const { pathname, search, hash } = window.location;
-    if (!force && href === `${pathname}${search}${hash}`) return;
-    if (Object.hasOwn(window.history, "replaceState")) {
-      window.history.replaceState(null, "", href);
-      return;
-    }
-    const { state } = window.history;
-    History.prototype.replaceState.call(window.history, state, "", href);
-    requestAnimationFrame(() => {
-      if (Object.hasOwn(window.history, "replaceState")) project(true);
-    });
+  function project(replace = false): void {
+    const href = find(data.state.active_primary_pane_id)?.current_visit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
+    if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) projectHref(href, replace);
   }
 
   function admit(next: WorkspaceState, ownerIds: readonly string[] = []): boolean {
@@ -688,6 +677,11 @@ function createWorkspaceStore(
       const foldHash = () => {
         const pane = find(data.state.active_primary_pane_id);
         const { pathname, search, hash } = window.location;
+        if (installedApp && pane && mounted) {
+          const result = commands.navigatePane(pane.id, `${pathname}${search}${hash}`, { replace: true });
+          if (result === "cancelled") project(true);
+          return;
+        }
         const [path] = pane?.current_visit.href.split("#") ?? [];
         if (path !== `${pathname}${search}`) {
           if (mounted) project();
@@ -695,13 +689,22 @@ function createWorkspaceStore(
           commands.navigatePane(pane.id, `${path}${hash}`, { replace: true });
         }
       };
-      foldHash();
+      if (installedApp) {
+        const href = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (href !== "/") commands.navigatePane(data.state.active_primary_pane_id, href);
+      } else foldHash();
       mounted = true;
-      project();
+      project(true);
+      const navigate = (event: Event) => {
+        const href = normalizeWorkspaceHref((event as CustomEvent<{ href: string }>).detail.href);
+        if (href) commands.navigatePane(data.state.active_primary_pane_id, href);
+      };
+      window.addEventListener("nexus:navigate", navigate);
       window.addEventListener("hashchange", foldHash);
       window.addEventListener("popstate", foldHash);
       return () => {
         mounted = false;
+        window.removeEventListener("nexus:navigate", navigate);
         window.removeEventListener("hashchange", foldHash);
         window.removeEventListener("popstate", foldHash);
       };
@@ -717,11 +720,12 @@ export function WorkspaceStoreProvider(props: {
   children: ReactNode;
 }) {
   const guard = useWorkGuard();
+  const host = useHostPolicy();
   const { calendarTimeZone } = useAuthenticatedAccount();
   const zone = useRef(calendarTimeZone);
   const [memento] = useState(() => createPaneReturnMemento(guard));
   const [store] = useState(() =>
-    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, guard, () => zone.current),
+    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, guard, () => zone.current, host.project),
   );
   useLayoutEffect(() => { zone.current = calendarTimeZone; }, [calendarTimeZone]);
   useLayoutEffect(

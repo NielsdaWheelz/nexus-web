@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { NavigationIdentity, useHostPolicy } from "@/lib/host/policy";
 import {
   useCallback,
   useEffect,
@@ -11,9 +11,12 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import { installedApp } from "@/lib/native/admission";
+import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
+import { DeviceSessionNotice } from "@/lib/native/DeviceSessionNotice";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
-import { FeedbackProvider, FeedbackState, useFeedback, useWorkspaceCondition, type FeedbackAction } from "@/components/feedback/Feedback";
+import { FeedbackProvider, useFeedback, useWorkspaceCondition, type FeedbackAction } from "@/components/feedback/Feedback";
 import Nexus from "@/components/nexus/Nexus";
 import { downloadWriting } from "@/components/notes/NoteNotices";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
@@ -44,6 +47,7 @@ import {
   subscribeWriting,
   writingHasMemoryOnlyChanges,
 } from "@/lib/notes/journal";
+import { WritingReadyContext, useWritingReady } from "@/lib/notes/readiness";
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
 import { connectOffline } from "@/lib/offline/bridge";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
@@ -86,7 +90,8 @@ export default function AuthenticatedShell(props: {
         <UnauthenticatedApiBoundary>
           <MobileViewportProvider>
             <FeedbackProvider returnFocus={returnWorkspaceFocus}>
-              <WorkProvider>
+              <DeviceSettingsProvider><WorkProvider>
+                {installedApp ? <DeviceSessionNotice /> : null}
                 <MediaAdmissionsProvider accountId={props.account.accountId}>
                   <ActivityCapture />
                   <ServerSeedsProvider seeds={props.seeds}>
@@ -99,7 +104,7 @@ export default function AuthenticatedShell(props: {
                     </ReaderProvider>
                   </ServerSeedsProvider>
                 </MediaAdmissionsProvider>
-              </WorkProvider>
+              </WorkProvider></DeviceSettingsProvider>
             </FeedbackProvider>
           </MobileViewportProvider>
         </UnauthenticatedApiBoundary>
@@ -132,8 +137,8 @@ function Workspace(props: {
     observer.observe(node);
     return () => observer.disconnect();
   }, [profile]);
-  // Binds Android's offline store to this account.
-  useEffect(() => connectOffline(accountId), [accountId]);
+  // Native owns account binding; this hello only subscribes.
+  useEffect(() => connectOffline(), []);
   return (
     <>
       <div
@@ -167,8 +172,10 @@ function Workspace(props: {
                               <ImportsProvider>
                                 <MediaContinuationHost />
                                 <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
-                                  <Nexus />
-                                  <WorkspaceCanvas />
+                                  <WorkspaceNavigation>
+                                    <WorkspaceNexus />
+                                    <WorkspaceCanvas />
+                                  </WorkspaceNavigation>
                                 </WorkspacePresentationsProvider>
                               </ImportsProvider>
                             </AuthenticatedWorkspaceErrorBoundary>
@@ -185,6 +192,13 @@ function Workspace(props: {
       </WorkspaceStoreProvider>
     </>
   );
+}
+
+function WorkspaceNexus() { return useWritingReady() ? <Nexus /> : null; }
+
+function WorkspaceNavigation({ children }: { children: ReactNode }) {
+  const { state } = useWorkspaceStore();
+  return <NavigationIdentity value={state.panes.find(pane => pane.id === state.active_primary_pane_id)!.current_visit.href}>{children}</NavigationIdentity>;
 }
 
 /** A route selects the shell composition before loading or mounting its reader. */
@@ -268,13 +282,12 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     announcement: "Polite",
     actions: [{ label: "reconnect", onClick: receive.retry }],
   });
-  if (runtime.state === "ready") return children;
-  if (runtime.state === "starting") return null;
-  return <FeedbackState
-    content={{ tone: "Danger", title: "writing couldn’t start.", message: "nothing can be edited until it does. check your connection, then try again." }}
-    announcement="Assertive"
-    actions={[{ label: "try again", onClick: runtime.retry, busy: runtime.state === "retrying" }]}
-  />;
+  useWorkspaceCondition("writing-startup", runtime.state === "failed" || runtime.state === "retrying" ? {
+    priority: "Write", announcement: "Polite",
+    content: { tone: "Danger", title: "writing couldn’t start.", message: "your workspace is open. retry to open its writing." },
+    actions: [{ label: "try again", onClick: runtime.retry, busy: runtime.state === "retrying" }],
+  } : null);
+  return <WritingReadyContext value={runtime.state === "ready"}>{children}</WritingReadyContext>;
 }
 
 function ChatWorkOwners() {
@@ -285,7 +298,7 @@ function ChatWorkOwners() {
 const ENTRY_NOTICE = "workspace-entry-read";
 
 function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | null }) {
-  const router = useRouter();
+  const host = useHostPolicy();
   const { state } = useWorkspaceStore();
   const [pending, startTransition] = useTransition();
   const inFlight = useRef(false);
@@ -293,8 +306,8 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
   const retry = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
-    startTransition(() => router.refresh());
-  }, [router]);
+    startTransition(() => host.recover());
+  }, [host]);
 
   useEffect(() => {
     if (!pending) inFlight.current = false;

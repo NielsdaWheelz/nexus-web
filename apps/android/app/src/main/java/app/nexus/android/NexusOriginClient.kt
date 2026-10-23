@@ -5,6 +5,8 @@ import android.os.Looper
 import android.webkit.CookieManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -31,14 +33,14 @@ private const val READING_COPY_DEADLINE_MINUTES = 5L
 // a lectern answer carries at most 2,000 rows
 private const val MAX_ORIGIN_RESPONSE_BYTES = 4 * 1024 * 1024L
 
-private class NexusOriginResponse(
+internal class NexusOriginResponse(
     val status: Int,
     val body: String,
 )
 
 internal interface NexusCookieStore {
     fun cookiesFor(url: String): String?
-    suspend fun install(url: String, setCookie: String)
+    suspend fun install(url: String, setCookie: String, current: () -> Boolean)
     fun flush()
 }
 
@@ -52,14 +54,18 @@ private class WebViewCookieStore : NexusCookieStore {
 
     override fun cookiesFor(url: String): String? = manager.getCookie(url)
 
-    override suspend fun install(url: String, setCookie: String) =
+    override suspend fun install(url: String, setCookie: String, current: () -> Boolean) = withContext(NonCancellable) {
         suspendCancellableCoroutine { continuation ->
             val posted = mainHandler.post {
+                if (!current()) {
+                    if (continuation.isActive) continuation.resumeWithException(IOException("retired credential operation"))
+                    return@post
+                }
                 manager.setCookie(url, setCookie) { accepted ->
                     if (!continuation.isActive) {
                         return@setCookie
                     }
-                    if (accepted) {
+                    if (accepted && current()) {
                         continuation.resume(Unit)
                     } else {
                         continuation.resumeWithException(
@@ -74,6 +80,8 @@ private class WebViewCookieStore : NexusCookieStore {
                 )
             }
         }
+
+    }
 
     override fun flush() {
         manager.flush()
@@ -120,6 +128,56 @@ internal class NexusOriginClient(
         require(base.username.isEmpty() && base.password.isEmpty())
         require(base.encodedPath == "/" && base.query == null && base.fragment == null)
         require(base.scheme == "http" || base.scheme == "https")
+    }
+
+    /** Credential effects are used only by DeviceSession's serialized lane. Ordinary calls never install cookies. */
+    suspend fun bootstrap(current: () -> Boolean): JSONObject =
+        credential(Request.Builder().url(api("native", "bootstrap")).get(), current).getJSONObject("data")
+
+    suspend fun handoff(code: String, verifier: String, expectedAccount: String?, current: () -> Boolean) {
+        credential(Request.Builder().url(api("native", "session", "handoff"))
+            .post(JSONObject().put("code", code).put("verifier", verifier)
+                .put("expected_account_id", expectedAccount ?: JSONObject.NULL).toString().toRequestBody(JSON)), current)
+    }
+
+    suspend fun emailChange(email: String, current: () -> Boolean): JSONObject =
+        credential(Request.Builder().url(api("me", "email-change"))
+            .post(JSONObject().put("email", email).toString().toRequestBody(JSON)), current)
+
+    suspend fun identities(current: () -> Boolean): JSONObject =
+        credential(Request.Builder().url(api("me", "identities")).get(), current)
+
+    suspend fun deleteIdentity(id: String, current: () -> Boolean): JSONObject =
+        credential(Request.Builder().url(api("me", "identities", id)).delete(), current)
+
+    /** Token minting never sends or installs app cookies. The current attempt owns redemption. */
+    suspend fun google(idToken: String, nonce: String, challenge: String): String {
+        val response = execute(Request.Builder().url(base.resolve("/auth/native/google")!!)
+            .post(JSONObject().put("id_token", idToken).put("nonce", nonce).put("hc", challenge)
+                .toString().toRequestBody(JSON)), client, sendCookies = false)
+        checkStatus(response)
+        return JSONObject(response.body).getJSONObject("data").getString("code")
+    }
+
+    /** One bounded best effort with captured credentials; sign-out never installs a response cookie. */
+    suspend fun signOut(cookie: String?) {
+        val response = execute(Request.Builder().url(base.resolve("/auth/signout")!!)
+            .post(ByteArray(0).toRequestBody(null)), client, sendCookies = false, capturedCookie = cookie)
+        checkStatus(response)
+    }
+
+    fun capturedCookies(): String? = cookies.cookiesFor(origin)
+
+    private suspend fun credential(request: Request.Builder, current: () -> Boolean): JSONObject {
+        val response = execute(request, client, current = current, unlimited = true)
+        checkStatus(response)
+        return if (response.body.isEmpty()) JSONObject() else JSONObject(response.body)
+    }
+
+    private fun checkStatus(response: NexusOriginResponse) {
+        if (response.status in 200..299) return
+        val error = try { JSONObject(response.body).optJSONObject("error") } catch (_: JSONException) { null }
+        throw NexusOriginError(response.status, error?.optString("code"), error?.optJSONObject("details"))
     }
 
     /** The account the WebView session cookie belongs to. */
@@ -194,10 +252,19 @@ internal class NexusOriginClient(
     private suspend fun execute(
         requestBuilder: Request.Builder,
         http: OkHttpClient,
+        current: (() -> Boolean)? = null,
+        unlimited: Boolean = false,
+        sendCookies: Boolean = true,
+        capturedCookie: String? = null,
     ): NexusOriginResponse = suspendCancellableCoroutine { continuation ->
-        val cookie = cookies.cookiesFor(origin)
+        if (current == null && sendCookies && DeviceSession.current()?.remotelyAdmitted() != true) {
+            continuation.resumeWithException(NexusOriginError(503, "E_REMOTE_UNAVAILABLE"))
+            return@suspendCancellableCoroutine
+        }
+        val cookie = capturedCookie ?: if (sendCookies) cookies.cookiesFor(origin) else null
         val request = requestBuilder
             .header("Origin", origin)
+            .header("User-Agent", NexusWebView.USER_AGENT_TOKEN)
             .header("Accept", "application/json")
             .header("X-Nexus-Wire", BuildConfig.NEXUS_WIRE.toString())
             .header("Cache-Control", "no-store")
@@ -218,9 +285,9 @@ internal class NexusOriginClient(
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    CoroutineScope(continuation.context + Dispatchers.IO).launch {
+                    CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            val result = response.use { decodeResponse(it) }
+                            val result = response.use { decodeResponse(it, current, unlimited) }
                             if (continuation.isActive) {
                                 continuation.resume(result)
                             }
@@ -235,19 +302,21 @@ internal class NexusOriginClient(
         )
     }
 
-    private suspend fun decodeResponse(response: Response): NexusOriginResponse {
-        val setCookies = response.headers("Set-Cookie")
+    private suspend fun decodeResponse(response: Response, current: (() -> Boolean)?, unlimited: Boolean): NexusOriginResponse {
+        val setCookies = if (current != null) response.headers("Set-Cookie") else emptyList()
         for (setCookie in setCookies) {
-            cookies.install(origin, setCookie)
+            if (current?.invoke() != true) throw IOException("retired credential operation")
+            cookies.install(origin, setCookie, current)
         }
         if (setCookies.isNotEmpty()) {
             cookies.flush()
         }
         val body = response.body?.let {
             val declared = it.contentLength()
-            if (declared > MAX_ORIGIN_RESPONSE_BYTES) {
+            if (!unlimited && declared > MAX_ORIGIN_RESPONSE_BYTES) {
                 throw IOException("owned-origin response exceeds size limit")
             }
+            if (unlimited) return@let it.string()
             val source = it.source()
             val buffer = Buffer()
             while (true) {
@@ -264,6 +333,7 @@ internal class NexusOriginClient(
             }
             buffer.readUtf8()
         }.orEmpty()
+        if (current == null && response.code == 401) DeviceSession.current()?.requestCheck()
         return NexusOriginResponse(response.code, body)
     }
 

@@ -50,13 +50,13 @@ active), `sub` a uuid.
 
 `resolveEntry(cookies)` (middleware, the resolve route, extension connect)
 verifies an active bearer and renews once when it is rejected or expiring;
-`liveSession()` (the bff, actions) takes an active bearer on the 120 s margin
+`liveSession()` (hosted bff and fixed account operations) takes an active bearer on the 120 s margin
 alone and renews only a refreshable one. Both answer `Live` (with the rotation's
 writes to publish first), `Ended` (names to clear) or `Anonymous`, and throw
 `AuthUnavailable`. `verifySession()` (server components) verifies only: a
 rejected GET waits on the unavailable page, a POST goes to login.
-`withActionSession` publishes a rotation before an operation's writes; `finish`
-applies one `Effect` (Preserve, Write, Clear with the one-minute ended feedback)
+`presentedSession()` verifies an installed client's bearer without renewing or
+clearing its cookies. `finish` applies one `Effect` (Preserve, Write, Clear with the one-minute ended feedback)
 with `private, no-store` and `Vary: Cookie`.
 
 Network-free, restated (#607 verifies at entry): classifying the cookie never
@@ -65,6 +65,41 @@ session within 120 s of expiry or one `verify` rejected, to verify a symmetric
 or kid-less token (the provider answers for those), or to fetch the key set when
 the process's copy (auth-js, process-wide, 10 min) is cold, stale or lacks the
 token's kid. With asymmetric keys and a warm key set, entry is local.
+
+## installed credential ownership
+
+`GET /api/native/bootstrap` verifies one session and resolves one `nx_device`
+before reading account, reader profile and workspace. all reads use that same
+bearer/device context; renewal and device cookie effects survive later failures.
+only a complete aggregate is published. `refresh_after_ms` is an ephemeral
+nonnegative duration derived from the existing renewal margin.
+
+ordinary `NexusAndroidShell` bff calls verify the presented bearer but never
+renew or clear cookies. the marker grants no authority. native serializes the
+fixed bootstrap, handoff and account operations that may publish credentials.
+`lib/native/contracts.ts` and `lib/account/settingsWire.ts` own their wire shapes.
+
+`POST /api/native/session/handoff` consumes once, verifies the consumed and
+installed successor accounts, and compares the native expected account before
+publishing any cookie. a mismatch is 409 with no cookie effects; a spent code
+is 401; a dependency outage is 503. a lost redemption response requires a new
+sign-in. no document navigation installs app credentials.
+
+password and oauth carry `flow=handoff&hc` through the browser form and provider
+context. all return deep links echo `hc` to correlate the current native attempt.
+password returns `{kind:"Handoff",handoff_url}`; google credential-manager mint
+uses `{id_token,nonce,hc}` and neither reads nor publishes app cookies.
+
+email change and unlink use fixed json bff operations. email sends are never
+automatically retried; unlink derives its provider from the authenticated lookup
+and an absent identity is already unlinked. provider session and pkce writes
+remain on their owning response. hosted `/account/password` and
+`/account/identities` retain `expected_account_id` through forms and provider
+callbacks and refuse another browser account before exposing controls or
+performing operations. browser credentials remain separate from app credentials.
+
+native sign-out revokes the presented bearer best effort and answers 204 without
+cookie effects; durable local cleanup and credential clearing belong to native.
 
 ## api identity (`python/nexus/auth/middleware.py`)
 
@@ -118,10 +153,11 @@ random bytes, stored as minted.
 - a dependency failure keeps credentials and answers 503 (or the unavailable
   page); only terminal outcomes clear them.
 - the web and the api accept the same bearers, but for two differences no
-  bearer in use reaches: python's `UUID()` also takes a `sub` without hyphens,
+  bearer minted by our provider reaches: python's `UUID()` also takes a `sub` without hyphens,
   braced or as `urn:uuid:` (the provider mints the canonical form, the only one
   the web takes), and the api's 60 s `exp` leeway lies past anything the web
-  forwards (it renews 120 s before expiry).
+  forwards through hosted renewal. installed passive requests instead verify
+  their presented bearer and leave renewal to native bootstrap.
 - a key fetch never runs on the api's event loop; a request whose key is cached
   never waits on one.
 - `users.email` is held by at most the one account whose latest seen token

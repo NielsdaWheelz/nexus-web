@@ -6,6 +6,10 @@
 // a success acknowledges exactly the state sent. Transport failures keep a
 // Retry notice up; a stale build (426) keeps the update notice up and the
 // workspace with it; anything else is a defect for the workspace boundary.
+import { installedApp, remoteReady } from "@/lib/native/admission";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
+import { useDeviceWorkspace } from "@/lib/native/workspaceContext";
+import { useDeviceWorkspaceSave } from "@/lib/native/workspaceSave";
 import { useEffect, useState } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import {
@@ -29,6 +33,9 @@ const TRANSPORT = [
 ];
 
 export function useWorkspaceSession(store: WorkspaceStore): void {
+  const local = useDeviceWorkspace();
+  useDeviceWorkspaceSave(store, local);
+  const generation = useRemoteGeneration();
   const [notice, setNotice] = useState<{
     content: FeedbackContent;
     stale: boolean;
@@ -39,7 +46,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     priority: "Write",
     content: notice.content,
     announcement: "Polite",
-    actions: [{
+    actions: notice.stale && installedApp ? [] : [{
       label: notice.stale ? "reload app" : "retry save",
       busy: notice.busy,
       onClick: notice.stale ? () => window.location.reload() : notice.retry,
@@ -59,7 +66,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     let live = true;
     const save = (keepalive = false): void => {
       clearTimeout(timer);
-      if (!live) return;
+      if (!live || !remoteReady()) return;
       const { state } = store.value();
       if (sending) {
         if (state !== sending) again = keepalive || again === true;
@@ -134,6 +141,6 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [store]);
+  }, [store, generation]);
   if (defect) throw defect.error;
 }

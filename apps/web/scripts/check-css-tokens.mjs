@@ -43,6 +43,11 @@ const PDFJS = new Set([
 ]);
 const BUNDLES = [
   [
+    "the installed android application",
+    "../android/app/src/main/assets/app/assets",
+    "bun run build:android",
+  ],
+  [
     "the android shelf",
     "../android/app/src/main/assets/shelf/assets",
     "bun run build:shelf",
