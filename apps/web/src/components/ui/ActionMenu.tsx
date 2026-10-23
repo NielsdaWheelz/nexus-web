@@ -136,8 +136,17 @@ function viewportGeometry(): string {
 function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
-  const transform = getComputedStyle(panel).transform;
-  const movement = transform === "none" ? null : new DOMMatrixReadOnly(transform);
+  let panelX = box.x;
+  let panelY = box.y;
+  if (mobile) {
+    // MobileSheet's fixed, untransformed backdrop is its offset parent. Layout
+    // offsets ignore the sheet's translation without mixing compositor samples.
+    const parent = panel.offsetParent;
+    if (!parent) throw new Error("mobile action sheet requires its layout containing block");
+    const origin = parent.getBoundingClientRect();
+    panelX = origin.left + parent.clientLeft + panel.offsetLeft - parent.scrollLeft;
+    panelY = origin.top + parent.clientTop + panel.offsetTop - parent.scrollTop;
+  }
   const position = anchor.getBoundingClientRect();
   const rows = [...body.querySelectorAll<HTMLElement>("[data-menu-row]")].map((row) => {
     const rect = row.getBoundingClientRect();
@@ -152,7 +161,7 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): read
   });
   return [
     position.x, position.y, position.width, position.height,
-    box.x - (movement?.m41 ?? 0), box.y - (movement?.m42 ?? 0), box.width, box.height,
+    panelX, panelY, box.width, box.height,
     ...rows.flat(),
   ];
 }
