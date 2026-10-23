@@ -15,6 +15,7 @@ import {
 import { hello } from "@/lib/native/client";
 import { installedApp } from "@/lib/native/admission";
 import { useHostPolicy } from "@/lib/host/policy";
+import { overlayOwnsHistoryTraversal } from "@/lib/ui/overlay";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
@@ -675,7 +676,8 @@ function createWorkspaceStore(
     mount(): () => void {
       // Another path's entry never moves the active pane; the address goes
       // back to naming it. The same path folds its hash, even an empty one.
-      const foldHash = () => {
+      const foldHash = (event?: Event) => {
+        if (event && overlayOwnsHistoryTraversal()) return;
         const pane = find(data.state.active_primary_pane_id);
         const { pathname, search, hash } = window.location;
         if (installedApp && pane && mounted) {
@@ -703,7 +705,8 @@ function createWorkspaceStore(
       };
       window.addEventListener("nexus:navigate", navigate);
       window.addEventListener("hashchange", foldHash);
-      window.addEventListener("popstate", foldHash);
+      // Observe ownership before the overlay's bubble listener settles it.
+      window.addEventListener("popstate", foldHash, true);
       // Entry hello subscribes before binding; this hello accepts retained native
       // navigation only after the workspace command owner is mounted.
       if (installedApp) void hello().catch(error => reportError(error));
@@ -711,7 +714,7 @@ function createWorkspaceStore(
         mounted = false;
         window.removeEventListener("nexus:navigate", navigate);
         window.removeEventListener("hashchange", foldHash);
-        window.removeEventListener("popstate", foldHash);
+        window.removeEventListener("popstate", foldHash, true);
       };
     },
   };
