@@ -84,6 +84,27 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   revision cannot authorize a new write.
   libraries receives the actual trigger and owning-pane focus fallback. relationship
   menus retain their occurrence principal; media quick actions retain the media id.
+- `resourceActions` is the finite media/podcast subject contract shared by pane
+  chrome and collection rows. domain hooks own command projection; `ActionButtons`
+  owns only button anatomy, disabled explanations, event isolation and focus
+  recovery. podcast subscription keeps one control key while its verb changes.
+  show indexes, discovery rows and headers expose subscription, libraries and
+  one complete more menu; compact hosts demote both shortcuts at 479px. library
+  cards retain their scoped single-shortcut policy. shows receive no playback controls.
+  live search/chat rows receive explicit subjects matching their own podcast ref;
+  captured evidence and editable references receive none.
+- podcast shortcut and menu commands share projectors. `PodcastLibraries` is
+  distinct from media-only `LibraryPlacement`. invocation passes explicit original
+  focus and captured surviving-row fallback through the prepared menu and overlay;
+  chooser-to-review handoff suppresses intermediate restoration. current facts
+  admit new intent; existing account commands alone own writes and uncertainty.
+  manager-scoped removal first restores the original control; the collection's
+  focus owner handles a later disappearance. card-local removal captures displayed
+  successors at selection and uses that target on acknowledgement, even before
+  refresh removes the row. aggregate unsubscribe uses the host's removal target;
+  discovery rows keep their original control and headers use their pane landmark.
+  disabled unresolved controls say checking/failure, never guess subscribe from
+  unknown membership.
 - prepared nonmissing media facts may omit playback while the player still owns
   that exact loaded or pending episode. the projector supplements only that
   current-session transport command with no retained descriptor. a server-offered

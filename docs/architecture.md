@@ -1828,6 +1828,8 @@ surface is active and the document visible. embedded disclosures additionally
 require their open lifetime. an admitted logical read may finish inactive;
 query change or unmount aborts. scrolling admits no work. rows deduplicate by
 stable id, first occurrence wins; metadata follows the latest committed page.
+`fresh` means the committed snapshot matches the requested key and `stale` token.
+actions using that snapshot also require no running read or settled failure.
 
 `refetch()` and `stale` changes supersede older work and atomically replace the
 loaded page prefix; a complete list rereads to its end. requests preserve each

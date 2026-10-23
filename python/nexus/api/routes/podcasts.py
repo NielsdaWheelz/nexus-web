@@ -68,6 +68,13 @@ def list_podcasts(
     )
 
 
+@router.post("/podcasts/action-facts/resolve")
+def resolve_podcast_action_facts(
+    body: wire.PodcastActionFactsResolveRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[wire.PodcastActionFactsOut]:
+    return Data(data=queries.action_facts(db, viewer_id=viewer.user_id, targets=body.targets))
+
+
 @router.get("/podcasts/{podcast_id}/removal-preview")
 def podcast_removal_preview(
     podcast_id: UUID,

@@ -3,11 +3,11 @@
 import { useEffect, useState, type ComponentProps } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import ActionMenu from "@/components/ui/ActionMenu";
+import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
-import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
@@ -23,16 +23,16 @@ export interface ContextActionSection {
  * reason blocks commands.
  */
 export default function ContextualActionMenu({
-  sections, resourceRef, title, subjectKey, onDefect, capturePodcastRemovalFocus,
+  sections, resourceRef, title, subjectKey, onDefect, actionFocus,
   omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, ...props
 }: Pick<ActionMenuProps,
   "label" | "placement" | "align" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
 > & {
+  readonly actionFocus?: PodcastActionFocus;
   readonly title: string;
   readonly subjectKey: string;
   readonly sections: readonly ContextActionSection[];
   readonly resourceRef?: CanonicalResourceRef;
-  readonly capturePodcastRemovalFocus?: () => ReturnFocusTarget;
   readonly omitResourceActions?: readonly string[];
   readonly showSourceSubject?: boolean;
   readonly displayedActivation?: ResourceActivation;
@@ -48,7 +48,7 @@ export default function ContextualActionMenu({
     update(); query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const resource = useResourceActions(resourceRef ?? null, { onDefect, capturePodcastRemovalFocus });
+  const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
   const groups: MenuContent["sections"][number][] = sections
     .filter((section) => section.actions.length > 0)

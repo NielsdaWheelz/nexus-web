@@ -1,6 +1,9 @@
 "use client";
 
 /** Shared media commands read the account runtime, never the lazy resource menu. */
+import { createElement } from "react";
+import { Library, ListMinus, ListPlus, Pause, Play } from "lucide-react";
+import type { ActionButtonSpec } from "@/lib/actions/inlineActions";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import { usePlaybackSource } from "./playbackSource";
 import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
@@ -12,17 +15,7 @@ import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import type { MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 
-export interface MediaAction {
-  readonly id: "Playback" | "LecternMembership" | "LibraryPlacement";
-  readonly label: string;
-  readonly glyph: "Play" | "Pause" | "ListPlus" | "ListMinus" | "Library";
-  readonly disabled: boolean;
-  readonly disabledReason: string | null;
-  readonly busy: boolean;
-  readonly invoke: (trigger: HTMLElement | null, returnFocus: () => HTMLElement | null) => void;
-}
-
-export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDescriptor | null): readonly MediaAction[] {
+export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDescriptor | null): readonly ActionButtonSpec[] {
   const { ctx, run } = useActionRuntime();
   const source = usePlaybackSource();
   const placement = useLibraryPlacementController();
@@ -50,7 +43,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const creatingLibrary = subject.kind === "External" && placement.hasPendingExternalCreation(subject.target);
   const holding = creatingLibrary || operation !== null && operation.phase !== "complete";
   const heldReason = creatingLibrary ? "finish creating this item's library first" : "finish this item's import first";
-  const actions: MediaAction[] = [];
+  const actions: ActionButtonSpec[] = [];
   if (kind === "podcast_episode") {
     const state = ctx.player.state;
     const loadedPreview = state.kind === "Loaded" && subject.kind === "External" &&
@@ -68,12 +61,12 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const label = verb;
     if (mediaId !== null && !loadedPreview) {
       const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, playbackSource: source, ctx, run });
-      actions.push({ id: "Playback", label: projected.label, glyph: projected.glyph, busy: false,
+      actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", label: projected.label, icon: projected.icon, busy: false,
         disabled: projected.disabled === true || !available,
         disabledReason: projected.disabledReason ?? (available ? null : "audio unavailable"),
-        invoke: trigger => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
+        invoke: ({ trigger }) => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
       });
-    } else actions.push({ id: "Playback", label, glyph: playing ? "Pause" : "Play", busy: false,
+    } else actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", label, icon: createElement(playing ? Pause : Play), busy: false,
       disabled: updateRequired || !available,
       disabledReason: updateRequired ? "update nexus for android to play audio" : available ? null : "audio unavailable",
       invoke: () => {
@@ -106,28 +99,28 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const projected = projectLecternAction({ mediaId, title, intent, blocked: null, ctx, busy, run });
     const label = request === undefined && present !== null && ctx.lectern.revision !== null
       ? present ? "remove from lectern" : "add to lectern" : projected.label;
-    actions.push({ id: "LecternMembership", label,
-      glyph: (request?.intent.kind ?? intent) === "Remove" ? "ListMinus" : "ListPlus",
+    actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", label,
+      icon: createElement((request?.intent.kind ?? intent) === "Remove" ? ListMinus : ListPlus),
       disabled: projected.disabled === true,
       disabledReason: projected.disabledReason ?? null,
       busy: busy.has("LecternMembership") || (request !== undefined && request.phase !== "Unconfirmed"),
-      invoke: trigger => {
+      invoke: ({ trigger }) => {
         if (projected.disabled) return;
         projected.onSelect({ triggerEl: trigger, openIntent: "default" });
       },
     });
   } else {
     const label = "add to lectern";
-    actions.push({ id: "LecternMembership", label, glyph: "ListPlus",
+    actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", label, icon: createElement(ListPlus),
       disabled: holding, disabledReason: holding ? heldReason : null, busy: holding,
       invoke: () => { if (subject.kind === "External" && !holding) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
     });
   }
-  actions.push({ id: "LibraryPlacement", label: "manage libraries", glyph: "Library", disabled: holding,
+  actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", label: "manage libraries", icon: createElement(Library), disabled: holding,
     disabledReason: holding ? heldReason : null, busy: holding,
-    invoke: (trigger, fallback) => {
+    invoke: ({ trigger, returnFocus }) => {
       if (holding) return;
-      const options = { anchor: () => trigger, returnFocusFallback: fallback };
+      const options = { anchor: () => trigger, returnFocusFallback: returnFocus };
       if (mediaId !== null) placement.openLibraryPlacement([{ kind: "Media", id: mediaId }], options);
       else if (subject.kind === "External") placement.openExternalLibraryPlacement({ target: subject.target, pending: holding,
         choose: (library, sessionKey) => ctx.mediaContinuations.start(subject, { kind: "Library", library }, sessionKey),

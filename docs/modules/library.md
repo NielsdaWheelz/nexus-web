@@ -98,3 +98,10 @@ reasons, progress and recovery remain explicit; highlight never means membership
 all and system libraries are absent from the named organizational projection.
 the revision-fenced placement owner retains accepted work and recovery across
 view closure; collection primitives own neither commands nor settlement.
+
+podcast libraries reuses this search/create presentation and creation transport,
+with an account-owned creation helper scoped by the frozen show target. pending
+names are shared across scopes; status, refusals and uncertainty remain scoped.
+the manager creates an empty library before a separate subscription review.
+creation is never rolled back when that review is cancelled. media placement's
+late-acquisition continuation does not participate.

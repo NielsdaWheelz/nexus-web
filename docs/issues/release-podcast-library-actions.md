@@ -5,6 +5,11 @@ resource actions replace `AddPodcast`/`StopPodcast` with distinct
 `RemovePodcastEpisodes` kinds. mixed api/web contracts are incompatible;
 write endpoints and database schemas do not change.
 
+the action-parity cutover adds `PodcastLibraries` to that closed union and
+`POST /podcasts/action-facts/resolve` for local subscription resolution. it shares
+the pending wire 15 revision. deploy matching api/web/native clients together;
+there is no old action slot, add-only manager or compatibility dispatch.
+
 production source `400e7039e` shipped wire `14`, as recorded by the release
 records on main `aa3dfc086`. these actions share the pending wire `15` bump with
 the [installed workspace cutover](release-offline-startup.md). do not bump again

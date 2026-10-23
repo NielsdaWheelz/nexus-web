@@ -2,6 +2,7 @@
 
 import { lazy, Suspense } from "react";
 import PodcastAcquisitionDialog from "@/components/podcasts/PodcastAcquisitionDialog";
+import PodcastLibrariesOverlay from "@/components/podcasts/PodcastLibrariesOverlay";
 import PodcastStopDialog from "@/components/podcasts/PodcastStopDialog";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
@@ -27,8 +28,8 @@ export function ResourceOverlays({
     | (Overlay & {
         readonly key: number;
         readonly open: boolean;
-        readonly opener: HTMLElement | null;
-        readonly fallback: ReturnFocusTarget;
+        readonly anchor: ReturnFocusTarget;
+        readonly focusFallback: ReturnFocusTarget;
       })
     | null;
   readonly close: () => void;
@@ -43,7 +44,7 @@ export function ResourceOverlays({
           <MediaAuthorsEditor
             key={overlay.key}
             mediaId={overlay.mediaId}
-            returnFocusTo={() => overlay.opener}
+            returnFocusTo={overlay.anchor}
             onClose={close}
           />
         </Suspense>
@@ -76,10 +77,11 @@ export function ResourceOverlays({
           onClose={close}
         />
       ) : null}
-      {overlay?.kind === "SubscribePodcast" ? <PodcastAcquisitionDialog key={overlay.key} mode="follow" target={overlay.target} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={() => overlay.opener} returnFocusFallback={overlay.fallback} onClose={close} /> : null}
-      {overlay?.kind === "ImportPodcastEpisodes" ? <PodcastAcquisitionDialog key={overlay.key} mode="current_episodes" target={overlay.target} title={overlay.title} libraryId={null} returnFocusTo={() => overlay.opener} returnFocusFallback={overlay.fallback} onClose={close} /> : null}
-      {overlay?.kind === "UnsubscribePodcast" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={overlay.libraryId} episodes="keep" successFocus={overlay.successFocus} returnFocusTo={() => overlay.opener} returnFocusFallback={overlay.fallback} onClose={close} /> : null}
-      {overlay?.kind === "RemovePodcastEpisodes" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={null} episodes="remove" returnFocusTo={() => overlay.opener} returnFocusFallback={overlay.fallback} onClose={close} /> : null}
+      {overlay?.kind === "PodcastLibraries" ? <PodcastLibrariesOverlay key={overlay.key} target={overlay.target} title={overlay.title} anchor={overlay.anchor} returnFocusFallback={overlay.focusFallback} successFocus={overlay.successFocus} onClose={close} /> : null}
+      {overlay?.kind === "SubscribePodcast" ? <PodcastAcquisitionDialog key={overlay.key} mode="follow" target={overlay.target} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "ImportPodcastEpisodes" ? <PodcastAcquisitionDialog key={overlay.key} mode="current_episodes" target={overlay.target} title={overlay.title} libraryId={null} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "UnsubscribePodcast" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={overlay.libraryId} episodes="keep" successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "RemovePodcastEpisodes" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={null} episodes="remove" returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
     </PaneReturnVisitScope>
   );
 }

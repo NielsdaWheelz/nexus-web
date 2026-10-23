@@ -2,7 +2,9 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useId, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
-import MediaActions from "@/components/media/MediaActions";
+import { podcastTargetKey } from "@/lib/podcasts/api";
+import ResourceActions from "@/components/resources/ResourceActions";
+import PodcastMenu from "@/components/podcasts/PodcastMenu";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneChrome } from "@/lib/panes/paneChrome";
@@ -42,7 +44,7 @@ const RECOVERY = {
 
 /**
  * A pane's chrome bar: back and forward, the identity (which yields width
- * first), a primary action, passive subscription status, one More menu
+ * first), resource shortcuts, a primary action, one More menu
  * (pane, view, then the resource's own actions) and the
  * icon-only Inspector. Desktop: the pane's top row. Mobile: a stationary frame
  * around the hideable top bar, after its visually hidden recovery toggle.
@@ -52,7 +54,7 @@ export default function SurfaceHeader({
   header,
   identityId,
   primaryAction,
-  mediaActions,
+  resourceActions,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -63,7 +65,7 @@ export default function SurfaceHeader({
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
   identityId: string;
-  mediaActions?: PaneChrome["mediaActions"];
+  resourceActions?: PaneChrome["resourceActions"];
   primaryAction?: {
     readonly action: PanePrimaryAction;
     readonly onActivate: (event:
@@ -83,13 +85,17 @@ export default function SurfaceHeader({
   const mobile = projection === "Mobile";
   const frameRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLElement>(null);
-  const more = useRef<{ readonly element: HTMLButtonElement; readonly resourceRef: CanonicalResourceRef | null } | null>(null);
+  const actionSubjectKey = resourceActions?.kind === "Podcast" ? podcastTargetKey(resourceActions.subject.target)
+    : resourceActions?.kind === "Media" ? resourceActions.subject.kind === "Stored" ? `media:${resourceActions.subject.summary.media_id}` : `external:${resourceActions.subject.target}`
+    : resourceRef ?? identityId;
+  const more = useRef<{ readonly element: HTMLButtonElement; readonly resourceRef: CanonicalResourceRef | null; readonly subjectKey: string } | null>(null);
   const setMore = useCallback((node: HTMLButtonElement | null) => {
-    more.current = node ? { element: node, resourceRef: resourceRef ?? null } : null;
-  }, [resourceRef]);
-  const returnFocus = () => more.current?.resourceRef === (resourceRef ?? null) &&
+    more.current = node ? { element: node, resourceRef: resourceRef ?? null, subjectKey: actionSubjectKey } : null;
+  }, [resourceRef, actionSubjectKey]);
+  const returnFocus = () => more.current?.subjectKey === actionSubjectKey && more.current.resourceRef === (resourceRef ?? null) &&
     more.current.element.isConnected && more.current.element.getClientRects().length
     ? more.current.element : findPaneLandmarkFocusTarget(paneId);
+  const actionFocus = { get trigger() { return more.current?.element ?? null; }, returnFocus, afterRemoval: () => findPaneLandmarkFocusTarget(paneId) };
   const viewport = useMobileViewport();
   const mobileChrome = useMobileChrome();
   const visibility = useMobileChromeState();
@@ -154,14 +160,8 @@ export default function SurfaceHeader({
             />
           </div>
           <div className={styles.trailing}>
-            {mediaActions ? (
-              <MediaActions
-                subject={mediaActions.subject}
-                knownDescriptor={mediaActions.knownDescriptor}
-                density="Header"
-                returnFocus={returnFocus}
-              />
-            ) : null}
+            {resourceActions ? <ResourceActions subject={resourceActions} density="Header"
+              returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
             {primaryAction && primary && primaryState ? (
               <>
                 {primary.kind === "link" ? (
@@ -200,34 +200,22 @@ export default function SurfaceHeader({
                 {primary.disabledReason ? <span id={reasonId} className="sr-only">{primary.disabledReason}</span> : null}
               </>
             ) : null}
-            {actions.length > 0 || resourceRef !== undefined ? (
-              <ContextualActionMenu
-                title={header.title}
-                subjectKey={identityId}
-                label={`more actions for ${header.title}`}
-                placement={mobile ? undefined : "below"}
-                align={mobile ? undefined : "end"}
-                sections={[
-                  { id: "Pane", actions: paneActions },
-                  { id: "View", actions: menuActions },
-                ]}
-                resourceRef={resourceRef}
-                triggerRef={setMore}
-                triggerAttributes={
-                  mobile ? { "data-pane-chrome-focus": "true" } : undefined
-                }
-                renderTrigger={(props) => (
-                  <span className={styles.overflow}>
-                    <OverflowMenuButton
-                      {...props}
-                      className={mobile ? styles.mobileOverflow : undefined}
-                    />
-                    {actions.some(action => action.indicator?.kind === "Status") ? (
-                      <span className={styles.statusMarker} aria-hidden="true" />
-                    ) : null}
-                  </span>
-                )}
-              />
+            {resourceActions?.kind === "Podcast" && resourceRef === undefined ? (
+              <PodcastMenu subject={resourceActions.subject} actionFocus={actionFocus}
+                subjectKey={identityId} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
+                sections={[{ id: "Pane", actions: paneActions }, { id: "View", actions: menuActions }]}
+                triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
+                renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} /></span>} />
+            ) : actions.length > 0 || resourceRef !== undefined ? (
+              <ContextualActionMenu title={header.title} subjectKey={identityId}
+                label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
+                sections={[{ id: "Pane", actions: paneActions }, { id: "View", actions: menuActions }]}
+                resourceRef={resourceRef} actionFocus={actionFocus} triggerRef={setMore}
+                triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
+                renderTrigger={props => <span className={styles.overflow}>
+                  <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />
+                  {actions.some(action => action.indicator?.kind === "Status") ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
+                </span>} />
             ) : null}
             {companion && companionState ? (
               <Button

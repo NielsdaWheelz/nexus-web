@@ -1,5 +1,6 @@
 /** Browse result rows: candidates and podcast-preview episodes. */
 
+import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import {
   browsePreviewHref,
   type BrowseCandidate,
@@ -14,6 +15,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 /** An InNexusMedia candidate carries its resolved media summary. */
 export function presentBrowseCandidate(
   candidate: BrowseCandidate,
+  podcast?: PodcastActionSubject,
 ): CollectionRowView {
   const { resolution } = candidate;
   const id = candidate.kind === "OwnedMedia"
@@ -35,12 +37,16 @@ export function presentBrowseCandidate(
     throw new Error("Owned browse candidate without a media resolution");
   }
   const source = BROWSE_SOURCE_LABELS[candidate.source];
-  const preview = resolution.kind === "Preview";
+  const local = podcast?.facts.kind === "Ready" && podcast.facts.resolution.kind === "Canonical" ? podcast.facts.resolution : null;
+  if (candidate.kind === "Podcast" && podcast === undefined) throw new Error("podcast browse row requires current action facts");
+  const preview = candidate.kind === "Podcast" ? local === null : resolution.kind === "Preview";
   return {
     id,
-    kind: "search_result",
+    kind: candidate.kind === "Podcast" ? "podcast" : "search_result",
+    ...(podcast === undefined ? {} : { resourceActions: { kind: "Podcast" as const, subject: podcast } }),
     ...(candidate.kind !== "Podcast" && preview ? {
-      media: {
+      resourceActions: {
+        kind: "Media" as const,
         subject: {
           kind: "External" as const,
           target: candidate.target,
@@ -55,7 +61,8 @@ export function presentBrowseCandidate(
     } : {}),
     primary: {
       kind: "link",
-      href: preview ? browsePreviewHref(candidate.target) : resolution.href,
+      href: candidate.kind === "Podcast" ? local !== null ? `/podcasts/${local.podcast_id}` : browsePreviewHref(candidate.target)
+        : resolution.kind === "Preview" ? browsePreviewHref(candidate.target) : resolution.href,
       paneLabelHint: candidate.title,
     },
     title: { text: candidate.title },
@@ -70,9 +77,8 @@ export function presentBrowseCandidate(
     },
     activity: null,
     exceptionalStatus: null,
-    resourceRef: preview
-      ? null
-      : assumeCanonicalResourceRef(resolution.action_ref),
+    resourceRef: candidate.kind === "Podcast" ? local === null ? null : assumeCanonicalResourceRef(`podcast:${local.podcast_id}`)
+      : resolution.kind === "Preview" ? null : assumeCanonicalResourceRef(resolution.action_ref),
     selected: false,
   };
 }
@@ -83,7 +89,8 @@ export function presentPreviewEpisode(
   return {
     id: `PodcastIndex:episode:${episode.target}`,
     kind: "search_result",
-    media: {
+    resourceActions: {
+      kind: "Media" as const,
       subject: {
         kind: "External",
         target: episode.target,

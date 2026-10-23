@@ -18,6 +18,8 @@ export type PodcastSection = Schema<"LibraryPodcastsOut">;
 export type LibraryPodcast = Schema<"LibraryPodcastOut">;
 export type PodcastSettings = Schema<"PodcastPlaybackSettingsOut">;
 export type PodcastTarget = Schema<"PodcastImportCreateRequest">["target"];
+export type PodcastActionResult = Schema<"PodcastActionResultOut">;
+export type PodcastActionResolution = PodcastActionResult["resolution"];
 export type PodcastAdmission = Schema<"PodcastAdmissionOut">;
 export type PodcastRemovalPreview = Schema<"PodcastRemovalPreviewOut">;
 export type EpisodeState = Schema<"PodcastEpisodeSelection">["state"];
@@ -25,6 +27,20 @@ export type PodcastRefreshScope =
   | Schema<"PodcastRefreshPodcastScope">
   | Schema<"PodcastRefreshPodcastsScope">
   | Schema<"PodcastRefreshLibraryScope">;
+
+export function podcastTargetKey(target: PodcastTarget): string {
+  return JSON.stringify([target.kind, target.kind === "Canonical" ? target.podcast_id : target.target]);
+}
+
+/** Local identities and aggregate subscription facts; never calls the directory. */
+export async function resolvePodcastActionFacts(
+  targets: readonly PodcastTarget[], signal: AbortSignal,
+): Promise<PodcastActionResult[]> {
+  type Body = ApiJson<"/podcasts/action-facts/resolve", "post">;
+  return (await apiFetch<Body>("/api/podcasts/action-facts/resolve", {
+    method: "POST", body: JSON.stringify({ targets }), signal,
+  })).data.items;
+}
 
 export async function listPodcasts(
   query: URLSearchParams,

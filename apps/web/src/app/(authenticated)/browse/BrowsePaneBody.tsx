@@ -12,6 +12,8 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { podcastActionFacts } from "@/lib/actions/inlineActions";
+import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
@@ -196,9 +198,18 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
+  const actionFacts = usePodcastActionFacts({ scope: `Browse.${sectionKey}:${queryKey}`,
+    targets: list.items.flatMap(item => item.kind === "Podcast" ? [{ kind: "Discovery" as const, target: item.target }] : []),
+    refresh: `${list.current}:${list.running}:${list.requestedKey}`,
+  });
+  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
   const rows = list.items.flatMap((item) => {
     if (item.resolution.kind !== "InNexusMedia") {
-      return [presentBrowseCandidate(item)];
+      return [presentBrowseCandidate(item, item.kind === "Podcast" ? {
+        target: { kind: "Discovery", target: item.target }, title: item.title,
+        facts: list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
+          : !list.fresh || list.running !== null ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Discovery", target: item.target }),
+      } : undefined)];
     }
     const resolution = item.resolution;
     const summary = summaries.resolve(resolution.media_summary);
@@ -227,6 +238,8 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     ) : list.complete && rows.length === 0 ? (
       <FeedbackStatus content={{ tone: "Neutral", title: "no results" }} announcement="None" />
     ) : null}
+    {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
+      actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
     <CollectionView
       returnScope={`Browse.${section.kind}.${section.source}`}
       rows={rows}

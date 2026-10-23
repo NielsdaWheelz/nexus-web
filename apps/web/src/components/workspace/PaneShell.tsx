@@ -313,7 +313,7 @@ function PaneView({
   });
   const header = resolvePaneHeaderModel({
     route: route.header,
-    title: body?.mediaActions?.subject.kind === "Stored" ? body.mediaActions.subject.summary.title
+    title: body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
       : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label,
     publication: body?.header,
   });
@@ -383,7 +383,7 @@ function PaneView({
       projection={isMobile ? "Mobile" : "Desktop"}
       header={header}
       identityId={identityId}
-      mediaActions={body?.mediaActions}
+      resourceActions={body?.resourceActions}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
       paneActions={paneActions}
