@@ -105,8 +105,8 @@ function Identity({
       </span>
       {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
     </span>;
-  return href ? <ButtonLink href={href} className={styles.identity}
-    data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</ButtonLink> : <Button ref={buttonRef} className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
+  return href ? <ButtonLink href={href} className={styles.identity} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</ButtonLink>
+    : <Button ref={buttonRef} className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
 }
 
 function Transport({
@@ -131,8 +131,9 @@ function Transport({
         <Button size="comfortable" iconOnly icon={<Icon.SkipBack />} aria-label="Previous" onClick={commands.previous} />
       ) : null}
       {compact ? null : (
-        <Button size="comfortable" iconOnly aria-label="back 15 seconds" onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
-          icon={<span className={styles.numberedSkip} aria-hidden="true"><Icon.RotateCcw /><span>15</span></span>} />
+        <Button size="comfortable" iconOnly aria-label="back 15 seconds"
+          onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
+          icon={<span className={styles.numberedSkip}><Icon.RotateCcw /><span>15</span></span>} />
       )}
       <Button
         emphasis="strong"
@@ -146,8 +147,9 @@ function Transport({
         aria-label={offerPause ? "pause media player" : "play media player"}
         icon={offerPause ? <Icon.Pause fill="currentColor" /> : <Icon.Play fill="currentColor" />}
       />
-      {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds" onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
-        icon={<span className={styles.numberedSkip} aria-hidden="true"><Icon.RotateCw /><span>30</span></span>} />}
+      {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds"
+        onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
+        icon={<span className={styles.numberedSkip}><Icon.RotateCw /><span>30</span></span>} />}
       {episode ? (
         <Button size="comfortable" iconOnly icon={<Icon.SkipForward />}
           aria-label="Next" onClick={commands.next} disabled={nextUp === null} />
@@ -603,7 +605,7 @@ export default function GlobalPlayerSurfaces() {
         </Button> : null}
         {episode && episode.chapters.length > 0 && playbackSubject !== null ? <Button ref={chaptersRef} size="comfortable" iconOnly
           aria-label="chapters" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup={isMobile ? undefined : "dialog"}
-          onClick={() => toggle("Chapters")} icon={<Icon.ListOrdered />} /> : null}
+          onClick={() => toggle("Chapters")} icon={<Icon.ListMusic />} /> : null}
         {stop}
       </div>;
       const feedback = <div className={styles.feedback}>

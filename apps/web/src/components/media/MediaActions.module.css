@@ -12,7 +12,6 @@
 }
 
 .button {
-  --control-min-size: 32px;
   flex: none;
 }
 

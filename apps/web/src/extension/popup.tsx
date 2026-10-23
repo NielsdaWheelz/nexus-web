@@ -375,11 +375,10 @@ function Popup() {
             full address, including any access parameters in it, to Nexus.
           </p>
           <Button
-            className={styles.primary}
-            emphasis="strong"
+            emphasis="strong" className={styles.primary}
             disabled={account === null || !connected || saving || (phase.kind !== "draft" && phase.kind !== "review")}
             onClick={() => sendWithOrigins({ kind: "save" })}
-            aria-busy={phase.kind !== "draft" && phase.kind !== "review" || undefined}
+            aria-busy={phase.kind !== "draft" && phase.kind !== "review"}
           >
             {saveCaption}
           </Button>

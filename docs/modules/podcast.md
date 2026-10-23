@@ -81,7 +81,7 @@ feed fetching uses safe_get (60s, 10mib); chapters use independent bounded jobs
 (15s, 2mib). inline chapters publish immediately and supersede external ownership;
 absence preserves existing chapters. external url/job identity fences publication,
 including a→b→a changes. successful sidecars revalidate after 24h; changed urls
-reset freshness. failures preserve old chapters; no chapter job delays core imports.
+reset freshness. failures preserve old chapters; core imports never await chapters.
 
 ## wire and presentation
 
@@ -233,4 +233,3 @@ public captions; otherwise Video Transcribe fails closed as
 YouTube transcript live proof skips when this proxy is not configured because
 the YouTube Data API key proves only metadata and caption-track listing, not
 caption download.
-

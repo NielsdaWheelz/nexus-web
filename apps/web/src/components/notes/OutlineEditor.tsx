@@ -1,7 +1,8 @@
 "use client";
 
-// Route chrome and page/day publication surround the shared outline surface.
 import Button from "@/components/ui/Button";
+
+// Route chrome and page/day publication surround the shared outline surface.
 import { useCallback, useEffect, useId, useMemo, type RefObject } from "react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import CanonicalNoteEditor from "./CanonicalNoteEditor";
@@ -227,7 +228,7 @@ export default function OutlineEditor({
           onRevealRoot={() => session.reveal({ kind: "root" })}
         />
         {!outline.complete ? (
-          <Button onClick={outline.more}>
+          <Button type="button" onClick={outline.more}>
             show more
           </Button>
         ) : null}

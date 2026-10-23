@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 import {
   createContext,
   useCallback,
@@ -8,7 +10,6 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import Button from "@/components/ui/Button";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {hasActiveInteractionOwner, useInteractionOwner} from "@/lib/ui/overlay";
 import {usePaneIsActive} from "@/lib/panes/paneRuntime";
@@ -107,6 +108,7 @@ function ObservedOutlineSession({
                   {intent.problem ? <p>{intent.problem}</p> : null}
                   {index === 0 ? (
                     <Button
+                      type="button"
                       disabled={intent.problem !== null}
                       onClick={session.retryFailed}
                     >

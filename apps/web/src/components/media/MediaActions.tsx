@@ -32,16 +32,23 @@ export default function MediaActions({
         return (
           <span key={action.id} className={styles.control}>
             <Button
-              iconOnly icon={<Glyph size={20} aria-hidden="true" />}
-              tooltip={{ text: action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label }}
-              className={styles.button} aria-label={action.label}
-              aria-disabled={action.disabled || undefined} aria-busy={action.busy || undefined}
+              iconOnly
+              icon={<Glyph />}
+              className={styles.button}
+              aria-label={action.label}
+              aria-disabled={action.disabled || undefined}
+              aria-busy={action.busy || undefined}
               aria-describedby={action.disabledReason ? reasonId : undefined}
+              tooltip={{ text: action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label }}
               aria-haspopup={action.id === "LibraryPlacement" ? "dialog" : undefined}
-              data-action-id={action.id} data-media-action=""
+              data-action-id={action.id}
+              data-media-action=""
               onPointerDown={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}
-              onClick={event => { event.stopPropagation(); action.invoke(event.currentTarget, returnFocus); }}
+              onClick={event => {
+                event.stopPropagation();
+                if (!action.disabled) action.invoke(event.currentTarget, returnFocus);
+              }}
             />
             {action.disabledReason ? (
               <span className="sr-only" id={reasonId}>{action.disabledReason}</span>

@@ -7,8 +7,8 @@ import ImportsBadge from "@/components/imports/ImportsBadge";
 import { saveWritingFile, writingFileName } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
-import Button from "@/components/ui/Button";
 import type { ControlAppearance } from "@/components/ui/control";
+import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
@@ -203,7 +203,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
         {discarding ? (
           <div className={dialogStyles.choices}>
             <p>this removes unsynced writing from this device. changes already sent may still finish.</p>
-            {choice("discard and sign out", () => discard(token), { emphasis: "strong", tone: "danger" }, working === "discard")}
+            {choice("discard and sign out", () => discard(token), { tone: "danger" }, working === "discard")}
             {choice("back", () => setStep({ kind: "Choosing", token, note: null }), {}, false)}
           </div>
         ) : shown.kind === "ConfirmingReceipt" ? (

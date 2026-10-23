@@ -26,11 +26,6 @@
   border-top: var(--stroke-hairline) solid var(--edge);
 }
 
-.surface button,
-.surface a {
-  min-height: 44px;
-}
-
 /* Row budgets include the border: 80/96px wide, 128/144px narrow. */
 .bar {
   --player-seek-height: 28px;
@@ -136,9 +131,14 @@
   gap: var(--space-1);
 }
 
-.playPause {
-  --control-radius: var(--radius-full);
+.transport button {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
 }
+
+.playPause { --control-radius: var(--radius-full); }
 .numberedSkip { display: inline-flex; position: relative; align-items: center; justify-content: center; }
 .numberedSkip > svg { width: 28px; height: 28px; stroke-width: 1.5; }
 .numberedSkip > span { position: absolute; top: 8px; font-family: var(--font-mono); font-size: calc(var(--text-xs) * 0.75); font-weight: var(--weight-semibold); line-height: 1; }
@@ -148,7 +148,9 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  min-height: 44px;
   height: auto;
+  border: 0;
   padding: 0;
   justify-content: flex-start;
   gap: var(--space-3);
