@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 14;
+export const WIRE_REVISION = 15;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {

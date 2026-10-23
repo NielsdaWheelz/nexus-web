@@ -26,6 +26,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { apiFetch, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { modeledApiError } from "@/lib/api/serverState";
@@ -73,7 +74,7 @@ function createStore() {
   };
 
   const schedule = () => {
-    if (!active || scheduled || running) return;
+    if (!active || !remoteReady() || scheduled || running) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
@@ -82,7 +83,7 @@ function createStore() {
   };
 
   async function resolve() {
-    if (!active) return;
+    if (!active || !remoteReady()) return;
     const ids = [...entries]
       .filter(([, entry]) => entry.stale && entry.retained > 0)
       .map(([id]) => id)
@@ -157,7 +158,9 @@ function createStore() {
     attach() {
       active = true;
       schedule();
+      const unsubscribe = subscribeAdmission(() => { if (remoteReady()) invalidate(entries.keys()); });
       return () => {
+        unsubscribe();
         active = false;
         request?.abort();
       };

@@ -1,6 +1,8 @@
 "use client";
 
 // Row parts: the body, resource menu, and source failures.
+import { checkSession } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -112,7 +114,14 @@ export function NexusSourceFailures({ failures, semanticUnavailable, searchUnava
   returnFocus: () => HTMLElement | null;
   announce?: boolean;
 }) {
+  const admission = useRemoteAdmission();
   if (failures.size === 0 && !semanticUnavailable && !searchUnavailable) return null;
+  if (admission !== "Ready") return <FeedbackNotice
+    content={{ tone: "Warning", title: "search needs a connection" }}
+    announcement={announce ? "Polite" : "None"}
+    actions={[{ label: "try again", onClick: checkSession }]}
+    returnFocus={returnFocus}
+  />;
   return (
     <div className={styles.failures}>
       {[...failures].map((source) => (

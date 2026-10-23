@@ -142,7 +142,7 @@ android {
         buildConfig = true
     }
 
-    // This root contains only the generated shelf. Register its producer
+    // This root contains only generated interfaces. Register their producer
     // below so every asset consumer, including lint, depends on it.
     sourceSets.named("main") {
         assets.setSrcDirs(emptyList<String>())
@@ -188,32 +188,35 @@ android {
 
 }
 
-// The shelf (the Downloads screen and offline reader) is a build output, not
-// source: gradle regenerates it from apps/web into src/main/assets/shelf before
+// The installed interface and isolated reader are build outputs, not source:
+// gradle regenerates both from apps/web into src/main/assets before
 // any asset consumer runs, so a clean checkout builds. The pdf.js copy is pinned
 // by `apps/web/package.json` + `bun.lock` (asserted at run time by
 // copy-pdfjs.mjs), so node_modules is not declared as an input.
 val webDir = rootProject.projectDir.resolve("../web")
-abstract class BuildShelf : Exec() {
+abstract class BuildPackagedUi : Exec() {
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 }
 
-val buildShelf = tasks.register<BuildShelf>("buildShelf") {
+val buildPackagedUi = tasks.register<BuildPackagedUi>("buildPackagedUi") {
     group = "build"
-    description = "Builds the zero-network shelf from apps/web."
+    description = "Builds the installed application and isolated downloads reader."
     workingDir = webDir
-    commandLine("bun", "run", "build:shelf")
+    commandLine("bun", "run", "build:packaged")
     inputs.dir(webDir.resolve("src"))
     inputs.dir(webDir.resolve("scripts"))
     inputs.file(webDir.resolve("vite.shelf.config.ts"))
+    inputs.file(webDir.resolve("vite.android.config.ts"))
+    inputs.files(fileTree(webDir.resolve("public")) { exclude("pdfjs/**") })
+    inputs.property("storageOrigin", providers.environmentVariable("R2_S3_API_ORIGIN").orElse(""))
     inputs.file(webDir.resolve("package.json"))
     inputs.file(webDir.resolve("bun.lock"))
     outputDirectory.set(layout.projectDirectory.dir("src/main/assets"))
 }
 
 androidComponents.onVariants { variant ->
-    variant.sources.assets?.addGeneratedSourceDirectory(buildShelf, BuildShelf::outputDirectory)
+    variant.sources.assets?.addGeneratedSourceDirectory(buildPackagedUi, BuildPackagedUi::outputDirectory)
 }
 
 kotlin {

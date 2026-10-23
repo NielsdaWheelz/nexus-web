@@ -4,7 +4,7 @@
  * subscribers (outlines, panes) after success only. Unlink retries the selected
  * uuid through the write queue; context detachment retains its version fence.
  */
-import { ApiError, apiFetch, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { ApiError, apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
@@ -167,6 +167,8 @@ export function connectionMutationErrorMessage(
       requestId,
     };
   }
+  const transport = apiTransportFeedback(error, "couldn’t remove connection");
+  if (transport !== null) return transport;
   if (GONE.has(code)) {
     return {
       tone: "Warning",

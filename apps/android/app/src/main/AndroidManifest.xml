@@ -51,7 +51,7 @@
 
                 <data
                     android:host="auth"
-                    android:path="/handoff"
+                    android:pathPrefix="/"
                     android:scheme="nexus" />
             </intent-filter>
         </activity>

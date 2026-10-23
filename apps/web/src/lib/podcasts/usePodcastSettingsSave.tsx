@@ -6,7 +6,7 @@
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { type ApiError, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { type ApiError, isApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import { modeledApiError, requestWithRetry } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
@@ -41,7 +41,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
     entry.state = { kind: "Reading", command, reason }; emit();
     invalidateReads("Podcasts");
     try {
-      const value = await requestWithRetry(signal => getPodcastSettings(entry.podcastId, signal), AbortSignal.any([scope.signal, AbortSignal.timeout(30_000)]));
+      const value = await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: signal => requestWithRetry(s => getPodcastSettings(entry.podcastId, s), signal) });
       if (!current(entry, scope)) return null;
       if (value.id !== null && value.id !== command.patch.id) { entry.state = { kind: "Replaced", command }; emit(); return null; }
       if (reason === "Unknown" && value.id === command.patch.id && value.default_playback_speed === command.patch.default_playback_speed && value.pause_shortening_mode === command.patch.pause_shortening_mode) {
@@ -62,7 +62,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
     const command = entry.state.command;
     entry.busy = true; entry.state = { kind: "Saving", command }; emit();
     try {
-      const value = await savePodcastSettings(entry.podcastId, command.patch, AbortSignal.any([scope.signal, AbortSignal.timeout(30_000)]));
+      const value = await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: signal => savePodcastSettings(entry.podcastId, command.patch, signal) });
       if (!current(entry, scope)) return null;
       entry.state = { kind: "Accepted", command, current: value }; emit(); return value;
     } catch (caught) {

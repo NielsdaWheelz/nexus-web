@@ -12,6 +12,7 @@
 // revision moved, so the lane then waits for a read past it; a move's conflict
 // can come at an unchanged revision (its row went hidden), so it leaves the floor.
 
+import { remoteReady } from "@/lib/native/admission";
 import {
   createContext,
   useContext,
@@ -231,6 +232,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
 
   /** Send the head when nothing else is in flight and the floor is known. */
   function pump() {
+    if (!remoteReady()) return;
     const floor = floorOf(lane, lane.read);
     const head = lane.requests.values().next().value;
     if (lane.pending === null && floor !== null && head?.phase === "Queued")
@@ -254,7 +256,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       return previous.intent.kind === intent.kind
         ? check(previous)
         : Promise.resolve("Superseded");
-    if (revision === null) {
+    if (revision === null || !remoteReady()) {
       setLoadRequired(true);
       return Promise.resolve("Superseded");
     }

@@ -30,7 +30,7 @@ from nexus.errors import ApiErrorCode
 from nexus.logging import bind_request, get_logger
 from nexus.responses import error_response
 
-WIRE_REVISION = 14
+WIRE_REVISION = 15
 """The client contract. It moves at most once between releases: the first change merged
 after a release that breaks that release's clients bumps it; later breaking changes before
 the next release ride that bump. ``gen:wire`` carries it to the web build, the extension

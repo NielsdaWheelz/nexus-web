@@ -2,7 +2,6 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, CircleUser, Plus, Search } from "lucide-react";
-import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import Button from "@/components/ui/Button";
@@ -99,7 +98,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   return (
     <nav className={cx(styles.rail, collapsed && styles.collapsed)} aria-label="Primary">
       <div className={styles.brand}>
-        <Link
+        <a
           href={home.href}
           className={styles.brandLink}
           aria-label="Nexus — Home"
@@ -108,7 +107,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         >
           <AsterismMark size={20} className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
-        </Link>
+        </a>
         <Button
           iconOnly
           icon={collapsed ? <ChevronRight /> : <ChevronLeft />}
@@ -160,7 +159,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                   openDelayMs={0}
                   disabled={!collapsed}
                   renderTrigger={(tooltip) => (
-                    <Link
+                    <a
                       {...tooltip}
                       href={item.href}
                       className={cx(buttonClassName({}), styles.item)}
@@ -171,7 +170,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                     >
                       <Icon className={styles.icon} size={20} aria-hidden="true" />
                       <span className={styles.label}>{item.label}</span>
-                    </Link>
+                    </a>
                   )}
                 />
               </li>
@@ -187,7 +186,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           openDelayMs={0}
           disabled={!collapsed}
           renderTrigger={help => (
-            <Link
+            <a
               {...help}
               href={NAV_IMPORTS.href}
               className={cx(buttonClassName({}), styles.item, styles.imports)}
@@ -200,7 +199,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
               <span className={collapsed ? styles.importsChip : cx(styles.label, styles.importsLabel)}>
                 <ImportsBadge label={NAV_IMPORTS.label} labelVisible={!collapsed} />
               </span>
-            </Link>
+            </a>
           )}
         />
         <Tooltip

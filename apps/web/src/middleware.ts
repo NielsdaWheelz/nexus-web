@@ -1,14 +1,16 @@
-// per request: content policy, routing metadata and silent navigation renewal.
-// node middleware owns entry cookie effects; bff/routes/actions own theirs.
+// response policy and routing metadata. hosted entry owns silent renewal;
+// native documents verify only; fixed native routes own credential effects.
 import { NextResponse, type NextRequest } from "next/server";
 import { assertNever } from "@/lib/assertNever";
-import { DEVICE_COOKIE_NAME, readDeviceId } from "@/lib/auth/deviceCookie";
+import { isAndroidShellUserAgent } from "@/lib/androidShell";
+import { resolveDevice } from "@/lib/auth/deviceCookie";
 import {
   applyRequestEffect,
   ended,
   finish,
   redirectTo,
   resolveEntry,
+  presentedSession,
   type Effect,
 } from "@/lib/auth/session";
 import {
@@ -18,8 +20,8 @@ import {
   REQUEST_PATH_HEADER,
   unavailablePath,
 } from "@/lib/auth/urls";
-import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
+import { nativeError } from "@/lib/native/server";
 import { appCsp, cspNonce, publicReaderCsp } from "@/lib/security/csp";
 import { AuthUnavailable } from "@/lib/supabase/auth";
 
@@ -45,16 +47,19 @@ const PUBLIC_PATHS = new Set([
 ]);
 const PUBLIC_PREFIXES = ["/auth/", "/pdfjs/", "/_next"];
 
-const DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10;
-
 export async function middleware(request: NextRequest) {
   const { pathname, search, host, protocol } = request.nextUrl;
+  const native = isAndroidShellUserAgent(request.headers.get("user-agent") ?? "");
   const isAuthSurface =
     pathname === "/login" ||
     pathname === "/forgot-password" ||
     pathname === "/account/password" ||
+    pathname === "/account/identities" ||
+    pathname === "/extension/connect/start" ||
     pathname === "/auth" ||
     pathname.startsWith("/auth/");
+  const fixedNativeAuth = request.method === "POST" && (pathname === "/auth/native/google" || pathname === "/auth/signout");
+  const rejectNativeAuth = native && isAuthSurface && !fixedNativeAuth;
   const isProtected =
     !PUBLIC_PATHS.has(pathname) &&
     !PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
@@ -82,16 +87,16 @@ export async function middleware(request: NextRequest) {
     : requestPath;
   let effect: Effect = { kind: "Preserve" };
   let destination: string | null = null;
-  if (isNavigation && (isProtected || isLogin)) {
+  if (!rejectNativeAuth && isNavigation && (isProtected || isLogin)) {
     try {
-      const live = await resolveEntry(request.cookies.getAll());
+      const live = await (native ? presentedSession(request.cookies.getAll()) : resolveEntry(request.cookies.getAll()));
       switch (live.kind) {
         case "Live":
-          effect = { kind: "Write", writes: live.writes };
-          if (isLogin) destination = target;
+          if (!native) effect = { kind: "Write", writes: live.writes };
+          if (isLogin && request.nextUrl.searchParams.get("flow") !== "handoff" && request.nextUrl.searchParams.get("switch_account") !== "1") destination = target;
           break;
         case "Ended":
-          effect = ended(live.cookieNames);
+          if (!native) effect = ended(live.cookieNames);
           if (isProtected) destination = loginPath(target);
           break;
         case "Anonymous":
@@ -107,15 +112,14 @@ export async function middleware(request: NextRequest) {
   }
 
   let response: NextResponse;
-  if (destination !== null) {
+  if (rejectNativeAuth) {
+    response = nativeError(403, "E_FORBIDDEN", "open authentication in your browser");
+  } else if (destination !== null) {
     response = redirectTo(destination, 303);
   } else {
     applyRequestEffect(request.cookies, effect);
-    let device: string | null = null;
-    if (isProtected && isNavigation && !readDeviceId(request.cookies)) {
-      device = createRandomId();
-      request.cookies.set(DEVICE_COOKIE_NAME, device);
-    }
+    const device = !native && isProtected && isNavigation ? resolveDevice(request.cookies) : null;
+    if (device) for (const write of device.writes) request.cookies.set(write.name, write.value);
     // next reads this policy to stamp its scripts with the request nonce.
     // copy headers after applying effects so server rendering sees the successor.
     const forwarded = new Headers(request.headers);
@@ -125,15 +129,7 @@ export async function middleware(request: NextRequest) {
       forwarded.set(REQUEST_METHOD_HEADER, request.method);
     }
     response = NextResponse.next({ request: { headers: forwarded } });
-    if (device !== null) {
-      response.cookies.set(DEVICE_COOKIE_NAME, device, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: getEnv().appPublicOrigin.startsWith("https:"),
-        path: "/",
-        maxAge: DEVICE_MAX_AGE_SECONDS,
-      });
-    }
+    if (device) for (const write of device.writes) response.cookies.set(write.name, write.value, write.options);
   }
 
   if (isProtected || isAuthSurface) finish(response, effect);

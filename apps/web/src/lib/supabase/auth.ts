@@ -327,24 +327,24 @@ export async function signInWithPassword(
   cookies: readonly CookieValue[],
   email: string,
   password: string,
-): Promise<{ outcome: SignInOutcome; writes: readonly CookieWrite[] }> {
+): Promise<{ outcome: SignInOutcome; writes: readonly CookieWrite[]; tokens: Tokens | null }> {
   const { auth, writes, call } = client(withoutSession(cookies));
   const result = await call(
     auth.signInWithPassword({ email: email.trim().toLowerCase(), password }),
   );
-  if ("unavailable" in result) return { outcome: "ServiceUnavailable", writes };
+  if ("unavailable" in result) return { outcome: "ServiceUnavailable", writes, tokens: null };
   const { data, error } = result;
   if (error) {
     return {
       outcome:
         SIGN_IN[error.code ?? ""] ?? unexpected("password sign-in", error),
-      writes,
+      writes, tokens: null,
     };
   }
   if (!data?.session) {
     throw new Error("Supabase password sign-in returned no session");
   }
-  return { outcome: "SignedIn", writes };
+  return { outcome: "SignedIn", writes, tokens: { accessToken: data.session.access_token, refreshToken: data.session.refresh_token } };
 }
 
 // every account-dependent failure answers like an unknown address (no
@@ -526,8 +526,9 @@ async function establish(
 ): Promise<{ tokens: Tokens | null; writes: readonly CookieWrite[] }> {
   const { auth, writes, call } = client(withoutSession(cookies));
   const result = await call(operation(auth));
-  const session =
-    "unavailable" in result || result.error ? null : result.data?.session;
+  if ("unavailable" in result) throw new AuthUnavailable();
+  if (result.error && isDependencyFailure(result.error)) throw new AuthUnavailable();
+  const session = result.error ? null : result.data?.session;
   return {
     tokens: session
       ? {
@@ -620,8 +621,7 @@ export async function listIdentities(
 export async function unlinkIdentity(
   cookies: readonly CookieValue[],
   identityId: string,
-  provider: string,
-): Promise<{
+ ): Promise<{
   outcome: "Unlinked" | "Failed" | "SessionEnded";
   writes: readonly CookieWrite[];
 }> {
@@ -634,7 +634,7 @@ export async function unlinkIdentity(
     isOAuthProvider(row.provider),
   );
   const match = rows.find(
-    (row) => row.identity_id === identityId && row.provider === provider,
+    (row) => row.identity_id === identityId,
   );
   // idempotent: an identity already gone is unlinked
   if (!match) return { outcome: "Unlinked", writes };

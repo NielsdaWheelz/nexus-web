@@ -50,11 +50,11 @@ build and packaging command.
 - External functionality may be consumed by any module.
 - Internal functionality is only for a module and its submodules.
 - Default to internal unless functionality is clearly external.
-- `apps/android/app/src/main/java/.../GoogleSignInController.kt` owns native
-  Google sign-in via the Android Credential Manager: generates the OIDC nonce
-  and the handoff verifier, calls `getCredential`, posts the Google ID token
-  to `/auth/native/google`, and loads the WebView at `/auth/handoff` with the
-  verifier.
+- `apps/android/app/src/main/java/.../GoogleSignInController.kt` obtains a
+  google credential and joins the current native handoff attempt. `DeviceSession`
+  owns its verifier, account binding, credential effects and private startup
+  record. `AppRouter` owns installed interface delivery; `AppBridge` exposes its
+  fixed operations ([module](../modules/device-startup.md)).
 - `apps/android/app/src/main/java/.../MainActivity.kt` owns Android shell
   mechanics: owned-origin routing, external routing, file chooser handoff,
   popup handoff, app-link intent handling, and OAuth Custom Tab orchestration
@@ -70,7 +70,8 @@ build and packaging command.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
   may call only its fixed player-descriptor, listening-state, consumption-command,
-  Consumption-activity, `me`, reading-copy and reader-state BFF paths with
+  Consumption-activity, `me`, reading-copy, reader-state, bootstrap, handoff and
+  account-setting BFF paths with
   WebView cookies, the exact owned Origin and `X-Nexus-Wire`; it accepts no
   arbitrary URL, path, headers, or credentials.
 - `apps/android/app/src/main/java/.../offline/` owns offline
@@ -85,12 +86,11 @@ build and packaging command.
 - Android manifests own Android framework entrypoints and deep-link filters.
 - Android Gradle files own Android build, signing, app-link, and release
   configuration.
-- Android has exactly five authorized native boundaries:
-  `GoogleSignInController` may make the auth-bootstrap
-  `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
-  paths above; offline may make only the two direct calls above; and AndroidX
-  WebKit may expose the main-frame `nexusQueueSession` listener on the owned origin
-  and the main-frame `nexusDownloads` listener on the owned and shelf origins.
+- Android product api/auth calls belong to `NexusOriginClient`'s fixed paths,
+  including bootstrap, handoff, google minting and account settings. offline may
+  make only its two direct download calls above. AndroidX WebKit exposes the
+  main-frame `nexusApp` and `nexusQueueSession` listeners on the owned origin and
+  `nexusDownloads` on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
   OAuth/PKCE exchange remains server-side.

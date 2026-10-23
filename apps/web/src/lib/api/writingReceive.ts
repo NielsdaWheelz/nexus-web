@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { assertNever } from "@/lib/assertNever";
+import { remoteReady } from "@/lib/native/admission";
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { requestWithRetry } from "@/lib/api/serverState";
@@ -94,7 +95,7 @@ function receiver(accountId: string): Receiver {
   async function probe() {
     const active = controller;
     const started = epoch;
-    if (active === null || active.signal.aborted) return;
+    if (active === null || active.signal.aborted || !remoteReady()) return;
     if (probing) { queued = true; return; }
     probing = true;
     try {
@@ -121,7 +122,8 @@ function receiver(accountId: string): Receiver {
         notify();
       } while (queued && started === epoch && !active.signal.aborted);
     } catch (error) {
-      if (started !== epoch || active.signal.aborted || isAbortError(error) || handleUnauthenticatedApiError(error)) return;
+      if (started !== epoch || active.signal.aborted || isAbortError(error)) return;
+      handleUnauthenticatedApiError(error);
       probeError = asError(error);
       notify();
     } finally {
@@ -159,6 +161,11 @@ function receiver(accountId: string): Receiver {
         retryFailedWatches();
         notify();
         current.probe();
+      },
+      onSuspended(error) {
+        if (started !== epoch) return;
+        streamError = error;
+        notify();
       },
       onError(error) {
         if (started !== epoch) return;

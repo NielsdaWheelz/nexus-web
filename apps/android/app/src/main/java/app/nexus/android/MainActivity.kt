@@ -13,7 +13,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Message
-import android.util.Base64
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -22,14 +21,11 @@ import android.view.WindowInsets
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import android.widget.Button
-import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
@@ -46,6 +42,9 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 import app.nexus.android.offline.OfflineBridge
 import app.nexus.android.offline.OfflineJobs
 import app.nexus.android.offline.OfflineStore
@@ -57,16 +56,9 @@ import app.nexus.android.playback.PlayerBridge
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
-
-private enum class HostedLoadFailure {
-    Connection,
-    RedirectLoop,
-}
 
 @OptIn(UnstableApi::class)
 class MainActivity : AppCompatActivity() {
@@ -76,15 +68,20 @@ class MainActivity : AppCompatActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var writingExportPicker: ((Uri?) -> Unit)? = null
     private val nexusBaseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
-    internal var pendingHandoffVerifier: String? = null
+    private val deviceSession by lazy { DeviceSession.get(this) }
+    private val appRouter by lazy { AppRouter(this, deviceSession) }
+    private lateinit var appBridge: AppBridge
+    private var authAttempt: DeviceSession.Attempt? = null
+    private var browserWasPaused = false
+    private var pendingAppLink: Uri? = null
+    private var pendingShelfExit: Uri? = null
+    private var appDocumentGeneration = 0L
     private val googleSignInController by lazy { GoogleSignInController(this) }
     // offline (android 14+): the bridge and the shelf router exist only there
     private var offline: OfflineBridge? = null
     private var shelfRouter: ShelfRouter? = null
     // the shelf is the main document: set at each main-frame request and at its commit
     @Volatile private var shelfActive = false
-    private var hostedLoadTerminal: View? = null
-    private var failedMainFrameUrl: String? = null
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -130,6 +127,8 @@ class MainActivity : AppCompatActivity() {
 
         webView = WebView(this)
         NexusWebView.configure(webView)
+        appBridge = AppBridge(webView, deviceSession, ::signIn, ::flushAppLink)
+        val bridgeAvailable = appBridge.install()
         if (Build.VERSION.SDK_INT >= 34) {
             val store = OfflineStore.get(this)
             shelfRouter = ShelfRouter(this, store)
@@ -140,7 +139,6 @@ class MainActivity : AppCompatActivity() {
                     override fun showDownloads() = webView.loadUrl(SHELF_URL)
 
                     override fun openHosted(path: String) {
-                        shelfActive = false
                         webView.loadUrl(BuildConfig.NEXUS_BASE_URL.trimEnd('/') + path)
                     }
 
@@ -188,70 +186,56 @@ class MainActivity : AppCompatActivity() {
                     return false
                 }
                 if (shelfActive) {
-                    // the shelf's own loads, and redirects of a navigation already let through
-                    if (request.isRedirect || uri.host == SHELF_HOST) return false
+                    if (uri.host == SHELF_HOST) return false
                     openFromShelf(uri, Intent(Intent.ACTION_VIEW, uri))
                     return true
                 }
-                if (uri.scheme == "nexus" && uri.host == "auth") {
-                    when (uri.path) {
-                        "/start" -> { startAuthFlow(uri); return true }
-                        "/native" -> { googleSignInController.signIn(uri); return true }
-                    }
+                if (isNativeAuthUri(uri)) {
+                    handleAuthUri(uri)
+                    return true
                 }
-                if (isOwnedUrl(uri)) {
-                    return false
-                }
-                openExternalUrl(uri)
+                if (appRouter.isAppRoute(uri) && request.method == "GET") return false
+                if (isOwnedUrl(uri) && request.method != "GET") return false
+                openBrowser(uri)
                 return true
             }
 
-            override fun onPageFinished(view: WebView?, url: String?) {
-                // a failed main frame also finishes; only another page clears its terminal
-                if (url != null && url != failedMainFrameUrl && isOwnedUrl(Uri.parse(url))) {
-                    hostedLoadTerminal?.let(root::removeView)
-                    hostedLoadTerminal = null
-                }
-                CookieManager.getInstance().flush()
-            }
-
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                appDocumentGeneration += 1
                 shelfActive = url?.let { Uri.parse(it).host } == SHELF_HOST
+                appBridge.onPageStarted()
                 offline?.onPageStarted()
                 playerBridge.onPageStarted()
+                if (url?.let { appRouter.isAppRoute(Uri.parse(it)) } == true) {
+                    val target = pendingShelfExit
+                    pendingShelfExit = null
+                    target?.let(::routeUrl)
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?,
+            ) {
+                if (request == null || !appRouter.isOwned(request.url) ||
+                    request.url.path?.startsWith("/_nexus/") == true) return
+                if (errorResponse?.statusCode in setOf(401, 426) &&
+                    deviceSession.remoteAdmission in setOf("Ready", "Unavailable")) deviceSession.requestCheck()
             }
 
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?,
             ): WebResourceResponse? {
-                val router = shelfRouter ?: return null
                 val ownedRequest = request ?: return null
-                // ahead of onPageStarted, so the next document's subresources see its own mode
-                if (ownedRequest.isForMainFrame) shelfActive = ownedRequest.url.host == SHELF_HOST
-                return router.intercept(ownedRequest, shelfActive)
-            }
-
-            override fun onReceivedError(
-                view: WebView?,
-                request: WebResourceRequest?,
-                error: WebResourceError?,
-            ) {
-                if (request?.isForMainFrame != true || !isOwnedUrl(request.url)) {
-                    return
-                }
-                if (error?.errorCode != WebViewClient.ERROR_REDIRECT_LOOP) {
-                    if (Build.VERSION.SDK_INT >= 34) {
-                        failedMainFrameUrl = request.url.toString()
-                        showHostedLoadTerminal(HostedLoadFailure.Connection)
-                    }
-                    return
-                }
-                failedMainFrameUrl = request.url.toString()
-                view?.stopLoading()
-                // justify-defect: an owned redirect loop is a routing defect, not a connection failure.
-                Log.e("Nexus", "Hosted navigation ended in a redirect loop")
-                showHostedLoadTerminal(HostedLoadFailure.RedirectLoop)
+                // Parser preloads can precede onPageStarted. Their browser-owned
+                // referrer distinguishes the incoming app from the outgoing shelf;
+                // shelf requests and missing referrers keep the shelf's refusal.
+                val fromApp = ownedRequest.requestHeaders.entries
+                    .firstOrNull { it.key.equals("Referer", ignoreCase = true) }
+                    ?.value?.let { appRouter.isOwned(Uri.parse(it)) } == true
+                return shelfRouter?.intercept(ownedRequest, shelfActive && !fromApp) ?: appRouter.intercept(ownedRequest)
             }
         }
 
@@ -365,57 +349,60 @@ class MainActivity : AppCompatActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (webView.canGoBack()) {
-                        webView.goBack()
-                        return
-                    }
-                    val owned = webView.url?.let { isOwnedUrl(Uri.parse(it)) } == true
-                    val exit = if (owned) {
-                        "var exit=new Event('nexus:request-exit',{cancelable:true});" +
-                            "document.dispatchEvent(exit);return exit.defaultPrevented;"
-                    } else {
-                        "return false;"
-                    }
                     try {
                         webView.evaluateJavascript(
                             "(function(){try{var event=new KeyboardEvent('keydown'," +
                                 "{key:'Escape',bubbles:true,cancelable:true});" +
-                                "document.dispatchEvent(event);if(event.defaultPrevented)return true;" +
-                                exit + "}catch(error){return null;}})()",
-                        ) { handledByRenderer ->
-                            if (this@MainActivity.isFinishing || this@MainActivity.isDestroyed) {
+                                "document.dispatchEvent(event);return event.defaultPrevented;" +
+                                "}catch(error){return null;}})()",
+                        ) { handled ->
+                            if (isFinishing || isDestroyed || handled == "true") return@evaluateJavascript
+                            if (handled != "false") { showExitFailure(); return@evaluateJavascript }
+                            if (webView.canGoBack()) { webView.goBack(); return@evaluateJavascript }
+                            val owned = webView.url?.let { isOwnedUrl(Uri.parse(it)) } == true
+                            if (!owned) {
+                                isEnabled = false
+                                onBackPressedDispatcher.onBackPressed()
                                 return@evaluateJavascript
                             }
-                            when (handledByRenderer) {
-                                "true" -> return@evaluateJavascript
-                                "false" -> {
-                                    if (webView.canGoBack()) {
-                                        webView.goBack()
-                                        return@evaluateJavascript
-                                    }
-                                    isEnabled = false
-                                    onBackPressedDispatcher.onBackPressed()
+                            try {
+                                webView.evaluateJavascript(
+                                    "(function(){try{var event=new Event('nexus:request-exit',{cancelable:true});" +
+                                        "document.dispatchEvent(event);return event.defaultPrevented;}catch(error){return null;}})()",
+                                ) exitReply@ { blocked ->
+                                    if (isFinishing || isDestroyed || blocked == "true") return@exitReply
+                                    if (blocked == "false") {
+                                        isEnabled = false
+                                        onBackPressedDispatcher.onBackPressed()
+                                    } else showExitFailure()
                                 }
-                                else -> showExitFailure()
+                            } catch (error: RuntimeException) {
+                                Log.e("Nexus", "Could not check unsaved work before exit", error)
+                                showExitFailure()
                             }
                         }
                     } catch (error: RuntimeException) {
-                        // justify-defect: a renderer evaluation failure cannot authorize exit.
-                        Log.e("Nexus", "Could not check unsaved work before exit", error)
+                        Log.e("Nexus", "Could not check renderer before back", error)
                         showExitFailure()
                     }
                 }
             }
         )
 
-        val restoredWebViewState =
-            savedInstanceState?.let { webView.restoreState(it) } != null
-        if (Build.VERSION.SDK_INT >= 34 && !hasValidatedNetwork()) {
-            // cold start offline is the shelf; the launch link is opened locally or offered
-            webView.loadUrl(SHELF_URL)
-            intent?.data?.let { openFromShelf(it, intent) }
-        } else if (!restoredWebViewState) {
+        if (!bridgeAvailable) {
+            root.removeView(webView)
+            root.addView(TextView(this).apply {
+                text = "update android system webview to open nexus"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.BLACK)
+                gravity = Gravity.CENTER
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            return
+        }
+        lifecycleScope.launch {
+            try { deviceSession.initialize() } catch (_: LocalStateError) { /* entry owns visible repair state */ }
             loadUrlFromIntent(intent)
+            deviceSession.setForeground(true)
         }
     }
 
@@ -475,25 +462,17 @@ class MainActivity : AppCompatActivity() {
             if (uri.scheme == "http" || uri.scheme == "https") openExternalUrl(uri)
             return
         }
-        val online = hasValidatedNetwork()
-        val builder = AlertDialog.Builder(this)
-            .setTitle("Leave downloaded reading?")
-            .setMessage(
-                when {
-                    !online -> "This link is not downloaded. Reconnect before opening it."
-                    isNativeAuthUri(uri) -> "Finishing sign-in needs Nexus online. Open Nexus?"
-                    else ->
-                        "This link is not available in your downloaded copies. Open Nexus online?"
-                },
-            )
-            .setNegativeButton("Stay offline", null)
-        if (online) {
-            builder.setPositiveButton("Open Nexus") { _, _ ->
-                shelfActive = false
-                loadUrlFromIntent(intent)
-            }
-        }
-        builder.show()
+        AlertDialog.Builder(this)
+            .setTitle("leave downloaded reading?")
+            .setMessage("return to your workspace to open this link.")
+            .setNegativeButton("stay here", null)
+            .setPositiveButton("open workspace") { _, _ ->
+                if (appRouter.isAppRoute(uri)) loadUrlFromIntent(intent)
+                else {
+                    pendingShelfExit = uri
+                    webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
+                }
+            }.show()
     }
 
     private fun mediaIdOf(uri: Uri): UUID? {
@@ -513,6 +492,7 @@ class MainActivity : AppCompatActivity() {
         uri.scheme == "nexus" && uri.host == "auth"
 
     override fun onPause() {
+        if (authAttempt != null) browserWasPaused = true
         CookieManager.getInstance().flush()
         webView.onPause()
         webView.pauseTimers()
@@ -526,6 +506,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         playerBridge.setForeground(false)
+        deviceSession.setForeground(false)
         // leaving the app: a sync pass adopts what was read online here as the
         // copies' baseline before the device can go offline (A2)
         if (Build.VERSION.SDK_INT >= 34) OfflineJobs.scheduleSync(this, 0)
@@ -540,70 +521,26 @@ class MainActivity : AppCompatActivity() {
         }
         webView.onResume()
         webView.resumeTimers()
-    }
-
-    /** Expected connection failures can reload; redirect defects cannot. */
-    private fun showHostedLoadTerminal(reason: HostedLoadFailure) {
-        if (hostedLoadTerminal != null && reason == HostedLoadFailure.Connection) return
-        hostedLoadTerminal?.let(root::removeView)
-        val terminal = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(Color.BLACK)
-            addView(TextView(this@MainActivity).apply {
-                text = when (reason) {
-                    HostedLoadFailure.Connection -> "Nexus could not connect."
-                    HostedLoadFailure.RedirectLoop -> "something went wrong."
+        if (::appBridge.isInitialized) deviceSession.setForeground(true)
+        if (browserWasPaused) {
+            browserWasPaused = false
+            // onNewIntent runs before onResume for an actual handoff; it retires authAttempt.
+            authAttempt?.let { current ->
+                webView.post {
+                    if (authAttempt === current) {
+                        deviceSession.cancelAttempt(current)
+                        authAttempt = null
+                    }
                 }
-                setTextColor(Color.WHITE)
-                textSize = 18f
-            })
-            if (reason == HostedLoadFailure.RedirectLoop) {
-                addView(TextView(this@MainActivity).apply {
-                    text = "nexus couldn’t open this page."
-                    setTextColor(Color.WHITE)
-                    textSize = 16f
-                })
-            }
-            if (shelfRouter != null) {
-                addView(Button(this@MainActivity).apply {
-                    text = "Open downloaded copies"
-                    setOnClickListener {
-                        hostedLoadTerminal?.let(root::removeView)
-                        hostedLoadTerminal = null
-                        webView.loadUrl(SHELF_URL)
-                    }
-                })
-            }
-            if (reason == HostedLoadFailure.Connection) {
-                addView(Button(this@MainActivity).apply {
-                    text = "Retry"
-                    setOnClickListener {
-                        hostedLoadTerminal?.let(root::removeView)
-                        hostedLoadTerminal = null
-                        webView.reload()
-                    }
-                })
             }
         }
-        hostedLoadTerminal = terminal
-        root.addView(
-            terminal,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        webView.saveState(outState)
-        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
         playerLifecycleClosing = true
+        authAttempt?.let(deviceSession::cancelAttempt)
+        authAttempt = null
+        appBridge.close()
         playerBridge.close()
         playerController?.release()
         playerController = null
@@ -617,13 +554,6 @@ class MainActivity : AppCompatActivity() {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
         super.onDestroy()
-    }
-
-    private fun hasValidatedNetwork(): Boolean {
-        val manager = getSystemService(android.net.ConnectivityManager::class.java)
-        val network = manager.activeNetwork ?: return false
-        val capabilities = manager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun connectPlayerController() {
@@ -711,99 +641,100 @@ class MainActivity : AppCompatActivity() {
     }
 
     internal fun routeUrl(uri: Uri) {
-        if (isOwnedUrl(uri)) {
-            if (webView.url != uri.toString()) {
-                webView.loadUrl(uri.toString())
-            }
-            return
+        if (isNativeAuthUri(uri)) { handleAuthUri(uri); return }
+        if (!appRouter.isAppRoute(uri)) { openBrowser(uri); return }
+        val current = webView.url?.let(Uri::parse)
+        if (current != null && appRouter.isAppRoute(current)) {
+            pendingAppLink = uri
+            flushAppLink()
+        } else {
+            pendingAppLink = null
+            webView.loadUrl(uri.toString())
         }
-        openExternalUrl(uri)
+    }
+
+    /** The command owner acknowledges delivery; a boot or unbound document retains the latest link. */
+    private fun flushAppLink() {
+        val uri = pendingAppLink ?: return
+        if (isFinishing || isDestroyed || webView.url?.let { appRouter.isAppRoute(Uri.parse(it)) } != true) return
+        val generation = appDocumentGeneration
+        val href = (uri.encodedPath ?: "/") + (uri.encodedQuery?.let { "?$it" } ?: "") +
+            (uri.encodedFragment?.let { "#$it" } ?: "")
+        webView.evaluateJavascript(
+            "(function(){var event=new CustomEvent('nexus:navigate',{cancelable:true,detail:{href:" +
+                JSONObject.quote(href) + "}});window.dispatchEvent(event);return event.defaultPrevented;})()",
+        ) { handled ->
+            if (handled == "true" && generation == appDocumentGeneration && pendingAppLink == uri) pendingAppLink = null
+        }
+    }
+
+    private fun openBrowser(uri: Uri) {
+        val target = if (isOwnedUrl(uri) && (uri.path?.startsWith("/account/") == true)) {
+            uri.buildUpon().clearQuery().apply {
+                for (name in uri.queryParameterNames) {
+                    if (name != "expected_account_id") for (value in uri.getQueryParameters(name)) appendQueryParameter(name, value)
+                }
+                deviceSession.accountId()?.let { appendQueryParameter("expected_account_id", it.toString()) }
+            }.build()
+        } else uri
+        openExternalUrl(target)
+    }
+
+    private suspend fun signIn(): String {
+        val current = try { deviceSession.newAttempt() }
+        catch (error: NexusOriginError) {
+            if (error.code == "E_DIFFERENT_ACCOUNT") return "DifferentAccount"
+            throw error
+        }
+        authAttempt = current
+        val uri = nexusBaseUri.buildUpon().path("/login")
+            .appendQueryParameter("flow", "handoff").appendQueryParameter("hc", current.challenge).build()
+        try {
+            CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(this, uri)
+        } catch (_: ActivityNotFoundException) {
+            deviceSession.cancelAttempt(current)
+            authAttempt = null
+            return "Failed"
+        }
+        return current.result.await()
     }
 
     internal fun startAuthFlow(triggerUri: Uri) {
-        val provider = triggerUri.getQueryParameter("provider")
-        val mode = triggerUri.getQueryParameter("mode") ?: "signin"
-        val next = triggerUri.getQueryParameter("next") ?: DEFAULT_AUTH_RETURN_TARGET
-        if (provider !in setOf("google", "github") || mode !in setOf("signin", "link")) {
-            return
-        }
-        val verifierBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        val verifier = Base64.encodeToString(verifierBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-        val challenge = MessageDigest.getInstance("SHA-256")
-            .digest(verifier.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        pendingHandoffVerifier = verifier
-        val uri = nexusBaseUri.buildUpon()
-            .appendEncodedPath("auth/oauth")
-            .appendQueryParameter("provider", provider)
-            .appendQueryParameter("mode", mode)
-            .appendQueryParameter("flow", "handoff")
-            .appendQueryParameter("hc", challenge)
-            .appendNonDefaultAuthReturnTarget(next)
-            .build()
-        try {
-            CustomTabsIntent.Builder()
-                .setShowTitle(true)
-                .build()
-                .launchUrl(this, uri)
-        } catch (_: ActivityNotFoundException) {
-            // justify-ignore-error: fall back to the platform URL handler below.
+        lifecycleScope.launch { signIn() }
+    }
+
+    private fun handleAuthUri(uri: Uri) {
+        // An intent return is not a user closing the current custom tab.
+        if (uri.path in setOf("/native", "/handoff")) browserWasPaused = false
+        when (uri.path) {
+            "/start" -> startAuthFlow(uri)
+            "/native" -> {
+                if (uri.getQueryParameter("provider") != "google" ||
+                    deviceSession.currentAttempt(uri.getQueryParameter("hc")) == null) return
+                authAttempt = null
+                googleSignInController.signIn(uri)
+            }
+            "/handoff" -> {
+                val challenge = uri.getQueryParameter("hc")
+                val current = deviceSession.currentAttempt(challenge) ?: return
+                authAttempt = null
+                if (uri.getQueryParameter("error") == "oauth_user_cancelled") deviceSession.cancelAttempt(current)
+                else lifecycleScope.launch { deviceSession.redeem(challenge, uri.getQueryParameter("code")) }
+            }
         }
     }
 
     internal fun loadUrlFromIntent(intent: Intent?) {
-        val uri = intent?.data ?: run {
-            if (webView.url != BuildConfig.NEXUS_BASE_URL) {
-                webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
-            }
-            return
+        val uri = intent?.data
+        if (uri == null) {
+            if (webView.url == null) webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
+        } else {
+            if (webView.url == null && !appRouter.isAppRoute(uri)) webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
+            routeUrl(uri)
         }
-        val launchUrl =
-            if (
-                uri.scheme == "nexus" &&
-                uri.host == "auth" &&
-                uri.path == "/handoff"
-            ) {
-                val callbackUri = nexusBaseUri.buildUpon()
-                    .path("/auth/handoff")
-                    .encodedQuery(uri.encodedQuery)
-                    .appendQueryParameter("hv", pendingHandoffVerifier ?: "")
-                    .build()
-                pendingHandoffVerifier = null
-                callbackUri.takeIf(::isOwnedUrl)?.toString()
-            } else {
-                uri.takeIf(::isOwnedUrl)?.toString()
-            } ?: return
-        if (webView.url == launchUrl) {
-            return
-        }
-        webView.loadUrl(launchUrl)
     }
 
-    private fun isOwnedUrl(uri: Uri): Boolean {
-        val scheme = uri.scheme ?: return false
-        if (scheme != "http" && scheme != "https") {
-            return false
-        }
-
-        val baseScheme = nexusBaseUri.scheme ?: return false
-        val baseHost = nexusBaseUri.host ?: return false
-        val uriPort = if (uri.port == -1) {
-            if (scheme == "https") 443 else 80
-        } else {
-            uri.port
-        }
-        val basePort = if (nexusBaseUri.port == -1) {
-            if (baseScheme == "https") 443 else 80
-        } else {
-            nexusBaseUri.port
-        }
-
-        val uriHost = uri.host ?: return false
-        return scheme == baseScheme &&
-            uriHost.equals(baseHost, ignoreCase = true) &&
-            uriPort == basePort
-    }
+    private fun isOwnedUrl(uri: Uri): Boolean = appRouter.isOwned(uri)
 
     private fun openExternalUrl(uri: Uri) {
         if (uri.scheme == "http" || uri.scheme == "https") {

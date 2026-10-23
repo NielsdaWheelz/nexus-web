@@ -59,7 +59,7 @@ internal class PlayerBridge(
         if (foreground) subscriber?.postMessage("{\"snapshot\":$snapshot}")
     }
 
-    /** A (re)connected service: bind it to the document's account again and push what it now holds. */
+    /** A (re)connected service: subscribe again after a service restart and push what it now holds. */
     fun onControllerConnected() {
         val frame = hello ?: return
         val connected = controller() ?: return

@@ -2,7 +2,6 @@
 
 import { createContext, useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Download, LogOut } from "lucide-react";
-import Link from "next/link";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import { saveWritingFile, writingFileName } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -10,7 +9,10 @@ import collection from "@/components/ui/Collection.module.css";
 import type { ControlAppearance } from "@/components/ui/control";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { useGuardedSignOut } from "@/lib/unsavedWork";
+import { isApiError } from "@/lib/api/client";
+import { installedApp, publishAdmission } from "@/lib/native/admission";
+import { sessionSignOut } from "@/lib/native/client";
+import { useGuardedSignOut, useWorkGuard } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import {
   commitSignOut,
@@ -99,6 +101,14 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     try {
       const completed = await guardedSignOut(async () => {
         await unbindNativePlayer();
+        if (installedApp) {
+          message = "writing on this device couldn’t be removed. your account is still open.";
+          await commitSignOut(token);
+          message = "writing was removed, but local account cleanup did not finish. retry sign out to remove downloads, pending progress and app credentials.";
+          await sessionSignOut();
+          publishAdmission("SignInRequired");
+          return;
+        }
         message = offlineMessage;
         if (offlineAvailable) await offlineCall("purge");
         message = offlineAvailable
@@ -107,6 +117,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
         await commitSignOut(token);
         message = "sign out couldn’t finish. your session is still open.";
       }, () => {
+        if (installedApp) { window.dispatchEvent(new Event("nexus:device-settings-refreshed")); return; }
         if (!live.current || !form.current?.isConnected) throw new Error("Sign-out form is no longer available");
         form.current.submit();
       }, { reviewedOwnerIds: [`writing:${token.account_id}`] });
@@ -117,7 +128,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       if (!(error instanceof WritingDecisionError)) reportError(error);
-      await restore(token, message);
+      await restore(token, installedApp && isApiError(error) && error.code === "E_LOCAL_CLEANUP" ? `${message} ${error.message}` : message);
     }
   };
   const decide = async (token: WritingRuntimeToken, result: SignOutResult, note: string | null) => {
@@ -135,6 +146,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   };
   function request() {
     if (current.current.kind !== "Idle") return;
+    if (installedApp && !window.confirm("sign out on this device?\n\nlocal downloads and the saved workspace will be removed. pending reading and listening progress will be lost. any unsynced writing needs a decision first.")) return;
     const token = writingRuntimeToken();
     setStep({ kind: "Checking", token });
     void run(token, async () => decide(token, await prepareSignOut(token, "sync"), null));
@@ -246,6 +258,7 @@ export default function AccountMenu(props: {
   renderTrigger: ComponentProps<typeof ActionMenu>["renderTrigger"];
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
+  const guard = useWorkGuard();
   const signOut = useContext(SignOutContext);
   // justify-defect: the authenticated shell mounts the one sign-out owner above every menu.
   if (!signOut) throw new Error("AccountMenu must be used within a SignOutProvider");
@@ -255,7 +268,7 @@ export default function AccountMenu(props: {
     id: item.id,
     label: item.label,
     render: ({ closeMenu, closeMenuWithoutFocus, presentation }) => (
-      <Link
+      <a
         href={item.href}
         data-workspace-rich-target="true"
         role={presentation === "menu" ? "menuitem" : undefined}
@@ -275,7 +288,7 @@ export default function AccountMenu(props: {
       >
         <item.icon size={16} className={collection.adornment} aria-hidden="true" />
         {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : <span className={collection.content}>{item.label}</span>}
-      </Link>
+      </a>
     ),
   });
 
@@ -301,7 +314,7 @@ export default function AccountMenu(props: {
       id: "downloads",
       label: "Downloads",
       icon: <Download size={16} aria-hidden="true" />,
-      onSelect: () => void offlineCall("showDownloads"),
+      onSelect: () => { if (guard.confirmDocumentExit()) void offlineCall("showDownloads"); },
     });
   }
 

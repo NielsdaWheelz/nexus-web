@@ -3,6 +3,7 @@ import {
   apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
+  outcomeUnknown,
 } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -88,6 +89,6 @@ export function chatFailure(error: unknown, title: string): ChatFailure {
   return {
     kind: "Feedback",
     feedback,
-    ambiguous: AMBIGUOUS.has(error.code) || error.status >= 500,
+    ambiguous: outcomeUnknown(error) || AMBIGUOUS.has(error.code) || error.status >= 500,
   };
 }

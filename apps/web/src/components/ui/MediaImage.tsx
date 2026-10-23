@@ -1,12 +1,12 @@
 "use client";
 
-import Image, { type ImageProps } from "next/image";
+import { useHostPolicy, type HostImageProps } from "@/lib/host/policy";
 import {
   buildMediaImageProxySrc,
   type MediaImageProxySrc,
 } from "@/lib/media/imageProxy";
 
-type SharedImageProps = Omit<ImageProps, "src" | "unoptimized">;
+type SharedImageProps = Omit<HostImageProps, "src" | "unoptimized">;
 
 type MediaImageProps =
   | ({ kind: "static"; src: string } & SharedImageProps)
@@ -14,6 +14,7 @@ type MediaImageProps =
   | ({ kind: "proxy-src"; src: MediaImageProxySrc } & SharedImageProps);
 
 export default function MediaImage(props: MediaImageProps) {
+  const { Image } = useHostPolicy();
   if (props.kind === "static") {
     const { kind: _kind, src, alt, ...rest } = props;
     return <Image src={src} alt={alt} {...rest} />;

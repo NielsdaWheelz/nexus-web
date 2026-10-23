@@ -7,7 +7,7 @@
  * reviewed choices with those same bytes. No request identity is persisted. */
 
 import { publishChange } from "@/lib/api/changes";
-import { ApiError, apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import type { BrowsePreview } from "@/lib/browse/api";
@@ -192,9 +192,14 @@ export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseCh
       if (remaining <= 0) { attempt.expired = true; throw outcome({ kind: "Expired" }); }
       let response: Response;
       try {
-        const deadline = AbortSignal.timeout(remaining);
-        response = await fetch(upload.upload_url, { method: "PUT", headers: { "Content-Type": upload.content_type },
-          body: file, signal: signal === undefined ? deadline : AbortSignal.any([deadline, signal]) });
+        response = await requestWithDeadline({ signal: signal ?? new AbortController().signal,
+          timeoutMs: remaining, request: async signal => {
+            const response = await fetch(upload.upload_url, {
+              method: "PUT", headers: { "Content-Type": upload.content_type }, body: file, signal,
+            });
+            await response.arrayBuffer();
+            return response;
+          } });
       } catch (error) {
         if (signal?.aborted) throw error;
         throw outcome({ kind: "BytesMissing" }, error);

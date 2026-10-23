@@ -26,6 +26,7 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
+import app.nexus.android.DeviceSession
 import app.nexus.android.NexusOriginClient
 import app.nexus.android.NexusOriginError
 import app.nexus.android.R
@@ -90,6 +91,9 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private lateinit var offline: OfflineStore
     private lateinit var origin: NexusOriginClient
     private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
+    private val device by lazy { DeviceSession.get(this) }
+    private var releaseDevice: (() -> Unit)? = null
+    private var releaseStop: (() -> Unit)? = null
     private var account: UUID? = null
     private var store: PlaybackStore? = null
     private var undoQueue: JSONObject? = null
@@ -242,6 +246,55 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             },
         )
         offlineUnsubscribe = offline.addListener { scope.launch { prepareOffline() } }
+        releaseStop = device.ownPlaybackStop {
+            retireActivation()
+            loads.withLock {
+                try { unbind() }
+                finally {
+                    // Explicit sign-out discards pending progress after attempting its checkpoint.
+                    recorder.retire()
+                    pendingCheckpoint = null
+                }
+            }
+        }
+        releaseDevice = device.subscribe { scope.launch { adoptDeviceAccount() } }
+        scope.launch { adoptDeviceAccount(); device.checkSession() }
+    }
+
+    /** Only DeviceSession chooses the namespace; document hellos merely subscribe. */
+    private suspend fun adoptDeviceAccount() {
+        try { device.initialize() } catch (_: IOException) { return }
+        try { loads.withLock {
+            val owner = device.accountId()
+            if (owner == account) {
+                if (owner != null && device.remotelyAdmitted()) {
+                    store?.let { recorder.bind(owner, it) }
+                    prepareOffline()
+                }
+                return@withLock
+            }
+            unbind()
+            if (owner != null && owner == device.accountId()) {
+                val playback = PlaybackStore(this, owner)
+                store = playback
+                account = owner
+                recorder.bind(owner, playback)
+                consumptionRevision = 0
+                // A restored checkpoint never starts audio or manufactures a sample.
+                restoreCheckpoint()
+                prepareOffline()
+            }
+            publish()
+        } } catch (_: IOException) {
+            error = "saved playback couldn’t be opened"
+            publish()
+        } catch (_: JSONException) {
+            error = "saved playback couldn’t be opened"
+            publish()
+        } catch (_: IllegalArgumentException) {
+            error = "saved playback couldn’t be opened"
+            publish()
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = session
@@ -257,6 +310,9 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     override fun onDestroy() {
+        device.setPlaybackActive(false)
+        releaseDevice?.invoke()
+        releaseStop?.invoke()
         player.pause()
         saveCheckpoint()
         accrueSaved()
@@ -313,7 +369,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             val op = inbound?.optString("op")
             val ownsDocument = inbound != null && inbound.optString("document_id") == documentId && controller == documentOwner
             val mine = if (
-                (op == "hello" && inbound.optString("account_id") != account?.toString()) ||
                 (ownsDocument && (
                     (op == "queue_read" && inbound.optBoolean("reconcile")) ||
                     op in setOf("cancelPlayback", "play", "pause", "seekAndPlay", "seek", "skip", "load", "preview", "fence", "unbind", "dismiss", "queue_commit") ||
@@ -366,25 +421,17 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             }
             ok()
         }
-        if (op == "hello") return loads.withLock {
-            if (mine != null && mine != activationGeneration) return failure("Stale")
-            val accountId = UUID.fromString(request.getString("account_id"))
-            if (documentOwner != controller || documentId != document) { draft = null; knownDraft = null; knownDescriptor = null; knownPreparationId = null }
-            documentOwner = controller
-            documentId = document
-            if (account != accountId) {
-                unbind()
-                val playback = PlaybackStore(this, accountId)
-                store = playback
-                account = accountId
-                recorder.bind(accountId, playback)
-                consumptionRevision = 0
-                // Restoration owns no permission to start audio or publish a listening sample.
-                restoreCheckpoint()
-                prepareOffline()
+        if (op == "hello") {
+            adoptDeviceAccount()
+            return loads.withLock {
+                if (documentOwner != controller || documentId != document) {
+                    draft = null; knownDraft = null; knownDescriptor = null; knownPreparationId = null
+                }
+                documentOwner = controller
+                documentId = document
+                publish()
+                if (account == null) failure("NotConnected") else ok()
             }
-            publish()
-            ok()
         }
         if (documentOwner != controller || documentId != document) return failure("NotConnected")
         if (op == "unbind") return loads.withLock {
@@ -1074,7 +1121,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         return true
     }
 
-    /** Online refusal retires retained authority; transport failure alone may use a prepared local file. */
+    /** Resource refusal retires retained authority; interrupted admission keeps prepared local files. */
     private suspend fun resolveDescriptor(mediaId: UUID, refresh: Boolean = true): JSONObject? {
         val playback = store ?: return null
         val generation = activationGeneration
@@ -1088,7 +1135,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 // justify-ignore-error: transport loss permits only explicit prepared offline authority.
                 null
             } catch (failure: NexusOriginError) {
-                if (failure.status != 408 && failure.status != 429 && failure.status < 500) {
+                if (failure.status !in setOf(401, 408, 426, 429) && failure.status < 500) {
                     retireDescriptor(playback, mediaId)
                     if (store !== playback || generation != activationGeneration) return null
                     playbackFailed = true
@@ -1172,7 +1219,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         val fresh = try { descriptorReads.withPermit { origin.player(mediaId) } }
                         catch (_: IOException) { continue } // justify-ignore-error: a later network/download event retries preparation.
                         catch (failure: NexusOriginError) {
-                            if (failure.status != 408 && failure.status != 429 && failure.status < 500)
+                            if (failure.status !in setOf(401, 408, 426, 429) && failure.status < 500)
                                 retireDescriptor(playback, mediaId)
                             continue
                         }
@@ -1214,6 +1261,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     // ---- player events ----
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+        device.setPlaybackActive(isPlaying)
         if (isPlaying) { error = null; playbackFailed = false }
         // at the end the recorder settles instead of writing
         if (player.playbackState != Player.STATE_ENDED) recorder.playing(isPlaying)

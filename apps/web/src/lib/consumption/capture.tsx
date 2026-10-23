@@ -10,8 +10,9 @@
  * refusals drop their batch. A tab closed offline loses what it held (accepted).
  */
 
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { useEffect } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isUnauthenticatedApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
@@ -262,7 +263,7 @@ function take(): Request | null {
 }
 
 async function send(): Promise<void> {
-  if (sending) return;
+  if (sending || !remoteReady()) return;
   sending = true;
   try {
     for (let request = take(); request !== null; request = take()) {
@@ -273,9 +274,10 @@ async function send(): Promise<void> {
         });
         attempt = 0;
       } catch (error) {
-        if (handleUnauthenticatedApiError(error)) return;
+        handleUnauthenticatedApiError(error);
+        const signingIn = isUnauthenticatedApiError(error);
         const status = isApiError(error) ? error.status : 0;
-        if (status === 0 || status === 408 || status === 429 || status >= 500) {
+        if (signingIn || status === 0 || status === 408 || status === 429 || status >= 500) {
           const { modality } = request.batch;
           const head = {
             media_id: request.media_id,
@@ -314,6 +316,7 @@ function leave(): void {
   for (const [group, accrual] of accruals)
     close(group, accrual, false, performance.now());
   settle();
+  if (!remoteReady()) return;
   let budget = KEEPALIVE_BYTES;
   for (let request = take(); request !== null; request = take()) {
     const body = JSON.stringify(request);
@@ -328,19 +331,21 @@ function leave(): void {
 export function ActivityCapture(): null {
   const hydrated = useViewportState().hydrated;
   useEffect(() => {
-    ready = hydrated;
+    ready = hydrated && remoteReady();
     settle();
     if (!hydrated) return;
     const resume = () => {
-      ready = true;
+      ready = remoteReady();
       settle();
     };
-    const online = () => schedule(0);
+    const online = () => { if (remoteReady()) schedule(0); };
+    const unsubscribe = subscribeAdmission(() => { resume(); if (remoteReady()) schedule(0); });
     document.addEventListener("visibilitychange", settle);
     window.addEventListener("pagehide", leave);
     window.addEventListener("pageshow", resume);
     window.addEventListener("online", online);
     return () => {
+      unsubscribe();
       document.removeEventListener("visibilitychange", settle);
       window.removeEventListener("pagehide", leave);
       window.removeEventListener("pageshow", resume);

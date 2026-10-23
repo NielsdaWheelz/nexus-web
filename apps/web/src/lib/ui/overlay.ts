@@ -277,6 +277,11 @@ let popping: string | null = null; // the address to keep while traversing it of
 let settlements: Array<() => void> = [];
 const here = () => location.pathname + location.search + location.hash;
 
+/** Modal history belongs to this owner, including its intermediate hashchange. */
+export function overlayOwnsHistoryTraversal(): boolean {
+  return marked || popping !== null;
+}
+
 // One entry while any modal is open. After the last closes, traverse it off;
 // if the address moved meanwhile (a navigating close), the landed entry keeps it.
 function syncHistory(): void {
@@ -302,12 +307,13 @@ function syncHistory(): void {
 function onPopState(): void {
   if (popping !== null) {
     const address = popping;
-    popping = null;
-    if (here() !== address) {
-      // After the router has seen the traversal.
-      requestAnimationFrame(() => history.replaceState(null, "", address));
-    }
-    syncHistory();
+    // Keep ownership through popstate/hashchange and restore after the router
+    // has seen the traversal. Neither intermediate address navigates a pane.
+    requestAnimationFrame(() => {
+      if (here() !== address) history.replaceState(null, "", address);
+      popping = null;
+      syncHistory();
+    });
     return;
   }
   interactionGeneration += 1;

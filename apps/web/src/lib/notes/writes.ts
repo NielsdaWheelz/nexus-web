@@ -7,6 +7,7 @@
  * Presentation listeners run after the acknowledgement transaction and cannot
  * govern delivery, settlement or retries.
  */
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -158,10 +159,10 @@ async function attempt(row: OutboxRow, signal: AbortSignal): Promise<void> {
   await settleWriting(row, ack);
 }
 async function pump(signingOut = false): Promise<void> {
-  if (running) return;
+  if (running || !remoteReady()) return;
   running = true;
   try {
-    while (true) {
+    while (remoteReady()) {
       const state = readWriting();
       const next = head();
       if ((!signingOut && state.paused) || state.storage_error !== null || state.incompatible.length > 0 || next === null) break;
@@ -194,6 +195,7 @@ export async function syncForSignOut(token: WritingRuntimeToken): Promise<void> 
   assertWritingRuntimeToken(token); await pump(true); assertWritingRuntimeToken(token);
 }
 subscribeWriting(nudgeWrites);
+subscribeAdmission(() => { if (remoteReady()) nudgeWrites(); });
 if (typeof window !== "undefined") {
   window.addEventListener("online", nudgeWrites);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") nudgeWrites(); });

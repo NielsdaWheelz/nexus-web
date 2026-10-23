@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import {
   FeedbackNotice,
@@ -205,9 +204,11 @@ export default function OracleLandingPaneBody() {
             )
           )}
 
-          <Link className={styles.skyLink} href="/atlas?layer=readings">
+          {/* Shared pane anchors are handled by the containing host. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a className={styles.skyLink} href="/atlas?layer=readings">
             ✦ View as a sky
-          </Link>
+          </a>
         </div>
       </div>
     </OracleTheme>

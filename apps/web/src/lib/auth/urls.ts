@@ -8,6 +8,11 @@ export type ReturnTarget = string & { readonly __returnTarget: unique symbol };
 export const OAUTH_PROVIDERS = ["google", "github"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 // query feedback; ended-session feedback comes from its cookie, never the url.
+export interface HandoffContext { readonly challenge: string }
+export function parseHandoffContext(flow: string | null | undefined, hc: string | null | undefined): HandoffContext | null {
+  return flow === "handoff" && typeof hc === "string" && /^[a-f0-9]{64}$/.test(hc) ? { challenge: hc } : null;
+}
+
 export type LoginError = "oauth_start_failed" | "sign_in_failed";
 
 export const DEFAULT_RETURN_TARGET =
@@ -79,8 +84,18 @@ function withNext(
   return search ? `${base}?${search}` : base;
 }
 
-export const loginPath = (target: ReturnTarget, error?: LoginError) =>
-  withNext("/login", target, error ? { error } : {});
+export const loginPath = (target: ReturnTarget, error?: LoginError, handoff: HandoffContext | null = null) =>
+  withNext("/login", target, { ...(error ? { error } : {}), ...(handoff ? { flow: "handoff", hc: handoff.challenge } : {}) });
+
+export function expectedAccountPath(path: string, expectedAccountId: string | null): string {
+  if (expectedAccountId === null) return path;
+  const url = new URL(path, "http://localhost");
+  url.searchParams.set("expected_account_id", expectedAccountId);
+  return `${url.pathname}${url.search}`;
+}
+
+export const switchBrowserAccountPath = (target: ReturnTarget) =>
+  withNext("/login", target, { switch_account: "1" });
 
 export const unavailablePath = (target: ReturnTarget) =>
   withNext("/auth/session/unavailable", target);
@@ -107,21 +122,20 @@ export const callbackPath = (
 export const oauthPath = (
   provider: OAuthProvider,
   target: ReturnTarget | "link",
+  handoff: HandoffContext | null = null,
 ) =>
   target === "link"
     ? withNext("/auth/oauth", DEFAULT_RETURN_TARGET, { mode: "link", provider })
-    : withNext("/auth/oauth", target, { provider });
+    : withNext("/auth/oauth", target, { provider, ...(handoff ? { flow: "handoff", hc: handoff.challenge } : {}) });
 
-export const savedPasswordPath = (target: ReturnTarget) =>
-  withNext("/account/password", target, { saved: "1" });
+export const savedPasswordPath = (target: ReturnTarget, expectedAccountId: string | null = null) =>
+  expectedAccountPath(withNext("/account/password", target, { saved: "1" }), expectedAccountId);
 
 export const handoffDeepLink = (
   outcome: { code: string } | { error: string },
   target: ReturnTarget,
-) => withNext("nexus://auth/handoff", target, outcome);
+  handoff: HandoffContext,
+) => withNext("nexus://auth/handoff", target, { ...outcome, hc: handoff.challenge });
 
-export const startDeepLink = (provider: OAuthProvider, target: ReturnTarget) =>
-  withNext("nexus://auth/start", target, { provider, mode: "signin" });
-
-export const nativeGoogleDeepLink = (target: ReturnTarget) =>
-  withNext("nexus://auth/native", target, { provider: "google" });
+export const nativeGoogleDeepLink = (target: ReturnTarget, handoff: HandoffContext) =>
+  withNext("nexus://auth/native", target, { provider: "google", hc: handoff.challenge });

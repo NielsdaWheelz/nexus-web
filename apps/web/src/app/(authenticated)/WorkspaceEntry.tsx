@@ -6,6 +6,7 @@ import { assertNever } from "@/lib/assertNever";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { EntryResult, WorkspaceBootstrap } from "@/lib/workspace/bootstrap";
 import AuthenticatedShell from "./AuthenticatedShell";
+import HostedPolicy from "@/lib/host/HostedPolicy";
 import styles from "./layout.module.css";
 
 /** One verified viewer's first successful initializer; later reads never replace live work. */
@@ -36,10 +37,10 @@ export default function WorkspaceEntry({
     );
   }
   return (
-    <AuthenticatedShell
+    <HostedPolicy><AuthenticatedShell
       {...bootstrap}
       renderEnvironment={renderEnvironment}
       entryFailure={result.kind === "Unavailable" ? result : null}
-    />
+    /></HostedPolicy>
   );
 }
