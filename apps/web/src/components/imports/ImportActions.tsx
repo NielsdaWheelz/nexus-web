@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -159,6 +159,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   readonly returnFocus: () => HTMLElement | null;
 }) {
   const shortcutsRef = useRef<HTMLDivElement>(null);
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; }, [triggerRef]);
   useActionFocusRecovery(shortcutsRef, returnFocus);
   const open = useOpenAction(item);
   const sourceOffer = item.obligations.source?.recovery ?? null;
@@ -178,14 +179,14 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     {upload.retry ? <span data-import-shortcut=""><RecoveryControl action={upload.retry} /></span> : null}
   </div>;
   const menu = item.media_id === null ? <ActionMenu
-    triggerRef={node => { triggerRef.current = node; }} returnFocusTo={returnFocus} label={`more actions for ${item.title}`}
+    triggerRef={setTrigger} returnFocusTo={returnFocus} label={`more actions for ${item.title}`}
     source={{ kind: "Immediate", subjectKey: `import:${item.ref}`, title: item.title,
       content: { sections: [{ id: "Import", label: null,
         options: [upload.retry, upload.remove].filter((action): action is Command => action !== null),
       }] },
     }}
   /> : <ContextualActionMenu
-    triggerRef={node => { triggerRef.current = node; }} returnFocusTo={returnFocus}
+    triggerRef={setTrigger} returnFocusTo={returnFocus}
     title={item.title} subjectKey={`import:${item.ref}:media:${item.media_id}`}
     sections={[{ id: "View", actions: commands }]}
     omitResourceActions={commands.map(action => action.id)}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import MediaActions from "@/components/media/MediaActions";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
@@ -58,6 +58,7 @@ export default function CollectionRow({
   const mediaLayout = row.media !== undefined;
   const paneId = usePaneRuntime()?.paneId;
   const moreRef = useRef<HTMLButtonElement>(null);
+  const setMore = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
   const returnFocus = () => moreRef.current?.isConnected && moreRef.current.getClientRects().length
     ? moreRef.current : findPaneCollectionRowFocusTarget(paneId, row.id);
   const title = row.title.segments
@@ -121,7 +122,7 @@ export default function CollectionRow({
       resourceRef={row.resourceRef ?? undefined}
       displayedActivation={row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
       label={menuLabel}
-      triggerRef={node => { moreRef.current = node; }}
+      triggerRef={setMore}
       triggerAttributes={{ "data-row-actions-control": "" }}
     />
   ) : undefined;

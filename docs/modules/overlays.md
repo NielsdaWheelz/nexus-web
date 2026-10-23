@@ -140,7 +140,9 @@ and clicked-highlight composition belong to `FloatingActionSurface`.
 
 return candidates must be connected, visible and enabled; a css-hidden opener
 cannot suppress its surviving fallback. visible but temporarily inert modal
-targets retain the existing uncover retry. modal tab candidates apply the same
+targets retain the existing uncover retry. closing a presenter retains its last
+active destination callbacks even if that render clears the session; its current
+close policy and focus-return veto remain live. modal tab candidates apply the same
 visibility rule. `useActionFocusRecovery` captures only a focused shortcut inside
 its host and observes that element while owned. when responsive css removes it,
 focus moves without scrolling to the host's surviving more control, then its

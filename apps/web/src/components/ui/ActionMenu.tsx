@@ -2,6 +2,7 @@
 
 import {
   Fragment,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -198,6 +199,10 @@ export default function ActionMenu({
   latest.current = source;
   const [announcement, announce] = useState("");
   const trigger = useRef<HTMLElement | null>(null);
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => {
+    trigger.current = node;
+    triggerRef?.(node);
+  }, [triggerRef]);
   const root = useRef<HTMLDivElement>(null);
   const sheetBody = useRef<HTMLDivElement>(null);
   const modalLayer = useRef<Layer | null>(null);
@@ -659,7 +664,7 @@ export default function ActionMenu({
   const popup = mobile || (candidate && !hasChoices) ? "dialog" : "menu";
   const triggerProps: ActionMenuTriggerProps = {
     ...triggerAttributes,
-    ref: (node) => { trigger.current = node; triggerRef?.(node); },
+    ref: setTrigger,
     type: "button", id: triggerId, "aria-label": label,
     "aria-describedby": triggerDisabled && triggerDisabledReason ? reasonId : undefined,
     "aria-disabled": triggerDisabled || undefined,

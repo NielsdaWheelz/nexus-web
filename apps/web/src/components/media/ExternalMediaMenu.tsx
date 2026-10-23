@@ -1,6 +1,6 @@
 "use client";
 
-import type { RefObject } from "react";
+import { useCallback, type RefObject } from "react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
@@ -17,6 +17,7 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
   returnFocus: () => HTMLElement | null;
 }) {
   const actions = useMediaActions(subject, null);
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; }, [triggerRef]);
   const commands: ActionDescriptor[] = actions.map(action => {
     const Glyph = MEDIA_ACTION_GLYPHS[action.glyph];
     return {
@@ -31,7 +32,7 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
   return <ContextualActionMenu
     title={subject.title} subjectKey={subjectKey}
     sections={[{ id: "View", actions: [...commands, ...viewActions] }]}
-    triggerRef={node => { triggerRef.current = node; }}
+    triggerRef={setTrigger}
     triggerAttributes={{ "data-row-actions-control": "" }}
   />;
 }

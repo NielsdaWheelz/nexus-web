@@ -521,7 +521,13 @@ export function useOverlay(
   readonly depth: number;
 } {
   const optionsRef = useRef(options);
-  optionsRef.current = options;
+  const previous = optionsRef.current;
+  // Closing presenters may clear their session before cleanup restores focus.
+  // Keep its last live targets; close policy and veto still come from this render.
+  optionsRef.current = !open && options.kind !== "tooltip" && previous.kind !== "tooltip"
+    ? { ...options, returnFocusTo: previous.returnFocusTo,
+        returnFocusFallback: previous.returnFocusFallback }
+    : options;
   const parent = useContext(OverlayContext);
   const [layer] = useState<Layer>(() => ({
     parent,
