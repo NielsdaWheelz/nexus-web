@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import Button from "@/components/ui/Button";
+import { isApiError, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { FeedbackState } from "@/components/feedback/Feedback";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { DeviceWorkspaceContext } from "./workspaceContext";
@@ -18,10 +19,10 @@ type Binding = NonNullable<DeviceStartup["binding"]>;
 
 export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [startup, setStartup] = useState<DeviceStartup | null | undefined>(undefined);
-  const [failure, setFailure] = useState(false);
+  const [failure, setFailure] = useState<{ error: unknown } | null>(null);
   const [signInResult, setSignInResult] = useState<SignInResult | null>(null);
   const [signingIn, setSigningIn] = useState(false);
-  const [cleanupFailed, setCleanupFailed] = useState(false);
+  const [cleanupFailure, setCleanupFailure] = useState<{ error: unknown } | null>(null);
   const admission = useRemoteAdmission();
   const revision = useRef("0");
   const initial = useRef<Binding["workspace"] | null>(null);
@@ -38,13 +39,13 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
       }
       if (!next?.binding) { initial.current = null; revision.current = "0"; }
       setStartup(next);
-      setFailure(false);
-    } catch { if (live.current && request === reading.current) setFailure(true); }
+      setFailure(null);
+    } catch (error) { if (live.current && request === reading.current) setFailure({ error }); }
   }, []);
   useEffect(() => {
     live.current = true;
     void read();
-    void hello().catch(() => setFailure(true));
+    void hello().catch(error => { if (live.current) setFailure({ error }); });
     const check = () => { void sessionCheck().catch(() => undefined); };
     window.addEventListener("online", check);
     const foreground = () => { if (document.visibilityState === "visible") check(); };
@@ -83,26 +84,30 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
     }, () => setSignInResult("Failed")).finally(() => setSigningIn(false));
   };
   const clearDevice = () => {
-    if (signingIn || (!cleanupFailed && !window.confirm("sign out on this device?\n\nlocal downloads and the saved workspace will be removed. pending reading and listening progress will be lost."))) return;
+    if (signingIn || (cleanupFailure === null && !window.confirm("sign out on this device?\n\nlocal downloads and the saved workspace will be removed. pending reading and listening progress will be lost."))) return;
     setSigningIn(true);
     void sessionSignOut().then(() => {
-      setCleanupFailed(false);
+      setCleanupFailure(null);
       setSignInResult(null);
       void read();
-    }, () => setCleanupFailed(true)).finally(() => setSigningIn(false));
+    }, error => setCleanupFailure({ error })).finally(() => setSigningIn(false));
   };
   const wrong = signInResult === "DifferentAccount";
+  const startupCleanup = isApiError(failure?.error) && failure.error.code === "E_LOCAL_CLEANUP" ? failure.error : null;
+  const cleanupError = startupCleanup ?? (isApiError(cleanupFailure?.error) ? cleanupFailure.error : null);
   return <main><FeedbackState
-    content={cleanupFailed ? { tone: "Warning", title: "sign out not completed", message: "local cleanup did not finish. retry to remove this device’s account data." }
+    content={startupCleanup !== null || cleanupFailure !== null ? { tone: "Warning", title: "sign out not completed", message: cleanupError?.message ?? "local cleanup did not finish. retry to remove this device’s account data." }
       : failure ? { tone: "Danger", title: "saved workspace couldn’t be opened" }
+      : admission === "UpdateRequired" ? STALE_BUILD_FEEDBACK
       : startup === undefined ? { tone: "Neutral", title: "opening your workspace…" }
       : wrong ? { tone: "Warning", title: "use the account already open here", message: "sign out first to switch accounts." }
       : signInResult === "Failed" ? { tone: "Warning", title: "couldn’t connect", message: "connect to sign in on this device." }
       : { tone: "Neutral", title: "sign in to open your workspace", message: "connect to sign in on this device." }}
     announcement="Polite"
-    actions={cleanupFailed ? [{ label: "retry sign out", busy: signingIn, onClick: clearDevice }]
+    actions={startupCleanup !== null ? [{ label: "retry cleanup", onClick: () => void read() }]
+      : cleanupFailure !== null ? [{ label: "retry sign out", busy: signingIn, onClick: clearDevice }]
       : failure ? [{ label: "retry", onClick: () => void read() }]
-      : startup === undefined ? undefined
+      : admission === "UpdateRequired" || startup === undefined ? undefined
       : wrong ? [{ label: "retry", busy: signingIn, onClick: signIn }, { label: "cancel", onClick: () => setSignInResult(null) }]
       : [{ label: "sign in", busy: signingIn, onClick: signIn }]}
   />

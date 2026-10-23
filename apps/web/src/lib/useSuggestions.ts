@@ -298,9 +298,16 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       commit((value) => ({ ...value, admitting: true }));
       const version = observationVersion;
       const latestAtAdmission = current.current.state?.latest;
+      const request = new AbortController();
+      const cancel = () => request.abort();
+      if (signal.aborted || controller.signal.aborted) cancel();
+      else {
+        signal.addEventListener("abort", cancel, { once: true });
+        controller.signal.addEventListener("abort", cancel, { once: true });
+      }
       admitting = (async () => {
         try {
-          const state = await refreshSuggestions(path, input, AbortSignal.any([signal, controller.signal]));
+          const state = await refreshSuggestions(path, input, request.signal);
           if (controller.signal.aborted) return false;
           if (version === observationVersion) installState(state);
           else void queue({ latest: true });
@@ -323,6 +330,8 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           failed(error, "Read", input);
           return false;
         } finally {
+          signal.removeEventListener("abort", cancel);
+          controller.signal.removeEventListener("abort", cancel);
           admitting = null;
           if (!controller.signal.aborted) commit((value) => ({ ...value, admitting: false }));
           armTimer();

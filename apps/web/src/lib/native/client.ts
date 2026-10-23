@@ -33,7 +33,7 @@ if (port) port.onmessage = ({ data }) => {
       publishAdmission(readAdmission(frame.remote_admission));
       return;
     }
-    if (typeof frame.id !== "number" || !Number.isSafeInteger(frame.id) || frame.id < 1 || typeof frame.ok !== "boolean") throw invalidReply();
+    if (typeof frame.id !== "number" || !Number.isSafeInteger(frame.id) || typeof frame.ok !== "boolean") throw invalidReply();
     const pending = waiting.get(frame.id);
     if (!frame.ok) {
       const error = frame.error;

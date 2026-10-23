@@ -199,7 +199,7 @@ export async function proxySession(
   const passive = isAndroidShellUserAgent(request.headers.get("user-agent") ?? "");
   let live;
   try {
-    live = await (passive ? presentedSession() : liveSession());
+    live = await (passive ? presentedSession((await cookies()).getAll()) : liveSession());
   } catch (error) {
     if (!(error instanceof AuthUnavailable)) throw error;
     const message = "Authentication service unavailable";

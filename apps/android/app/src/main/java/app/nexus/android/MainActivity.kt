@@ -73,6 +73,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var appBridge: AppBridge
     private var authAttempt: DeviceSession.Attempt? = null
     private var browserWasPaused = false
+    private var pendingAppLink: Uri? = null
+    private var appDocumentGeneration = 0L
     private val googleSignInController by lazy { GoogleSignInController(this) }
     // offline (android 14+): the bridge and the shelf router exist only there
     private var offline: OfflineBridge? = null
@@ -124,7 +126,7 @@ class MainActivity : AppCompatActivity() {
 
         webView = WebView(this)
         NexusWebView.configure(webView)
-        appBridge = AppBridge(webView, deviceSession, ::signIn)
+        appBridge = AppBridge(webView, deviceSession, ::signIn, ::flushAppLink)
         val bridgeAvailable = appBridge.install()
         if (Build.VERSION.SDK_INT >= 34) {
             val store = OfflineStore.get(this)
@@ -199,6 +201,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                appDocumentGeneration += 1
                 shelfActive = url?.let { Uri.parse(it).host } == SHELF_HOST
                 appBridge.onPageStarted()
                 offline?.onPageStarted()
@@ -629,11 +632,27 @@ class MainActivity : AppCompatActivity() {
         if (!appRouter.isAppRoute(uri)) { openBrowser(uri); return }
         val current = webView.url?.let(Uri::parse)
         if (current != null && appRouter.isAppRoute(current)) {
-            val href = (uri.encodedPath ?: "/") + (uri.encodedQuery?.let { "?$it" } ?: "") +
-                (uri.encodedFragment?.let { "#$it" } ?: "")
-            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('nexus:navigate',{detail:{href:" +
-                JSONObject.quote(href) + "}}))", null)
-        } else webView.loadUrl(uri.toString())
+            pendingAppLink = uri
+            flushAppLink()
+        } else {
+            pendingAppLink = null
+            webView.loadUrl(uri.toString())
+        }
+    }
+
+    /** The command owner acknowledges delivery; a boot or unbound document retains the latest link. */
+    private fun flushAppLink() {
+        val uri = pendingAppLink ?: return
+        if (isFinishing || isDestroyed || webView.url?.let { appRouter.isAppRoute(Uri.parse(it)) } != true) return
+        val generation = appDocumentGeneration
+        val href = (uri.encodedPath ?: "/") + (uri.encodedQuery?.let { "?$it" } ?: "") +
+            (uri.encodedFragment?.let { "#$it" } ?: "")
+        webView.evaluateJavascript(
+            "(function(){var event=new CustomEvent('nexus:navigate',{cancelable:true,detail:{href:" +
+                JSONObject.quote(href) + "}});window.dispatchEvent(event);return event.defaultPrevented;})()",
+        ) { handled ->
+            if (handled == "true" && generation == appDocumentGeneration && pendingAppLink == uri) pendingAppLink = null
+        }
     }
 
     private fun openBrowser(uri: Uri) {
@@ -649,7 +668,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun signIn(): String {
-        val current = deviceSession.newAttempt()
+        val current = try { deviceSession.newAttempt() }
+        catch (error: NexusOriginError) {
+            if (error.code == "E_DIFFERENT_ACCOUNT") return "DifferentAccount"
+            throw error
+        }
         authAttempt = current
         val uri = nexusBaseUri.buildUpon().path("/login")
             .appendQueryParameter("flow", "handoff").appendQueryParameter("hc", current.challenge).build()
@@ -668,11 +691,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleAuthUri(uri: Uri) {
+        // An intent return is not a user closing the current custom tab.
+        if (uri.path in setOf("/native", "/handoff")) browserWasPaused = false
         when (uri.path) {
             "/start" -> startAuthFlow(uri)
             "/native" -> {
+                if (uri.getQueryParameter("provider") != "google" ||
+                    deviceSession.currentAttempt(uri.getQueryParameter("hc")) == null) return
                 authAttempt = null
-                browserWasPaused = false
                 googleSignInController.signIn(uri)
             }
             "/handoff" -> {

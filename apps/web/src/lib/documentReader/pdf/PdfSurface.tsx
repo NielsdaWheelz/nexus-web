@@ -63,7 +63,13 @@ async function hostRanges(
 ): Promise<PDFDataRangeTransport> {
   // pdf.js aborts the transport when it drops the document.
   const dropped = new AbortController();
-  const live = AbortSignal.any([signal, dropped.signal]);
+  const live = dropped.signal;
+  const close = () => {
+    signal.removeEventListener("abort", close);
+    dropped.abort();
+  };
+  if (signal.aborted) close();
+  else signal.addEventListener("abort", close, { once: true });
   const read = async (range: string) => {
     const response = await ranges(range, live);
     const size = /\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
@@ -71,9 +77,9 @@ async function hostRanges(
       throw new Error(`pdf range answered ${response.status}`);
     return { response, size: Number(size[1]) };
   };
-  const whole = await read("bytes=0-");
+  const whole = await read("bytes=0-").catch(error => { close(); throw error; });
   const transport = new pdfjs.PDFDataRangeTransport(whole.size, null);
-  transport.abort = () => dropped.abort();
+  transport.abort = close;
   transport.requestDataRange = (begin, end) =>
     void read(`bytes=${begin}-${end - 1}`)
       .then(async ({ response }) => {

@@ -32,7 +32,8 @@ export default async function SharePage({
     switch (session.state) {
       case "active":
       case "refreshable":
-        // `refreshable` proceeds: the capture call refreshes the session inline.
+        // browsers renew at capture; native validates through DeviceSession
+        // before loading this hosted surface.
         content = <ShareCapture text={sharedText} isShell={isShell} />;
         break;
       case "ended":

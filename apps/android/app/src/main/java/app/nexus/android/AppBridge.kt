@@ -19,6 +19,7 @@ internal class AppBridge(
     private val webView: WebView,
     private val session: DeviceSession,
     private val signIn: suspend () -> String,
+    private val onHello: () -> Unit,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val framing = OwnedOriginWebMessage(webView, "nexusApp", BuildConfig.NEXUS_BASE_URL, ::onMessage)
@@ -55,6 +56,7 @@ internal class AppBridge(
                         session.initialize()
                         require(message.documentGeneration == framing.currentDocumentGeneration())
                         subscriber = message.replyProxy
+                        onHello()
                         JSONObject().put("remote_admission", session.remoteAdmission)
                     }
                     "workspace_begin" -> JSONObject().put("write_id", session.workspaceBegin(document,

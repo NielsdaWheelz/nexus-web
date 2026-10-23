@@ -71,9 +71,14 @@ export function openStream<E, P = unknown>(
   options: StreamOptions<E, P>,
 ): () => void {
   const stop = new AbortController();
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, stop.signal])
-    : stop.signal;
+  const signal = stop.signal;
+  const abort = () => stop.abort(options.signal?.reason);
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener("abort", abort, { once: true });
+  const close = () => {
+    options.signal?.removeEventListener("abort", abort);
+    stop.abort();
+  };
   const maxReconnects = options.maxReconnects ?? 8;
   const maxBackoffMs = options.maxBackoffMs ?? 30_000;
   let cursor = options.after ?? "";
@@ -186,8 +191,8 @@ export function openStream<E, P = unknown>(
     }
   };
   // a final callback closes any connection still open
-  void run().finally(() => stop.abort());
-  return () => stop.abort();
+  void run().finally(close);
+  return close;
 }
 
 /**

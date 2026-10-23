@@ -239,10 +239,9 @@ export async function liveSession(): Promise<LiveSession> {
   return resolve((await cookies()).getAll(), false);
 }
 
-// ordinary installed bff calls may verify the presented bearer but cannot
-// rotate or clear native-owned credentials, even inside the renewal margin.
-export async function presentedSession(): Promise<LiveSession> {
-  const presented = (await cookies()).getAll();
+// ordinary native bff/document requests verify the presented bearer without
+// renewing or clearing credentials, even inside the renewal margin.
+export async function presentedSession(presented: readonly CookieValue[]): Promise<LiveSession> {
   const accessToken = readBearer(presented);
   if (accessToken === null || (await verify(accessToken)) === "Rejected") {
     return { kind: "Anonymous" };

@@ -12,6 +12,8 @@ import android.webkit.CookieManager
 import androidx.core.util.AtomicFile
 import app.nexus.android.offline.OfflineStore
 import app.nexus.android.offline.OfflineJobService
+import app.nexus.android.playback.ActivityOutbox
+import app.nexus.android.playback.PlaybackStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -145,8 +147,11 @@ internal class DeviceSession private constructor(private val context: Context) {
             credentials.withLock {
                 if (!cleanupCompleted && files.withLock { envelope?.isNull("binding") == true }) {
                     admission("SignInRequired")
-                    withContext(Dispatchers.Main.immediate) { playbackStop?.invoke() }
-                    cleanup(stopJobs = false)
+                    try {
+                        withContext(Dispatchers.Main.immediate) { playbackStop?.invoke() }
+                        cleanup(stopJobs = false)
+                    }
+                    catch (error: IOException) { throw LocalStateError("E_LOCAL_CLEANUP", error.message ?: "sign out cleanup failed") }
                     cleanupCompleted = true
                     signingOut = false
                 }
@@ -294,6 +299,7 @@ internal class DeviceSession private constructor(private val context: Context) {
     }
 
     private suspend fun bootstrap(generation: Long, current: () -> Boolean = { lifetime.get() == generation }) {
+        files.withLock { expectedAccount() }
         val started = SystemClock.elapsedRealtime()
         val data = origin.bootstrap(current)
         if (signingOut || !current()) throw IOException("retired session")
@@ -302,7 +308,7 @@ internal class DeviceSession private constructor(private val context: Context) {
         require(refresh >= 0)
         files.withLock {
             if (signingOut || !current()) throw IOException("retired session")
-            val expected = account ?: OfflineStore.get(context).account
+            val expected = expectedAccount()
             if (expected != null && expected != remoteAccount) throw NexusOriginError(409, "E_DIFFERENT_ACCOUNT")
             val previous = envelope?.optJSONObject("binding")
             val binding = JSONObject().put("account", data.getJSONObject("account"))
@@ -326,10 +332,21 @@ internal class DeviceSession private constructor(private val context: Context) {
         }
     }
 
-    suspend fun newAttempt(): Attempt {
+    /** Cached namespaces preserve data during first provisioning; only the verified root grants authority. */
+    private fun expectedAccount(): UUID? {
+        account?.let { return it }
+        val cached = PlaybackStore.cachedAccounts(context).toMutableSet()
+        OfflineStore.get(context).account?.let(cached::add)
+        cached += ActivityOutbox(File(context.filesDir, "player/spans.json")).cachedAccounts()
+        if (cached.size > 1) throw NexusOriginError(409, "E_DIFFERENT_ACCOUNT")
+        return cached.singleOrNull()
+    }
+
+    suspend fun newAttempt(): Attempt = withContext(Dispatchers.IO) {
         initialize()
-        return credentials.withLock {
+        credentials.withLock {
             if (signingOut) throw LocalStateError("E_LOCAL_CLEANUP", "finish signing out before signing in")
+            expectedAccount()
             attempt?.result?.complete("Cancelled")
             val verifier = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) },
                 Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
@@ -352,7 +369,7 @@ internal class DeviceSession private constructor(private val context: Context) {
             val current = currentAttempt(challenge) ?: return@withLock "Cancelled"
             val ownsAttempt = { attempt === current && lifetime.get() == current.generation }
             var result = if (code.isNullOrEmpty()) "Failed" else try {
-                val expected = account ?: OfflineStore.get(context).account
+                val expected = expectedAccount()
                 origin.handoff(code, current.verifier, expected?.toString(), ownsAttempt)
                 bootstrap(current.generation, ownsAttempt)
                 "Restored"
@@ -434,7 +451,7 @@ internal class DeviceSession private constructor(private val context: Context) {
         }
     }
 
-    private suspend fun cleanup(stopJobs: Boolean) {
+    private suspend fun cleanup(stopJobs: Boolean) = withContext(NonCancellable) {
         account = null
         if (stopJobs) OfflineJobService.stopForSignOut(context)
         OfflineStore.get(context).purge()

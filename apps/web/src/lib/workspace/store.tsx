@@ -12,6 +12,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { hello } from "@/lib/native/client";
 import { installedApp } from "@/lib/native/admission";
 import { useHostPolicy } from "@/lib/host/policy";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -696,12 +697,16 @@ function createWorkspaceStore(
       mounted = true;
       project(true);
       const navigate = (event: Event) => {
+        event.preventDefault();
         const href = normalizeWorkspaceHref((event as CustomEvent<{ href: string }>).detail.href);
         if (href) commands.activateWorkspaceTarget({ originPaneId: data.state.active_primary_pane_id, target: { href }, disposition: { kind: "Follow" } });
       };
       window.addEventListener("nexus:navigate", navigate);
       window.addEventListener("hashchange", foldHash);
       window.addEventListener("popstate", foldHash);
+      // Entry hello subscribes before binding; this hello accepts retained native
+      // navigation only after the workspace command owner is mounted.
+      if (installedApp) void hello().catch(error => reportError(error));
       return () => {
         mounted = false;
         window.removeEventListener("nexus:navigate", navigate);

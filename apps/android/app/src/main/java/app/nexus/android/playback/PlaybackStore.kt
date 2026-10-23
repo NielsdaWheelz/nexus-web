@@ -74,6 +74,20 @@ internal class PlaybackStore(context: Context, val accountId: UUID) {
         const val MAX_ENTRIES = 10_000
         const val MESSAGE_BYTES = 32 * 1024
 
+        /** Current account filenames, including AtomicFile's recoverable backup, constrain first provisioning. */
+        fun cachedAccounts(context: Context): Set<UUID> {
+            val directory = File(context.filesDir, "player/accounts")
+            if (!directory.exists()) return emptySet()
+            val files = directory.listFiles() ?: throw IOException("saved playback accounts could not be read")
+            return files.mapNotNull { file ->
+                when {
+                    file.name.endsWith(".json.bak") -> UUID.fromString(file.name.removeSuffix(".json.bak"))
+                    file.name.endsWith(".json") -> UUID.fromString(file.name.removeSuffix(".json"))
+                    else -> null
+                }
+            }.toSet()
+        }
+
         fun validateEntry(entry: JSONObject) {
             require(entry.length() == 2)
             UUID.fromString(entry.getString("id"))
