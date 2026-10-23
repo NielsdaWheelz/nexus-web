@@ -10,10 +10,12 @@ server receives a fresh closed runtime environment.
 Only explicit live credentials reach api/workers. Creates are not retried: a
 failed attempt owns its unique namespaces through finally cleanup. Recovery
 metadata never authorizes killing a saved pid. Caller files are never removed.
-Host admission holds one of two persistent flock slots from acquisition through
-teardown; client throttling takes both, trying slot 1 then slot 2. Waiters hold
-neither slot and report diagnostic run ids for at most
-1800 seconds; only the kernel owns slot release, never a saved pid.
+Host admission reads capacity.json once from the existing host state directory;
+its sole max_parallel_labs integer defaults to six when the file is absent.
+Ordinary runs hold one persistent flock slot through teardown; client throttling
+takes all configured slots in ascending order. Waiters release partial locks and
+report observed diagnostic run ids for at most 1800 seconds; only the kernel owns
+slot release, never a saved pid. Capacity changes require drained labs and waiters.
 
 Use a dedicated checkout with no root/web dotenv files, concurrent next/static
 checks or application edits. Context is published only after /me bootstrap. Its
@@ -37,8 +39,8 @@ private host socket directory is recovery-recorded and removed after host drain.
 
 Driver exit passes through; usage is 2, setup/runtime failure 125, interruption
 130/143. Cleanup failure turns success into 125. Private logs remain; secrets
-and session files are deleted only after verified namespace and lab image
-cleanup. An incomplete cleanup retains recovery inputs. The checkout lock is released last;
+and session files are deleted only after verified owned namespace cleanup.
+An incomplete cleanup retains recovery inputs. The checkout lock is released last;
 a stale lock after hard kill requires manual recovery, never a saved-pid killer.
 """
 
@@ -301,6 +303,8 @@ def main() -> int:
         epilog="prerequisites: docker compose, supabase 2.117.0, node, bun, uv, locked python/web dependencies, "
         "playwright chromium. "
         "use a dedicated checkout without root/web dotenv files; do not edit app source or run next/static checks during a run. "
+        "host capacity: ${XDG_STATE_HOME:-~/.local/state}/nexus-lab/capacity.json; "
+        'optional {"max_parallel_labs": 6}; absent means six lab slots. '
         "example: ./scripts/lab -- node apps/web/node_modules/@playwright/test/cli.js test "
         "--config apps/web/scripts/lab/playwright.config.ts",
     )
@@ -325,7 +329,7 @@ def main() -> int:
     parser.add_argument(
         "--client-throttle",
         type=int,
-        help="integer client CPU slowdown >= 1; holds both host slots exclusively",
+        help="integer client CPU slowdown >= 1; holds all configured lab slots exclusively",
     )
     parser.add_argument(
         "driver",
@@ -615,12 +619,38 @@ def main() -> int:
         if not state_home.is_absolute():
             raise ValueError("XDG_STATE_HOME must be absolute")
         slot_dir = state_home / "nexus-lab/slots"
+        capacity_path = slot_dir.parent / "capacity.json"
+        capacity_error = (
+            f'{capacity_path}: expected {{"max_parallel_labs": n}} with integer n >= 1 '
+            "(excluding booleans) and 31000 + 10*n - 1 <= 65535"
+        )
+        try:
+            capacity = json.loads(capacity_path.read_text())
+        except FileNotFoundError:
+            capacity = {"max_parallel_labs": 6}
+        except (OSError, ValueError) as exc:
+            raise ValueError(capacity_error) from exc
+        if (
+            not isinstance(capacity, dict)
+            or capacity.keys() != {"max_parallel_labs"}
+            or type(capacity["max_parallel_labs"]) is not int
+            or capacity["max_parallel_labs"] < 1
+            or 31000 + 10 * capacity["max_parallel_labs"] - 1 > 65535
+        ):
+            raise ValueError(capacity_error)
+        max_parallel_labs = capacity["max_parallel_labs"]
         slot_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        for number in (1, 2):
+        for number in range(1, max_parallel_labs + 1):
             slot_files.append((slot_dir / f"slot-{number}").open("a+"))
         deadline = time.monotonic() + HOST_SLOT_WAIT_SECONDS
         previous_holders = None
-        required_slots = 2 if args.client_throttle is not None else 1
+        exclusive = args.client_throttle is not None
+        required_slots = max_parallel_labs if exclusive else 1
+        requested_slots = (
+            f"all {max_parallel_labs} lab slots"
+            if exclusive
+            else f"one of {max_parallel_labs} lab slots"
+        )
         while True:
             holders: list[str] = []
             acquired: list[tuple[int, TextIO]] = []
@@ -632,7 +662,7 @@ def main() -> int:
                     holders.append(
                         f"slot-{number}={slot_file.read().strip() or 'acquiring holder'}"
                     )
-                    if required_slots == 2:
+                    if exclusive:
                         break
                     continue
                 acquired.append((number, slot_file))
@@ -640,24 +670,30 @@ def main() -> int:
                     break
             if len(acquired) == required_slots:
                 host_slot = acquired[0][0]
-                for number, slot_file in acquired:
+                for _, slot_file in acquired:
                     slot_file.seek(0)
                     slot_file.truncate()
                     slot_file.write(run_id + "\n")
                     slot_file.flush()
-                    message(f"host slot {number}: acquired for {run_id}")
+                message(
+                    f"acquired all {max_parallel_labs} lab slots for run {run_id}"
+                    if exclusive
+                    else f"acquired lab slot {host_slot} of {max_parallel_labs} for run {run_id}"
+                )
                 break
             for _, slot_file in acquired:
                 fcntl.flock(slot_file, fcntl.LOCK_UN)
             current_holders = ", ".join(holders)
             if current_holders != previous_holders:
                 message(
-                    f"host slots busy: {current_holders}; waiting up to {HOST_SLOT_WAIT_SECONDS}s"
+                    f"waiting for {requested_slots}; observed holders: {current_holders}; "
+                    f"limit {HOST_SLOT_WAIT_SECONDS}s"
                 )
                 previous_holders = current_holders
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    f"host slot wait exceeded {HOST_SLOT_WAIT_SECONDS}s; {current_holders}"
+                    f"wait for {requested_slots} exceeded {HOST_SLOT_WAIT_SECONDS}s; "
+                    f"observed holders: {current_holders}"
                 )
             time.sleep(0.2)
         sockets: list[socket.socket] = []
@@ -674,7 +710,9 @@ def main() -> int:
                         raise OSError("port already has a listener")
                     listener = socket.create_server(("127.0.0.1", port))
                 except OSError as exc:
-                    raise RuntimeError(f"host slot {host_slot} port {port} unavailable") from exc
+                    raise RuntimeError(
+                        f"lab slot {host_slot} port {port} unavailable; inspect the port owner"
+                    ) from exc
                 sockets.append(listener)
             (
                 db_port,
@@ -1331,12 +1369,6 @@ def main() -> int:
                         )
                         if remaining.strip():
                             cleanup_errors.append(f"owned {kind} resources remain ({namespace})")
-                remaining = command(
-                    ["docker", "image", "ls", "-q", "--filter", "reference=nexus-lab-*"],
-                    timeout=max(0.1, deadline - time.monotonic()),
-                )
-                if remaining.strip():
-                    cleanup_errors.append("host-wide lab images remain")
             except Exception:
                 cleanup_errors.append("cleanup verification unavailable")
         if lock_owned and run_dir is not None:
@@ -1356,9 +1388,12 @@ def main() -> int:
                     result = 125
             elif resources_owned:
                 (run_dir / "recovery.txt").write_text(
-                    "verified owned runtime removed; generated credentials and browser session deleted.\n"
+                    "verified this run's owned runtime removed; "
+                    "generated credentials and browser session deleted.\n"
                 )
-                message(f"runtime removed; private diagnostics retained: {run_dir}")
+                message(
+                    f"this run's owned runtime removed; private diagnostics retained: {run_dir}"
+                )
         for slot_file in slot_files:
             slot_file.close()
         if lock_owned:
