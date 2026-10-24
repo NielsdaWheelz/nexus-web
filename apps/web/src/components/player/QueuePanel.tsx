@@ -41,7 +41,7 @@ function sourceHref(source: QueueSource): string {
 }
 
 export function QueueStatus() {
-  const { queue } = usePlayerSession();
+  const { queue, state } = usePlayerSession();
   const commands = usePlayerCommands();
   return <>
     {queue.phase === "Preparing" ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "preparing queue…" }} actions={[{ label: "cancel", onClick: commands.cancelQueuePreparation }]} /> : null}
@@ -49,7 +49,7 @@ export function QueueStatus() {
     {queue.phase === "Uncertain" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t confirm queue change" }} actions={[{ label: "check", onClick: commands.checkQueue }]} /> : null}
     {queue.phase === "Unavailable" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "player unavailable", message: "open nexus in a browser with web locks and broadcast channels to play audio" }} /> : null}
     {queue.error !== null && queue.failure?.kind !== "Episode" && queue.phase !== "Uncertain" && queue.phase !== "Unavailable" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: queue.error }} actions={[{ label: "retry", onClick: commands.checkQueue }]} /> : null}
-    {queue.canRestore ? <FeedbackNotice announcement="None" content={{ tone: "Neutral", title: "queue replaced" }} actions={[{ label: "restore previous queue", onClick: commands.restoreQueue }]} /> : null}
+    {queue.known && queue.phase === "Ready" && state.kind !== "Unavailable" && queue.canRestore ? <FeedbackNotice announcement="None" content={{ tone: "Neutral", title: "queue replaced" }} actions={[{ label: "restore previous queue", onClick: commands.restoreQueue }]} /> : null}
   </>;
 }
 
@@ -69,7 +69,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
   const current = header?.current_entry ?? null;
   const visible = current === null ? upcoming : [current, ...upcoming];
   const summaries = useMediaSummaryIds(visible.map(entry => entry.media_id));
-  const ready = queue.phase === "Ready";
+  const ready = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
   const failure = queue.failure?.kind === "Episode" && queue.failure.entry_id === current?.id ? queue.failure : null;
   const failed = failure !== null;
   useLayoutEffect(() => { setPrefix(100); setPageError(false); }, [header?.queue_id, header?.current_entry_id]);
@@ -84,7 +84,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
   }, [header?.revision, ready]);
 
   const send = async (command: QueueCommand) => {
-    if (header === null) return false;
+    if (!ready || header === null) return false;
     setCommandFailed(false);
     try {
       await commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command });
@@ -135,7 +135,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     const action = (id: string, label: string, icon: ReactElement, invoke: () => void, reason: string | null = null): ActionDescriptor => ({
       kind: "command", id, label, icon,
       disabled: !ready || reason !== null,
-      disabledReason: !ready ? "wait for the queue change to finish" : reason ?? undefined,
+      disabledReason: !ready ? state.kind === "Unavailable" ? "player unavailable" : "wait for the queue change to finish" : reason ?? undefined,
       onSelect: () => { if (ready && reason === null) invoke(); },
     });
     const options = [
@@ -162,8 +162,8 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
       rootProps={{ "data-collection-row-id": entry.id, "aria-current": isCurrent ? "true" : undefined, "aria-label": name }}
       controls={<>
         <Button iconOnly icon={<Play />} size="comfortable" aria-label={`${failed && isCurrent ? "retry" : "play"}: ${name}`}
-          data-queue-entry={entry.id} data-queue-action="play" aria-disabled={!ready || undefined}
-          onClick={() => { if (ready) select(entry.id); }} />
+          data-queue-entry={entry.id} data-queue-action="play" disabled={!ready}
+          onClick={() => select(entry.id)} />
         {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus}
           label={`more actions for ${name}${failed && isCurrent ? "; episode playback failed" : ""}`}
           triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
@@ -178,18 +178,18 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
     <QueueStatus />
     {commandFailed ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t change queue", message: "try the queue action again" }} /> : null}
-    {header?.source ? <div>
+    {!queue.known ? <p>{queue.error === null ? "loading queue…" : "couldn’t load queue"}</p> : header?.source ? <div>
       <ButtonLink href={sourceHref(header.source)}>{header.source.kind === "Lectern" ? "started from lectern" : `started from “${header.source.label}”`}</ButtonLink>
       <p className={styles.eyebrow}>{[header.source.sort === null ? header.source.kind === "Lectern" ? "custom order" : "default order" : SORT_LABELS[header.source.sort], header.source.query ? `filter: ${header.source.query}` : null,
         header.source.kind === "Library" ? [header.source.entry_type?.replaceAll("_", " "), header.source.projection?.replaceAll("_", " "), header.source.completion].filter(Boolean).join(" · ") : header.source.kind === "Podcast" ? header.source.state.replaceAll("_", " ") : null].filter(Boolean).join(" · ")}</p>
-    </div> : <p className={styles.eyebrow}>custom queue</p>}
-    <p className={styles.eyebrow}>{header?.count ?? 0} queued · {remaining} upcoming</p>
+    </div> : header !== null ? <p className={styles.eyebrow}>custom queue</p> : null}
+    {queue.known ? <p className={styles.eyebrow}>{header?.count ?? 0} queued · {remaining} upcoming</p> : null}
     {summaries.error !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "episodes couldn’t be loaded" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
-    {failure !== null && current !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: failure.title === null ? "episode unavailable" : `couldn’t play “${failure.title}”` }} actions={[
+    {failure !== null && current !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: failure.title === null ? "episode unavailable" : `couldn’t play “${failure.title}”` }} actions={ready ? [
       { label: "retry", onClick: () => select(current.id) },
       { label: "skip", onClick: () => { const next = upcoming[0]; if (next === undefined) commands.next(); else select(next.id); } },
-    ]} /> : null}
-    {current !== null ? <div><h3 className={styles.panelTitle}>current</h3>{render(current, (header?.current_index ?? 0) + 1, true)}</div> : <p>{header && header.count > 0 ? "queue finished" : "nothing queued"}</p>}
+    ] : undefined} /> : null}
+    {current !== null ? <div><h3 className={styles.panelTitle}>current</h3>{render(current, (header?.current_index ?? 0) + 1, true)}</div> : queue.known ? <p>{header && header.count > 0 ? "queue finished" : "nothing queued"}</p> : null}
     {upcoming.length > 0 ? <div><h3 className={styles.panelTitle}>upcoming</h3>
       <SortableList items={rows} order={order} ariaLabel="upcoming episodes" scrollport={scrollport}
         onAnnouncement={announce} renderItem={row => {
@@ -197,7 +197,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
           return render(upcoming[index]!, firstUpcoming + index + 1, false);
         }} />
     </div> : null}
-    {upcoming.length < remaining ? <Button disabled={paging} onClick={() => {
+    {queue.known && upcoming.length < remaining ? <Button disabled={!ready || paging} onClick={() => {
       setPaging(true); setPageError(false);
       const next = prefix + 100;
       const loaded = queue.offset + queue.entries.length - firstUpcoming;
@@ -206,7 +206,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     <div className={styles.queueActions}>
       <Button onClick={commands.previous} disabled={!ready || header === null || header.count === 0}>previous</Button>
       {current !== null && state.kind === "Absent" ? <Button onClick={commands.resume} disabled={!ready}>resume</Button> : null}
-      <Button onClick={commands.stop} disabled={!ready || header === null}>stop playback</Button>
+      <Button onClick={commands.stop} disabled={state.kind !== "Loaded" && (!ready || header === null)}>stop playback</Button>
       <Button onClick={commands.clearQueue} disabled={!ready || header === null || header.count === 0}>clear queue</Button>
     </div>
   </section>;

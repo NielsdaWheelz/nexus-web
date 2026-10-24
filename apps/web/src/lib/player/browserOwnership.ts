@@ -9,6 +9,8 @@ import { ApiError, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { EngineState, PlayerQueue } from "@/lib/player/playerRuntime";
 
+export const BROWSER_COORDINATION_BOUND_MS = 5_000;
+
 interface BrowserSnapshot { readonly queue: PlayerQueue; readonly engine: EngineState }
 
 export type BrowserPlayerCommand =
@@ -121,7 +123,7 @@ export function createBrowserOwnership(input: {
     acquiring = new Promise<boolean>((resolve, reject) => {
       const abort = new AbortController();
       let granted = false;
-      const timer = setTimeout(() => { if (!granted) { abort.abort(); reject(new QueueCommandError("playback is still in another tab")); } }, 5_000);
+      const timer = setTimeout(() => { if (!granted) { abort.abort(); reject(new QueueCommandError("playback is still in another tab")); } }, BROWSER_COORDINATION_BOUND_MS);
       // No steal: the old audio must stop before a new holder can be admitted.
       const options: LockOptions = transfer ? { mode: "exclusive", signal: abort.signal } : { mode: "exclusive", ifAvailable: true };
       void navigator.locks.request(lockName, options, async lock => {
@@ -163,7 +165,7 @@ export function createBrowserOwnership(input: {
       if (await acquire(false)) return input.command(command);
       const id = crypto.randomUUID();
       return new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => { requests.delete(id); reject(new QueueCommandError("playback is still in another tab")); }, 5_000);
+        const timer = setTimeout(() => { requests.delete(id); reject(new QueueCommandError("playback is still in another tab")); }, BROWSER_COORDINATION_BOUND_MS);
         requests.set(id, { resolve, reject, timer });
         post({ kind: "command", sender, id, command });
       });

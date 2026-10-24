@@ -253,6 +253,17 @@ finish, undo, unread, reset and settle publish `Consumption`.
   omitted and validates it again at engine application. retired seeks do nothing.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
+  public explicit play, preview, resume and playing queue selection notify
+  `onExplicitPlay` once at admission, before asynchronous work. internal loads,
+  natural advancement and passive observations never notify presentation.
+  pending intent covers source/descriptor preparation as well as installation,
+  including passive-tab playing selection. generation-owned cleanup cannot erase
+  a newer start; pause retires pending intent immediately.
+  `PlayerQueue.known` distinguishes first observation from confirmed absence;
+  queue-derived commands require knowledge and their existing revision/phase
+  preconditions. `createQueue` captures a singleton paused queue and rechecks
+  absence under ownership; a discovered queue refuses creation rather than
+  rebasing it. unrestricted replacement belongs only to explicit-play internals.
   Server rendering and the first client render start absent. Only the existing
   client initialization effect can observe a missing Android bridge and report
   `UpdateRequired`; native response timeouts report `NotResponding`, cleared by
@@ -273,6 +284,10 @@ finish, undo, unread, reset and settle publish `Consumption`.
   recovery resends through the joint consumption/queue postcondition. pause or
   seek retires automatic activation; an already-sent write settles before a
   newer retained cursor is persisted.
+  initial knowledge is false; successful reads and acknowledged saves establish
+  it. refresh failures preserve confirmed data. the runtime bounds first browser
+  observation by the existing five-second coordination deadline; preparation
+  and cancellation cannot clear unresolved startup failure.
 - `lib/player/browserOwnership.ts` owns the exclusive account web lock and
   narrow broadcast channel. passive tabs mirror state and forward non-play
   commands. explicit play resolves its source, requests cooperative release,
@@ -297,10 +312,25 @@ finish, undo, unread, reset and settle publish `Consumption`.
   replies cannot replace an intervening confirmed load. real pushes from the
   current controller remain authoritative. preference admission refuses while
   unavailable; recovery preserves failed intent for explicit retry.
+  the accepted snapshot counter establishes queue knowledge. runtime reads and
+  pages retain their originating engine and observation; retired success/failure
+  cannot change current queue data or status. a timeout cannot mark availability
+  lost after a newer accepted snapshot.
+- `lib/player/presentation.tsx` owns desktop visibility for the account's workspace
+  lifetime, independently of audio, queue data and mobile chrome. initial markup
+  is hidden; mount reads `sessionStorage` key `nexus:desktop-player:<account_id>`
+  before explicit commands write `shown`/`hidden`. denied storage leaves the
+  in-memory choice usable. rail-open focuses the committed region; hide returns
+  owned focus to the rail and closes desktop pickers without changing playback.
+  explicit desktop play/resume reveals without moving focus; mobile commands
+  preserve the desktop choice. tabs keep independent ongoing choices.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
   sheet, desktop playback/chapter pickers and shared presentational fields.
-  the authenticated workspace always renders one stable player slot and footer,
-  including server rendering and initial hydration. a retained stopped queue
+  the authenticated workspace keeps one mounted player and live-region owner.
+  a hidden desktop slot contributes no geometry or tab stops; its operation
+  owners remain mounted. the permanent rail disclosure indicates active playback
+  or engine/queue/preference-application failure without forcing reopen.
+  a retained stopped queue
   remains reachable with resume/up next even when the engine is absent.
   exhausted and empty queues are distinct; restoration never starts audio.
   `Loaded` retains identity, transport and stop while load-scoped preferences
@@ -308,8 +338,12 @@ finish, undo, unread, reset and settle publish `Consumption`.
   `Unavailable` exposes the actual warning and android update link only when
   required. stop unloads and retains sequence/cursor; clear remains distinct. closing an overlay preserves playback. the downloaded shelf is a
   separate composition.
-  normal idle/loaded footprints match: wide desktop is 80px, narrow desktop
-  128px; coarse pointing adds 16px for seeking. the 42rem breakpoint belongs to
+  desktop shares one source/transport/seek/options anatomy across empty, pending,
+  unavailable and loaded states. unavailable controls are natively disabled;
+  unloaded clocks read `—` and speed reads `speed`. pending pause remains usable,
+  and unknown queues never display invented emptiness or counts. wide desktop
+  starts at 80px, narrow desktop at 128px; coarse pointing adds 16px for seeking.
+  the 64rem breakpoint belongs to
   the player container. equal side tracks center transport in the whole player.
   enlarged text and substantive failures may grow without clipping controls.
   the 64px mobile mini adds the existing safe inset and shows artwork, title,

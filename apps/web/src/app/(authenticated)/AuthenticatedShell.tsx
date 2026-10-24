@@ -55,12 +55,13 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
+import { PlayerPresentationProvider, usePlayerPresentation } from "@/lib/player/presentation";
 import {
   ReaderProvider,
   useReaderContext,
   type ReaderProfile,
 } from "@/lib/reader/ReaderContext";
-import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
+import { getBrowserViewportKind, RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspaceState } from "@/lib/workspace/model";
@@ -141,7 +142,7 @@ function Workspace(props: {
   // Native owns account binding; this hello only subscribes.
   useEffect(() => connectOffline(), []);
   return (
-    <>
+    <PlayerPresentationProvider accountId={accountId}>
       <div
         ref={probe}
         aria-hidden="true"
@@ -165,7 +166,7 @@ function Workspace(props: {
                   <LecternProvider>
                     <LibraryPlacementControllerProvider>
                       <ShareControllerProvider>
-                        <GlobalPlayerProvider accountId={accountId}>
+                        <WorkspacePlayer accountId={accountId}>
                           <ResourceActionsProvider>
                             <AuthenticatedWorkspaceErrorBoundary>
                               <ResourceActionPresentation />
@@ -181,7 +182,7 @@ function Workspace(props: {
                               </ImportsProvider>
                             </AuthenticatedWorkspaceErrorBoundary>
                           </ResourceActionsProvider>
-                        </GlobalPlayerProvider>
+                        </WorkspacePlayer>
                       </ShareControllerProvider>
                     </LibraryPlacementControllerProvider>
                   </LecternProvider>
@@ -191,11 +192,19 @@ function Workspace(props: {
           </SignOutProvider>
         </WritingRuntime>
       </WorkspaceStoreProvider>
-    </>
+    </PlayerPresentationProvider>
   );
 }
 
 function WorkspaceNexus() { return useWritingReady() ? <Nexus /> : null; }
+
+function WorkspacePlayer({ accountId, children }: { accountId: string; children: ReactNode }) {
+  const { show } = usePlayerPresentation();
+  const onExplicitPlay = useCallback(() => {
+    if (getBrowserViewportKind() === "desktop") show({ focus: false });
+  }, [show]);
+  return <GlobalPlayerProvider accountId={accountId} onExplicitPlay={onExplicitPlay}>{children}</GlobalPlayerProvider>;
+}
 
 function WorkspaceNavigation({ children }: { children: ReactNode }) {
   const { state } = useWorkspaceStore();
