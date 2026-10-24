@@ -24,11 +24,6 @@ import {
 } from "@/lib/chat/conversationIndex";
 import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
-import {
-  artifactPaneHref,
-  createDossierBuild,
-  learnDossier,
-} from "@/lib/dossiers/dossierApi";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
 import { deleteLibrary } from "@/lib/libraries/api";
@@ -571,28 +566,6 @@ export function projectResourceActions(
         } });
       });
     }, "/notes"),
-    LearnHighlight: [
-      ({ openIntent }) =>
-        openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, create: async () => {
-          const learned = await learnDossier(ref, crypto.randomUUID());
-          return {
-            target: { href: artifactPaneHref(learned.artifact_ref), labelHint: "Dossier" },
-            title: {
-              BuildAccepted: "dossier requested",
-              Opened: "dossier available",
-            }[learned.kind],
-            openLabel: "open dossier",
-          };
-        } }),
-    ],
-    RegenerateArtifact: [
-      () =>
-        createDossierBuild(
-          { kind: "Artifact", artifactRef: ref },
-          null,
-          crypto.randomUUID(),
-        ),
-    ],
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
     EditNoteBody: entry({ kind: "EditNoteBody", noteBlockId: id }),
     EditHighlight: entry({ kind: "EditHighlight", highlightId: id }),

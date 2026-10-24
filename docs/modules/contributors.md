@@ -19,7 +19,7 @@ metadata, with no user-facing author write.
 refs, batch publication, in-transaction publication, prepare/apply and cleanup.
 it owns sessions, retries and when to invalidate.
 `contributor_credits.py` holds the sql fragments and loaders consumers compose
-(search, library entries, stats, dossier, suggestions, resource graph, sharing).
+(search, library entries, stats, suggestions, resource graph, sharing).
 
 ## invariants
 

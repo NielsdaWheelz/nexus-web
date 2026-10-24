@@ -668,8 +668,7 @@ them over whatever the durable Companion was doing; picking a durable tab ends
 them and selects that tab; ✕, closing Find or leaving the source end them and
 the durable presentation returns as it was. Their width is the durable
 record's when one exists. in sheet presentation a successful preview hides it while
-the results live on. A pane whose body publishes no Companion (an artifact)
-shows its results with a solo title and no tablist.
+the results live on. A pane whose body publishes no Companion shows its results with a solo title and no tablist.
 
 The region id is `paneSecondaryRegionId(paneId)` (`pane-<id>-companion`) for
 both groups; the Inspector's disclosure names it only while it is open.
@@ -684,11 +683,6 @@ to a live external opener, else the pane landmark. promotion records the live
 external opener; demotion retains inspector focus on the same connected control,
 else its selected tab. a hidden pane and another interaction owner take precedence
 over these repairs.
-
-Standalone Artifact panes publish pane find and no Companion. The dossier
-article renders into an open shadow root of the app document, so find is the
-plain DOM case over that article (citation buttons excluded), keyed on the
-revision ref.
 
 ## Browse And Preview Panes
 

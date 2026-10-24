@@ -217,22 +217,6 @@ to its pane even when no chat composer is mounted, while an existing-chat reques
 belongs to the account and conversation. hiding the reader keeps both its draft
 and any command. a retired visit cannot restore its draft through a late callback.
 
-## Learn
-
-**Learn** is Highlight-first. A reader selection is created or reused through
-the existing Highlight owner; after that succeeds, the reader pane posts the
-durable `highlight:<id>` ref to `POST /artifacts/dossiers/learn`. Popover state
-ends normally. Global feedback owns pending/failure state, and success adopts
-the standalone Artifact pane.
-
-The Artifact subsystem, not Highlight, canonicalizes the selected text to one
-user-owned Idea and records the Highlight as a generation seed. Learning the
-same phrase twice reaches the same Idea, so the resolution row, the seed pair
-and the head key carry the replay; re-Learn is the recovery path. Highlight
-deletion explicitly removes Idea resolution, seed, and any leftover Learn rows
-before the Highlight row. Learn creates no Resource Graph Link and Highlight
-still publishes no Inspector.
-
 ## Reader Presentation
 
 Marks are css custom highlights over the untouched reader dom (pdf: overlay
@@ -345,8 +329,6 @@ resolved through the `highlight:<id>` resource and graph citation path.
   `resource_edges`.
 - Do not make Evidence the owner of highlight CRUD. It is an
   aggregate read and presentation surface.
-- Do not key a learning Dossier by Highlight occurrence or add a second Learn
-  preview surface; the Highlight is provenance for an Idea Artifact.
 - Do not delete a Highlight or its anchors from reindex/refresh code, and do
   not add a DB cascade between highlight-family rows; deletion is always
   explicit and child-first.

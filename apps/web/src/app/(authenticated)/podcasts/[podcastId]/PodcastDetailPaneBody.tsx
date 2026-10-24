@@ -38,7 +38,7 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -337,7 +337,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   );
   useResourceInspector({
     scheme: "podcast",
-    handle: podcastId,
+    handle: ready !== null && headError?.status !== 404 && headError?.status !== 403 ? podcastId : null,
     bodies: { linkedItems: connections },
   });
   const text = filterRows.query.trim();

@@ -4,11 +4,11 @@ import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import type { ShareMode } from "@/lib/sharing/types";
 
 export type ResourceInspectorSurfaceRole =
-  "Contents" | "LinkedItems" | "Forks" | "Dossier";
+  "Contents" | "LinkedItems" | "Forks";
 export type ResourceInspectorLinkedItemsSurface =
   "MediaEvidence" | "ResourceConnections";
 
-/** `default_surface_order` is fallback preference, not tab order; it ends in Dossier. */
+/** `default_surface_order` is fallback preference, not tab order. */
 export interface ResourceInspectorResourcePolicy {
   readonly linked_items: ResourceInspectorLinkedItemsSurface;
   readonly forks: "ConversationForks" | null;
@@ -30,7 +30,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "MediaEvidence",
       forks: null,
-      default_surface_order: ["Contents", "LinkedItems", "Dossier"],
+      default_surface_order: ["Contents", "LinkedItems"],
     },
   },
   library: {
@@ -40,7 +40,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "ResourceConnections",
       forks: null,
-      default_surface_order: ["Dossier"],
+      default_surface_order: ["LinkedItems"],
     },
   },
   evidence_span: {
@@ -68,7 +68,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "ResourceConnections",
       forks: null,
-      default_surface_order: ["Dossier"],
+      default_surface_order: ["LinkedItems"],
     },
   },
   note_block: {
@@ -78,7 +78,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "ResourceConnections",
       forks: null,
-      default_surface_order: ["Dossier"],
+      default_surface_order: ["LinkedItems"],
     },
   },
   fragment: {
@@ -94,7 +94,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "ResourceConnections",
       forks: "ConversationForks",
-      default_surface_order: ["LinkedItems", "Forks", "Dossier"],
+      default_surface_order: ["LinkedItems", "Forks"],
     },
   },
   message: {
@@ -115,18 +115,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: false,
     inspector: null,
   },
-  artifact: {
-    link_mode: "direct",
-    sharing: "CopyOnly",
-    app_search_scope: false,
-    inspector: null,
-  },
-  artifact_revision: {
-    link_mode: "none",
-    sharing: "None",
-    app_search_scope: false,
-    inspector: null,
-  },
   external_snapshot: {
     link_mode: "none",
     sharing: "None",
@@ -140,7 +128,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "ResourceConnections",
       forks: null,
-      default_surface_order: ["Dossier"],
+      default_surface_order: ["LinkedItems"],
     },
   },
   podcast: {
@@ -150,7 +138,7 @@ export const RESOURCE_CAPABILITIES = {
     inspector: {
       linked_items: "ResourceConnections",
       forks: null,
-      default_surface_order: ["Dossier"],
+      default_surface_order: ["LinkedItems"],
     },
   },
   reader_apparatus_item: {

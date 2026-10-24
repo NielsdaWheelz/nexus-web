@@ -81,7 +81,7 @@ class PageContentOut(_Closed):
 
 
 class NoteContentOut(_Closed):
-    """``places`` counts cross-owner retaining graph facts and saved dossier heads."""
+    """``places`` counts cross-owner retaining graph facts."""
 
     kind: Literal["note"]
     body_pm_json: dict[str, Any]

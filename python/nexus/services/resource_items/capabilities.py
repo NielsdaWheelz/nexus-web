@@ -21,18 +21,18 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 ShareMode = Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
 LinkMode = Literal["none", "direct", "materialize_passage"]
-InspectorRole = Literal["Contents", "LinkedItems", "Forks", "Dossier"]
+InspectorRole = Literal["Contents", "LinkedItems", "Forks"]
 
 
 @dataclass(frozen=True, slots=True)
 class InspectorPolicy:
     linked_items: Literal["MediaEvidence", "ResourceConnections"]
     forks: Literal["ConversationForks"] | None
-    # Fallback preference, not tab order; ends in the always-published Dossier.
+    # Fallback preference, not tab order.
     default_surface_order: tuple[InspectorRole, ...]
 
 
-_CONNECTIONS = InspectorPolicy("ResourceConnections", None, ("Dossier",))
+_CONNECTIONS = InspectorPolicy("ResourceConnections", None, ("LinkedItems",))
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +53,6 @@ class Capability:
         "media_owned_reader_children",
         "page_note_blocks",
         "note_block_owned_evidence",
-        "artifact_revisions",
     ] = "none"
     adjacency_source: bool = True
 
@@ -62,7 +61,7 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     "media": Capability(
         sharing="ResourceGrants",
         readable="media",
-        inspector=InspectorPolicy("MediaEvidence", None, ("Contents", "LinkedItems", "Dossier")),
+        inspector=InspectorPolicy("MediaEvidence", None, ("Contents", "LinkedItems")),
         citable_result_type="media",
         app_search_scope=True,
         prompt_render="label",
@@ -106,7 +105,7 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     "conversation": Capability(
         sharing="CopyOnly",
         inspector=InspectorPolicy(
-            "ResourceConnections", "ConversationForks", ("LinkedItems", "Forks", "Dossier")
+            "ResourceConnections", "ConversationForks", ("LinkedItems", "Forks")
         ),
         prompt_render="label",
     ),
@@ -115,8 +114,6 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     "oracle_passage_anchor": Capability(
         link_mode="materialize_passage", attachable=False, embeddable=False, chat_subject=False
     ),
-    "artifact": Capability(sharing="CopyOnly", expansion="artifact_revisions"),
-    "artifact_revision": Capability(link_mode="none", citation_output_source=True),
     "external_snapshot": Capability(
         link_mode="none",
         attachable=False,
@@ -192,13 +189,6 @@ def expand_owned_child_refs(
                 *_children(
                     db, "content_chunk", _OWNED.format("content_chunks", "note_block"), ref.id
                 ),
-            )
-        case "artifact_revisions":
-            return _children(
-                db,
-                "artifact_revision",
-                "SELECT revision_id FROM artifacts WHERE id = :id AND revision_id IS NOT NULL",
-                ref.id,
             )
         case _ as unreachable:
             assert_never(unreachable)

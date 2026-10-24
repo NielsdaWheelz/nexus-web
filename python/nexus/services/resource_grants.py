@@ -86,13 +86,6 @@ def count_for_media(db: Session, media_id: UUID) -> int:
     return db.execute(count).scalar_one()
 
 
-def _notify(db: Session, user_ids: set[UUID]) -> None:
-    from nexus.services.dossier.engine import on_visibility_lost
-
-    for user_id in sorted(user_ids):
-        on_visibility_lost(db, user_id=user_id)
-
-
 def annotation_visibility(
     db: Session, *, user_ids: set[UUID], media_ids: set[UUID]
 ) -> set[tuple[UUID, UUID]]:
@@ -147,7 +140,7 @@ def library_annotation_visibility(
 
 
 def _delete(db: Session, *where: ColumnElement[bool], also: frozenset[UUID] = frozenset()) -> int:
-    """Delete the matching grants and notify their creators and grantees, plus `also`."""
+    """Delete matching grants and invalidate their affected annotation projections."""
     previous = list(db.scalars(select(ResourceGrant).where(*where)))
     users = {
         user
@@ -170,7 +163,6 @@ def _delete(db: Session, *where: ColumnElement[bool], also: frozenset[UUID] = fr
         .where(*where)
         .returning(ResourceGrant.created_by_user_id, ResourceGrant.grantee_user_id)
     ).all()
-    _notify(db, {user for row in rows for user in row if user is not None} | also)
     invalidate_annotation_visibility(db, projections)
     return len(rows)
 
@@ -222,7 +214,6 @@ def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id
     for row in moved:
         row.subject_id = winner_media_id
     db.flush()
-    _notify(db, affected)
     projections.update(annotation_visibility(db, user_ids=affected, media_ids={winner_media_id}))
     invalidate_annotation_visibility(db, projections)
     return len(changed)
@@ -290,8 +281,6 @@ def insert_grant(
     )
     db.add(grant)
     db.flush()
-    if grantee_id is not None:
-        _notify(db, {grantee_id})
     invalidate_annotation_visibility(
         db,
         annotation_visibility(

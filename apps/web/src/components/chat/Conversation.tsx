@@ -17,7 +17,7 @@ import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
 import type { Catalog } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { openAsyncResult } from "@/lib/panes/openResult";
@@ -313,7 +313,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   );
   useResourceInspector({
     scheme: "conversation",
-    handle: conversationId,
+    handle: state.conversation !== null && !state.gone ? conversationId : null,
     bodies,
   });
   // streaming re-renders this body often; publish only what changed.

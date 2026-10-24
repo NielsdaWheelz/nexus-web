@@ -272,7 +272,6 @@ def require_version(db: Session, *, viewer_id: UUID, note_id: UUID, version: int
 def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
     """The one teardown: subject state, edges, anchors, index, protocol state, row."""
     from nexus.services import passage_anchors
-    from nexus.services.dossier import engine as dossier_engine
 
     block = db.scalar(
         select(NoteBlock)
@@ -288,7 +287,6 @@ def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
         return
     writing.changed(db, viewer_id)
     ref = note_ref(note_id)
-    dossier_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref, remove_inbound_citations=True)
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=note_id)
     delete_content_index(db, owner=IndexOwner("note_block", note_id))

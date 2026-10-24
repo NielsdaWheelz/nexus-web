@@ -325,7 +325,6 @@ def accept_url_source(
     expected_removal_revision: int,
     destinations: list[DestinationGuard],
     request_id: str | None,
-    ingest_purpose: Literal["artifact_research"] | None = None,
 ) -> FromUrlOut:
     """Accept a url on a fresh session; ``id`` is the client-minted attempt id.
 
@@ -358,16 +357,13 @@ def accept_url_source(
             if sent is not None:
                 return _from_url_out(db, sent, id)
             library_ids = [guard.library_id for guard in destinations]
-            payload: dict[str, object] = {}
-            if ingest_purpose is not None:
-                payload["ingest_purpose"] = ingest_purpose
             result = _accept_url(
                 db,
                 viewer_id,
                 id,
                 url,
                 library_ids,
-                payload,
+                {},
                 request_id,
                 expected_removal_revision=expected_removal_revision,
                 destinations=destinations,

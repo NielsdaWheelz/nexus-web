@@ -90,8 +90,8 @@ the same binding-conflict contract as `ensure_daily`.
 - I7 a capture's blank text is 400 `E_EMPTY_NOTE_BODY`. the reader composer omits
   creation only for a canonical empty paragraph; other rich bodies save normally.
   an existing note can be saved empty without changing its identity or links.
-- I8 structural retention counts every cross-owner graph fact and saved dossier
-  head, including derived endpoints and captured historical owners. it reads only
+- I8 structural retention counts every cross-owner graph fact,
+  including derived endpoints and captured historical owners. it reads only
   the facts incident to what the page or note owns (itself, its passage anchors,
   evidence spans and content chunks) or that captured it, and only its owner's: no
   other user's fact reaches a page or note (premise checked by census C12).
@@ -120,7 +120,7 @@ retirement. an old create cannot recreate deleted roots or initialize new childr
 pins and activity touches. only paragraphs with no children, attributes or marks
 are blank; omitted and empty containers are equivalent. whitespace, breaks, empty
 code blocks, images and embeds remain content. cross-owner persisted graph
-relationships in either direction and saved dossier heads retain their subjects.
+relationships in either direction retain their subjects.
 reads, folding, no-op retries and semantically equivalent indexing do not renew
 grace. real text/title edits, saved order changes and retaining-reference changes
 touch `last_activity_at` after pinning, without changing collection ordering.
@@ -131,7 +131,7 @@ blank. both need seven days without activity. each run freezes a database cutoff
 each invocation inspects at most 100 refs in stable order. each short read-committed transaction
 locks its claim and root, rechecks in a fresh statement, and checkpoints every
 inspection with its cursor and counters. continuation resumes the same cutoff.
-canonical teardown owns graph, binding, dossier, anchor, index and protocol
+canonical teardown owns graph, binding, anchor, index and protocol
 state; it never commits inside the sweep. queued or running index/discovery jobs
 may outlive the resource. their handlers recheck the live root and cannot recreate
 it; ordinary background pruning owns terminal job history.

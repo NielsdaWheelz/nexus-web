@@ -37,7 +37,6 @@ from nexus.services.contributor_credits import (
     contributor_fts_text_sql,
     credit_target_filter_exists_sql,
 )
-from nexus.services.dossier.subjects import head_visible_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.search.query import SearchScope
 from nexus.services.search.scope import scope_predicate
@@ -166,15 +165,6 @@ SOURCES: dict[str, str] = {
             COALESCE(c.title, 'Conversation') AS title, 'conversation' AS source_label
         FROM conversations c JOIN visible_conversations vc ON vc.conversation_id = c.id
         WHERE TRUE {where}""",
-    # Conversation Dossier claims stay private to the conversation's owner.
-    "artifact": """SELECT 'artifact' AS type, a.subject_id AS id, NULL AS label,
-            to_tsvector('english', COALESCE(a.content_text, '')) AS doc, a.content_text AS text,
-            a.revision_id, 'Dossier' AS title, 'dossier' AS source_label,
-            'conversation:' || a.subject_id AS subject_ref
-        FROM artifacts a JOIN conversations c ON c.id = a.subject_id
-        WHERE a.subject_scheme = 'conversation' AND a.audience_scheme = 'user'
-          AND a.audience_id = c.owner_user_id AND c.owner_user_id = :viewer_id
-          AND a.revision_id IS NOT NULL {where}""",
     "reader_apparatus_item": f"""SELECT 'reader_apparatus_item' AS type, rai.id, rai.label,
             to_tsvector('english', concat_ws(' ', rai.label, rai.kind, rai.body_text)) AS doc,
             COALESCE(rai.body_text, rai.label, rai.kind) AS text, rai.kind AS apparatus_kind,
@@ -251,25 +241,6 @@ SOURCES: dict[str, str] = {
                 r.interpretation_text)) AS doc, r.question_text AS text,
             concat_ws(' ', r.folio_motto, r.interpretation_text) AS discovery_text
         FROM oracle_readings r WHERE r.user_id = :viewer_id {where}""",
-    "dossier": f"""SELECT 'dossier' AS type, a.id, s.title AS label,
-            to_tsvector('english', concat_ws(' ', s.title, a.content_text)) AS doc,
-            COALESCE(a.content_text, s.title) AS text,
-            'Dossier — ' || COALESCE(sm.title, sc.title,
-                CASE WHEN sl.is_default THEN 'All' ELSE sl.name END, sp.title,
-                so.display_name, sg.title, si.display_title) AS discovery_name
-        FROM artifacts a
-        LEFT JOIN media sm ON a.subject_scheme = 'media' AND sm.id = a.subject_id
-        LEFT JOIN conversations sc ON a.subject_scheme = 'conversation' AND sc.id = a.subject_id
-        LEFT JOIN libraries sl ON a.subject_scheme = 'library' AND sl.id = a.subject_id
-        LEFT JOIN podcasts sp ON a.subject_scheme = 'podcast' AND sp.id = a.subject_id
-        LEFT JOIN contributors so ON a.subject_scheme = 'contributor' AND so.id = a.subject_id
-        LEFT JOIN pages sg ON a.subject_scheme = 'page' AND sg.id = a.subject_id
-        LEFT JOIN note_blocks sn ON a.subject_scheme = 'note_block' AND sn.id = a.subject_id
-        LEFT JOIN artifact_idea_subjects si ON a.subject_scheme = 'idea' AND si.id = a.subject_id
-        CROSS JOIN LATERAL (SELECT COALESCE(sm.title, sc.title, CASE WHEN sl.is_default
-            THEN 'All' ELSE sl.name END, sp.title, so.display_name, sg.title, sn.body_text,
-            si.display_title, 'Dossier') AS title) s
-        WHERE {head_visible_sql("a")} {{where}}""",
     "passage_anchor": """SELECT 'passage_anchor' AS type, pa.id,
             pa.selector #>> '{quote,exact}' AS label, pa.selector #>> '{quote,exact}' AS text,
             to_tsvector('english', COALESCE(pa.selector #>> '{quote,exact}', '')) AS doc
@@ -504,7 +475,7 @@ def rank_discovery(
     if family == "content_chunk" and r.terms:
         where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
             OR cc.id = ANY(CAST(:ann_ids AS uuid[])))"""
-    name = "s.discovery_name" if family == "dossier" else "s.label"
+    name = "s.label"
     if family in _PROSE_FAMILIES:
         name = "NULL::text"
     cosine = "s.cosine" if family in SEMANTIC else "NULL::float8"
@@ -546,7 +517,7 @@ def rank_discovery(
     )
     scheme = cast(
         ResourceScheme,
-        {"dossier": "artifact", "web_result": "external_snapshot"}.get(family, family),
+        {"web_result": "external_snapshot"}.get(family, family),
     )
     return [
         DiscoveryHit(

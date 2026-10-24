@@ -431,20 +431,6 @@ def stop(
                     media_deletion.remove_podcast_workspace_access_locked(
                         db, viewer_id=viewer_id, media_ids=media
                     )
-            if body.episodes == "remove" and media:
-                from nexus.services.dossier import engine as dossier
-
-                affected_members = list(
-                    db.scalars(
-                        text("""
-                    SELECT DISTINCT user_id FROM memberships
-                    WHERE library_id=ANY(:ids) AND user_id<>:viewer ORDER BY user_id
-                """),
-                        {"ids": selected, "viewer": viewer_id},
-                    )
-                )
-                for member_id in affected_members:
-                    dossier.on_visibility_lost(db, user_id=member_id)
             for destination in current.destinations:
                 libraries.advance_order_revision(db, destination.library_id)
             sync.stop_if_unused(db, podcast_id=podcast_id)

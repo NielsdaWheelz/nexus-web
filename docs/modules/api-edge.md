@@ -141,7 +141,7 @@ server components: callFastAPI ────────────────�
   `X-Nexus-Device` header; absent → 400).
 - `api/routes/stream.py`: `GET /stream/...` authenticated like every route.
   The chat run stream is a cursor stream (`id: <seq>`, `?after=<seq>`, closes
-  after `done`); oracle readings, dossier builds, media processing, metadata
+  after `done`); oracle readings, media processing, metadata
   (done once nothing is unfinished) and podcast subscriptions are snapshot streams (`state` on
   change, `done` when terminal, the whole snapshot again on reconnect).
   writing is an account revision stream: initial/changed `state {revision}`,

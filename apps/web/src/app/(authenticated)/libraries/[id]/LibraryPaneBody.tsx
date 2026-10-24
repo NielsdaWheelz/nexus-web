@@ -49,7 +49,7 @@ import {
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { renderOrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   entriesPage,
   getLibrary,
@@ -254,7 +254,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   );
   useResourceInspector({
     scheme: "library",
-    handle: library ? id : null,
+    handle: library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
     bodies: {
       members: members ? <LibraryMembers state={members} /> : undefined,
       linkedItems: useMemo(

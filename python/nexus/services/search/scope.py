@@ -129,9 +129,6 @@ _CELLS: dict[str, dict[str, str]] = {
             OR {_context("conversation", "ms.conversation_id")})"""
     },
     "conversation": {"conversation": f"(c.id = :{{s}} OR {_context('conversation', 'c.id')})"},
-    "artifact": {
-        "conversation": f"(a.subject_id = :{{s}} OR {_context('conversation', 'a.subject_id')})"
-    },
     "web_result": {"conversation": "msg.conversation_id = :{s}"},
     "passage_anchor": {
         kind: f"""((pa.owner_scheme = 'media' AND pa.owner_id IN ({media}))
@@ -159,7 +156,6 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
         ("conversation", "ms.conversation_id"),
     ),
     "conversation": (("conversation", "c.id"),),
-    "artifact": (("artifact", "a.id"), ("conversation", "a.subject_id")),
     "web_result": (("conversation", "msg.conversation_id"),),
 }
 

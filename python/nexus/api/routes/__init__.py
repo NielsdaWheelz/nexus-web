@@ -11,7 +11,6 @@ from nexus.api.routes.connection_discovery import router as connection_discovery
 from nexus.api.routes.consumption import router as consumption_router
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
-from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.email_ingest import router as email_ingest_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
@@ -55,7 +54,6 @@ def create_api_router() -> APIRouter:
     api_router.include_router(auth_handoff_codes_router)
     api_router.include_router(library_members_router)
     api_router.include_router(libraries_router)
-    api_router.include_router(dossiers_router)
     # Media family. Every router owning a static `/media/<literal>` path
     # (media_assets, media_uploads, media_sources, playback, consumption,
     # podcast_transcripts) must be registered before the `media` router that owns
