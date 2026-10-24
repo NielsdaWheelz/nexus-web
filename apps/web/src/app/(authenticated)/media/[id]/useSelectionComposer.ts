@@ -459,7 +459,14 @@ export function useSelectionComposer(input: {
 
   // Preparation fixes the source and all request identities before loading the
   // saved slot. It never presents an editor; commands await this same target.
-  const prepare = (passage: ComposerDraft["passage"], highlightId: string | null, carried: ComposerDraft | null) => {
+  const prepare = (selected: ComposerDraft["passage"], highlightId: string | null, carried: ComposerDraft | null) => {
+    // captures may carry command-only fields such as pdf `exact`. retained
+    // passages own the visual anchor contract, with their quote kept separately.
+    const passage: ComposerDraft["passage"] = { identity: selected.identity, quote: selected.quote,
+      anchor: selected.anchor.kind === "text"
+        ? { kind: "text", unit: selected.anchor.unit, start: selected.anchor.start, end: selected.anchor.end }
+        : { kind: "pdf", page: selected.anchor.page, quads: selected.anchor.quads },
+    };
     let existing = carried ? undefined : (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
       store.getSnapshot().find((entry) => samePassage(entry.passage, passage));
     if (existing) {
