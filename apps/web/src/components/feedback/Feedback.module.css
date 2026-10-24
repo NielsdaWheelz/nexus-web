@@ -73,6 +73,11 @@
   background: var(--ink-muted);
 }
 
+.mobileActivityBody {
+  min-width: 0;
+  padding: var(--space-4);
+}
+
 .activityList {
   min-width: 0;
 }

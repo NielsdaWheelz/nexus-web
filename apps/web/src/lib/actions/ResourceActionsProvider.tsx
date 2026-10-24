@@ -13,6 +13,8 @@ import {
 import {
   useFeedback,
   type FeedbackContextValue,
+  type FeedbackContent,
+  type FeedbackActions,
   type FeedbackOffer,
   useWorkspaceCondition,
 } from "@/components/feedback/Feedback";
@@ -378,8 +380,10 @@ export default function ResourceActionsProvider({
       attempts.get(key)?.failure?.withdraw();
       const attempt: { failure: FeedbackOffer | null } = { failure: null };
       attempts.set(key, attempt);
-      const offerFailure = (notice: Parameters<FeedbackContextValue["offer"]>[0]) => {
-        if (!signal.aborted && attempts.get(key) === attempt) attempt.failure = feedback.offer({ ...notice,
+      const offerFailure = (content: FeedbackContent, actions?: FeedbackActions) => {
+        if (!signal.aborted && attempts.get(key) === attempt) attempt.failure = feedback.offer({
+          key: `resource-action:${command.ref}:${command.id}`, content, actions,
+          announcement: "Polite", needsAttention: true, undo: null,
           onDismiss: () => { if (attempts.get(key) === attempt) attempts.delete(key); },
         });
       };
@@ -389,27 +393,22 @@ export default function ResourceActionsProvider({
         } catch (error) {
           if (signal.aborted || attempts.get(key) !== attempt) return;
           if (error instanceof ResourceActionFailure) {
-            offerFailure({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null, content: error.content });
+            offerFailure(error.content);
             return;
           }
           if (error instanceof QueueCommandError) {
-            offerFailure({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
-              content: { tone: "Warning", title: error.message } });
+            offerFailure({ tone: "Warning", title: error.message });
             return;
           }
           if (error instanceof ProgressPreparationError) {
-            offerFailure({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null, content: { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." } });
+            offerFailure({ tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." });
             return;
           }
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
-          offerFailure({
-            key: `resource-action:${command.ref}:${command.id}`,
-            announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
-            content: actionFailure(command.id, command.label, error),
-            actions: command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined,
-          });
+          offerFailure(actionFailure(command.id, command.label, error),
+            command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined);
         } finally {
           if (command.tracked) busy.set(key, false);
           if (attempts.get(key) === attempt && attempt.failure === null) attempts.delete(key);

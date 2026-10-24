@@ -90,7 +90,7 @@ export function ActivitySurface({ signals, fallbackFocus }: {
     skipReturnFocus: signals.activityNavigated,
   };
   return mobile ? <MobileSheet {...modal} active={activity !== null} ariaLabel="activity" onDismiss={signals.closeActivity}>
-    <ActivityList onNavigate={onNavigate} />
+    <div className={styles.mobileActivityBody}><ActivityList onNavigate={onNavigate} /></div>
   </MobileSheet> : <Dialog {...modal} open={activity !== null} title="activity" onClose={signals.closeActivity}>
     <ActivityList onNavigate={onNavigate} />
   </Dialog>;
@@ -162,6 +162,7 @@ export function ActivityList({ onNavigate }: { onNavigate?: () => void }) {
       className={styles.activityItem}
       onDismiss={entry.kind === "Offer" ? () => signals.dismiss(entry) : undefined}
       dismissLabel={entry.undo ? "remove undo" : `dismiss: ${entry.notice.content.title}`}
+      dismissText={entry.undo ? "remove undo" : undefined}
       returnFocus={recover}
       onNavigate={onNavigate}
     />);

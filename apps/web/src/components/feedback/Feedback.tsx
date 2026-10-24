@@ -156,11 +156,12 @@ export function FieldFeedback({ id, content }: { id: string; content: FeedbackCo
 
 export function Signal({
   content, announcement, actions, disclosure, returnFocus, className,
-  onDismiss, dismissLabel, dismissBlocked, activityId, plain = false, focusable = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
+  onDismiss, dismissLabel, dismissText, dismissBlocked, activityId, plain = false, focusable = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
 }: FeedbackProps & {
   className: string;
   onDismiss?: () => void;
   dismissLabel?: string;
+  dismissText?: string;
   dismissBlocked?: boolean;
   activityId?: number;
   plain?: boolean;
@@ -244,8 +245,7 @@ export function Signal({
         </Button> : null}
         {onDismiss ? <Button
           className={styles.control}
-          iconOnly
-          icon={<X />}
+          {...(dismissText === undefined ? { iconOnly: true as const, icon: <X /> } : { children: dismissText })}
           aria-label={dismissLabel ?? `dismiss: ${content.title}`}
           aria-disabled={(dismissBlocked ?? actions?.some((action) => action.busy)) || undefined}
           onClick={() => onDismiss()}
