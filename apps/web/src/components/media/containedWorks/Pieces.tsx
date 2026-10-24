@@ -46,7 +46,10 @@ export function SourcePieces({ source, reader }: { readonly source: string; read
   const rows = pages?.flatMap(page => page.rows) ?? [];
   const active = page?.operation?.status === "pending" || page?.operation?.status === "running" || page?.preparation?.status === "Queued" || page?.preparation?.status === "Processing";
   const refresh = useCallback(() => { prefix.refetch(); navigation.refetch(); }, [navigation, prefix]);
-  useIntervalPoll({ enabled: active, onPoll: refresh, pollIntervalMs: 1500 });
+  useIntervalPoll({ enabled: active, onPoll: () => {
+    if (prefix.status === "ready" && !prefix.refreshing) prefix.refetch();
+    if (navigation.status === "ready" && !navigation.refreshing || navigation.status === "failed" && !navigation.retrying) navigation.refetch();
+  }, pollIntervalMs: 1500 });
   const run = async (command: Command) => {
     if (commands.read().busy) return;
     const request = commands.read().request ?? command;
