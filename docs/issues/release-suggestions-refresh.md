@@ -8,11 +8,11 @@ refresh endpoints become bodyless
 ensure-fresh admission; ordinary ui refresh reads the latest completed publication.
 ship web/api and paired installed clients through the existing release process.
 
-verify the actual release interval before changing `WIRE_REVISION`. source is 15
-on 2026-10-23; [offline startup](release-offline-startup.md) records its bump from
-released 14. retain 15 while that interval remains open, otherwise apply the next
-single bump. regenerate web wire types; retain normal mismatch rejection. no
-database migration, data conversion, environment change or new infrastructure.
+wire 15 retains the pending once-per-release bump. the public frontend `/version`
+currently names `dc12792e0`, whose source declares wire 14 (checked 2026-10-24).
+recheck the release interval before shipping. web wire types are regenerated;
+retain normal mismatch rejection. no database migration, data conversion,
+environment change or new infrastructure.
 
 before release, confirm the deployed source/build identities and paired clients.
 qualify ordinary refresh and visit preservation in the intended hosted/installed
