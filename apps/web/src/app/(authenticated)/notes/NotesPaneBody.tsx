@@ -4,7 +4,6 @@ import { Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useSyncExternalStore } from "react";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import WritingRecovery from "@/components/notes/WritingRecovery";
 import {
   FeedbackNotice,
 } from "@/components/feedback/Feedback";
@@ -42,11 +41,12 @@ import { isAbortError } from "@/lib/errors";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { readWriting, subscribeWriting } from "@/lib/notes/journal";
+import { subscribeWriting } from "@/lib/notes/writes";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
 import {
   dailyDateFor,
   fetchNotePages,
+  isDeletingPage,
   type NotePageSummary,
 } from "@/lib/notes/api";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
@@ -76,14 +76,6 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<NotePageSummary>>(
 );
 const UNIT = { singular: "page", plural: "pages" };
 
-/** Pages this tab's journal durably holds a pending delete for, as one comparable
- * key; a refused delete is blocked and its page shows again. */
-function pendingPageDeletes(): string {
-  return readWriting().outbox.flatMap((row) =>
-    row.blocked === null && row.intent.kind === "resource_delete" && row.intent.resource_kind === "page"
-      ? [row.intent.resource_id]
-      : []).join(" ");
-}
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
 const VIEW_CODEC = {
   basePath: "/notes",
@@ -131,13 +123,12 @@ export default function NotesPaneBody() {
     [captureScroll, setDecoded],
   );
 
-  // A durable delete hides its page at once; an acknowledged one stays hidden
-  // through the existing deletion fence until the next read omits it.
-  const deleting = useSyncExternalStore(subscribeWriting, pendingPageDeletes, () => "");
+  const pendingDeletes = useSyncExternalStore(subscribeWriting,
+    () => list.items.filter(item => isDeletingPage(item.id)).map(item => item.id).join(" "), () => "");
   const items = useMemo(() => {
-    const pending = new Set(deleting.split(" "));
-    return list.items.filter((item) => !pending.has(item.id) && !isDeletedResource(`page:${item.id}`));
-  }, [list.items, deleting]);
+    const pending = new Set(pendingDeletes.split(" "));
+    return list.items.filter(item => !pending.has(item.id) && !isDeletedResource(`page:${item.id}`));
+  }, [list.items, pendingDeletes]);
   const rows = useMemo(() => items.map(presentNote), [items]);
   const filterRows = usePaneFilterRows({
     sourceKey: "Notes.Pages",
@@ -221,7 +212,7 @@ export default function NotesPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const title = useResourceDraft("Notes.NewPageTitle", () => "", value => ({ changed: value !== "", unconfirmed: false, stopsBrowserWork: false }));
+  const title = useResourceDraft("Notes.NewPageTitle", () => "");
   const titleInput = useRef<HTMLInputElement>(null);
   const setTitle = title.set;
   useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
@@ -276,7 +267,6 @@ export default function NotesPaneBody() {
   return (
     <div>
       {readFeedback.announcement}
-      <WritingRecovery />
       <CollectionView
         returnScope="Notes.Pages"
         rows={visible}

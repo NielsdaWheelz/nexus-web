@@ -6,7 +6,7 @@ into today. python owners (under `python/nexus/`): `schemas/note_bodies.py` (bod
 grammar), `schemas/notes.py` (notes and command models), `services/note_bodies.py` (the note row),
 `services/outline.py` (outlines and their commands), `services/notes.py` (pages, days,
 capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
-`lib/notes/` (`noteBody`, `outline`, `useOutlineSession`, `useOutline`, `texts`, `journal`, `writes`, `api`) and
+`lib/notes/` (`noteBody`, `outline`, `useOutlineSession`, `useOutline`, `texts`, `writes`, `api`) and
 `components/notes/`.
 
 ## contract
@@ -162,8 +162,7 @@ token editor, internal structural drag or add-item button/menu remains.
 
 every composing transaction stays editor-local until commitment; the final rich
 body and selection then checkpoint together. acknowledgement projection waits
-for that composition boundary. failed continuation input remains independently
-recoverable through the existing writing owner.
+for that composition boundary. failed continuation input remains copyable in its live writing owner.
 
 one session interface, `commandState` / `executeCommand`, serves hardware and the
 pane accessory: insert, indent/outdent, sibling up/down, undo/redo. execution checks
@@ -178,18 +177,18 @@ authoritative `title_version`. history uses `TextValue`, keeps caret/direction a
 belongs to the editing surface; another surface's later edit invalidates old title
 undo. browser history input, hardware and bar use that owner. conflicts never
 overwrite dirty text; blank titles remain unsaved. root titles retain the existing
-latent/new-page creator and journal base; editing cannot publish an unmaterialized
+latent/new-page creator and acknowledged base; editing cannot publish an unmaterialized
 page. title flush and structural admission are separate outcomes.
 
 a single retained insertion composer captures its source, predecessor, rich body
-and selection until handoff. the canonical occurrence and write/recovery owners
+and selection until handoff. the canonical occurrence and live write owners
 retain admitted ids and requests. the empty/trailing insertion line writes nothing
 on render/focus. prose or explicit insert admits existing creation; `@` query text
 never autosaves. changing slots returns to the unfinished composer unless explicitly
 discarded under work protection. successor edits survive delayed acknowledgement.
-refused/unknown writes keep their existing queue and recovery owners.
+refused/unknown writes keep their live request owners.
 an accepted reference hands off and retires its composer at admission; its later
-acknowledgement cannot close another query or draft. an unfinished composer has
+acknowledgement cannot close another query or newer input. an unfinished composer has
 one host for its exact occurrence path. if its predecessor disappears, that host
 keeps the original destination and exposes review/discard rather than rebasing.
 
@@ -215,77 +214,40 @@ must match; a differing draft makes location unavailable until reopened against
 compatible text. confirmed deletion fences old writes and invalidates affected
 undo entries. dirty title/rich body remains visible and read-only for copying.
 
-- `texts`: one in-memory body/title owner per account and resource, shared by
-  same-tab occurrences. each owner holds an independently locked journal branch;
-  another tab gets another branch. committed edits paint immediately and checkpoint
-  rich value/selection with their autosave intent atomically. dispatch becomes
-  eligible after 250 ms idle, at most 2 s during continuous input. title-only new
-  pages and explicit passage/reference drafts never submit on open, focus or restore.
-  acknowledgements adopt confirmed bases without replacing newer input. exact
-  per-ref subscriptions keep an unrelated outline out of the keystroke path.
-  rich conflicts retain base/local/saved values for an explicit decision.
-  canonical acknowledgements publish `NoteBodies` for search, chat and connections;
-  title or structural membership changes also publish `Notes`. body-only receipts
-  leave unrelated outlines alone. memory-only writing participates in the common
-  work guard; completed journal checkpoints do not trigger loss warnings.
-  composition carries its starting value and acknowledged version. only an exact
-  owned desired-value receipt can advance that authority; a read cannot. a newer
-  saved value during a clean owner's composition creates a fresh authored branch
-  at commitment, preserving the original rich base and current saved comparison.
-  the resource and editor remain the same. missing causal proof requires review.
-- `journal`: one indexeddb database per account; `drafts` and ordered `outbox`
-  stores, with strict transaction durability. persist only authored branches,
-  exact bases/context, pending requests and their still-needed causal results.
-  clean server data is memory-only. stable envelopes retain readable recovery
-  text and complete opaque envelopes across unsupported schema revisions; incompatible
-  payloads never enter the current rich projector. a checkpoint is durable only
-  after its transaction completes. storage failure leaves memory editable and
-  exportable but stops delivery; browser eviction remains possible.
-  explicit storage retry opens a fresh account connection without replacing owned
-  memory, pending intents or branch locks.
-  an unpublished, freshly minted branch belongs to the authenticated runtime
-  immediately; its existing branch-ready promise gates storage and release on
-  the actual web lock. recovery claims an existing branch before enabling edits.
-  fresh structural body/reference owners install before the editor handoff, so
-  its next input cannot land in the old parent while awaiting local ownership.
-- `writes`: one account fifo drainer under a web lock. admission commits carried
-  draft snapshots and intent together; sealing commits immutable method/path/body
-  and wire revision before transport. retry those exact bytes after interruption,
-  with a 30 s request deadline and persisted 1–30 s jittered backoff respecting
-  retry-after. a definitive no-effect refusal parks its causal dependents and lets
-  independent work proceed; an unknown outcome blocks the suffix. a new unsealed
-  request over the bff's 4,500,000-byte limit is refused before transport; sealed
-  retries keep their original bytes and uncertainty fence. explicit stop
-  retires that suffix without claiming server cancellation. presentation callbacks
-  cannot govern delivery or settlement. a terminal compact acknowledgement stays
-  in the outbox only until its originating live runtime consumes it or closes;
-  observer locks permit safe orphan cleanup. terminal results never dispatch and
-  remain separate from pending rows. this lets another tab settle a live editor
-  even if the drainer closes before broadcasting. exact accepted desired body/title
-  values prove named scalar successors, fenced by the sealed request's expected
-  version; these compact facts share existing causal-result retention. an unwritten
-  daily title proves only unchanged initial version one. structural dependencies
-  still require genuine checked lane/placement facts. an observed expectation retains its captured
-  version; an unrelated acknowledgement cannot rebase another branch. same-branch
-  autosave successors name their pending predecessor explicitly. reverting to
-  the confirmed value still queues a successor when a different value is pending;
-  equality alone cannot cancel an already sent request. a later read permits an
-  explicit new decision.
-  a retained-note inverse owns its historical-body match certificate. only that
-  inverse's canonical acknowledgement can prove its named body successor; newer
-  authored prose never supplies the historical comparison.
+- `texts`: one body/title owner per account and resource in this tab. committed
+  edits paint immediately; autosave is eligible after 250 ms idle or 2 s of
+  continuous committed input. coalesce only unsent values, with at most one field
+  save outstanding. its acknowledgement adopts the exact saved base while newer
+  input remains. composition carries its captured value/version until commitment;
+  only its named desired-value receipt can advance that authority. dirty input
+  cannot be rebased by a read or unrelated receipt. rich comparison requires a
+  choice against the displayed revision/version. title-only pages stay local.
+- `writes`: one memory fifo per account in this tab. live handles own immutable
+  intent, settlement and notifications. named predecessor handles authorize
+  sealing method/path/body/wire bytes once; retries reuse them exactly. three
+  attempts bound one automatic cycle, with a 30 s deadline and 1–30 s jittered
+  backoff respecting retry-after. offline/admission pauses consume no attempts;
+  reconnect does not renew an exhausted budget. explicit retry starts a new cycle.
+  no-effect refusal rejects named dependents and permits independent work; an
+  unknown outcome fences the suffix. a nonretryable conflict after prior response
+  loss stays unknown: copy, then deliberately reload. no in-place reconciliation.
+  accepted state precedes isolated canonical callbacks, promise settlement and
+  presentation notifications; callbacks cannot resend or strand a write. proofs
+  for identity, placement and retained-note undo live only with referenced handles.
+  teardown fences old callbacks and abandons local work without promising server
+  cancellation. no journal, browser locks, terminal-result archive or cross-tab
+  delivery. independent tabs use server versions and explicit conflicts.
 - `useOutlineSession`: the tab-wide outline graph and one surface's view and undo history
   (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused
-  write cancels the dependent structure writes and retains their latest drafts in
-  the account journal. canonical read owners revalidate. unrelated text history
+  write refuses dependent structure and retains its latest text in memory. canonical read owners revalidate. unrelated text history
   survives. a reply's `deleted_refs` or an acknowledged global note deletion
   stops the removed note's text saving. global deletion removes loaded placements,
   rejects older reads and clears histories that could recreate that note.
   `useResourceOutline` owns root and branch reads, paging, failure and retry through
   `usePagePrefix` and the existing server-value primitive. the notes graph retains
   the derived editing projection and pending overlays. exact links/body/title invalidation
-  refreshes read owners; text adoption preserves dirty drafts. a source read waits
+  refreshes read owners; text adoption preserves dirty input. a source read waits
   only for unsettled structure that names that source; independent sources load
   immediately. supplied branches
   reuse their owner's first page until invalidated; a supplied daily outline then
@@ -299,7 +261,7 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   failure retains the editor; absence, lost access and stale wire block editing.
   body operations identify `{key, noteRef}` separately from the outer resource.
   command admission owns pending occurrences for ordinary edits, history, paste
-  and retry. history/recovery retain their real occurrence keys; acknowledgements
+  and retry. history retains its real occurrence keys; acknowledgements
   settle their own admission even when a later inverse reuses the same edge id.
   body-only projections carry explicit current/local note authority. that grants
   editing, never complete adjacency, retention or join authority. one mounted
@@ -313,14 +275,14 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   a view consumes each explicit focus serial once, including readiness changes.
   reference readiness is read after its layout installs local ownership and
   before the view updates. canonical binding cannot temporarily disable the same
-  editor; recovered branches still wait for their actual ownership claim.
+  editor. there is no branch recovery or storage readiness claim.
   text history coalesces only contiguous before/after bodies. undo/redo checks
   the expected current body before restoring text, including structural inverses;
   stale entries retire without overwriting newer writing.
 - preserving unlink snapshots exact edges, both endpoints and the initiating
   occurrence. every selected occurrence must be a current editable nonterminal
   user placement; unsupported selections refuse as a whole. rows remain pending
-  until acknowledgement, and journal-owned pending ids block dependent structure and
+  until acknowledgement, and live pending handles block dependent structure and
   history while unrelated text saves continue. no text is carried or reset.
   its keyed uncertainty offer survives row unmount; retry nudges that same job.
   acknowledgement withdraws its own offer before one initiating success receipt.
@@ -328,7 +290,7 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   acknowledgement removes exact edges from graph and retained replies before
   publishing; superseded reads cannot restore them. dependent structural history
   retires in every pane; unrelated text history survives. generic unlink has no
-  undo. refusal releases pending state and retains recoverable drafts/selection.
+  undo. refusal releases pending state and retains live input/selection.
   only a fresh bare deletion key on the selected section admits removal; held
   keys, modifiers, composition and nested editors cannot cross into unlink. on
   devices with any coarse pointer, automatic empty-note backspace and deletion-key
@@ -347,7 +309,7 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   acknowledgement preserves only its still-live creation item from retirement.
   an unproven position stops redo for explicit review; a fresh read never silently
   rebases the original decision.
-- `/pages/new` owns recoverable title and first-item branches. title edits, focus,
+- `/pages/new` owns local title and first-item owners. title edits, focus,
   blur and leaving do not publish. the first real rich note uses the same autosave
   eligibility window; selecting a resource/passage admits at once. admission freezes
   ids/body, then successor edits enter the shared text owner while the same mounted editor adopts publication and route identity in place.
@@ -355,7 +317,7 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   title and body risk read the same retained cell. a transient `ComposePage`
   delivery transfers only its title before claiming the delivery; it preserves
   the cell's rich body, immutable request and editor ids.
-- a latent day shows one draft row; its first real body or structural insertion
+- a latent day shows one local row; its first real body or structural insertion
   materializes the proposed page and first link in one command transaction. title
   edits stay local until publication. every successful materialization records its
   exact binding before hydration; older virtual reads cannot replace it or make
@@ -374,8 +336,8 @@ reads cannot authorize creation. a latent day's sibling creation materializes it
 original visible draft in the same existing contract, outside the sibling's undo
 history. queued creation retains its pending text/projection identity until ack.
 
-a definitively refused structural batch keeps its latest writing in the account
-journal before replacing the optimistic projection. retry preserves the
+a definitively refused structural batch keeps its latest writing in memory
+before replacing the optimistic projection. retry preserves the
 original source, predecessor and atomic edit sequence, requires reviewed current
 placement and body preconditions, and never guesses an append position. missing
 anchors or conflicting bodies keep the draft copyable while retry is disabled.
@@ -387,17 +349,17 @@ it does not enroll the draft in `texts` or autosave on blur. enter saves,
 shift-enter inserts the existing newline, and command/control-enter sends a new
 quoted chat without changing the saved note. bodies use `NoteBody`'s canonical
 `body_pm_json`/`body_text`; edits and focus use `NoteEdit`/`FocusSelection`.
-composition and nested controls keep their own keys. caret, rich body and undo
-history survive reader body unmounts in the existing pane visit; completed rich
-checkpoints and selection survive restart, while undo history resets. canonical
+composition and nested controls keep their own keys. one active composer owns its caret, rich body and undo history. outer dismissal,
+reader replacement or another passage discards unsubmitted input silently. nested
+chooser dismissal preserves it. no per-passage buffer inventory or restart restore. canonical
 rich equality determines changed input; a model or quote choice alone is clean.
 saving a passage and sending its text as chat remain separate explicit operations.
 
 an empty resource-owned composer accepts typed `@` through the shared reference
 controller before persistence. mutable editor cells belong to the exact visit,
-route and editor; durable branches have separate ids and locks; delayed acknowledgements settle their original cell, including
-after unmount/remount. unmount releases only the exact host’s active report;
-retained queries and admitted writes remain account-journal-owned. search text never enters canonical prose or an
+route and editor; delayed acknowledgements settle their original live owner.
+unmount releases the exact host’s active report. admitted writes remain
+account-owned until settlement; unsubmitted passage queries die with the composer. search text never enters canonical prose or an
 autosave; blur suspends it and escape makes one ordinary literal edit using its
 captured body version. accepted intents freeze ids, endpoints and placement;
 escape cannot turn an admitted write into prose. a definitive position refusal
@@ -447,26 +409,20 @@ and stored chat text remain. there
 is no new undo service. acknowledgement marks the shared text gone, announces
 `resource_deleted` and uses `settleDeletedResourcePanes` for visible note panes.
 
-these commands use the same durable account journal and exact sealed retries.
+these commands use the same live writer and exact sealed retries.
 fresh passage plus initial note is one atomic mutation with client-minted ids and
 frozen reader generation, without a prerequisite read. first acknowledgement
 adopts canonical identity/base in place, preserving successor input and focus.
-chat state remains visit-owned and outside the journal. [highlight](highlight.md)
+chat admission remains owned by the existing conversation command owner. [highlight](highlight.md)
 owns selection interaction; [chat](chat.md) owns admission and immutable quotes.
 
-## recovery, receive and account lifetime
+## receive and account lifetime
 
-`WritingRecovery` exposes authored branches and pending/refused work without the
-original pane. restore never submits unsubmitted writing. rich comparison offers
-explicit replacement against the displayed saved version, taking saved content,
-saving under a new identity, or exporting. deleted identities are never resurrected.
-a completed copy is reported even if newer input prevents retiring the original.
-discarding a text-owned branch restores its latest confirmed baseline in the
-retained editor; its next edit renews the branch through the existing journal
-owner. selecting that baseline waits for in-flight acknowledgements.
-`NoteNotices` distinguishes saving, locally committed/offline, synced, uncertainty
-and memory-only work; it makes no durability claim before transaction completion.
-new uploads are online-only; completed bodies never contain local blob urls.
+there is no writing recovery panel, export, durable outbox or browser writing
+storage. `NoteNotices` reports live saving, uncertainty, refusal, rich conflict or
+deleted text beside its owner. memory is never presented as a save. explicit
+capture success requires backend acknowledgement. new uploads remain online-only;
+completed bodies contain no local blob urls.
 
 `api/writingReceive` owns one writing stream per authenticated tab and bounded
 256-ref probes of mounted resource lanes. each projection adopts versions only
@@ -489,19 +445,20 @@ foreground and reconnect directly invalidate failed watches without first cleari
 their errors, allowing the same observed version to reread. healthy watches keep
 their duplicate-invalidation fence. confirmed unavailable text and embedded-note
 bindings retire their watches under generation and binding-identity checks, while
-retaining authored recovery branches. only modeled api errors enter failure
+retaining live authored text for copying. only modeled api errors enter failure
 state; authentication and defects follow their existing owners.
 
-`useWritingRuntime` acquires the shared account runtime lease before editors mount,
-rechecks the authenticated account, and owns the one document-exit/security/reload
-integration. deliberate sign-out serializes under an account sign-out lock,
-freezes admission/settlement, then requires an exclusive runtime lease. another
-writer must resolve its work and close. sync, completed export/receipt or explicit
-discard must resolve writing before purge. native reading copies purge first,
-then the journal, then the session form; failures report their actual phase.
-reviewed runtime tokens fence stale account callbacks. gates remain held until
-actual document navigation; failure/cancel restores the surviving runtime.
-auth expiry preserves the journal and yields to security navigation. account
-switch never displays or replays another account's work. unload protects only
-memory-only revisions and unfinished uploads; wire reload also holds incompatible
-or sealed pending work.
+`useWritingRuntime` activates synchronous account memory and registers narrow
+ordinary-autosave loss risk with `WorkGuard`. pane navigation leaves that owner
+alive. full document exit, native back/downloads and elective signout consult the
+existing guard; title-only pages and unsubmitted explicit passage/reference input
+add no writing warning. automatic wire reload waits for guard work or any
+unsettled submitted write. security teardown keeps its existing authority.
+
+signout uses one guarded action, pauses admission and preserves player/native
+cleanup. failure before account teardown restores memory and editing for that
+same account. once native signout tombstones the account, cleanup failure never
+revives it. successful teardown abandons this account’s memory and fences late
+results. no old local writing is replayed on login or restart. release-only exact
+store retirement is documented in `docs/issues/release-online-first-writing.md`;
+no cleanup reader or maintenance route remains in the final app.

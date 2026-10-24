@@ -13,12 +13,12 @@ let redirectStarted = false;
 let tearingDown = false;
 let beforeTeardown: (() => void) | null = null;
 
-/** The writing runtime pauses delivery before the login navigation. One holder;
+/** The document ends writing ownership before the login navigation. One holder;
  * the returned function releases it. */
-export function beforeSecurityTeardown(pause: () => void): () => void {
-  beforeTeardown = pause;
+export function beforeSecurityTeardown(stop: () => void): () => void {
+  beforeTeardown = stop;
   return () => {
-    if (beforeTeardown === pause) beforeTeardown = null;
+    if (beforeTeardown === stop) beforeTeardown = null;
   };
 }
 
@@ -32,7 +32,7 @@ export function handleUnauthenticatedApiError(error: unknown): boolean {
   try {
     beforeTeardown?.();
   } catch (failure) {
-    // justify-ignore-error: a failed pause never vetoes the security teardown.
+    // justify-ignore-error: a failed stop never vetoes the security teardown.
     reportError(failure);
   }
   const { pathname, search } = window.location;

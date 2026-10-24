@@ -1,12 +1,11 @@
 "use client";
 
-// Retained authored passage branches and their explicit editor interaction.
-// Preparation fixes one source and its identities; capture commands await that
-// exact slot and journal without presenting an editor. Writes use the existing
-// journal's fixed create identities and absolute versioned updates for retry.
-// Acknowledgement adopts saved facts; it never replaces prose or opens a view.
+// One ephemeral rich composer. Explicit submissions freeze their input; their
+// owners settle independently of dismissal and never replace newer input.
 
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { copyWriting } from "@/components/notes/NoteNotices";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -33,18 +32,16 @@ import type { HighlightColor } from "@/lib/documentReader/model";
 import { emptyNoteBodyHistory, recordNoteBodyEdit } from "@/lib/notes/bodyHistory";
 import { docFromBody, emptyBody, parseBody, sameBody } from "@/lib/notes/noteBody";
 import { adoptText, setGone } from "@/lib/notes/texts";
-import { WritingDecisionError, admitWriting, assertWritingRuntimeToken, writingRuntimeToken, checkpoint, claimDraft, confirmedDraftBase, discardDraft, draftIsDurable, openDraft, readDraft, readWriting, releaseDraft, retireWriting, snapshotDraft, stageDraft, subscribeWriting, updateDraftContext, type ConflictShown, type DraftContext, type DraftHandle, type DraftShown, type DraftSnapshot, type WritingIntent } from "@/lib/notes/journal";
+import { WritingDecisionError, admitWriting, canRetryWriting, readWriting, subscribeWriting, type ConflictShown, type WritingIntent } from "@/lib/notes/writes";
 import { useOutlineSession, type NoteEdit } from "@/lib/notes/useOutlineSession";
 import { OutlineSessionContext, ResourceBranch } from "@/components/resources/ResourceOutlineList";
-import { nudgeWrites } from "@/lib/notes/writes";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
-import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitIdentity, usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { AnnotationStore } from "./annotations";
-import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type SelectionDrafts } from "./selectionDrafts";
+import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type ReaderChatIssue } from "./selectionDrafts";
 
-const VISIT_DRAFTS = definePaneVisitDataKey<SelectionDrafts>("Reader.AnnotationDrafts");
 const DEFAULT_VISIT = definePaneVisitDataKey<Visit<ListPage<ConversationListItem>>>("Reader.ChatDefault");
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
@@ -75,8 +72,8 @@ function reconcileDeletedNote(entry: ComposerDraft): ComposerDraft {
   const conflictDeleted = entry.issue?.kind === "Conflict" && entry.issue.saved.kind === "Present" &&
     isDeletedResource(`note_block:${entry.issue.saved.id}`);
   if (!baseDeleted && !conflictDeleted) return entry;
-  return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, discardBase: null, load: "Ready" as const, publication: null } : {}),
-    issue: { kind: "Deleted", message: "this note was deleted. your words are kept. save them as a new note or select another passage." },
+  return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, load: "Ready" as const, publication: null } : {}),
+    issue: { kind: "Deleted", message: "this note was deleted. copy any changes you want to keep." },
     status: null };
 
 }
@@ -90,6 +87,7 @@ export function useSelectionComposer(input: {
 }) {
   const { reader, annotations, active, isMobile, onError } = input;
   const latestWorkspace = useLatestWorkspace();
+  const feedback = useFeedback();
   const { ctx } = useActionRuntime();
   const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
   const inheritedSession = useContext(OutlineSessionContext);
@@ -99,19 +97,7 @@ export function useSelectionComposer(input: {
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
   const catalog = catalogRead.status === "ready" && catalogRead.error === null ? catalogRead.data : null;
   const refreshCatalog = catalogRead.refetch;
-  const holder = useRef<SelectionDrafts | null>(null);
-  const retained = usePaneVisitData(VISIT_DRAFTS, () => holder.current);
-  const [store] = useState(() => retained ?? createSelectionDrafts());
-  holder.current = store;
-  const workScope = usePaneVisitWorkScope();
-  usePaneVisitWorkOwner({
-    id: `${usePaneVisitIdentity()}:selection-drafts`, scope: workScope, subscribe: store.subscribe,
-    read: () => ({
-      changed: false,
-      unconfirmed: store.getSnapshot().some(entry => entry.chatAttempt?.kind === "Preparing"),
-      stopsBrowserWork: false,
-    }),
-  });
+  const [store] = useState(createSelectionDrafts);
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const writing = useSyncExternalStore(subscribeWriting, readWriting, readWriting);
   const publication = useReaderState(reader, state => state.document.status === "ready" ? state.document.doc.identity : null);
@@ -127,8 +113,15 @@ export function useSelectionComposer(input: {
   const activeRef = useRef(active);
   activeRef.current = active;
   const show = useCallback((next: Opening | null) => { current.current = next; interaction.current = next?.id ?? null; setOpening(next); }, []);
-  useEffect(() => { if (!active) { show(null); setPickerDraftId(null); } }, [active, show]);
+  useEffect(() => { if (!active) { show(null); setPickerDraftId(null); for (const entry of store.getSnapshot()) store.remove(entry.id); } }, [active, show, store]);
   useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
+  const previousPublication = useRef(publication);
+  useEffect(() => {
+    if (previousPublication.current === publication) return;
+    previousPublication.current = publication;
+    show(null); setPickerDraftId(null);
+    for (const entry of store.getSnapshot()) store.remove(entry.id);
+  }, [publication, show, store]);
   useEffect(() => {
     const retire = () => { if (document.visibilityState === "hidden") cancelReselection(); };
     document.addEventListener("visibilitychange", retire);
@@ -156,130 +149,6 @@ export function useSelectionComposer(input: {
 
   const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
   const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
-  const contextFor = (entry: ComposerDraft): DraftContext => {
-    if (!entry.publication) throw new Error("load the exact annotation slot before editing");
-    return { kind: "passage", media_id: entry.sourceMediaId, resource_ref: `note_block:${entry.noteId}`,
-      passage: { identity: entry.passage.identity, anchor: entry.passage.anchor, quote: entry.passage.quote },
-      source: entry.referenceSource, publication: entry.publication };
-  };
-  const journalFor = (entry: ComposerDraft): Promise<DraftHandle> => {
-    if (entry.journal) return entry.journal;
-    const candidates = readWriting().drafts.filter(saved => saved.context.kind === "passage" &&
-      saved.context.resource_ref === `note_block:${entry.noteId}` &&
-      saved.context.media_id === entry.sourceMediaId && samePassage(saved.context.passage, entry.passage));
-    const recovered = candidates.length === 1 ? candidates[0] : undefined;
-    const token = writingRuntimeToken();
-    const journal = (async () => {
-      const handle = recovered ? await claimDraft(recovered.draft_id) : null;
-      assertWritingRuntimeToken(token);
-      return handle ?? openDraft(contextFor(entry), { kind: "body", body_pm_json: entry.body.body_pm_json },
-        entry.base.kind === "Present" ? { value: { kind: "body", body_pm_json: entry.base.body.body_pm_json }, version: entry.base.version } : null,
-        recovered?.draft_id ?? null);
-    })();
-    void journal.then(handle => {
-      assertWritingRuntimeToken(token);
-      store.update(entry.id, value => value.journal === journal ? { ...value, handle } : value);
-    }).catch(() => undefined);
-    store.update(entry.id, value => ({ ...value, journal }));
-    return journal;
-  };
-  useEffect(() => {
-    if (writing.paused) return;
-    for (const entry of drafts) if (entry.load === "Ready" && entry.publication && !entry.journal)
-      void journalFor(entry).catch(() => undefined);
-    // opening acquires local ownership; it never checkpoints or submits clean prose.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drafts, store, writing.paused]);
-  useEffect(() => () => {
-    for (const entry of store.getSnapshot()) if (entry.journal) {
-      void entry.journal.then(releaseDraft).catch(() => undefined);
-      store.update(entry.id, value => ({ ...value, journal: null, handle: null }));
-    }
-  }, [store]);
-  useLayoutEffect(() => {
-    for (const entry of drafts) {
-      const saved = entry.handle && readDraft(entry.handle.draft_id);
-      if (entry.handle !== null && saved === undefined) {
-        const confirmed = entry.discardBase;
-        const base: ComposerDraft["base"] = confirmed?.value.kind === "body" && typeof confirmed.version === "number"
-          ? { kind: "Present", id: entry.noteId, linkId: entry.linkId, version: confirmed.version,
-            body: parseBody(confirmed.value.body_pm_json), embeddedItem: entry.base.kind === "Present" ? entry.base.embeddedItem : null }
-          : { kind: "Absent" };
-        const body = initialBody(base);
-        const noteId = base.kind === "Present" ? base.id : createRandomId();
-        const linkId = base.kind === "Present" ? base.linkId : createRandomId();
-        const highlightId = entry.highlightId ?? createRandomId();
-        const referenceSource = { ...entry.referenceSource, highlight_id: highlightId };
-        const publication: ComposerDraft["publication"] = entry.publication?.kind === "passage"
-          ? { ...entry.publication, request: { ...entry.publication.request, id: highlightId,
-            initial_note: { note_id: noteId, link_id: linkId, body_pm_json: body.body_pm_json } } }
-          : entry.publication?.kind === "attach_highlight"
-            ? { ...entry.publication, request: { ...entry.publication.request, note_id: noteId, link_id: linkId,
-              body_pm_json: body.body_pm_json, expected: base.kind === "Present"
-                ? { kind: "version", version: base.version } : entry.publication.request.expected } } : null;
-        store.update(entry.id, value => ({ ...value, body, base, noteId, linkId, referenceSource, publication,
-          revision: value.revision + 1, selection: null, history: emptyNoteBodyHistory(),
-          journal: null, handle: null, operation: null, resuming: null, issue: null, status: null, referenceActive: false }));
-        void releaseDraft(entry.handle);
-        continue;
-      }
-      if (!saved || saved.context.kind !== "passage") continue;
-      const pending = writing.outbox.find(row => row.authored.some(authored => authored.draft_id === saved.draft_id));
-      const base = saved.base;
-      const deleted = isDeletedResource(saved.context.resource_ref) || isDeletedResource(`highlight:${saved.context.source.highlight_id}`);
-      const confirmed = confirmedDraftBase(saved);
-      const previous = saved.context.resource_ref === `note_block:${entry.noteId}` ? entry.discardBase : null;
-      const discardBase = deleted ? null : confirmed?.value.kind === "body" && (previous === null ||
-        typeof confirmed.version === "number" && (typeof previous.version !== "number" || confirmed.version > previous.version))
-        ? confirmed : previous;
-      const bound = !deleted && base?.value.kind === "body" && typeof base.version === "number"
-        ? { value: base.value, version: base.version } : null;
-      const changedBase = bound !== null && (entry.base.kind === "Absent" || entry.base.version !== bound.version || entry.publication?.kind === "passage");
-      const currentRequest = pending?.authored.some(authored => authored.draft_id === saved.draft_id && authored.revision === saved.revision);
-      const currentSaved = bound !== null && sameBody(parseBody(bound.value.body_pm_json), entry.body);
-      const status = !draftIsDurable(saved.draft_id) ? writing.storage_error === null ? "saving…" : null
-        : pending && currentRequest ? pending.uncertain ? "couldn’t confirm this change." : navigator.onLine ? "saved on this device · syncing" : "saved on this device · offline"
-        : currentSaved ? "synced" : "draft saved on this device";
-      const finished = entry.resuming !== null && !pending;
-      const deletedIssue = deleted && entry.issue?.kind !== "Deleted";
-      if (!changedBase && !finished && !deletedIssue && discardBase === entry.discardBase && status === entry.status) continue;
-      const context = saved.context;
-      const noteId = context.resource_ref.slice("note_block:".length);
-      const linkId = saved.results.flatMap(result => result.ack.identities).find(identity => identity.kind === "link" && identity.requested_id === entry.linkId)?.canonical_id ?? entry.linkId;
-      const highlightId = context.source.highlight_id;
-      store.update(entry.id, current => ({ ...current, status, discardBase,
-        ...(finished ? { operation: null, resuming: null } : {}),
-        ...(deletedIssue ? { publication: null, issue: { kind: "Deleted", message: "this annotation was deleted. your words are kept; choose a new passage or note." } } : {}),
-        ...(changedBase && bound !== null ? {
-          noteId, linkId, highlightId,
-          referenceSource: context.source,
-          base: { kind: "Present", id: noteId, linkId, version: bound.version, body: parseBody(bound.value.body_pm_json), embeddedItem: null },
-          publication: { kind: "attach_highlight", highlight_id: highlightId, request: { note_id: noteId, link_id: linkId,
-            body_pm_json: bound.value.body_pm_json, expected: { kind: "version", version: bound.version } } },
-        } : {}),
-      }));
-    }
-  }, [drafts, store, writing]);
-  const keep = (entry: ComposerDraft, editBase?: NoteEdit["editBase"]) => {
-    const revision = entry.revision;
-    store.update(entry.id, value => ({ ...value, status: "saving…" }));
-    void journalFor(entry).then(async handle => {
-      const saved = readDraft(handle.draft_id);
-      if (!saved) throw new Error("the passage draft is no longer open");
-      await checkpoint(handle, saved.revision, { kind: "body", body_pm_json: entry.body.body_pm_json }, entry.selection, null, null, editBase?.consumed_reference ?? null);
-      store.update(entry.id, value => value.revision === revision ? { ...value, status: "draft saved on this device" } : value);
-    }).catch(() => store.update(entry.id, value => ({ ...value, status: null,
-      issue: { kind: "Failed", message: "recent changes are only in this tab. keep it open or download your writing." } })));
-  };
-  const retireBranch = async (entry: ComposerDraft, shown: DraftShown | null) => {
-    if (!entry.handle) return;
-    if (shown === null) throw new WritingDecisionError("review the current draft before replacing it");
-    const rows = readWriting().outbox.filter(row => row.authored.some(authored => authored.draft_id === entry.handle!.draft_id));
-    if (rows.some(row => row.uncertain || row.blocked === null)) throw new Error("resolve the pending change in recover writing before replacing this draft");
-    for (const row of rows) await retireWriting(row.intent_id);
-    await discardDraft(entry.handle, shown);
-    await releaseDraft(entry.handle);
-  };
   const destination = draft?.destination ?? null;
   const defaultId = draft?.load === "Ready" && destination?.kind === "Resolving" ? draft.id : null;
   const defaultSource = draft?.sourceMediaId ?? null;
@@ -369,7 +238,7 @@ export function useSelectionComposer(input: {
       const data = await liveHighlight(highlightId);
       if (!ownsRead()) return;
       if (!data) {
-        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight is no longer available. your draft is kept." } }));
+        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight is no longer available. your input remains in this tab." } }));
         return;
       }
       const saved = data.anchor;
@@ -379,7 +248,7 @@ export function useSelectionComposer(input: {
       const shown = reader.getState().document;
       if (shown.status !== "ready" || shown.doc.identity !== requested.passage.identity ||
         JSON.stringify(anchor) !== JSON.stringify({ ...annotations.source(requested.passage.anchor).anchor, exact: undefined })) {
-        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Source", message: "the source changed. your words are kept; select the passage again." } }));
+        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Source", message: "the source changed. select it again before saving or sending." } }));
         return;
       }
       const base = noteBase(data), body = initialBody(base), doc = docFromBody(body);
@@ -389,9 +258,6 @@ export function useSelectionComposer(input: {
         requested.base.kind === "Present" && base.id === requested.base.id && base.version === requested.base.version;
       const captureSlot = replace || requested.publication === null || requested.publication.kind === "passage";
       store.update(draftId, entry => ({ ...entry, highlight: data, highlightId: data.id, load: "Ready",
-        discardBase: base.kind === "Present" && base.id === entry.noteId && (entry.discardBase === null ||
-          typeof entry.discardBase.version !== "number" || base.version > entry.discardBase.version)
-          ? { value: { kind: "body", body_pm_json: base.body.body_pm_json }, version: base.version } : entry.discardBase,
         ...(captureSlot && (replace || sameBase) ? {
           linksVersion: data.links_version,
           noteId: base.kind === "Present" ? base.id : entry.noteId, linkId: base.kind === "Present" ? base.linkId : entry.linkId,
@@ -404,61 +270,14 @@ export function useSelectionComposer(input: {
         passage: { ...entry.passage, quote: data.exact }, sourceMediaId: data.anchor.media_id,
         chatIssue: entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" ? null : entry.chatIssue,
         ...(replace ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null }
-          : { issue: sameBase ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base, linksVersion: data.links_version } }),
+          : { issue: sameBase ? null : { kind: "Conflict", message: "this note changed elsewhere. your input remains in this tab.", saved: base, linksVersion: data.links_version } }),
       }));
-      const loaded = get(draftId);
-      if (!replace && requested.load === "Loading" && !requested.journal && loaded?.publication) keep(loaded);
-      if (captureSlot && (replace || sameBase) && loaded?.publication && loaded.journal) {
-        const handle = await loaded.journal;
-        if (get(draftId)?.handle === handle && readDraft(handle.draft_id)?.resource_ref === `note_block:${loaded.noteId}`)
-          await updateDraftContext(handle, contextFor(loaded));
-      }
+
     } catch (error) {
       if (!ownsRead()) return;
-      store.update(draftId, (entry) => ({ ...entry, load: replace ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your draft is kept." } }));
+      store.update(draftId, (entry) => ({ ...entry, load: replace ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your input remains in this tab." } }));
       onError(error, "Note couldn’t be loaded");
     }
-  };
-
-  useEffect(() => {
-    for (const entry of drafts) {
-      const saved = entry.handle && readDraft(entry.handle.draft_id);
-      if (entry.highlightId !== null || saved?.context.kind !== "passage" || saved.base !== null) continue;
-      const highlightId = saved.context.source.highlight_id;
-      const ensured = saved.results.some(result => result.ack.identities.some(identity =>
-        identity.kind === "highlight" && identity.canonical_id === highlightId && identity.state === "live"));
-      if (!ensured) continue;
-      store.update(entry.id, value => ({ ...value, highlightId, referenceSource: saved.context.kind === "passage" ? saved.context.source : value.referenceSource }));
-      void readNote(entry.id, highlightId, false);
-    }
-    // settlement facts, rather than a link sender callback, establish this identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drafts, store, writing]);
-
-  const restore = (saved: DraftSnapshot, retainedId: string | null = null) => {
-    if (saved.context.kind !== "passage" || saved.value.kind !== "body") return null;
-    const context = saved.context, publication = context.publication;
-    const id = retainedId ?? saved.draft_id;
-    const noteId = context.resource_ref.slice("note_block:".length);
-    const linkId = publication.kind === "attach_highlight" ? publication.request.link_id : publication.request.initial_note?.link_id;
-    if (linkId === undefined) throw new Error("passage draft is missing its fixed attachment identity");
-    const journal = (async () => await claimDraft(saved.draft_id) ?? openDraft(context, saved.value, saved.base, saved.draft_id))();
-    const pending = readWriting().outbox.find(row => row.authored.some(authored => authored.draft_id === saved.draft_id));
-    const highlightId = publication.kind === "attach_highlight" ? publication.highlight_id
-      : saved.base !== null ? context.source.highlight_id : null;
-    store.put({ id, passage: context.passage, referenceSource: context.source, publication, journal, handle: null, resuming: pending?.intent_id ?? null,
-      noteId, linkId, linksVersion: publication.kind === "attach_highlight" && publication.request.expected.kind === "absent" ? publication.request.expected.version : null,
-      highlightId, highlight: null, body: parseBody(saved.value.body_pm_json), selection: saved.selection,
-      revision: 0, history: emptyNoteBodyHistory(), referenceActive: false, load: "Ready", discardBase: confirmedDraftBase(saved),
-      base: saved.base?.value.kind === "body" && typeof saved.base.version === "number"
-        ? { kind: "Present", id: noteId, linkId, body: parseBody(saved.base.value.body_pm_json), version: saved.base.version, embeddedItem: null } : { kind: "Absent" },
-      operation: pending ? { id: pending.intent_id, kind: "Save" } : null,
-      issue: saved.conflict ? { kind: "Failed", message: saved.conflict.reason } : null,
-      status: draftIsDurable(saved.draft_id) ? "draft saved on this device" : null,
-      sourceMediaId: context.media_id, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
-    });
-    void journal.then(handle => store.update(id, entry => ({ ...entry, handle }))).catch(() => undefined);
-    return id;
   };
 
   // Preparation fixes the source and all request identities before loading the
@@ -471,8 +290,8 @@ export function useSelectionComposer(input: {
         ? { kind: "text", unit: selected.anchor.unit, start: selected.anchor.start, end: selected.anchor.end }
         : { kind: "pdf", page: selected.anchor.page, quads: selected.anchor.quads },
     };
-    let existing = carried ? undefined : (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
-      store.getSnapshot().find((entry) => samePassage(entry.passage, passage));
+    let existing = carried ? undefined : store.getSnapshot().find(entry => entry.id === current.current?.draftId &&
+      (highlightId ? entry.highlightId === highlightId : samePassage(entry.passage, passage)));
     if (existing) {
       const admitted = reconcileDeletedNote(existing);
       if (admitted !== existing) store.update(existing.id, () => admitted);
@@ -509,12 +328,12 @@ export function useSelectionComposer(input: {
       const noteId = createRandomId(), linkId = createRandomId();
       store.put({
         id, passage, referenceSource, highlightId, highlight: null,
-        noteId, linkId, linksVersion: null, journal: null, handle: null, resuming: null,
+        noteId, linkId, linksVersion: null, write: null,
         publication: highlightId ? null : annotations.prepareCreate({
           anchor: passage.anchor.kind === "pdf" ? { ...passage.anchor, exact: passage.quote } : passage.anchor,
           id: selectionId, color: "yellow", initialNote: { note_id: noteId, link_id: linkId, body_pm_json: emptyBody().body_pm_json },
         }),
-        base: { kind: "Absent" }, discardBase: null, body: carried?.body ?? emptyBody(), revision: 0,
+        base: { kind: "Absent" }, body: carried?.body ?? emptyBody(), revision: 0,
         selection: carried?.selection ?? null, history: carried?.history ?? emptyNoteBodyHistory(),
         load: highlightId ? "Loading" : "Ready", operation: null,
         issue: null, status: null, referenceActive: false,
@@ -525,24 +344,15 @@ export function useSelectionComposer(input: {
       passage: passage.quote ? passage : { ...passage, quote: entry.passage.quote },
       referenceSource, sourceMediaId: boundSource.mediaId, highlightId: highlightId ?? entry.highlightId,
     }));
-    const candidates = readWriting().drafts.filter(value => value.context.kind === "passage" &&
-      value.context.media_id === boundSource.mediaId && samePassage(value.context.passage, passage));
-    const saved = candidates.length === 1 ? candidates[0] : undefined;
-    if (!existing && !carried && saved) restore(saved, id);
     const clean = existing && sameBody(existing.body, initialBody(existing.base));
     const held = preparing.current.has(id);
     const ready = async () => {
-      if (highlightId && !saved && !existing?.operation && !held)
+      if (highlightId && !existing?.operation && !held)
         await readNote(id, highlightId, !carried && (!existing || Boolean(clean)));
-      else if (carried) {
-        const opened = get(id);
-        if (opened?.publication) keep(opened);
-      }
       const opened = get(id);
-      if (opened?.load === "Ready" && opened.publication) await journalFor(opened);
       return opened ?? null;
     };
-    return { id, ready, mediaId: boundSource.mediaId, generation, restored: !existing && !carried && saved !== undefined };
+    return { id, ready, mediaId: boundSource.mediaId, generation, restored: false };
   };
   const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null, mode: Opening["mode"]) => {
     const prepared = prepare(passage, highlightId, carried);
@@ -558,7 +368,7 @@ export function useSelectionComposer(input: {
   const highlightDeleted = useCallback((id: string) => {
     if (store.getSnapshot().some((entry) => entry.id === current.current?.draftId && entry.highlightId === id)) show(null);
     for (const entry of store.getSnapshot()) if (entry.highlightId === id) {
-      store.update(entry.id, (value) => ({ ...value, highlightId: null, highlight: null, base: { kind: "Absent" }, discardBase: null,
+      store.update(entry.id, (value) => ({ ...value, highlightId: null, highlight: null, base: { kind: "Absent" },
         issue: { kind: "Deleted", message: "this highlight was deleted. your words are kept; select a passage to save them again." },
         publication: null, load: "Ready", status: null }));
     }
@@ -571,7 +381,7 @@ export function useSelectionComposer(input: {
     continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>;
   }) => {
     const entry = source && get(source.draftId);
-    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.issue?.kind === "Conflict" || entry.issue?.kind === "Deleted") return;
+    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.issue?.kind === "Conflict" || entry.issue?.kind === "Deleted" || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return;
     const shown = reader.getState().document;
     let sourceMatches = false;
     if (shown.status === "ready" && !shown.refreshing && shown.doc.identity === entry.passage.identity) {
@@ -583,7 +393,7 @@ export function useSelectionComposer(input: {
       }
     }
     if (!sourceMatches) {
-      store.update(entry.id, value => ({ ...value, issue: { kind: "Source", message: "the source changed. your words are kept; select the passage again." } }));
+      store.update(entry.id, value => ({ ...value, issue: { kind: "Source", message: "the source changed. select it again before saving or sending." } }));
       return;
     }
     if (!entry.highlightId && !reader.measurePassage(entry.passage)) return;
@@ -621,16 +431,23 @@ export function useSelectionComposer(input: {
             expected: submitted.base.kind === "Present" ? { kind: "version", version: submitted.base.version } : submitted.publication.request.expected,
           } };
         }
-        const handle = await journalFor(submitted);
-        const snapshot = readDraft(handle.draft_id);
-        if (!snapshot) throw new Error("the passage draft is no longer open");
-        const localCommit = checkpoint(handle, snapshot.revision, { kind: "body", body_pm_json: submitted.body.body_pm_json }, submitted.selection, null);
-        const authored = snapshotDraft(handle);
-        await localCommit;
-        const admitted = admitWriting(intent, [authored]);
-        await admitted.durable;
-        store.update(entry.id, value => ({ ...value, operation: { id: admitted.intent_id, kind: command.kind },
-          status: navigator.onLine ? "saved on this device · syncing" : "saved on this device · offline" }));
+        const admitted = admitWriting(intent);
+        store.update(entry.id, value => ({ ...value, write: admitted, operation: { id: admitted.id, kind: command.kind } }));
+        let notice: ReturnType<typeof feedback.offer> | null = null;
+        const stop = admitted.subscribe(() => {
+          const state = admitted.read();
+          if (state.kind !== "unconfirmed") return;
+          const irreducible = !canRetryWriting(admitted);
+          const message = irreducible ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded.";
+          store.update(entry.id, value => ({ ...value, status: null,
+            issue: { kind: "Failed", message: `save not confirmed. ${message}` } }));
+          if (current.current?.draftId !== entry.id) notice = feedback.offer({ key: `passage-save:${admitted.id}`, announcement: "Polite",
+            content: { tone: "Warning", title: "passage save not confirmed", message },
+            actions: irreducible ? [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) },
+              { label: "reload", onClick: () => { window.location.reload(); } }]
+              : [{ label: "retry same save", onClick: admitted.retry }] });
+        });
+        void admitted.settled.then(() => { stop(); notice?.withdraw(); }, stop);
         const ack = await admitted.settled;
         if (ctx.sessionSignal().aborted) return;
         annotations.acknowledge(ack);
@@ -651,14 +468,13 @@ export function useSelectionComposer(input: {
           publication: expected === null ? null : { kind: "attach_highlight", highlight_id: highlightId, request: {
             note_id: nextNoteId, link_id: nextLinkId, body_pm_json: submitted.body.body_pm_json, expected,
           } },
-          ...(command.kind === "Delete" ? { journal: null, handle: null, discardBase: null } : {}),
-          issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base, linksVersion },
+          write: null,
+          issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your input remains in this tab.", saved: base, linksVersion },
           status: value.revision === submitted.revision
-            ? savedNote && accepted ? "synced" : isEmptyParagraph(value.body) ? "highlight saved" : "draft saved on this device"
-            : value.status,
+            ? command.kind === "Delete" ? "note deleted" : savedNote && accepted ? "note saved" : "highlight saved"
+            : null,
         }));
         const next = get(entry.id);
-        if (next?.publication && next.handle === handle && command.kind !== "Delete") await updateDraftContext(handle, contextFor(next));
         if (next && next.publication === null && command.kind !== "Delete") void readNote(entry.id, highlightId, false);
         for (const note of ack.notes) adoptText(`note_block:${note.id}`, parseBody(note.body_pm_json), note.body_version);
         if (command.kind === "Delete" && submitted.base.kind === "Present") {
@@ -672,12 +488,13 @@ export function useSelectionComposer(input: {
         if (ctx.sessionSignal().aborted) return;
         store.update(entry.id, value => ({ ...value, operation: null, status: null,
           issue: { kind: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED" ? "Source" : "Failed", message: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
-            ? "the source changed. your words are kept; select the passage again."
-            : "couldn’t confirm this change. your draft is kept." } }));
+            ? "the source changed. select it again before saving or sending."
+            : "couldn’t confirm this change. your input remains in this tab." } }));
         if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && submitted.highlightId)
           void readNote(entry.id, submitted.highlightId, false);
-        else if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") reader.reload();
-        else onError(error, "passage request didn’t finish");
+        else if (!(isApiError(error) && error.code === "E_READER_CONTENT_CHANGED")) onError(error, "couldn’t save this passage");
+        if (current.current?.draftId !== entry.id) feedback.offer({ key: `passage-save:${submitted.commandId}`, announcement: "Polite",
+          content: { tone: "Warning", title: "couldn’t save this passage", message: isApiError(error) ? error.message : "review the passage before saving again." } });
       }
     };
     const completion = run();
@@ -704,7 +521,7 @@ export function useSelectionComposer(input: {
     } catch (error) {
       if (ctx.sessionSignal().aborted) return null;
       store.update(prepared.id, value => samePassage(value.passage, capture) ? { ...value,
-        issue: { kind: "Failed", message: "your request could not be prepared. your draft is kept." } } : value);
+        issue: { kind: "Failed", message: "your request could not be prepared. your input remains in this tab." } } : value);
       onError(error, "passage request didn’t finish");
     } finally {
       preparing.current.delete(entry.id);
@@ -721,14 +538,17 @@ export function useSelectionComposer(input: {
     if (!entry || entry.operation || entry.referenceActive || chatLocked || hasHeldChat()) return;
     setPickerDraftId(entry.id);
   };
-  const chatOutcome = (entry: ComposerDraft, outcome: CommandOutcome, target: "New" | "Existing"): OpenResult | null => {
+  const chatOutcome = (entry: ComposerDraft, outcome: CommandOutcome, target: "New" | "Existing", submitted = false): OpenResult | null => {
     const currentAttempt = get(entry.id)?.chatAttempt;
     const attempt = currentAttempt?.kind === "Dispatched" ? currentAttempt : null;
     const held = readerRecovery(attempt ?? null) ? attempt : null;
+    if (submitted && outcome.kind === "Failed" && current.current?.draftId !== entry.id)
+      feedback.offer({ key: `passage-send:${entry.id}`, announcement: "Polite",
+        content: { tone: "Warning", title: "highlight saved; question not sent", message: outcome.feedback.title },
+        actions: [{ label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" }] });
     switch (outcome.kind) {
       case "Accepted": {
-        const title = entry.destination.kind === "Selected" && target === "Existing" ? `sent to “${entry.destination.title}”` : "message sent";
-        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held, chatIssue: null, status: `${title}. note draft kept.` }));
+        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held, chatIssue: null }));
         return { target: { href: conversationViewHref(outcome.receipt.outcome.conversation_id, outcome.receipt.outcome.assistant_message_id), labelHint: "chat" },
           title: "message sent", openLabel: "open response" };
       }
@@ -741,14 +561,17 @@ export function useSelectionComposer(input: {
           chatIssue: { kind: "Missing", message: "this chat is no longer available" } }));
         return null;
       case "Failed": {
+        const issue: ReaderChatIssue = outcome.rejection === "E_READER_SELECTION_STALE"
+          ? { kind: "Passage", message: "the passage changed. select it again before saving or sending." }
+          : outcome.rejection === "E_CONVERSATION_NOT_FOUND"
+            ? { kind: "Missing", message: "this chat is no longer available" }
+            : outcome.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || outcome.rejection === "E_INVALID_GENERATION_SELECTION"
+              ? { kind: "Model", message: "this chat’s model is unavailable", destination: attempt?.destination ?? target, selection: attempt?.selection ?? null }
+              : { kind: "Failed", message: `${outcome.feedback.title}${outcome.feedback.message ? ` ${outcome.feedback.message}` : ""}` };
         store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held,
           destination: target === "Existing" && outcome.rejection === "E_CONVERSATION_NOT_FOUND" && value.destination.kind === "Selected"
             ? { ...value.destination, snapshot: { kind: "Failed" } } : value.destination,
-          chatIssue: outcome.rejection === "E_READER_SELECTION_STALE" ? { kind: "Passage", message: "this passage changed. reopen the highlight before sending" }
-            : outcome.rejection === "E_CONVERSATION_NOT_FOUND" ? { kind: "Missing", message: "this chat is no longer available" }
-            : outcome.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || outcome.rejection === "E_INVALID_GENERATION_SELECTION"
-              ? { kind: "Model", message: "this chat’s model is unavailable", destination: attempt?.destination ?? "Existing", selection: attempt?.selection ?? null }
-              : { kind: "Failed", message: `${outcome.feedback.title}${outcome.feedback.message ? ` ${outcome.feedback.message}` : ""}` } }));
+          chatIssue: { ...issue, ...(submitted ? { highlightSaved: true as const } : {}) } }));
         return null;
       }
       case "Settled":
@@ -761,7 +584,7 @@ export function useSelectionComposer(input: {
   const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: Selection | null } | null = null) => {
     const source = current.current;
     const entry = source && get(source.draftId);
-    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || pickerDraftId !== null || hasHeldChat()) return;
+    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
     const selected = entry.destination;
     const owner = target === "New" ? newOwner : selected.kind === "Selected" ? getConversationCommands(ctx.accountId, selected.id) : null;
     if (!owner) { chooseChat(); return; }
@@ -784,7 +607,7 @@ export function useSelectionComposer(input: {
     const canonical = annotations.source(entry.passage.anchor);
     if (shown.status !== "ready" || shown.refreshing || shown.doc.identity !== entry.passage.identity || canonical.mediaId !== entry.sourceMediaId ||
       canonical.generation !== entry.referenceSource.expected_reader_generation) {
-      store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Source", message: "this source changed. select the passage again. your draft is kept" } })); return;
+      store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Source", message: "the passage changed. select it again before saving or sending." } })); return;
     }
     let observed: ConversationTree | null = null;
     let view: ReturnType<typeof chatView> | null = null;
@@ -810,7 +633,16 @@ export function useSelectionComposer(input: {
     }
     const runId = createRandomId();
     store.update(entry.id, value => ({ ...value, chatAttempt: { kind: "Preparing", runId } }));
-    const owns = () => activeRef.current && current.current?.id === source.id && current.current.ownsFocus && get(entry.id)?.revision === entry.revision;
+    // The exact acceptance reset still belongs to this submitted input. Later
+    // edits and reference queries revoke its authority to move attention.
+    const submittedInput: { revision: number; consumedRevision: number | null } = { revision: entry.revision, consumedRevision: null };
+    const owns = () => {
+      const latest = get(entry.id);
+      return activeRef.current && current.current?.id === source.id && current.current.ownsFocus &&
+        latest !== undefined && !latest.referenceActive &&
+        (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
+    };
+    let sendNotice: ReturnType<typeof feedback.offer> | null = null;
     const execute = async (): Promise<OpenResult | null> => {
       let ensured: string | null = null;
       await submit({ command: { kind: "Ensure" }, source, continuation: id => { ensured = id; } });
@@ -818,13 +650,13 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => ({ ...value, operation: { id: runId, kind: "Chat" }, chatIssue: null }));
       const sourceNow = annotations.source(entry.passage.anchor);
       if (sourceNow.mediaId !== entry.sourceMediaId || sourceNow.generation !== entry.referenceSource.expected_reader_generation) {
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Source", message: "this source changed. select the passage again. your draft is kept" } })); return null;
+        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Source", message: "the passage changed. select it again before saving or sending." } })); return null;
       }
-      const live = get(entry.id)?.highlight;
+      const live = await liveHighlight(ensured);
       if (!live || live.anchor.media_id !== entry.sourceMediaId || live.exact !== entry.passage.quote || (entry.highlight &&
         live.version !== entry.highlight.version)) {
         store.update(entry.id, value => ({ ...value, operation: null, highlight: entry.highlight ?? value.highlight,
-          chatIssue: { kind: "Passage", message: "this passage changed. reopen the highlight before sending" } })); return null;
+          chatIssue: { kind: "Passage", message: "the passage changed. select it again before saving or sending." } })); return null;
       }
       const key = assumeReaderSelectionKey({ mediaId: live.anchor.media_id, highlightId: ensured });
       const preview = await getReaderQuotePreview({ key });
@@ -833,16 +665,16 @@ export function useSelectionComposer(input: {
       const verified = await liveHighlight(ensured);
       if (!verified || verified.version !== live.version) {
         annotations.refresh();
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Passage", message: "this passage changed. reopen the highlight before sending" } })); return null;
+        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Passage", message: "the passage changed. select it again before saving or sending." } })); return null;
       }
       const finalSource = annotations.source(entry.passage.anchor);
       if (finalSource.mediaId !== entry.sourceMediaId || finalSource.generation !== entry.referenceSource.expected_reader_generation) {
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Source", message: "this source changed. select the passage again. your draft is kept" } })); return null;
+        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Source", message: "the passage changed. select it again before saving or sending." } })); return null;
       }
       const quoteHref = readerHighlightChatIntentHref({ destination: observed ? { kind: "Existing", conversationId: observed.conversation.id } : { kind: "New" }, key });
       const href = observed ? `${conversationViewHref(observed.conversation.id, observed.active_leaf_message_id)}${quoteHref.slice(quoteHref.indexOf("#"))}` : quoteHref;
       if (question.kind === "Blank" || recovery !== null) {
-        store.update(entry.id, value => ({ ...value, operation: null, status: "quoted chat ready. note draft kept." }));
+        store.update(entry.id, value => ({ ...value, operation: null, status: "quoted chat ready" }));
         return { target: { href, labelHint: "chat" }, title: "quoted chat ready", openLabel: "open chat",
           ...(recovery !== null ? { entry: { kind: "ComposeReaderQuestion" as const, text: question.kind === "Text" ? question.content : "", selection } } : {}) };
       }
@@ -852,30 +684,39 @@ export function useSelectionComposer(input: {
       }
       const insertion = view?.target;
       if (target === "Existing" && insertion?.kind !== "Empty" && insertion?.kind !== "Reply") throw new Error("Reader send without a replyable snapshot");
-      store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: { kind: "Dispatched", runId, owner, selection, destination: target } }));
+      store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: { kind: "Dispatched", runId, owner, selection, destination: target, input: submittedInput } }));
       const request = { destination: observed && insertion && (insertion.kind === "Empty" || insertion.kind === "Reply")
         ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
           insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
         : { kind: "New" as const }, content: question.content, selection, reader_selection: { key: preview.key, revision: preview.revision } };
       const result = await owner.execute({ kind: "Send", request, runId, viewId: pane.paneId, openIntent }, () => {
-        store.update(entry.id, value => value.chatAttempt?.runId !== runId ? value : { ...value,
-          chatIssue: null,
-          destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination,
-          status: target === "Existing" && selected.kind === "Selected" ? `sent to “${selected.title}”. note draft kept.` : "message sent. note draft kept." });
+        sendNotice?.withdraw();
+        store.update(entry.id, value => {
+          if (value.chatAttempt?.runId !== runId) return value;
+          const consume = value.revision === submittedInput.revision && !value.referenceActive;
+          if (consume) submittedInput.consumedRevision = value.revision + 1;
+          return { ...value, chatIssue: null,
+            ...(consume ? { body: initialBody(value.base), revision: value.revision + 1,
+              selection: null, history: emptyNoteBodyHistory() } : {}),
+            destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination,
+            status: consume ? "message sent" : null };
+        });
       });
-      if (result.kind === "Failed" && (result.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || result.rejection === "E_INVALID_GENERATION_SELECTION")) {
-        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: null,
-          chatIssue: { kind: "Model", message: "this chat’s model is unavailable", destination: target, selection } })); return null;
-      }
-      return chatOutcome(entry, result, target);
+      if (result.kind === "Pending" && current.current?.draftId !== entry.id) sendNotice = feedback.offer({
+        key: `passage-send:${runId}`, announcement: "Polite",
+        content: { tone: "Warning", title: "highlight saved; send not confirmed", message: "the request may have succeeded." },
+        actions: [{ label: "retry same send", onClick: () => { void owner.retry().then(result => chatOutcome(entry, result, target, true)).catch(error => onError(error, "chat retry didn’t finish")); } }],
+      });
+      return chatOutcome(entry, result, target, true);
     };
     try {
       await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: openIntent, disposition: "Fork", mayOpen: owns,
-        onOpened: () => { if (current.current?.id === source.id && get(entry.id)?.revision === entry.revision) show(null); }, create: execute });
+        onOpened: () => { if (owns()) { store.remove(entry.id); show(null); } }, create: execute });
     } catch (error) {
       if (ctx.sessionSignal().aborted) return;
-      store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", message: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
-        ? "this source changed. select the passage again. your draft is kept" : "chat couldn’t be prepared. your question is kept" } }));
+      store.update(entry.id, value => ({ ...value, operation: null, chatIssue: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
+        ? { kind: "Source", message: "the passage changed. select it again before saving or sending." }
+        : { kind: "Failed", message: "chat couldn’t be prepared. your question is kept" } }));
       const failure = chatFailure(error, "chat couldn’t be prepared");
       if (failure.kind === "Defect") onError(failure.error, "Chat couldn’t be prepared");
     }
@@ -912,48 +753,27 @@ export function useSelectionComposer(input: {
     if (!source || !entry || attempt?.kind !== "Dispatched") return;
     const state = attempt.owner.getSnapshot();
     if (state.kind === "Idle" || state.command.kind !== "Send" || state.command.runId !== attempt.runId || state.kind !== "Unconfirmed") return;
+    const owns = () => {
+      const latest = get(entry.id);
+      return activeRef.current && current.current?.id === source.id && current.current.ownsFocus &&
+        latest !== undefined && !latest.referenceActive &&
+        (latest.revision === attempt.input.revision || latest.revision === attempt.input.consumedRevision);
+    };
     try {
-      await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: state.command.openIntent, disposition: "Fork",
-        mayOpen: () => activeRef.current && current.current?.id === source.id && current.current.ownsFocus && get(entry.id)?.revision === entry.revision,
-        onOpened: () => { if (current.current?.id === source.id && get(entry.id)?.revision === entry.revision) show(null); },
-        create: async () => chatOutcome(entry, await attempt.owner.retry(), attempt.destination) });
+      await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: state.command.openIntent, disposition: "Fork", mayOpen: owns,
+        onOpened: () => { if (owns()) { store.remove(entry.id); show(null); } },
+        create: async () => chatOutcome(entry, await attempt.owner.retry(), attempt.destination, true) });
     } catch (error) { onError(error, "Chat retry didn’t finish"); }
   };
   const restoreHistoryFocus = () => {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
   };
-  let conflictDraft: DraftSnapshot | null = null;
   const issue = draft?.issue;
-  const savedBranch = draft?.handle && readDraft(draft.handle.draft_id);
-  if (draft && savedBranch && issue?.kind === "Conflict" && issue.saved.kind === "Present") {
-    conflictDraft = { ...savedBranch, value: { kind: "body", body_pm_json: draft.body.body_pm_json }, conflict: {
-      reason: issue.message, saved_value: { kind: "body", body_pm_json: issue.saved.body.body_pm_json },
-      saved_version: issue.saved.version, other_draft_id: null,
-    } };
-  }
   return {
     draft, opening, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
     paused: writing.paused,
-    conflictShown: { revision: savedBranch?.revision ?? draft?.revision ?? 0,
+    conflictShown: { revision: draft?.revision ?? 0,
       saved_version: issue?.kind === "Conflict" ? issue.saved.kind === "Present" ? issue.saved.version : issue.linksVersion : null },
-    conflictDraft,
-    async retireDraft(shown: ConflictShown) {
-      if (!draft) return;
-      if (!draft.handle || readDraft(draft.handle.draft_id)?.revision !== shown.revision || get(draft.id)?.revision !== draft.revision)
-        throw new WritingDecisionError("the draft changed; review the current comparison");
-      await retireBranch(draft, shown);
-      if (get(draft.id)?.revision !== draft.revision) return;
-      if (current.current?.draftId === draft.id) show(null);
-      store.remove(draft.id);
-    },
-    recoveries: writing.drafts.filter(saved => saved.context.kind === "passage" &&
-      saved.context.media_id === annotations.getState().map.data?.media_id &&
-      (saved.base === null || saved.conflict !== null || saved.base.value.kind !== "body" || saved.value.kind !== "body" ||
-        !sameBody(parseBody(saved.base.value.body_pm_json), parseBody(saved.value.body_pm_json)))),
-    restore(id: string) {
-      const saved = readDraft(id), restored = saved && restore(saved);
-      if (restored) show({ id: createRandomId(), draftId: restored, focus: true, ownsFocus: true, serial: ++serial.current, mode: "Note" });
-    },
     reselection, cancelReselection,
     reselect() {
       const shown = reader.getState().document;
@@ -999,16 +819,8 @@ export function useSelectionComposer(input: {
         onSelected(target, targetItem, authored) {
           const value = get(id);
           if (!value) return;
-          const carried = journalFor(value).then(handle => {
-            const saved = readDraft(handle.draft_id);
-            if (!saved) throw new Error("the passage draft is no longer open");
-            if (saved.value.kind !== "body" || !sameBody(parseBody(saved.value.body_pm_json), value.body))
-              stageDraft(handle, { kind: "body", body_pm_json: value.body.body_pm_json }, value.selection);
-            return snapshotDraft(handle);
-          });
-          void session.insertReference({ destination: { source, position: null, occurrencePrefix: `reader-draft:${id}`, path: [] },
-            target, targetItem, authored: Promise.all([authored, carried]).then(([references, body]) => [...references, body]),
-          });
+          void session.insertReference({ destination: { source, position: null, occurrencePrefix: `reader-composer:${id}`, path: [] },
+            target, targetItem, authored });
         },
       };
     },
@@ -1037,14 +849,15 @@ export function useSelectionComposer(input: {
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
       const returnFocus = current.current?.ownsFocus;
+      const id = current.current?.draftId;
+      if (id) store.remove(id);
       show(null); setPickerDraftId(null); cancelReselection();
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
     },
+    compositionStart() { if (draft) store.update(draft.id, entry => ({ ...entry, revision: entry.revision + 1 })); },
     edit(edit: NoteEdit) {
       if (draft) store.update(draft.id, (entry) => ({ ...entry, body: edit.after, revision: entry.revision + 1,
         selection: edit.selectionAfter, history: recordNoteBodyEdit(entry.history, edit), status: null }));
-      const changed = draft && get(draft.id);
-      if (changed) keep(changed, edit.editBase);
     },
     selection(selection: NoteEdit["selectionAfter"]) { if (draft) store.update(draft.id, (entry) => ({ ...entry, selection })); },
     historyBoundary() { if (draft) store.update(draft.id, (entry) => ({ ...entry, history: { ...entry.history, group: entry.history.group + 1 } })); },
@@ -1052,34 +865,14 @@ export function useSelectionComposer(input: {
       if (!draft) return;
       store.update(draft.id, (entry) => { const edit = entry.history.undo.at(-1); return edit ? { ...entry, body: edit.before, selection: edit.selectionBefore, revision: entry.revision + 1,
         history: { undo: entry.history.undo.slice(0, -1), redo: [...entry.history.redo, edit], group: entry.history.group + 1 }, status: null } : entry; });
-      const changed = get(draft.id);
-      if (changed) keep(changed);
       restoreHistoryFocus();
     },
     redo() {
       if (!draft) return;
       store.update(draft.id, (entry) => { const edit = entry.history.redo.at(-1); return edit ? { ...entry, body: edit.after, selection: edit.selectionAfter, revision: entry.revision + 1,
         history: { undo: [...entry.history.undo, edit], redo: entry.history.redo.slice(0, -1), group: entry.history.group + 1 }, status: null } : entry; });
-      const changed = get(draft.id);
-      if (changed) keep(changed);
       restoreHistoryFocus();
     },
-    async saveAsNewNote(shown: DraftShown) {
-      const entry = current.current && get(current.current.draftId);
-      if (!entry || !entry.highlightId || entry.operation || entry.issue?.kind !== "Deleted") return;
-      store.update(entry.id, value => ({ ...value, noteId: createRandomId(), linkId: createRandomId(),
-        publication: null, linksVersion: null, base: { kind: "Absent" }, discardBase: null, issue: null }));
-      await readNote(entry.id, entry.highlightId, false);
-      const next = get(entry.id);
-      if (!next?.publication || next.issue !== null) return;
-      const journal = openDraft(contextFor(next), { kind: "body", body_pm_json: next.body.body_pm_json }, null);
-      store.update(entry.id, value => ({ ...value, journal, handle: null }));
-      const handle = await journal;
-      store.update(entry.id, value => ({ ...value, handle }));
-      await submit({ command: { kind: "Save" }, source: current.current });
-      if (draftIsDurable(handle.draft_id)) await retireBranch(entry, shown);
-    },
-
     save() { if (draft) void submit({ command: { kind: "Save" }, source: current.current }); },
     newChat(openIntent: OpenIntent) { void sendChat("New", openIntent); },
     continueChat(openIntent: OpenIntent = "default") { void sendChat("Existing", openIntent); },
@@ -1096,49 +889,28 @@ export function useSelectionComposer(input: {
     retry() {
       if (!draft) return;
       if (draft.load === "Failed" && draft.highlightId) void readNote(draft.id, draft.highlightId, sameBody(draft.body, initialBody(draft.base)));
-      else nudgeWrites();
+      else draft.write?.retry();
     },
     async resolveConflict(useSaved: boolean, shown: ConflictShown) {
       const entry = current.current && get(current.current.draftId);
       if (!entry || entry.operation || entry.issue?.kind !== "Conflict" || !entry.highlightId) return;
       if (reconcileDeletedNote(entry) !== entry) { store.update(entry.id, reconcileDeletedNote); return; }
-      const checkShown = () => {
-        const current = get(entry.id);
-        const issue = current?.issue;
-        const version = issue?.kind === "Conflict" ? issue.saved.kind === "Present" ? issue.saved.version : issue.linksVersion : null;
-        if (current?.revision !== entry.revision || !entry.handle || readDraft(entry.handle.draft_id)?.revision !== shown.revision || version !== shown.saved_version)
-          throw new WritingDecisionError("the conflict changed; review the current comparison");
-      };
-      checkShown();
-      const token = writingRuntimeToken();
+      const version = entry.issue.saved.kind === "Present" ? entry.issue.saved.version : entry.issue.linksVersion;
+      if (entry.revision !== shown.revision || version !== shown.saved_version)
+        throw new WritingDecisionError("the conflict changed; review the current comparison");
       const base = entry.issue.saved;
       const linksVersion = entry.issue.linksVersion;
       if (base.kind === "Absent" && linksVersion === null) throw new Error("review the current annotation slot before saving");
-      const rows = entry.handle ? readWriting().outbox.filter(row => row.authored.some(authored => authored.draft_id === entry.handle!.draft_id)) : [];
-      if (rows.some(row => row.uncertain || row.blocked === null)) throw new Error("resolve the pending change in recover writing first");
-      for (const row of rows) await retireWriting(row.intent_id);
-      assertWritingRuntimeToken(token);
-      checkShown();
       const noteId = base.kind === "Present" ? base.id : createRandomId();
       const linkId = base.kind === "Present" ? base.linkId : createRandomId();
       const body = useSaved ? initialBody(base) : entry.body;
       const publication = { kind: "attach_highlight" as const, highlight_id: entry.highlightId, request: { note_id: noteId, link_id: linkId,
         body_pm_json: body.body_pm_json, expected: base.kind === "Present" ? { kind: "version" as const, version: base.version }
           : { kind: "absent" as const, version: linksVersion! } } };
-      const next = { ...entry, noteId, linkId, linksVersion, base, body, publication,
-        journal: null, handle: null, operation: null, resuming: null, issue: null, revision: entry.revision + 1,
-        ...(useSaved ? { selection: null, history: emptyNoteBodyHistory() } : {}),
-      };
-      const journal = openDraft(contextFor(next), { kind: "body", body_pm_json: body.body_pm_json },
-        base.kind === "Present" ? { value: { kind: "body", body_pm_json: base.body.body_pm_json }, version: base.version } : null);
-      store.update(entry.id, () => ({ ...next, journal }));
-      const handle = await journal;
-      store.update(entry.id, value => ({ ...value, handle }));
-      if (useSaved) await retireBranch(entry, shown);
-      else {
-        await submit({ command: { kind: "Save" }, source: current.current });
-        if (draftIsDurable(handle.draft_id)) await retireBranch(entry, shown);
-      }
+      store.update(entry.id, value => ({ ...value, noteId, linkId, linksVersion, base, body, publication,
+        write: null, operation: null, issue: null, revision: value.revision + 1,
+        ...(useSaved ? { selection: null, history: emptyNoteBodyHistory() } : {}) }));
+      if (!useSaved) await submit({ command: { kind: "Save" }, source: current.current });
     },
   };
 }

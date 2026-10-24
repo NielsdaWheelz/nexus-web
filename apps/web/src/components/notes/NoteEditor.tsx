@@ -22,7 +22,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { readWriting, subscribeWriting } from "@/lib/notes/journal";
+import { readWriting, subscribeWriting } from "@/lib/notes/writes";
 import type { TextEditBase } from "@/lib/notes/texts";
 import { createPortal } from "react-dom";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -282,7 +282,6 @@ export default function NoteEditor(props: NoteEditorProps) {
       editBase: {
         value: intent.base,
         acknowledged: intent.editBase?.acknowledged ?? null,
-        consumed_reference: consumed,
       },
     });
   };

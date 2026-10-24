@@ -7,7 +7,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   useTransition,
   type ReactNode,
 } from "react";
@@ -16,9 +15,8 @@ import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
 import { DeviceSessionNotice } from "@/lib/native/DeviceSessionNotice";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
-import { FeedbackProvider, useFeedback, useWorkspaceCondition, type FeedbackAction } from "@/components/feedback/Feedback";
+import { FeedbackProvider, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import Nexus from "@/components/nexus/Nexus";
-import { downloadWriting } from "@/components/notes/NoteNotices";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { MobileReaderCompositionContext } from "@/components/workspace/PaneShell";
@@ -42,16 +40,8 @@ import { useChatWorkOwners } from "@/lib/chat/drafts";
 import { WorkProvider } from "@/lib/unsavedWork";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
-import {
-  readWriting,
-  retryWritingStorage,
-  subscribeWriting,
-  writingHasMemoryOnlyChanges,
-} from "@/lib/notes/journal";
-import { WritingReadyContext, useWritingReady } from "@/lib/notes/readiness";
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
 import { connectOffline } from "@/lib/offline/bridge";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
@@ -71,7 +61,7 @@ import {
   findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
-import { useLatestWorkspace, useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
@@ -175,7 +165,7 @@ function Workspace(props: {
                                 <MediaContinuationHost />
                                 <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
                                   <WorkspaceNavigation>
-                                    <WorkspaceNexus />
+                                    <Nexus />
                                     <WorkspaceCanvas />
                                   </WorkspaceNavigation>
                                 </WorkspacePresentationsProvider>
@@ -195,8 +185,6 @@ function Workspace(props: {
     </PlayerPresentationProvider>
   );
 }
-
-function WorkspaceNexus() { return useWritingReady() ? <Nexus /> : null; }
 
 function WorkspacePlayer({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { show } = usePlayerPresentation();
@@ -229,63 +217,16 @@ function WorkspaceCanvas() {
   </MobileReaderCompositionContext>;
 }
 
-/** Account-wide writing facts that need attention, as one comparable key, so that
- * ordinary checkpoints do not re-render the shell. */
-function writingAttention(): string {
-  const { storage_error, outbox, incompatible } = readWriting();
-  return [
-    storage_error === null ? "" : writingHasMemoryOnlyChanges() ? "memory" : "storage",
-    outbox.some((row) => row.uncertain && row.blocked !== null) ? "parked" : "",
-    incompatible.length > 0 ? "old" : "",
-  ].join(":");
-}
-
-/**
- * This account's writing runtime gates every editor until its lease is held; a
- * failed start shows only its retry. The shell presents the account-wide
- * conditions and the writing stream. Ordinary status stays with its text.
- */
+/** The document owns live writing and its automatic-update hold; reads retain their existing receive owner. */
 function WritingRuntime({ accountId, children }: { accountId: string; children: ReactNode }) {
   const runtime = useWritingRuntime(accountId);
-  const latest = useLatestWorkspace();
   const receive = useWritingReceive(accountId);
   const { connection, probe_failure, probing } = receive.snapshot;
-  const feedback = useFeedback();
-  const [storage, parked, old] = useSyncExternalStore(subscribeWriting, writingAttention, () => "::").split(":");
-  const download: FeedbackAction = { label: "download writing", onClick: () => downloadWriting(feedback, accountId) };
-  useWorkspaceCondition("writing-storage", storage === "" ? null : {
-    priority: "Write",
-    content: storage === "memory"
-      ? { tone: "Danger", title: "recent changes are only in this tab.", message: "keep it open or download your writing." }
-      : { tone: "Warning", title: "this device can’t keep writing right now.", message: "new changes will stay only in this tab." },
-    announcement: "Polite",
-    actions: [download, { label: "try again", onClick: () => void retryWritingStorage().catch(() => undefined) }],
-  });
-  useWorkspaceCondition("writing-halted", parked === "" && old === "" ? null : {
-    priority: "Action",
-    content: {
-      tone: "Warning",
-      title: "some writing isn’t syncing.",
-      message: old !== ""
-        ? "some was saved by another version of nexus. download or discard it in notes."
-        : "a change couldn’t be confirmed. later changes wait until you review it in notes.",
-    },
-    announcement: "Polite",
-    actions: [{
-      label: "review in notes",
-      href: "/notes",
-      onActivate: (event) => activateTargetLink({
-        event,
-        runtime: { activateTarget: (request) => latest().activateWorkspaceTarget({ ...request, originPaneId: latest().state.active_primary_pane_id }) },
-        target: { href: "/notes" },
-      }),
-    }],
-  });
   useWorkspaceCondition("writing-update", !runtime.reloadHeld ? null : {
     priority: "Action",
-    content: { tone: "Warning", title: "nexus was updated.", message: "download your writing, then reload." },
+    content: { tone: "Warning", title: "nexus was updated.", message: "finish saving before reloading. other unsaved changes will be lost." },
     announcement: "Polite",
-    actions: [download, { label: "reload app", onClick: () => window.location.reload() }],
+    actions: [{ label: "reload app", onClick: () => { window.location.reload(); } }],
   });
   useWorkspaceCondition("writing-receive", connection.failure !== null ? {
     priority: "Action",
@@ -313,12 +254,7 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     announcement: "Polite",
     actions: [{ label: "try again", onClick: receive.retryProbe, busy: probing }],
   });
-  useWorkspaceCondition("writing-startup", runtime.state === "failed" || runtime.state === "retrying" ? {
-    priority: "Write", announcement: "Polite",
-    content: { tone: "Danger", title: "writing couldn’t start.", message: "your workspace is open. retry to open its writing." },
-    actions: [{ label: "try again", onClick: runtime.retry, busy: runtime.state === "retrying" }],
-  } : null);
-  return <WritingReadyContext value={runtime.state}>{children}</WritingReadyContext>;
+  return children;
 }
 
 function ChatWorkOwners() {

@@ -17,8 +17,8 @@ import { remoteReady } from "@/lib/native/admission";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
-import { editText, hasUnsavedText, readText, textDraft, useTextReady } from "@/lib/notes/texts";
-import { readDraft, readWriting } from "@/lib/notes/journal";
+import { editText, hasUnsavedText, readText, useTextReady } from "@/lib/notes/texts";
+import { readWriting } from "@/lib/notes/writes";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
 import { useOutline } from "@/lib/notes/useOutline";
 import { outlineTextRefs, type PageCreation } from "@/lib/notes/useOutlineSession";
@@ -36,24 +36,14 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 export default function PagePaneBody() {
-  const pageId = usePaneParam("pageId");
+  const pageParam = usePaneParam("pageId");
+  const pageId = pageParam === "new" ? null : pageParam;
   const localDate = usePaneParam("localDate");
   const params = usePaneSearchParams();
   const route = pageId ?? (localDate === null ? "new" : `daily:${localDate}`);
   const initialCreation = (): PageCreation | null => {
     if (localDate !== null) return null;
-    if (pageId !== null) {
-      const candidates = readWriting().drafts.filter(draft => (draft.context.kind === "body" || draft.context.kind === "title") && draft.context.publication?.kind === "page" && draft.context.publication.request.id === pageId);
-      if (candidates.some(draft => draft.base !== null)) return null;
-      for (const draft of candidates) {
-        if (draft.context.kind !== "body" && draft.context.kind !== "title") continue;
-        const publication = draft.context.publication;
-        if (publication?.kind !== "page" || publication.request.initial_item.kind !== "note") continue;
-        const title = candidates.find(candidate => candidate.value.kind === "title")?.value;
-        return { page_id: pageId, note_id: publication.request.initial_item.note_id, link_id: publication.request.initial_item.link_id, title: title?.kind === "title" ? title.text : publication.request.title };
-      }
-      return null;
-    }
+    if (pageId !== null) return null;
     return { page_id: crypto.randomUUID(), note_id: crypto.randomUUID(), link_id: crypto.randomUUID(), title: params.get("title") ?? "" };
   };
   const [owner, setOwner] = useState(() => ({ route, creation: initialCreation() }));
@@ -68,7 +58,8 @@ export default function PagePaneBody() {
 }
 
 function PageContent({ creation }: { creation: PageCreation | null }) {
-  const routePageId = usePaneParam("pageId");
+  const pageParam = usePaneParam("pageId");
+  const routePageId = pageParam === "new" ? null : pageParam;
   const pageId = creation?.page_id ?? routePageId;
   const localDate = usePaneParam("localDate");
   const catalog = useCatalogState();
@@ -87,10 +78,9 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
     if (!creation || !titleReady || titleSeeded.current || readWriting().paused) return;
     titleSeeded.current = true;
     const ref = `page:${creation.page_id}`;
-    const handle = textDraft(ref);
     const value = readText(ref)?.value;
     // The launcher supplied authored title text; a blank route supplies none.
-    if (handle && readDraft(handle.draft_id)?.revision === 0 && typeof value === "string" && value.length > 0)
+    if (readText(ref)?.revision === 0 && typeof value === "string" && value.length > 0)
       editText(ref, value);
   }, [creation, titleReady]);
   useEffect(() => {

@@ -2,15 +2,15 @@
 
 // Reference intent is visit-owned draft state above prose persistence. Acceptance
 // freezes identity and placement; only the queue head seals its causal version.
-import { useEffect, useId, useLayoutEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { ApiError } from "@/lib/api/client";
 import type { OutlinePosition } from "@/lib/notes/outline";
-import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
+import { type NoteBody } from "@/lib/notes/noteBody";
 import { readText, type TextEditBase } from "@/lib/notes/texts";
-import { admitWriting, captureLane, checkpoint, claimDraft, openDraft, openFreshDraft, readDraft, readWriting, releaseDraft, subscribeDraft, resetDraftSeed, updateDraftContext, stageDraft, type AuthoredSnapshot, type DraftContext, type DraftHandle, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/journal";
+import { admitWriting, captureLane, readWriting, type AuthoredSnapshot, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/writes";
 import type { ResourceItem } from "@/lib/resources/items";
 import {
   type InsertionSource,
@@ -25,21 +25,14 @@ import { useResourceDraft } from "./useResourceDraft";
 export interface ReferenceInputHost {
   textRef?: string;
   source: InsertionSource | null;
-  onSelected(target: Schema<"InsertLink">["target"], item: ResourceItem, authored: Promise<AuthoredSnapshot[]>): void;
-  recoverySource?: InsertionSource;
+  onSelected(target: Schema<"InsertLink">["target"], item: ResourceItem, authored: readonly AuthoredSnapshot[]): void;
   label: string;
   position: OutlinePosition | null;
   onActiveChange?(active: boolean): void;
 }
-type ReferenceContext = Extract<DraftContext, { kind: "reference" }>;
-function referenceContext(host: ReferenceInputHost): ReferenceContext | null {
-  const source = host.recoverySource ?? host.source;
-  if (source === null) return null;
-  const position = host.position;
-  const ref = source.kind === "resource" ? source.ref : source.kind === "daily_page" ? `page:${source.page_id}` : source.kind === "passage" ? source.candidate_ref : `highlight:${source.highlight_id}`;
-  return { kind: "reference", source: structuredClone(source), resource_ref: host.textRef ?? null, position: position === null ? null : position.expected_links_version === null
-    ? { after: position.after, predecessor: { kind: "insertion", ...position.proof } }
-    : { after: position.after, expected_links_version: captureLane(ref, "links", position.expected_links_version) } };
+type ReferenceContext = { source: InsertionSource | null; resource_ref: string | null; position: OutlinePosition | null };
+function referenceContext(host: ReferenceInputHost): ReferenceContext {
+  return { source: structuredClone(host.source), resource_ref: host.textRef ?? null, position: host.position === null ? null : { ...host.position } };
 }
 type State = {
   context: ReferenceContext;
@@ -78,111 +71,18 @@ export function useReferenceInput(
   pickerOpen: boolean,
 ) {
   const paneActive = usePaneIsActive();
-  const draft = useResourceDraft<{ state: State | null; completion: number; ready: boolean }>(
+  const draft = useResourceDraft<{ state: State | null; completion: number }>(
     `Resources.ReferenceDraft:${editorKey}`,
-    () => ({ state: null, completion: 0, ready: false }),
+    () => ({ state: null, completion: 0 }),
   );
   const { state, completion } = draft.value;
   const listId = `reference-${useId().replaceAll(":", "")}`;
   const active = state !== null;
   const paused = readWriting().paused;
   const hasHost = host !== null;
-  const currentHost = useRef(host);
-  currentHost.current = host;
-  const opening = useRef<Promise<DraftHandle> | null>(null);
-  const opened = useRef<DraftHandle | null>(null);
-  const stopBranch = useRef<(() => void) | null>(null);
-  const contextChange = useRef<Promise<void>>(Promise.resolve());
-  const owned = useRef(new Set<Promise<DraftHandle>>());
-  const branchOwner = useRef<string | null>(null);
-  const recoveryChecked = useRef(false);
-  useLayoutEffect(() => {
-    branchOwner.current = draft.owner;
-    const branches = new Set<Promise<DraftHandle>>();
-    owned.current = branches;
-    return () => {
-      branchOwner.current = null;
-      stopBranch.current?.(); stopBranch.current = null;
-      opening.current = null; opened.current = null;
-      contextChange.current = Promise.resolve();
-      recoveryChecked.current = false;
-      for (const branch of branches) void branch.then(releaseDraft).catch(reportError);
-    };
-  }, [draft.owner]);
-  useLayoutEffect(() => {
-    const host = currentHost.current;
-    const context = host ? referenceContext(host) : null;
-    if (!host || context === null || opening.current !== null || readWriting().paused) return;
-    const candidates = recoveryChecked.current ? [] : readWriting().drafts.filter(candidate => candidate.context.kind === "reference"
-      && candidate.context.resource_ref === (host.textRef ?? null)
-      && JSON.stringify(candidate.context.source) === JSON.stringify(host.recoverySource ?? host.source)
-      && candidate.value.kind === "reference" && candidate.revision > 0
-      && (candidate.base === null || JSON.stringify(candidate.base.value) !== JSON.stringify(candidate.value))
-      && !readWriting().outbox.some(row => row.authored.some(item => item.draft_id === candidate.draft_id)));
-    recoveryChecked.current = true;
-    const value = host.textRef ? readText(host.textRef)?.value : null;
-    const base = typeof value === "object" && value !== null ? value : emptyBody();
-    const fresh = candidates.length === 0
-      ? openFreshDraft(context, { kind: "reference", raw: "", base_body_pm_json: base.body_pm_json })
-      : null;
-    const branch = fresh === null ? (async () => {
-      const recovered = candidates.length === 1 ? await claimDraft(candidates[0]!.draft_id) : null;
-      return recovered ?? openDraft(context, { kind: "reference", raw: "", base_body_pm_json: base.body_pm_json }, null);
-    })() : Promise.resolve(fresh);
-    opening.current = branch; owned.current.add(branch);
-    const adopt = (handle: DraftHandle) => {
-      if (branchOwner.current !== draft.owner || opening.current !== branch) return;
-      opened.current = handle;
-      stopBranch.current?.();
-      stopBranch.current = subscribeDraft(handle.draft_id, () => {
-        if (branchOwner.current !== draft.owner || opening.current !== branch || opened.current !== handle || readDraft(handle.draft_id)) return;
-        // Explicit recovery discard ends this query, not the retained editor.
-        stopBranch.current?.(); stopBranch.current = null;
-        opening.current = null; opened.current = null;
-        contextChange.current = Promise.resolve();
-        owned.current.delete(branch);
-        void releaseDraft(handle).catch(reportError);
-        draft.set(value => ({ state: null, ready: false, completion: value.completion + 1 }));
-      });
-      const saved = readDraft(handle.draft_id);
-      if (!saved || saved.context.kind !== "reference" || saved.value.kind !== "reference" || saved.revision === 0) {
-        draft.set(value => ({ ...value, ready: true })); return;
-      }
-      const body = parseBody(saved.value.base_body_pm_json);
-      const raw = saved.value.raw;
-      const context = saved.context;
-      const acknowledged = saved.base?.value.kind === "body" && typeof saved.base.version === "number"
-        ? { value: parseBody(saved.base.value.body_pm_json), version: saved.base.version } : null;
-      draft.set(value => ({ ...value, ready: true, state: { raw, base: body,
-        context, host, editBase: host.textRef ? { value: body, acknowledged, consumed_reference: null } : null,
-        message: null, active: null } }));
-    };
-    if (fresh !== null) adopt(fresh);
-    else void branch.then(adopt).catch(error => {
-      if (branchOwner.current !== draft.owner || opening.current !== branch) return;
-      opening.current = null;
-      if (!readWriting().paused) reportError(error);
-    });
-    // Fresh ownership is installed before paint; actual storage waits for its lock.
-    // Recovery still claims the existing branch before input; no network or row is created.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.owner, editorKey, hasHost, completion, active, paused]);
   function set(next: State | null, completed = false) {
     if (readWriting().paused) return;
-    if (next !== null) {
-      const handle = opened.current;
-      const snapshot = handle ? readDraft(handle.draft_id) : null;
-      if (!handle || !snapshot) return;
-      const value = { kind: "reference" as const, raw: next.raw, base_body_pm_json: next.base.body_pm_json };
-      if (snapshot.revision === 0 || JSON.stringify(snapshot.value) !== JSON.stringify(value))
-        void checkpoint(handle, snapshot.revision, value, null).catch(reportError);
-    } else {
-      stopBranch.current?.(); stopBranch.current = null;
-      opening.current = null; opened.current = null;
-      contextChange.current = Promise.resolve();
-    }
-    draft.set(previous => ({ state: next, ready: next === null ? false : previous.ready,
-      completion: previous.completion + (completed ? 1 : 0) }));
+    draft.set(previous => ({ state: next, completion: previous.completion + (completed ? 1 : 0) }));
   }
   const source = state?.host.source;
   const sourceRef =
@@ -225,14 +125,6 @@ export function useReferenceInput(
     report?.(active);
     return () => report?.(false);
   }, [active, draft.owner, hasHost]);
-  function authoredReference(value: State): Promise<AuthoredSnapshot[]> {
-    const branch = opening.current;
-    if (branch === null) return Promise.reject(new Error("the reference branch is not ready"));
-    return branch.then(async handle => {
-      await contextChange.current;
-      return [stageDraft(handle, { kind: "reference", raw: value.raw, base_body_pm_json: value.base.body_pm_json }, null)];
-    });
-  }
   function accept(target: LinkTargetResult | undefined) {
     const value = draft.read().state;
     if (
@@ -246,8 +138,7 @@ export function useReferenceInput(
       return;
     if (readWriting().paused || host === null) return;
     const current = referenceContext(host);
-    const saved = opened.current ? readDraft(opened.current.draft_id)?.context : null;
-    const frozen = saved?.kind === "reference" ? saved : value.context;
+    const frozen = value.context;
     if (JSON.stringify(current) !== JSON.stringify(frozen)) {
       set({ ...value, message: "the outline changed. your query is kept; review its destination before linking." });
       return;
@@ -257,7 +148,7 @@ export function useReferenceInput(
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
         : { kind: "passage" as const, candidate_ref: target.candidate_ref };
-    owner.onSelected(selectedTarget, target.item, authoredReference(value));
+    owner.onSelected(selectedTarget, target.item, []);
     set(null, true);
   }
 
@@ -268,25 +159,19 @@ export function useReferenceInput(
     search: { ...search, items: admitted ? search.items : [] },
     selected,
     bindings,
-    isReady: () => !hasHost || branchOwner.current === draft.owner && draft.read().ready && opened.current !== null,
+    isReady: () => true,
     reviewPosition() {
       const value = draft.read().state;
       const context = host ? referenceContext(host) : null;
       if (value && context && host && !readWriting().paused) {
-        if (opened.current === null) return;
-        contextChange.current = updateDraftContext(opened.current, context);
-        void contextChange.current.catch(reportError);
         set({ ...value, context, host, message: null });
       }
     },
     getState: () => draft.read().state,
     begin(base: NoteBody) {
       const context = host ? referenceContext(host) : null;
-      if (host && context && opened.current !== null && draft.read().state === null) {
-        contextChange.current = Promise.resolve();
+      if (host && context && draft.read().state === null) {
         const acked = host.textRef ? readText(host.textRef)?.acked : null;
-        resetDraftSeed(opened.current, context, { kind: "reference", raw: "@", base_body_pm_json: base.body_pm_json },
-          acked && typeof acked.value !== "string" ? { value: { kind: "body", body_pm_json: acked.value.body_pm_json }, version: acked.version } : null);
         set({
           context, message: null,
           raw: "@",
@@ -294,7 +179,6 @@ export function useReferenceInput(
           editBase: host.textRef
             ? {
                 value: base,
-                consumed_reference: null,
                 acknowledged:
                   acked && typeof acked.value !== "string"
                     ? { value: acked.value, version: acked.version }
@@ -304,7 +188,7 @@ export function useReferenceInput(
             host: {
             ...host,
             source: structuredClone(host.source),
-            position: structuredClone(host.position),
+            position: host.position === null ? null : { ...host.position },
           },
           active: null,
         });
@@ -315,12 +199,9 @@ export function useReferenceInput(
       if (value) set({ ...value, raw });
     },
     literal() {
-      const handle = opened.current;
-      const snapshot = handle ? readDraft(handle.draft_id) : null;
-      if (readWriting().paused || !handle || !snapshot) return false;
-      const consumed = { draft_id: handle.draft_id, revision: snapshot.revision };
+      if (readWriting().paused || draft.read().state === null) return false;
       set(null);
-      return consumed;
+      return true;
     },
   };
 }

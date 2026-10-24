@@ -1,6 +1,6 @@
 import type { Schema } from "@/lib/api/wire";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
-import type { DraftBase, DraftHandle, Publication } from "@/lib/notes/journal";
+import type { Publication, WriteHandle } from "@/lib/notes/writes";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import type { NoteEdit } from "@/lib/notes/useOutlineSession";
@@ -21,13 +21,14 @@ export type ChatDestination =
       | { kind: "Loading" | "Failed" | "RefreshRequired" }
       | { kind: "Ready"; tree: ConversationTree } };
 
-export type ReaderChatIssue =
+export type ReaderChatIssue = (
   | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: Selection | null }
-  | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string };
+  | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string }
+) & { /** The submitted chat command was definitively refused after its highlight was saved. */ highlightSaved?: true };
 
 type ChatAttempt =
   | { kind: "Preparing"; runId: string }
-  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing" };
+  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
 
 export interface ComposerDraft {
   id: string;
@@ -40,11 +41,8 @@ export interface ComposerDraft {
   linkId: string;
   linksVersion: number | null;
   publication: Extract<Publication, { kind: "passage" | "attach_highlight" }> | null;
-  journal: Promise<DraftHandle> | null;
-  handle: DraftHandle | null;
-  resuming: string | null;
+  write: WriteHandle | null;
   base: NoteBase;
-  discardBase: DraftBase;
   body: NoteBody;
   revision: number;
   selection: NoteEdit["selectionAfter"] | null;
@@ -61,7 +59,7 @@ export interface ComposerDraft {
   chatIssue: ReaderChatIssue | null;
 }
 
-/** presentation state for retained passage branches; the journal persists authored fields only. */
+/** One ephemeral working value. Submitted requests belong to their live owners. */
 export function createSelectionDrafts() {
   let drafts: readonly ComposerDraft[] = [];
   const listeners = new Set<() => void>();
@@ -72,7 +70,7 @@ export function createSelectionDrafts() {
       return () => { listeners.delete(listener); };
     },
     put(draft: ComposerDraft) {
-      drafts = [...drafts.filter((entry) => entry.id !== draft.id), draft];
+      drafts = [draft];
       for (const listener of listeners) listener();
     },
     remove(id: string) {
