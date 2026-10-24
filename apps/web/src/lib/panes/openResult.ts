@@ -105,7 +105,7 @@ export async function openAsyncResult({
   }
   const label = subject ?? result.target.labelHint;
   const shownLabel = label === undefined ? undefined : truncateText(label, 120);
-  const offer = ctx.feedback.offer({
+  const offer = ctx.feedback.offer({ needsAttention: false, undo: null, onDismiss: null,
     key: `open-result:${result.target.href}`,
     content: {
       tone: "Success", title: shownLabel ? `${result.title} · ${shownLabel}` : result.title,

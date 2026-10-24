@@ -1161,7 +1161,7 @@ export function useOutlineSession({
   }, [history]);
   function reportRefusal(error: unknown) {
     if (!currentLifetime()) return;
-    feedback.offer({
+    feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
       key: `notes-outline-refused:${owner}`,
       announcement: "Assertive",
       content: {
@@ -1174,28 +1174,41 @@ export function useOutlineSession({
     });
   }
   function observeSave(write: WriteHandle, refs: ReadonlySet<string>): void {
-    let offer: ReturnType<typeof feedback.offer> | null = null;
+    let condition: ReturnType<typeof feedback.retainCondition> | null = null;
+    let unconfirmed: Extract<ReturnType<WriteHandle["read"]>, { kind: "unconfirmed" }> | null = null;
+    let retryable = false;
     const inspect = () => {
       const state = write.read();
-      if (state.kind !== "unconfirmed") { offer?.withdraw(); offer = null; return; }
-      const retryable = canRetryWriting(write);
+      if (!currentLifetime() || state.kind === "accepted" || state.kind === "refused" || state.kind === "abandoned") {
+        condition?.withdraw(); condition = null; return;
+      }
+      if (state.kind === "unconfirmed") {
+        unconfirmed = state;
+        retryable = canRetryWriting(write);
+      }
+      if (unconfirmed === null) return;
+      const busy = state.kind === "queued" || state.kind === "sending";
       const copy = () => {
+        if (!currentLifetime()) return;
         const value = [...refs].map(ref => store.readText(ref)?.value).flatMap(value => value === undefined ? [] : [typeof value === "string" ? value : value.body_text]).join("\n\n");
         void copyText(value).catch(error => {
           if (!(error instanceof ClipboardWriteUnavailableError)) { reportError(error); return; }
-          feedback.offer({ key: `outline-copy:${write.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy text", message: "select and copy the text in the editor." } });
+          if (!currentLifetime()) return;
+          feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `outline-copy:${write.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy text", message: "select and copy the text in the editor." } });
         });
       };
       const notice = {
+        priority: "Write" as const,
+        needsAttention: true,
         announcement: "Polite" as const,
-        content: { tone: "Warning" as const, title: "save not confirmed", message: retryable ? "the request may have succeeded." : "copy changes you want to keep, then reload. other unsaved changes will be lost.", requestId: isApiError(state.error) ? state.error.requestId : undefined },
-        actions: retryable ? [{ label: "retry same save", onClick: () => write.retry() }, { label: "copy text", onClick: copy }] as const
-          : [{ label: "copy text", onClick: copy }, { label: "reload", onClick: () => { if (window.confirm("other unsaved changes will be lost. reload?")) window.location.reload(); } }] as const,
+        content: { tone: "Warning" as const, title: "save not confirmed", message: retryable ? "the request may have succeeded." : "copy changes you want to keep, then reload. other unsaved changes will be lost.", requestId: isApiError(unconfirmed.error) ? unconfirmed.error.requestId : undefined },
+        actions: retryable ? [{ label: "retry same save", commandKey: `notes-outline-save:${write.id}:retry`, busy, onClick: () => { if (currentLifetime()) write.retry(); } }, { label: "copy text", onClick: copy }] as const
+          : [{ label: "copy text", onClick: copy }, { label: "reload", onClick: () => { if (currentLifetime() && window.confirm("other unsaved changes will be lost. reload?")) window.location.reload(); } }] as const,
       };
-      if (offer) offer.update(notice); else offer = feedback.offer({ key: `notes-outline-save:${write.id}`, ...notice });
+      if (condition) condition.update(notice); else condition = feedback.retainCondition({ key: `notes-outline-save:${write.id}`, ...notice });
     };
     const unsubscribe = write.subscribe(inspect);
-    void write.settled.then(() => { unsubscribe(); offer?.withdraw(); }, () => { unsubscribe(); offer?.withdraw(); });
+    void write.settled.then(() => { unsubscribe(); condition?.withdraw(); }, () => { unsubscribe(); condition?.withdraw(); });
     inspect();
   }
   /** Apply, send and (unless replaying history) record one structure batch. */
@@ -1222,7 +1235,7 @@ export function useOutlineSession({
     const occurrences = options.occurrences ?? [];
     const refs = editReferences(edits);
     if ([...refs].some(isDeletedResource)) {
-      feedback.offer({
+      feedback.offer({ needsAttention: false, undo: null, onDismiss: null,
         key: "outline-write",
         announcement: "Polite",
         content: {

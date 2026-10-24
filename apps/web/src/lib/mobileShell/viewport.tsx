@@ -14,7 +14,7 @@ import {
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
 
 export type MobileTopSurfaceId = "Header" | "Controls";
-export type MobileBottomSurfaceId = "Nexus" | "Player" | "Feedback";
+export type MobileBottomSurfaceId = "Nexus" | "Player";
 type GeometryChange = "Occlusion" | "Layout";
 
 export interface MobileViewport {
@@ -97,10 +97,6 @@ function createMobileViewport() {
     const safe = Math.ceil(readMobileCssLength("var(--viewport-safe-bottom)"));
     const keyboardPx = keyboard.at(-1)?.px ?? 0;
     const root = document.documentElement.style;
-    const feedbackBox = surfaceBox(surfaces.get("Feedback"));
-    const feedbackBand = envelope(feedbackBox ? [feedbackBox] : [], viewport, "Bottom");
-    // flow feedback already contains platform protection and shortens the app.
-    root.setProperty("--mobile-canvas-safe-bottom", `${Math.max(0, safe - feedbackBand)}px`);
     const headerBox = surfaceBox(surfaces.get("Header"));
     root.setProperty("--mobile-header-height", `${headerBox?.height ?? 0}px`);
     const controls = surfaces.get("Controls");
@@ -108,8 +104,10 @@ function createMobileViewport() {
       const origin = controls.frame.offsetParent?.getBoundingClientRect().top ?? 0;
       controls.frame.style.setProperty("--mobile-controls-top", `${Math.max(0, (headerBox?.bottom ?? origin) - origin)}px`);
     }
+    const controlsBox = surfaceBox(controls);
+    root.setProperty("--mobile-feedback-top", `${Math.max(headerBox?.bottom ?? 0, controlsBox?.bottom ?? 0) + 12}px`);
     const playerBox = surfaceBox(surfaces.get("Player"));
-    const nexusOffset = Math.max(safe, envelope([playerBox, feedbackBox].filter(box => box !== null), viewport, "Bottom"));
+    const nexusOffset = Math.max(safe, envelope(playerBox ? [playerBox] : [], viewport, "Bottom"));
     root.setProperty("--mobile-nexus-bottom-offset", `${nexusOffset}px`);
     root.setProperty("--mobile-overlay-keyboard-inset", `${keyboardPx}px`);
 

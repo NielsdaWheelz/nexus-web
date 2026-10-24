@@ -110,7 +110,7 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
     const entry = delivery?.entry;
     if (!delivery || !entry || outline.status !== "ready" || !source) return;
     const gone = (title: string) =>
-      void feedback.offer({ key: "page-entry", announcement: "Polite", content: { tone: "Neutral", title } });
+      void feedback.offer({ needsAttention: false, undo: null, onDismiss: null, key: "page-entry", announcement: "Polite", content: { tone: "Neutral", title } });
     if (entry.kind === "EditPageTitle") {
       if (!claim(delivery)) return;
       if (entry.pageId !== id) return gone("This page is no longer available.");

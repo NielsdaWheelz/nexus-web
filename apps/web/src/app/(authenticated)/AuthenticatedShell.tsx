@@ -1,5 +1,6 @@
 "use client";
 
+import { useActivityNavigation } from "@/components/feedback/Activity";
 import { NavigationIdentity, useHostPolicy } from "@/lib/host/policy";
 import {
   useCallback,
@@ -201,7 +202,8 @@ function WorkspacePlayer({ accountId, children }: { accountId: string; children:
 }
 
 function WorkspaceNavigation({ children }: { children: ReactNode }) {
-  const { state } = useWorkspaceStore();
+  const { state, foregroundGeneration, pendingPaneFocus } = useWorkspaceStore();
+  useActivityNavigation(foregroundGeneration, pendingPaneFocus);
   return <NavigationIdentity value={state.panes.find(pane => pane.id === state.active_primary_pane_id)!.current_visit.href}>{children}</NavigationIdentity>;
 }
 
@@ -229,12 +231,14 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
   const receive = useWritingReceive(accountId);
   const { connection, probe_failure, probing } = receive.snapshot;
   useWorkspaceCondition("writing-update", !runtime.reloadHeld ? null : {
+    needsAttention: true,
     priority: "Action",
     content: { tone: "Warning", title: "nexus was updated.", message: "finish saving before reloading. other unsaved changes will be lost." },
     announcement: "Polite",
     actions: [{ label: "reload app", onClick: () => { window.location.reload(); } }],
   });
   useWorkspaceCondition("writing-receive", connection.failure !== null ? {
+    needsAttention: true,
     priority: "Action",
     content: {
       ...(apiTransportFeedback(connection.failure, "live updates are unavailable.") ?? {
@@ -245,11 +249,13 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     announcement: "Polite",
     actions: [{ label: "retry live updates", onClick: receive.reconnect, busy: connection.phase === "connecting" || connection.phase === "recovering" }],
   } : connection.phase === "recovering" ? {
+    needsAttention: false,
     priority: "Status",
     content: { tone: "Neutral", title: "reconnecting live updates…" },
     announcement: "None",
   } : null);
   useWorkspaceCondition("writing-probe", probe_failure === null ? null : {
+    needsAttention: true,
     priority: "Action",
     content: {
       ...(apiTransportFeedback(probe_failure, "some open content couldn’t refresh.") ?? {
@@ -287,7 +293,8 @@ function WorkspaceEntryNotice({ failure, locationLinkFailure }: { failure: { req
   useEffect(() => {
     if (locationLinkFailure === null || reportedLocation.current) return;
     reportedLocation.current = true;
-    feedback.offer({ key: "location-entry", announcement: "Polite", content: { tone: "Warning", title: "this location link is too long" } });
+    feedback.offer({ key: "location-entry", announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
+      content: { tone: "Warning", title: "this location link is too long" } });
   }, [feedback, locationLinkFailure]);
 
   useEffect(() => {
@@ -296,6 +303,7 @@ function WorkspaceEntryNotice({ failure, locationLinkFailure }: { failure: { req
 
   activePaneId.current = state.active_primary_pane_id;
   useWorkspaceCondition(ENTRY_NOTICE, failure === null ? null : {
+    needsAttention: true,
     priority: "Status",
     content: {
       tone: "Warning",

@@ -21,7 +21,7 @@ export function useWriting() {
 export function copyWriting(feedback: FeedbackContextValue, text: string): void {
   void copyText(text).catch((error: unknown) => {
     if (!(error instanceof ClipboardWriteUnavailableError)) { reportError(error); return; }
-    feedback.offer({ key: "writing-copy", announcement: "Polite", content: { tone: "Warning", title: "copy unavailable", message: "select the text and copy it before leaving." } });
+    feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "writing-copy", announcement: "Polite", content: { tone: "Warning", title: "copy unavailable", message: "select the text and copy it before leaving." } });
   });
 }
 
@@ -47,7 +47,7 @@ export function TextComparison({ value, saved, before = null, shown, resolve, su
     setBusy(true);
     void resolve(decision, shown).catch((error: unknown) => {
       if (!(error instanceof WritingDecisionError)) reportError(error);
-      feedback.offer({ key: "writing-choice", announcement: "Polite", content: { tone: "Warning", title: "couldn’t apply this choice", message: error instanceof WritingDecisionError ? error.message : "review the current versions before trying again." } });
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "writing-choice", announcement: "Polite", content: { tone: "Warning", title: "couldn’t apply this choice", message: error instanceof WritingDecisionError ? error.message : "review the current versions before trying again." } });
     }).finally(() => setBusy(false));
   };
   const entries = [...(before === null ? [] : [{ label: "before", value: before }]), { label: "your changes", value }, { label: "saved", value: saved }];

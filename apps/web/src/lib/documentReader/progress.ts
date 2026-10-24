@@ -337,8 +337,9 @@ export function createProgressSync(
       if (next.kind === "Canonical") hooks.remote(next.snapshot, true);
     } catch (error) {
       if (mine === generation) {
+        // Reconciliation reads own load failures; the fence keeps saves paused.
         failed = true;
-        if (state.kind === "LoadFailed") state = { ...state, retrying: false, error };
+        state = { kind: "LoadFailed", recovery: "RetryPosition", retrying: false, error };
       }
       throw error;
     } finally {
@@ -418,8 +419,8 @@ export function createProgressSync(
       await inFlight;
       if (handoff?.kind !== "Newer") await save(false);
       if (needsSourceBinding() || unsaved !== null || view?.kind !== "Canonical" || handoff !== null) {
-        // Source reloads retain their own fence; a command failure releases only its hold.
-        if (!needsSourceBinding()) fenced = false;
+        // Unloaded progress and source reloads retain their recovery fence.
+        if (!needsSourceBinding() && view !== null) fenced = false;
         publish();
         throw new ProgressPreparationError();
       }

@@ -210,7 +210,7 @@ export default function ResourceOutlineRow(props: {
         }
         submitted.current = null;
         if (command.kind === "unlink") {
-          feedback.offer({
+          feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
             key: `connection-remove:${command.link_id}`,
             content: { ...content, title: "this connection can’t be removed here" },
             announcement: "Polite",

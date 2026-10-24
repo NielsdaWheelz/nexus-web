@@ -1,7 +1,7 @@
-/** A holder retained unsaved progress and could not safely prepare a state write. */
+/** A progress holder could not safely prepare a state change. */
 export class ProgressPreparationError extends Error {
   constructor() {
-    super("progress could not be saved");
+    super("progress is not ready for this change");
     this.name = "ProgressPreparationError";
   }
 }

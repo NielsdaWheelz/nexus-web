@@ -341,7 +341,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     : [];
   const [embedFailure, setEmbedFailure] = useState<ApiError | null>(null);
   useWorkspaceCondition(`media-embed-updates:${runtime.paneId}`, embedFailure === null ? null : {
-    priority: "Status", announcement: "Polite",
+    priority: "Status", announcement: "Polite", needsAttention: true,
     content: { tone: "Warning", title: "article updates paused", requestId: embedFailure.requestId },
   });
   const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
@@ -809,7 +809,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     confirmation: null,
     tracked: true,
     execute: () => openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, create: async () => {
-      await ctx.consumption.finish(id, { leaveLectern: true });
+      await ctx.consumption.finish(id, { title: media.title, leaveLectern: true });
       const { media_id: mediaId, title } = target.media_summary;
       return { target: { href: `/media/${mediaId}`, labelHint: title }, title: "finished", openLabel: "open next on the lectern" };
     } }),

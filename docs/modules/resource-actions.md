@@ -173,17 +173,32 @@ selection scope while execution keeps the same catalog command ids.
   ([imports](imports.md), [media metadata](media-metadata.md)). an access failure after an
   unknown outcome cannot prove that the request was refused.
 - `ResourceActionsProvider` mounts the sole consumption command owner. callers use
-  `ctx.consumption.finish(id, { leaveLectern })`, `markUnread(id)` or `resetProgress(id)`;
+  `ctx.consumption.finish(id, { title, leaveLectern })`, `markUnread(id)` or `resetProgress(id)`;
   reader *open next* runs its finish through the existing tracked action runtime
   and delayed-result landing contract. the
   owner fences progress holders and keeps the finish response's exact undo receipt beyond
-  the originating pane. undo has no timer; a superseding consumption command on that media
-  or a definitive conflict retires it. an uncertain undo remains a workspace condition.
+  the originating pane. the named popup expires; the exact inverse remains in
+  activity and its subject menu through reactive `consumptionUndoItems`. `undo(commandKey)` and
+  `discardUndo(commandKey)` retain private receipts and revisions. overlapping
+  changes or authoritative refusal retire optional inverses. an uncertain undo
+  remains a required workspace condition even after a later refusal; the earlier
+  outcome is still unknown. send admission and exact owner identity are checked
+  after progress preparation, immediately before transmission.
+- progress preparation refusal means the position is not ready, not necessarily
+  that a save failed. no state request is sent; the reader/player retains its
+  specific recovery. an unloaded reader keeps its read fence so retry still loads.
 - chat deletion and repeat stay with `ConversationCommands`. `ctx.observeChatCommand` projects
   its continuing recovery after the originating pane closes; it stores no command
   or receipt. the target/revision or run id identify the frozen command, its
   owner's `retry()` checks it, and settlement or a different command removes the
   condition. retained failure copy and the same busy action survive checking.
+
+historical generic failures belong to the action runtime. an admitted deliberate
+same-subject/action retry withdraws its exact prior failure before execution;
+this does not claim success. current attempt identity fences delayed failures.
+modeled local device/admission refusals carry their content through
+`ResourceActionFailure` to this same runtime. domain conditions and inverses
+retain their separate settlement contracts.
 
 ## invariants
 

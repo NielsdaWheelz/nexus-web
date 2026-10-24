@@ -954,18 +954,18 @@ platform protection once and overlays shell controls. ordinary panes reserve the
 measured `--mobile-header-height` and retain a normal-flow player.
 
 `MobileViewportProvider` owns top surfaces (`Header`, `Controls`), bottom surfaces
-(`Nexus`, `Player`, `Feedback`), pane content and hosted reader scrollports. each
+(`Nexus`, `Player`), pane content and hosted reader scrollports. each
 shell registration supplies a stationary frame and nullable animated surface;
-null means independent feedback. the frame determines shown endpoint extent,
+the frame determines shown endpoint extent,
 while computed visibility determines current obstruction. the one border-box
 resize observer and coalesced viewport/transition pass own invalidation.
 
-one ordered pass derives `--mobile-canvas-safe-bottom`, the remaining platform
-protection after in-flow feedback,
-measures the header, places controls and nexus, publishes local content clearance,
+one ordered pass measures the header, places controls and nexus, publishes
+`--mobile-feedback-top` at the stationary header/control endpoint plus 12px,
+and publishes local content clearance,
 then publishes reader endpoint extent and current occlusion. overlapping
 rectangles form a conservative full-width envelope; their heights are never
-summed. already-spent flow space is not deducted twice. nexus placement uses
+summed. nexus placement uses
 shown frames and stays fixed on tap; `--mobile-content-bottom-clearance` and its
 subscribers report current visible obstruction. the chrome controller refreshes
 geometry synchronously after visibility writes and before holds/focus return.

@@ -9,9 +9,10 @@ import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { useRemoteAdmission } from "./admissionHooks";
 import type { SignInResult } from "./contracts";
 import { sessionCheck, sessionSignIn } from "./client";
-/** One shared condition describes admission; pane bodies do not each invent a
- * session lifecycle. Required account/build recovery is an Action; checking and
- * connectivity are Status. The custom tab leaves every mounted work owner in place. */
+/** Admission, catalog and listening conditions own independent recovery controls.
+ * Account/build and listening recovery are Actions; connectivity/catalog are Status.
+ * Each episode remains attention through its own retry until clean settlement,
+ * including overlapping session checks. The custom tab keeps work owners. */
 export function DeviceSessionNotice() {
   const admission = useRemoteAdmission();
   const catalog = useCatalogState();
@@ -24,17 +25,22 @@ export function DeviceSessionNotice() {
     { displayLocale: environment.displayLocale, displayTimeZone: calendarTimeZone }, { dateStyle: "medium", timeStyle: "short" });
   const saved = savedAt === null ? null : `catalog saved ${savedAt}`;
   const catalogFailure = catalog.error !== null || catalog.status?.last_error != null;
-  const catalogContent = catalog.accepting || catalog.status?.refreshing
+  const catalogRefreshing = catalog.accepting || catalog.status?.refreshing === true;
+  const [catalogEpisode, setCatalogEpisode] = useState(false);
+  const catalogAttention = catalogFailure || catalogEpisode && (catalogRefreshing || catalog.loading || catalog.status === null);
+  if (catalogEpisode !== catalogAttention) setCatalogEpisode(catalogAttention);
+  const catalogContent = catalogRefreshing
     ? { tone: "Neutral" as const, title: saved === null ? "saving your catalog…" : "updating catalog…", message: saved ?? undefined }
-    : catalogFailure ? { tone: "Warning" as const, title: "couldn’t update catalog", message: saved ?? "connect to save your lists for offline browsing." }
+    : catalogAttention ? { tone: "Warning" as const, title: "couldn’t update catalog", message: saved ?? "connect to save your lists for offline browsing." }
     : catalog.loading ? { tone: "Neutral" as const, title: "opening saved catalog…" }
-    : admission !== "Ready" ? { tone: "Neutral" as const, title: saved === null ? "catalog not ready on this device" : `offline · ${saved}`, message: saved === null ? "connect to save your lists for offline browsing." : undefined }
     : null;
   const [result, setResult] = useState<SignInResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [connectionEpisode, setConnectionEpisode] = useState(false);
   const signIn = () => {
     if (busy) return;
     setBusy(true);
+    setConnectionEpisode(true);
     setResult(null);
     void sessionSignIn().then(setResult, () => setResult("Failed")).finally(() => setBusy(false));
   };
@@ -46,18 +52,36 @@ export function DeviceSessionNotice() {
     : admission === "UpdateRequired" ? { tone: "Warning" as const, title: "update nexus to reconnect", message: "install the current nexus apk, then reopen the app." }
     : admission === "Unavailable" || result === "Failed" ? { tone: "Warning" as const, title: "couldn’t connect", message: "your workspace is still open." } : null;
   const needsRecovery = wrong || admission === "SignInRequired" || admission === "UpdateRequired";
-  const content = needsRecovery && sessionContent !== null
+  const connectionFailure = needsRecovery || admission === "Unavailable" || result === "Failed";
+  const connectionAttention = connectionFailure || connectionEpisode && (admission === "Checking" || busy);
+  const connectionChecking = connectionAttention && admission === "Checking";
+  // Publish episode continuity before layout registration can observe a retry.
+  if (connectionEpisode !== connectionAttention) setConnectionEpisode(connectionAttention);
+  const content = sessionContent !== null
     ? { ...sessionContent, message: ["message" in sessionContent ? sessionContent.message : null, saved].filter(Boolean).join(" ") }
-    : catalogContent ?? sessionContent;
+    : null;
   useWorkspaceCondition("device-session", content ? {
+    needsAttention: connectionAttention,
     priority: wrong || admission === "SignInRequired" || admission === "UpdateRequired" ? "Action" : "Status",
     content, announcement: "Polite",
     actions: wrong ? [{ label: "retry", busy, onClick: signIn }, { label: "cancel", onClick: () => setResult(null) }]
       : admission === "SignInRequired" ? [{ label: "sign in", busy, onClick: signIn }]
-      : admission === "Unavailable" || result === "Failed" ? [{ label: "try again", onClick: () => { setResult(null); void sessionCheck().catch(() => setResult("Failed")); } }]
-      : catalogFailure && admission === "Ready" ? [{ label: "retry", onClick: () => void catalog.refresh(), busy: catalog.accepting || catalog.status?.refreshing }] : undefined,
+      : admission === "Unavailable" || result === "Failed" || connectionChecking ? [{ label: "try again", busy: busy || connectionChecking, onClick: () => {
+        if (busy || connectionChecking) return;
+        setBusy(true); setConnectionEpisode(true); setResult(null);
+        void sessionCheck().catch(() => setResult("Failed")).finally(() => setBusy(false));
+      } }] : undefined,
+  } : null);
+  useWorkspaceCondition("device-catalog", catalogContent ? {
+    needsAttention: catalogAttention,
+    priority: "Status",
+    content: catalogContent, announcement: "Polite",
+    actions: catalogAttention ? [{ label: "retry", busy: catalogRefreshing || catalog.loading,
+      disabledReason: admission === "Ready" ? undefined : "connect before retrying",
+      onClick: () => { if (admission === "Ready" && !catalogRefreshing && !catalog.loading) void catalog.refresh(); } }] : undefined,
   } : null);
   useWorkspaceCondition("device-listening", listening.error === null ? null : {
+    needsAttention: true,
     priority: "Action",
     content: { tone: "Warning", title: "listening progress couldn’t be read",
       message: "saved progress has been kept. lists may be out of date." },

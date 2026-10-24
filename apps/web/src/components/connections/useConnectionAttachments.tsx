@@ -55,7 +55,7 @@ export function useConnectionAttachments(selfRef: string) {
     const owned = () => workspace().state.panes.some(pane => [pane.current_visit, ...pane.history.back, ...pane.history.forward]
       .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
     const stop = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
-    let linkNotice: ReturnType<typeof feedback.offer> | null = null;
+    let linkNotice: ReturnType<typeof feedback.retainCondition> | null = null;
     const withdrawLinkNotice = () => { linkNotice?.withdraw(); linkNotice = null; };
     task.running = true;
     task.failure = null;
@@ -82,21 +82,25 @@ export function useConnectionAttachments(selfRef: string) {
         task.link ??= admitWriting({ kind: "outline", commands: [{ kind: "insert_link", link_id: item.linkId,
           source: { kind: "resource", ref: selfRef }, target: { kind: "resource", ref: `media:${task.mediaId}` },
           position: null, require_created: false }] });
+        let linkFailure: FeedbackContent | null = null;
+        let retryable = false;
         const showLinkState = () => {
-          if (account.aborted || owner.read().task !== task) return;
+          if (account.aborted || owner.read().task !== task) { withdrawLinkNotice(); return; }
           const state = task.link!.read();
           task.failure = state.kind === "unconfirmed"
             ? { tone: "Warning", title: "link not confirmed", message: !canRetryWriting(task.link!)
               ? "the file is saved. reload to check its link. other unsaved changes will be lost."
               : "the file is saved. its link may also have succeeded." }
             : null;
-          if (state.kind !== "unconfirmed") withdrawLinkNotice();
-          else if (controller.signal.aborted) {
-            withdrawLinkNotice();
+          if (state.kind === "unconfirmed") { linkFailure = task.failure; retryable = canRetryWriting(task.link!); }
+          if (state.kind === "accepted" || state.kind === "refused" || state.kind === "abandoned") withdrawLinkNotice();
+          else if (linkFailure !== null && (controller.signal.aborted || linkNotice !== null)) {
             const link = task.link!;
-            linkNotice = feedback.offer({ key: `attachment-link:${link.id}`, announcement: "Polite", content: task.failure!,
-              actions: canRetryWriting(link) ? [{ label: "retry same link", onClick: link.retry }]
-                : [{ label: "reload", onClick: () => window.location.reload() }] });
+            const condition = { priority: "Write" as const, announcement: "Polite" as const, content: linkFailure, needsAttention: true,
+              actions: retryable ? [{ label: "retry same link", commandKey: `attachment-link:${link.id}:retry`, busy: state.kind === "queued" || state.kind === "sending",
+                onClick: () => { if (!account.aborted) link.retry(); } }] as const
+                : [{ label: "reload", onClick: () => { if (!account.aborted) window.location.reload(); } }] as const };
+            if (linkNotice) linkNotice.update(condition); else linkNotice = feedback.retainCondition({ key: `attachment-link:${link.id}`, ...condition });
           }
           publish();
         };
@@ -125,6 +129,7 @@ export function useConnectionAttachments(selfRef: string) {
       if (account.aborted || owner.read().task !== task) return;
       if (controller.signal.aborted) {
         if (task.link?.read().kind === "refused") feedback.offer({ key: `attachment-link:${task.link.id}`, announcement: "Polite",
+          needsAttention: true, undo: null, onDismiss: null,
           content: { tone: "Warning", title: "file saved; link refused", message: isApiError(error) ? error.message : "review its destination before linking again." },
           actions: task.mediaId === null ? undefined : [{ label: "open saved file", href: `/media/${task.mediaId}` }] });
         return;
@@ -153,7 +158,7 @@ export function useConnectionAttachments(selfRef: string) {
     const accepted: Task["files"][number][] = [];
     for (const file of files) {
       const invalid = getFileUploadError(file);
-      if (invalid) feedback.offer({ key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
+      if (invalid) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
       else accepted.push({ file, upload: createUploadAttempt(), linkId: crypto.randomUUID() });
     }
     if (!accepted.length) return;

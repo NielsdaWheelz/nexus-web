@@ -124,6 +124,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, af
     setFailure(null);
   }, [entry.mutation, stale]);
   useWorkspaceCondition(conditionKey, failure ? {
+    needsAttention: true,
     priority: "Write", content: failure, announcement: "Polite", returnFocus,
     actions: [{ label: stale ? "refresh context" : "retry removal", onClick: stale ? () => { refreshRequested.current = true; onChanged(); } : () => { void remove(); }, busy }],
   } : null);

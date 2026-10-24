@@ -303,7 +303,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   const warn = useCallback(
     (title: string, message: string) =>
-      feedback.offer({
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
         key: "note-attachment",
         announcement: "Polite",
         content: { tone: "Warning", title, message },

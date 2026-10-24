@@ -155,7 +155,7 @@ function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnT
     message: entry.phase === "Unknown" ? "the request may have succeeded. checking retains the original ids and guards." : undefined,
     requestId: entry.requestId ?? undefined,
   };
-  useWorkspaceCondition(entry.key, { priority: "Write", announcement: "Polite",
+  useWorkspaceCondition(entry.key, { needsAttention: entry.uncertain || entry.phase === "Refused", priority: "Write", announcement: "Polite",
     content: { ...content, title: `${content.title} · ${entry.title}` },
     actions: entry.phase === "Sending" ? undefined : entry.phase === "Refused" ? [{ label: "review current state", onClick: () => commands.review(entry.key) }]
       : [{ label: "check change", commandKey: entry.key, onClick: () => { void commands.check(entry.key); } }, { label: "stop tracking", onClick: () => commands.review(entry.key) }],

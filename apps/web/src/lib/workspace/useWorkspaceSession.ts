@@ -40,6 +40,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     retry: () => void;
   } | null>(null);
   useWorkspaceCondition(NOTICE, notice ? {
+    needsAttention: true,
     priority: installedApp ? "Status" : "Write",
     content: notice.content,
     announcement: "Polite",

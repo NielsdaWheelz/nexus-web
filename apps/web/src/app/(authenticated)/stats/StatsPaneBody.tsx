@@ -909,7 +909,7 @@ export default function StatsPaneBody() {
       if (handleUnauthenticatedApiError(error)) return;
       const failure = correctionFailure(error);
       if (failure === null) return fail({ error });
-      feedback.offer({ key: "consumption-activity-correction", announcement: "Polite", content: { tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined } });
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "consumption-activity-correction", announcement: "Polite", content: { tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined } });
       if (failure === STALE) publishChange("Consumption");
     } finally {
       if (mounted.current) setCorrecting(false);

@@ -4,6 +4,7 @@
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { ActivityList } from "@/components/feedback/Activity";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
@@ -230,6 +231,11 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           />
         </AddPanelBoundary>
       );
+    case "Activity":
+      return <section className={styles.page}>
+        <Header title="activity" onBack={controller.back} />
+        <ActivityList onNavigate={controller.completeActivityNavigation} />
+      </section>;
     case "ManageTabs":
       return <ManageTabs controller={controller} mobile={mobile} />;
   }

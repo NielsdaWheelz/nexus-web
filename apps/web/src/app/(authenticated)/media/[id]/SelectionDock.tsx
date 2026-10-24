@@ -168,7 +168,7 @@ function MobileSelectionActions({ verbs, reader, store, canQuote }: {
       { kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />,
         onSelect: () => {
           if (!verbs.selectionCurrent(captured)) return;
-          void copyText(captured.capture.quote).catch(() => feedback.offer({ key: "reader-copy-passage", announcement: "Polite",
+          void copyText(captured.capture.quote).catch(() => feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "reader-copy-passage", announcement: "Polite",
             content: { tone: "Danger", title: "passage couldn’t be copied" } }));
         } },
       { kind: "custom", id: "HighlightColours", label: "highlight colour", render: ({ closeMenu }) => (
@@ -337,7 +337,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
     const options: ActionDescriptor[] = [
       command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => {
-        void copyText(draft.passage.quote).catch(() => feedback.offer({ key: "reader-copy-passage", announcement: "Polite",
+        void copyText(draft.passage.quote).catch(() => feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "reader-copy-passage", announcement: "Polite",
           content: { tone: "Danger", title: "passage couldn’t be copied" } }));
       }, null),
     ];

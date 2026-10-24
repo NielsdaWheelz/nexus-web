@@ -17,6 +17,7 @@ import { publishImportsInvalidation } from "@/lib/imports/api";
 import { requestEpisodeTranscripts } from "@/lib/podcasts/api";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace } from "@/lib/workspace/store";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { remoteReady } from "@/lib/native/admission";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -105,7 +106,7 @@ function createCommands(accountId: string, guard: WorkGuard, feedback: FeedbackC
       if (!entry.uncertain) {
         const content = entry.failure;
         retire(entry);
-        if (!defect && content !== null) feedback.offer({ key: entry.commandKey, content: { ...content, title: `${content.title} · ${entry.title}` }, announcement: "Polite" });
+        if (!defect && content !== null) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: entry.commandKey, content: { ...content, title: `${content.title} · ${entry.title}` }, announcement: "Polite" });
       } else {
         entry.phase = "unconfirmed";
         publish();
@@ -185,13 +186,16 @@ function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnT
   const title = sending ? "requesting transcripts…" : "transcript request unconfirmed";
   const message = "it may have been accepted. inspect episode status and imports before requesting another batch.";
   useWorkspaceCondition(entry.commandKey, {
-    priority: "Write", announcement: "Polite",
+    needsAttention: !sending, priority: "Write", announcement: "Polite",
     content: { tone: sending ? "Neutral" : "Warning", title: `${title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${sending ? "" : ` ${message}${entry.failure === null ? "" : ` ${entry.failure.title}. ${entry.failure.message ?? ""}`}`}`, requestId: entry.requestId ?? undefined },
     actions: sending ? undefined : [
-      { label: "view imports", commandKey: entry.commandKey, onClick: intent => {
+      { label: "view imports", href: "/imports", onActivate: event => {
         const current = workspace();
-        const result = current.activateWorkspaceTarget({ originPaneId: current.state.active_primary_pane_id, target: { href: "/imports" }, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
-        if (result.kind !== "Cancelled") commands.inspect(entry.commandKey);
+        const handled = activateTargetLink({ event, target: { href: "/imports" },
+          runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId: current.state.active_primary_pane_id }) },
+        });
+        if (handled === "handled-default" || handled === "handled-new-pane") commands.inspect(entry.commandKey);
+        return handled;
       } },
       { label: "stop tracking", commandKey: entry.commandKey, onClick: () => commands.forget(entry.commandKey) },
     ],

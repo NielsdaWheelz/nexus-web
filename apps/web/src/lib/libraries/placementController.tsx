@@ -407,7 +407,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
     read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
   }), [workGuard, destinationCreation]);
   useWorkspaceCondition("external-library-creation", external !== null || (!creation.status && creation.error === null) ? null : {
-    priority: "Write", announcement: "Polite",
+    needsAttention: creation.error !== null, priority: "Write", announcement: "Polite",
     content: creation.error?.content ?? { tone: "Neutral", title: creation.status ?? "creating library…" },
     actions: creation.error?.retry ? [{ label: "retry library creation", onClick: creation.error.retry,
       busy: creation.error.busy, commandKey: creation.error.commandKey }] : undefined,
@@ -462,7 +462,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
     setReviewTargets(attention?.targets ?? null);
   } };
   useWorkspaceCondition("library-placement", attention === null ? null : {
-    priority: "Write", announcement: "Polite", content: attention.content,
+    needsAttention: true, priority: "Write", announcement: "Polite", content: attention.content,
     actions: attention.retry === null ? [review] : [{ label: "retry", onClick: attention.retry, busy: attention.busy, commandKey: attention.commandKey }, review],
   });
   const defect = owner.defect();

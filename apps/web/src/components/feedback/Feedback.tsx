@@ -11,18 +11,18 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
-import { hasActiveModal, OverlayContext, useModalActive } from "@/lib/ui/overlay";
+import { hasActiveModal, OverlayContext } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { createWorkspaceSignals, EMPTY_SIGNALS, type WorkspaceSignal } from "./workspaceSignals";
+import { createWorkspaceSignals } from "./workspaceSignals";
+import { ActivitySurface } from "./Activity";
+import WorkspaceFeedback from "./WorkspaceFeedback";
 import styles from "./Feedback.module.css";
 
 export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
@@ -51,22 +51,32 @@ export type FeedbackNoticeProps = FeedbackProps & {
   occurrence?: object;
   onDismiss?: () => void;
 };
-export type WorkspaceNotice = FeedbackProps;
+export type WorkspaceNotice = FeedbackProps & { needsAttention: boolean };
 export interface WorkspaceCondition extends WorkspaceNotice {
   priority: "Write" | "Action" | "Status";
 }
-export type OfferNotice = WorkspaceNotice;
+export type OfferInput = WorkspaceNotice & {
+  key: string;
+  undo: "Invite" | "Retain" | null;
+  onDismiss: (() => void) | null;
+};
 export interface FeedbackOffer {
-  update(notice: OfferNotice): void;
+  update(notice: WorkspaceNotice): void;
+  withdraw(): void;
+}
+export interface FeedbackCondition {
+  update(notice: WorkspaceCondition): void;
   withdraw(): void;
 }
 export interface FeedbackContextValue {
   receipt(content: Pick<FeedbackContent, "tone" | "title">): void;
-  /** Settle the owner's unique command condition; ordinary receipt suppression still applies. */
+  /** settlement removes its current condition; the short fact is presentation only. */
   settleCondition(input: { key: string; content: Pick<FeedbackContent, "tone" | "title"> }): void;
-  offer(input: OfferNotice & { key: string }): FeedbackOffer;
+  offer(input: OfferInput): FeedbackOffer;
+  /** A live command owner retains required recovery through its exact settlement. */
+  retainCondition(input: WorkspaceCondition & { key: string }): FeedbackCondition;
 }
-const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
+export const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
 const Scope = createContext<{ active: boolean; mayRestoreFocus: () => boolean; returnFocus: () => HTMLElement | null } | null>(null);
 
 /** The existing pane projects its focus target and announcement permission. */
@@ -100,10 +110,9 @@ export function FeedbackProvider({ children, returnFocus }: {
     return () => document.removeEventListener("visibilitychange", signals.visibilityChanged);
   }, [signals]);
   return <FeedbackContext value={signals}>
-    <div className={styles.viewport}>
-      <div className={styles.application}>{children}</div>
-      <WorkspaceFeedback signals={signals} fallbackFocus={returnFocus} />
-    </div>
+    <div className={styles.viewport} data-workspace-feedback-root>{children}</div>
+    <WorkspaceFeedback signals={signals} fallbackFocus={returnFocus} />
+    <ActivitySurface signals={signals} fallbackFocus={returnFocus} />
   </FeedbackContext>;
 }
 
@@ -135,80 +144,6 @@ export function useWorkspaceCondition(key: string, notice: WorkspaceCondition | 
   }, [signals, key, token]);
 }
 
-function WorkspaceFeedback({ signals, fallbackFocus }: {
-  signals: ReturnType<typeof createWorkspaceSignals>;
-  fallbackFocus?: () => HTMLElement | null;
-}) {
-  const { entries, receipt } = useSyncExternalStore(signals.subscribe, signals.snapshot, () => EMPTY_SIGNALS);
-  const modal = useModalActive();
-  const viewport = useMobileViewport();
-  const [element, setElement] = useState<HTMLElement | null>(null);
-  useLayoutEffect(() => {
-    if (!element) return;
-    const unregister = viewport.registerBottomSurface("Feedback", element, null);
-    return () => {
-      unregister();
-      signals.hold("Pointer", false);
-      signals.hold("Focus", false);
-    };
-  }, [element, viewport, signals]);
-  useLayoutEffect(() => { if (modal) signals.modalOpened(); }, [modal, signals]);
-  const leading = entries[0];
-  const level = leading?.notice.announcement ?? "Polite";
-  const summary = leading
-    ? `${leading.notice.content.title}${entries.length > 1 ? `. ${entries.length} workspace items.` : ""}`
-    : receipt?.content.title ?? "";
-  const returnFocus = (entry: WorkspaceSignal) => () => {
-    const remaining = element?.querySelector<HTMLElement>("[data-workspace-summary]");
-    if (remaining?.isConnected) return remaining;
-    const origin = entry.notice.returnFocus?.();
-    return origin?.isConnected && !origin.closest("[hidden], [inert]") ? origin : fallbackFocus?.() ?? null;
-  };
-  return <>
-    <Announcement text={summary} level={level} deferred={modal} />
-    {!modal && (leading || receipt) ? <section
-      ref={setElement}
-      className={styles.workspace}
-      aria-label="workspace feedback"
-      onMouseEnter={() => signals.hold("Pointer", true)}
-      onMouseLeave={() => signals.hold("Pointer", false)}
-      onFocus={() => signals.hold("Focus", true)}
-      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) signals.hold("Focus", false); }}
-    >
-      {leading ? <Signal
-        key={leading.id}
-        {...leading.notice}
-        announcement="None"
-        className={styles.workspaceSummary}
-        disclosure="Anchored"
-        workspace
-        occurrence={leading.kind === "Offer" ? leading.token : undefined}
-        more={entries.length - 1}
-        onExpanded={(open) => signals.hold("Disclosure", open)}
-        onDismiss={leading.kind === "Offer" ? () => signals.dismiss(leading) : undefined}
-        returnFocus={returnFocus(leading)}
-        extraDetails={entries.length > 1 ? <div className={styles.remaining}>
-          {entries.slice(1).map((entry) => <Signal
-            key={entry.id}
-            {...entry.notice}
-            disclosure={undefined}
-            announcement="None"
-            className={styles.notice}
-            occurrence={entry.kind === "Offer" ? entry.token : undefined}
-            onDismiss={entry.kind === "Offer" ? () => signals.dismiss(entry) : undefined}
-            returnFocus={returnFocus(entry)}
-          />)}
-        </div> : null}
-      /> : receipt ? <Signal
-        key={receipt.id}
-        content={receipt.content}
-        announcement="None"
-        className={styles.receipt}
-      /> : null}
-    </section> : null}
-  </>;
-}
-
 export function FeedbackStatus(props: FeedbackProps) {
   return <Signal {...props} className={styles.status} />;
 }
@@ -225,19 +160,22 @@ export function FieldFeedback({ id, content }: { id: string; content: FeedbackCo
   </div> : null;
 }
 
-function Signal({
+export function Signal({
   content, announcement, actions, disclosure, returnFocus, className,
-  onDismiss, extraDetails, more = 0, workspace = false, surfaceState = false, occurrence, announcementOccurrence, onExpanded,
+  onDismiss, dismissLabel, dismissText, dismissBlocked, activityId, plain = false, focusable = false, surfaceState = false, occurrence, announcementOccurrence, onNavigate: navigation,
 }: FeedbackProps & {
   className: string;
   onDismiss?: () => void;
-  extraDetails?: ReactNode;
-  more?: number;
-  workspace?: boolean;
+  dismissLabel?: string;
+  dismissText?: string;
+  dismissBlocked?: boolean;
+  activityId?: number;
+  plain?: boolean;
+  focusable?: boolean;
   surfaceState?: boolean;
   occurrence?: object;
   announcementOccurrence?: object;
-  onExpanded?: (open: boolean) => void;
+  onNavigate?: () => void;
 }) {
   const scope = useContext(Scope);
   const overlay = useContext(OverlayContext);
@@ -258,14 +196,13 @@ function Signal({
   const shown = content.reload ? RELOAD : actions;
   const primary = shown?.[0];
   const secondary = shown?.[1];
-  const hasDetails = Boolean(content.message || content.requestId || secondary || extraDetails);
+  const hasDetails = Boolean(content.message || content.requestId || secondary);
   const open = expanded && hasDetails;
   const changeExpanded = (next: boolean) => {
     if (next) navigated.current = false;
     setExpanded(next);
-    onExpanded?.(next);
   };
-  const onNavigate = () => { navigated.current = true; changeExpanded(false); };
+  const onNavigate = () => { navigated.current = true; changeExpanded(false); navigation?.(); };
   useLayoutEffect(() => () => {
     if (navigated.current) return;
     const focused = document.activeElement;
@@ -280,49 +217,43 @@ function Signal({
       if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
     });
   }, [overlay, mayRestoreFocus]);
-  const expandedCallback = useRef(onExpanded);
-  expandedCallback.current = onExpanded;
-  useLayoutEffect(() => { expandedCallback.current?.(open); }, [open]);
-  useLayoutEffect(() => () => expandedCallback.current?.(false), []);
-  const Icon = ICONS[content.tone];
+  const Icon = plain ? null : ICONS[content.tone];
   const Title = surfaceState ? "h2" : "p";
   const body = <div ref={details} className={styles.details}>
     {content.message ? <p className={styles.message}>{content.message}</p> : null}
     {secondary ? <div className={styles.secondary}>
-      <Action action={secondary} reasonId={secondaryReasonId} occurrence={occurrence} onNavigate={onNavigate} />
+      <Action action={secondary} reasonId={secondaryReasonId} contextId={titleId} occurrence={occurrence} onNavigate={onNavigate} />
     </div> : null}
     {content.requestId ? <Diagnostics requestId={content.requestId} /> : null}
-    {extraDetails}
   </div>;
   return <article
     ref={root}
     className={`${styles.signal} ${styles[content.tone]} ${className}`}
-    tabIndex={workspace ? -1 : undefined}
-    data-workspace-summary={workspace || undefined}
+    tabIndex={focusable ? -1 : undefined}
+    data-activity-entry={activityId}
     aria-labelledby={titleId}
   >
     <div ref={setSummaryElement} className={styles.summary}>
       {Icon ? <Icon className={styles.icon} size={16} aria-hidden="true" /> : null}
       <Title id={titleId} className={styles.title}>{content.title}</Title>
       <div className={styles.controls}>
-        {primary ? <Action action={primary} reload={content.reload} reasonId={primaryReasonId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
+        {primary ? <Action action={primary} reload={content.reload} reasonId={primaryReasonId} contextId={titleId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
         {hasDetails ? <Button
           ref={setAnchor}
           className={styles.control}
           aria-expanded={open}
           aria-controls={id}
-          aria-label={more > 0 ? `${more} more workspace items` : `details: ${content.title}`}
+          aria-label={`details: ${content.title}`}
           onClick={() => changeExpanded(!open)}
         >
-          {more > 0 ? `+${more}` : "details"}
+          details
           <ChevronDown size={14} aria-hidden="true" className={open ? `${styles.chevron} ${styles.expanded}` : styles.chevron} />
         </Button> : null}
         {onDismiss ? <Button
           className={styles.control}
-          iconOnly
-          icon={<X />}
-          aria-label={`dismiss: ${content.title}`}
-          aria-disabled={actions?.some((action) => action.busy) || undefined}
+          {...(dismissText === undefined ? { iconOnly: true as const, icon: <X /> } : { children: dismissText })}
+          aria-label={dismissLabel ?? `dismiss: ${content.title}`}
+          aria-disabled={(dismissBlocked ?? actions?.some((action) => action.busy)) || undefined}
           onClick={() => onDismiss()}
         /> : null}
       </div>
@@ -334,7 +265,7 @@ function Signal({
       anchor={summaryElement}
       disclosureTrigger={anchor}
       align="end"
-      placement={workspace ? "above" : "below"}
+      placement="below"
       flip
       role="group"
       label={`details: ${content.title}`}
@@ -346,10 +277,11 @@ function Signal({
   </article>;
 }
 
-function Action({ action, reload, reasonId, occurrence, onNavigate }: {
+function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }: {
   action: FeedbackAction;
   reload?: true;
   reasonId: string;
+  contextId: string;
   occurrence?: object;
   onNavigate: () => void;
 }) {
@@ -395,7 +327,7 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
       data-workspace-rich-target={shown.onActivate ? "true" : undefined}
       aria-disabled={blocked || undefined}
       aria-busy={shown.busy || undefined}
-      aria-describedby={reason ? reasonId : undefined}
+      aria-describedby={reason ? `${contextId} ${reasonId}` : contextId}
       onClick={activate}
       onKeyDown={activate}
     >{shown.label}</ButtonLink> : <Button
@@ -403,7 +335,7 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
       className={styles.control}
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
-      aria-describedby={reason ? reasonId : undefined}
+      aria-describedby={reason ? `${contextId} ${reasonId}` : contextId}
       onClick={activate}
       onKeyDown={activate}
     >{shown.label}</Button>}
@@ -412,13 +344,22 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
 }
 
 /** Only the short fact is live; controls and disclosure never enter the live region. */
-function Announcement({ text, level, deferred = false, occurrence }: {
+export function Announcement({ text, level, deferred = false, occurrence }: {
   text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object;
 }) {
   // A new local occurrence keeps the live region empty for a rendered frame.
   const [spoken, setSpoken] = useState<{ text: string; occurrence?: object }>({ text: "" });
+  const suppressed = useRef<{ text: string; occurrence?: object } | null>(null);
+  const delivered = useRef<object | null>(null);
   useEffect(() => {
-    if (deferred) return;
+    if (deferred) {
+      suppressed.current = { text, occurrence };
+      setSpoken({ text: "" });
+      return;
+    }
+    if (suppressed.current?.text === text && suppressed.current.occurrence === occurrence) return;
+    suppressed.current = null;
+    if (occurrence !== undefined && delivered.current === occurrence) return;
     const next = { text: level === "None" ? "" : text, occurrence };
     if (occurrence === undefined || level === "None") {
       setSpoken(next);
@@ -426,7 +367,7 @@ function Announcement({ text, level, deferred = false, occurrence }: {
     }
     let publication: number | null = null;
     const empty = requestAnimationFrame(() => {
-      publication = requestAnimationFrame(() => setSpoken(next));
+      publication = requestAnimationFrame(() => { delivered.current = occurrence ?? null; setSpoken(next); });
     });
     return () => {
       cancelAnimationFrame(empty);

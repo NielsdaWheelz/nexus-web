@@ -19,6 +19,7 @@ import {
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
+import { ActivityControl } from "@/components/feedback/Activity";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -197,7 +198,10 @@ function PaneView({
     else router.forward(options);
   };
   const body = state.chrome;
-  const principal = body?.primaryAction;
+  const primary = body?.primaryAction;
+  const principal = primary?.kind === "link" && !primary.onActivate
+    ? { ...primary, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: primary.href === null ? null : { href: primary.href } }) }
+    : primary;
   const menuActions = body?.menuActions?.map((action) => action.kind === "link" && !action.onActivate
     ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: action.href === null ? null : { href: action.href } }) }
     : action);
@@ -433,6 +437,7 @@ function PaneView({
       paneActions={paneActions}
       menuActions={menuActions}
       resourceRef={body?.resourceRef}
+      workspaceAction={isMobile ? <ActivityControl /> : null}
       navigation={{
         canGoBack: router.canGoBack,
         canGoForward: router.canGoForward,

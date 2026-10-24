@@ -35,6 +35,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const [historySave, setHistorySave] = useState<{ content: FeedbackContent; send: () => Promise<void>; commandKey: string; busy: boolean } | null>(null);
   const latestSelection = useRef<(() => Promise<void>) | null>(null);
   useWorkspaceCondition(HISTORY_FEEDBACK_KEY, historySave ? {
+    needsAttention: true,
     priority: "Write", announcement: "Polite", content: historySave.content,
     actions: [{ label: "retry save", commandKey: historySave.commandKey, onClick: () => void historySave.send(), busy: historySave.busy }],
   } : null);

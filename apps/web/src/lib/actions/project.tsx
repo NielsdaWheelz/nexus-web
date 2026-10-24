@@ -1,3 +1,4 @@
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { parseResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assertNever } from "@/lib/assertNever";
 import { installedApp, remoteReady } from "@/lib/native/admission";
@@ -82,6 +83,11 @@ export interface ActionCommand {
   /** Opening an overlay, navigating or handing a pane an entry is untracked. */
   readonly tracked: boolean;
   readonly execute: () => unknown;
+}
+
+/** A modeled local refusal; the action runtime owns its exact historical publication. */
+export class ResourceActionFailure extends Error {
+  constructor(readonly content: FeedbackContent) { super(content.title); }
 }
 
 interface Options {
@@ -506,7 +512,7 @@ export function projectResourceActions(
       if (outcome.kind === "Gone") {
         settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
       } else if (outcome.kind === "Failed") {
-        ctx.feedback.offer({ key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
+        ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id, title: facts.label, owner, present });
       }
@@ -521,7 +527,7 @@ export function projectResourceActions(
     const present = (outcome: CommandOutcome) => {
       if (!ctx.isActive()) return;
       if (outcome.kind === "Failed") {
-        ctx.feedback.offer({ key: `chat-command-result:${conversationId}`, content: outcome.feedback, announcement: "Polite" });
+        ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `chat-command-result:${conversationId}`, content: outcome.feedback, announcement: "Polite" });
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
           retry: requested => {
@@ -661,7 +667,7 @@ export function projectResourceActions(
       const admitted = await deletePage(id);
       void admitted.settled.catch(error => {
         if (handleUnauthenticatedApiError(error)) return;
-        ctx.feedback.offer({ key: `page-delete:${id}`, announcement: "Polite", content: {
+        ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `page-delete:${id}`, announcement: "Polite", content: {
           tone: "Warning", title: "page deletion needs review", message: "the queued deletion is kept in writing status.",
         } });
       });
@@ -727,7 +733,7 @@ export function projectResourceActions(
           () =>
             finished
               ? ctx.consumption.markUnread(id)
-              : ctx.consumption.finish(id, { leaveLectern: false }),
+              : ctx.consumption.finish(id, { title: facts.label, leaveLectern: false }),
           {
             state: episode
               ? finished
@@ -812,7 +818,7 @@ export function projectResourceActions(
             if (retry.status !== "allowed") return;
             const result = await ctx.admissions.admit({ kind: "MetadataResearch", mediaId: id, request: { expected_job_id: retry.expected_job_id } });
             if (!ctx.isActive()) return;
-            if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `metadata-admission:${id}`, content: result.content, announcement: "Polite" });
+            if (result.kind === "LocalFailure") throw new ResourceActionFailure(result.content);
           },
           {
             tracked: false,
@@ -838,7 +844,7 @@ export function projectResourceActions(
             if (action.expected_attempt_id === null) return;
             const result = await ctx.admissions.admit({ kind: "SourceRefresh", mediaId: id, request: { expected_attempt_id: action.expected_attempt_id } });
             if (!ctx.isActive()) return;
-            if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `source-admission:${id}`, content: result.content, announcement: "Polite" });
+            if (result.kind === "LocalFailure") throw new ResourceActionFailure(result.content);
           },
           {
             tracked: false,
@@ -910,7 +916,26 @@ export function projectResourceActions(
     menu.push({ ...descriptor, separatorBefore: separatorBefore || undefined });
     group = catalogEntry.group;
   }
+  const undoTarget = resource.scheme === "media" ? { kind: "Media" as const, mediaId: id }
+    : resource.scheme === "library" ? { kind: "Library" as const, library_id: id }
+    : resource.scheme === "podcast" ? { kind: "Podcast" as const, podcast_id: id } : null;
+  if (undoTarget !== null) menu.push(...projectConsumptionUndoActions(undoTarget, ctx));
   return menu;
+}
+
+/** Local exact inverses belong to their subject; the server action catalog stays unchanged. */
+export function projectConsumptionUndoActions(target: ActionContext["consumptionUndoItems"][number]["target"], ctx: ActionContext): ActionDescriptor[] {
+  return ctx.consumptionUndoItems.filter(item => {
+    if (item.target.kind === "Media") return target.kind === "Media" && item.target.mediaId === target.mediaId;
+    if (item.target.kind === "Library") return target.kind === "Library" && item.target.library_id === target.library_id;
+    return target.kind === "Podcast" && item.target.podcast_id === target.podcast_id;
+  }).map(item => {
+    const disabledReason = !ctx.online ? "requires a connection" : undefined;
+    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel,
+      disabled: disabledReason !== undefined || item.phase === "Sending", disabledReason, busy: item.phase === "Sending",
+      onSelect: () => { if (disabledReason === undefined && item.phase !== "Sending") ctx.consumption.undo(item.commandKey); },
+    };
+  });
 }
 
 /**
@@ -949,11 +974,11 @@ export function projectDownloadActions(input: {
     } catch (error) {
       if (!ctx.isActive()) return;
       const code = error instanceof Error ? error.message : "";
-      ctx.feedback.offer({ key: `download:${mediaId}`, announcement: "Polite", content: { tone: "Danger",
-        title: code === "Storage" ? "Not enough device storage for this download."
-          : code === "Unsupported" ? "This item can’t be downloaded."
-          : code === "Scheduler" ? "Android couldn’t schedule this download. Try again."
-          : "The download couldn’t be changed. Try again." } });
+      throw new ResourceActionFailure({ tone: "Danger",
+        title: `${code === "Storage" ? "not enough device storage for this download"
+          : code === "Unsupported" ? "this item can’t be downloaded"
+          : code === "Scheduler" ? "android couldn’t schedule this download; try again"
+          : "the download couldn’t be changed; try again"} · ${title}` });
     }
   };
   const { offline } = ctx;

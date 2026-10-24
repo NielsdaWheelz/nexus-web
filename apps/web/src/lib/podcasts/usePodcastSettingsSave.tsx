@@ -110,7 +110,7 @@ export function usePodcastSettingsOwner(accountId: string, fail: (input: { error
 function SettingsCondition({ entry, check }: { entry: Entry; check: () => void }) {
   const state = entry.state;
   const uncertain = state.kind === "Unknown" || state.kind === "ReadFailed";
-  useWorkspaceCondition(entry.ownerId, uncertain || state.kind === "Saving" || state.kind === "Reading" ? { priority: "Write", announcement: "Polite",
+  useWorkspaceCondition(entry.ownerId, uncertain || state.kind === "Saving" || state.kind === "Reading" ? { needsAttention: uncertain || state.kind === "Reading" && state.reason === "Unknown", priority: "Write", announcement: "Polite",
     content: { tone: uncertain ? "Warning" : "Neutral", title: uncertain ? "playback defaults not confirmed" : "saving playback defaults…", requestId: "error" in state && isApiError(state.error) ? state.error.requestId : undefined },
     actions: uncertain ? [{ label: "check saved settings", onClick: check }] : undefined,
   } : null);
