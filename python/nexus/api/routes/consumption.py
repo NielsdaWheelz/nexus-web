@@ -15,7 +15,6 @@ from nexus.schemas import consumption as wire
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.suggestions import (
     QuickReadsOut,
-    SuggestionRefreshIn,
     SuggestionsOut,
     SuggestionStateOut,
     SuggestionViewIn,
@@ -120,13 +119,9 @@ def reconcile_lectern_suggestions(
 
 
 @router.post("/lectern/suggestions/refresh", status_code=202)
-def refresh_lectern_suggestions(
-    request: SuggestionRefreshIn, viewer: ViewerDep, db: DbSession
-) -> Data[SuggestionStateOut]:
+def refresh_lectern_suggestions(viewer: ViewerDep, db: DbSession) -> Data[SuggestionStateOut]:
     return Data(
-        data=suggestion_shortlists.request_suggestions_refresh(
-            db, viewer_id=viewer.user_id, request=request
-        )
+        data=suggestion_shortlists.request_suggestions_refresh(db, viewer_id=viewer.user_id)
     )
 
 

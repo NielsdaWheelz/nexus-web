@@ -98,20 +98,6 @@ class SuggestionViewOut(Closed):
     items: list[SuggestionItemOut] = Field(max_length=80)
 
 
-class SuggestionEnsureFreshIn(Closed):
-    kind: Literal["EnsureFresh"]
-
-
-class SuggestionExplicitRefreshIn(Closed):
-    kind: Literal["Explicit"]
-    observed_publication_id: UUID | None
-
-
-type SuggestionRefreshIn = Annotated[
-    SuggestionEnsureFreshIn | SuggestionExplicitRefreshIn, Field(discriminator="kind")
-]
-
-
 class SuggestionCurrentOut(Closed):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 

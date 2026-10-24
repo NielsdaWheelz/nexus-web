@@ -15,6 +15,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
+import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -293,10 +294,14 @@ function LibraryPane({ id }: { readonly id: string }) {
       ]);
       refetchDetail();
       await refetchEntries().catch(() => {});
-      return suggested === "Requested" ? result : {
-        kind: result.kind === "Complete" ? "Partial" : result.kind,
-        announcement: `${result.announcement}. ${suggested === "Repair" ? "suggestions need repair." : "couldn’t request suggestions."}`,
-      };
+      switch (suggested) {
+        case "Refreshed": case "Finding": case "NotApplicable": return result;
+        case "Repair": case "Failed": return {
+          kind: result.kind === "Complete" ? "Partial" : result.kind,
+          announcement: `${result.announcement}. ${suggested === "Repair" ? "suggestions need repair." : "couldn’t refresh suggestions."}`,
+        };
+        default: return assertNever(suggested);
+      }
     },
     [id, refetchDetail, refetchEntries, refreshSuggestionFeed],
   );
