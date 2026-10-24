@@ -8,7 +8,6 @@ import { useRef } from "react";
 import NoteEditor from "./NoteEditor";
 import { sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import { editText } from "@/lib/notes/texts";
-import type { ReferenceConsumption } from "@/lib/notes/journal";
 import type {
   DailyPublication,
   OutlineDestination,
@@ -33,13 +32,12 @@ export default function OutlineInsertionLine({
     composer.destination.path.join("/") === destination.path.join("/") &&
     composer.destination.position?.after === destination.position?.after;
 
-  function admit(body: NoteBody, consumed_reference?: ReferenceConsumption | null) {
+  function admit(body: NoteBody) {
     if (admitting.current || composer === null || session.readComposer()?.serial !== composer.serial) return;
     admitting.current = true;
     void session.insertNote({
       destination: composer.destination,
       body,
-      consumed_reference,
       publication: composer.publication,
     }).then(
       (result) => {
@@ -47,7 +45,7 @@ export default function OutlineInsertionLine({
         const latest = session.readComposer();
         if (latest?.serial !== composer.serial) return;
         if (!result) {
-          session.composerProblem("item was not inserted; your draft is kept at its original position");
+          session.composerProblem("item was not inserted; your input remains at its original position");
           return;
         }
         const changed = !sameBody(latest.body, body);
@@ -59,7 +57,7 @@ export default function OutlineInsertionLine({
       (error: unknown) => {
         admitting.current = false;
         if (session.readComposer()?.serial === composer.serial)
-          session.composerProblem("couldn’t insert item; your draft is kept at its original position");
+          session.composerProblem("couldn’t insert item; your input remains at its original position");
         throw error;
       },
     );
@@ -120,7 +118,7 @@ export default function OutlineInsertionLine({
         onEdit={(edit) => {
           if (session.readComposer()?.serial !== composer.serial) return;
           session.editComposer(edit.after, edit.selectionAfter);
-          admit(edit.after, edit.editBase?.consumed_reference);
+          admit(edit.after);
         }}
       />
       {composer.problem ? <p role="alert">{composer.problem}</p> : null}

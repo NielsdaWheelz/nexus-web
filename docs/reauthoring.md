@@ -8,6 +8,19 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+online-first writing against `bdae1bb52`: -3,504 authored runtime lines
+(1,630 added, 5,134 deleted). deletes the account journal, recovery panel, passage
+shelf, writing startup/storage gates and native export protocol. live owners retain
+exact requests, bounded retries, version/undo proofs and narrow autosave exit risk.
+passage input and nested forms use existing surface scope; pending uploads retain
+their loss guard and abort their exact browser pipeline on confirmed abandonment.
+no backend schema or wire change. scoped deltas: android -233; pages/capture/document lifetime
+-243; passage composer -211; resource authoring -182; editors/notices -653; api/auth boundaries
++1; writing/text/outline -1,983.
+docs and disposable qualification cases are excluded; earlier area totals retain
+their stated bases. paired deployment and actual-phone store retirement remain
+in `docs/issues/release-online-first-writing.md`.
+
 mobile reader selection against `4acdadc1d`: +681 authored runtime lines
 (957 added, 276 deleted), reader web ui +594 and overlays +87. provisional
 mobile candidates and explicit capture commands replace automatic mobile
@@ -300,13 +313,13 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | player | 3,222 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 · playback settings +349 · persistent player +130 · player redesign +60 · media controls +72 · podcast collection +10 · podcast silence -5 · dropdown primitives -3 · native control cutover · playback queue +1514 · mobile reader chrome · popup sizing +0 · bounded indexes +30 · resource menu parity | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,096 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 · #670 +521 · reader python ingest +3 · ingest follow-ups -12 | re-slice: x titles |
 | overlays | 2,954 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 · player redesign +62 · dropdown primitives -28 · native control cutover · mobile reader chrome · compact actions +91 · popup sizing +29 · resource menu parity · mobile reader selection +87 | keep; #631 with selection composer, #650 with feedback admission recovery |
-| notes outline | 7,195 | reauthored #589 | #646 -319 · #631 +85 · #678 +111 · #679 +31 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · #700 +1 · shared outline +2,943 · unsaved work +10 · collection loading +2 · notes re-slice (server) -45 · durable writing -54 · native control cutover | keep; #631 with selection composer |
+| notes outline | 7,195 | reauthored #589 | #646 -319 · #631 +85 · #678 +111 · #679 +31 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · #700 +1 · shared outline +2,943 · unsaved work +10 · collection loading +2 · notes re-slice (server) -45 · durable writing -54 · native control cutover · online-first writing | keep; #631 with selection composer |
 | offline shelf | 2,631 | reauthored #502 | x threads +45 · reader python ingest -2 · durable writing +242 · shared shelf controls -29 · playback queue +6 | android slice (late) |
-| note bodies and editor | 4,571 | reauthored #589 | #631 +121 · #646 +29 · #679 +22 · resource insertion +448 · empty-resource lifecycle +71 · reader connections +111 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · unsaved work +84 · collection loading +1 · notes re-slice (server) +33 · durable writing +249 · libraries retention +7 · dropdown primitives -20 · native control cutover · offline catalog +2 | keep; #631 with selection composer |
+| note bodies and editor | 4,571 | reauthored #589 | #631 +121 · #646 +29 · #679 +22 · resource insertion +448 · empty-resource lifecycle +71 · reader connections +111 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · unsaved work +84 · collection loading +1 · notes re-slice (server) +33 · durable writing +249 · libraries retention +7 · dropdown primitives -20 · native control cutover · offline catalog +2 · online-first writing | keep; #631 with selection composer |
 | generation core | 2,275 | reauthored #547 | x threads +5 · resource-first search -1 · db substrate -1 | keep (#643 #644 re-sliced by chat web) |
 | metadata research, media intelligence | 2,395 | reauthored #620 | x threads +62 · #670 +49 · native control cutover · compact actions +7 · author editing -10 · resource menu parity | keep |
-| api transport, bff, sse | 2,877 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · reference interaction +14 · connection actions +13 · unsaved work +0 · collection loading +26 · notes re-slice (server) +3 · podcast collection +8 · durable writing +548 · podcast libraries -29 · offline catalog +97 · resource menu parity | keep |
-| android shell | 2,199 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 · durable writing +21 · native control cutover · playback queue -4 · offline catalog +55 | android slice (late) |
+| api transport, bff, sse | 2,877 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · reference interaction +14 · connection actions +13 · unsaved work +0 · collection loading +26 · notes re-slice (server) +3 · podcast collection +8 · durable writing +548 · podcast libraries -29 · offline catalog +97 · resource menu parity · online-first writing | keep |
+| android shell | 2,199 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 · durable writing +21 · native control cutover · playback queue -4 · offline catalog +55 · online-first writing | android slice (late) |
 | api substrate, config, storage, wire schemas | 2,295 | reauthored #585 #586 #622 | x threads +3 · #670 +3 · resource-first search +4 · empty-resource lifecycle +19 · python auth -5 · podcast details +4 · durable writing +124 · libraries retention +1 · podcast libraries -4 · playback queue +123 · author editing -15 · offline catalog +2 · resource menu parity | keep |
 | reader: document map, evidence | 1,929 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · #670 +5 · #679 +5 · shift-open +65 · resource metadata +1 · resource insertion +4 · reader connections -469 · shared outline +203 · durable writing +6 · native control cutover | reader python read (13b, deferred) |
 | search retriever | 2,673 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 · media controls +2 · libraries retention +1 | keep |
@@ -314,7 +327,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | consumption core (read state) | 1,865 | reauthored #417 #596 | #650 +170 · x threads +163 · media controls +1 · podcast collection +23 · libraries retention -4 · playback queue +24 · resource menu parity | keep; #650 with feedback admission recovery |
 | reader python: highlights | 1,950 | not yet | #645 +78 · #631 +75 · x threads +44 · #670 +28 · python auth -2 · db substrate -1 · durable writing +244 · podcast libraries +16 | reader python read (13b, deferred) |
 | jobs runtime | 1,626 | reauthored #564 | empty-resource lifecycle +6 · selection continuation +1 · podcast details +0 · podcast libraries +37 | keep |
-| notes pages and index | 4,662 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · #702 -1 · shared outline +4 · unsaved work +43 · db substrate -4 · collection loading -1 · notes re-slice (server) +13 · durable writing +2,690 · native control cutover · reader navigation +0 · offline catalog +25 | keep |
+| notes pages and index | 4,662 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · #702 -1 · shared outline +4 · unsaved work +43 · db substrate -4 · collection loading -1 · notes re-slice (server) +13 · durable writing +2,690 · native control cutover · reader navigation +0 · offline catalog +25 · online-first writing | keep |
 | reader python: html substrate, web article structure | 1,623 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +74 | read-path functions with 13b |
 | lectern | 1,443 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work -1 · media controls -42 · libraries retention +1 · playback queue +9 · offline catalog +27 · resource menu parity | keep |
 | android playback | 1,259 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 · player redesign +36 · playback queue +834 | android slice (late) |

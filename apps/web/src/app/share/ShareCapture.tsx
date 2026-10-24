@@ -27,7 +27,8 @@ import { addMediaFromUrl } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
-import { readWriting } from "@/lib/notes/journal";
+import { canRetryWriting } from "@/lib/notes/writes";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
 import { WritingStatus } from "@/components/notes/NoteNotices";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
@@ -44,7 +45,7 @@ function failed(
   label: string,
   error: unknown,
   describe: () => FeedbackContent | null,
-): Result {
+): Extract<Result, { ok: false }> {
   if (isUnauthenticatedApiError(error)) {
     const feedback: FeedbackContent = {
       tone: "Danger",
@@ -90,7 +91,7 @@ function ShareCaptureContent({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard }>());
   const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
-  const note = useRef<{ localDate: string; noteId: string } | null>(null);
+  const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: ReturnType<typeof captureToday> } | null>(null);
   const sentAttempt = useRef<number | null>(null);
   const plainText = trimmed !== "" && urls.length === 0;
   const account = usePaneFreeServerValue({
@@ -103,49 +104,43 @@ function ShareCaptureContent({
   });
   const timeZone =
     account.status === "ready" ? account.data.calendar_time_zone : null;
-  const writing = useWritingRuntime(account.status === "ready" ? account.data.user_id : null);
+  const accountId = account.status === "ready" ? account.data.user_id : null;
+  useWritingRuntime(accountId);
 
-  // plain text: one append per attempt (the effect runs twice in development);
-  // the date and note id are fixed on first send, so a retry lands once
+  // One live attempt freezes its date, ids and text. Retries use its handle;
+  // admission is never reported as a successful capture.
   useEffect(() => {
-    if (!plainText || writing.state !== "ready" || timeZone === null || sentAttempt.current === attempt) {
-      return;
-    }
-    sentAttempt.current = attempt;
-    note.current ??= {
-      localDate: formatLocalDateInTimeZone(new Date(), timeZone),
-      noteId: crypto.randomUUID(),
-    };
-    const { localDate, noteId } = note.current;
+    if (!plainText || accountId === null || timeZone === null) return;
     let active = true;
+    if (note.current === null || note.current.accountId !== accountId) {
+      const localDate = formatLocalDateInTimeZone(new Date(), timeZone);
+      const noteId = crypto.randomUUID();
+      note.current = { accountId, localDate, noteId, capture: captureToday(localDate, noteId, trimmed) };
+    } else if (sentAttempt.current !== attempt) note.current.capture.write.retry();
+    sentAttempt.current = attempt;
+    const { localDate, capture } = note.current;
     setSaving(true);
-    captureToday(localDate, noteId, trimmed).then(
-      ({ settled }) => {
-        const result = (status: string): Result => ({ label: trimmed, ok: true, available: true, status, path: `/daily/${localDate}` });
-        if (active) setResults([result(`kept on this device; queued for ${localDate}`)]);
-        void settled.then(() => {
-          if (active) setResults([result(`synced to ${localDate}`)]);
-        }, () => {
-          if (active) setResults([result("kept on this device; review this capture in notes")]);
-        });
-      },
-      (error: unknown) => {
-        if (!active) return;
-        if (readWriting().storage_error !== null) {
-          setResults([{ label: trimmed, ok: false, retryable: true, review: false, feedback: {
-            tone: "Warning", title: "recent changes are only in this tab.", message: "keep it open or copy the shared text before leaving.",
-          } }]);
-          return;
-        }
-        try {
-          setResults([failed(trimmed, error, () => captureTransportFeedback(error))]);
-        } catch (thrown) {
-          setDefect({ error: thrown });
-        }
-      },
-    ).finally(() => { if (active) setSaving(false); });
-    return () => { active = false; };
-  }, [plainText, writing.state, timeZone, attempt, trimmed]);
+    const inspect = () => {
+      const state = capture.write.read();
+      if (!active || state.kind !== "unconfirmed") return;
+      setSaving(false);
+      const irreducible = !canRetryWriting(capture.write);
+      setResults([{ label: trimmed, ok: false, retryable: !irreducible, review: false,
+        feedback: { tone: "Warning", title: "save not confirmed", message: irreducible
+          ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded. retry sends the same capture." } }]);
+
+    };
+    const stop = capture.write.subscribe(inspect);
+    inspect();
+    void capture.settled.then(() => {
+      if (active) setResults([{ label: trimmed, ok: true, available: true, status: `saved to ${localDate}`, path: `/daily/${localDate}` }]);
+    }, (error: unknown) => {
+      if (!active) return;
+      try { setResults([{ ...failed(trimmed, error, () => captureTransportFeedback(error)), retryable: false }]); }
+      catch (thrown) { setDefect({ error: thrown }); }
+    }).finally(() => { if (active) setSaving(false); });
+    return () => { active = false; stop(); };
+  }, [plainText, accountId, timeZone, attempt, trimmed]);
 
   if (defect !== null) throw defect.error;
 
@@ -283,9 +278,7 @@ function ShareCaptureContent({
   if (shown === null) {
     return (
       <>
-        {writing.state === "failed" ? (
-          <FeedbackNotice content={{ tone: "Warning", title: "couldn’t start writing", message: "your shared text is kept here." }} announcement="Polite" actions={[{ label: "retry", onClick: writing.retry }]} />
-        ) : <FeedbackState content={{ tone: "Neutral", title: "saving to nexus…", message: "capturing what you shared." }} announcement="Polite" />}
+        <FeedbackState content={{ tone: "Neutral", title: "saving…", message: "capturing what you shared." }} announcement="Polite" />
       </>
     );
   }
@@ -307,7 +300,15 @@ function ShareCaptureContent({
     }
   };
   const anySaved = shown.some((result) => result.ok && result.available);
-  const signedOut = shown.some((result) => !result.ok && !result.retryable);
+  const signedOut = shown.some((result) => !result.ok && result.feedback.title === "Sign in to save this");
+  const captureState = note.current?.capture.write.read();
+  const copyCapture = () => {
+    void copyText(trimmed).catch((error: unknown) => {
+      if (!(error instanceof ClipboardWriteUnavailableError)) { setDefect({ error }); return; }
+      setResults([{ label: trimmed, ok: false, retryable: false, review: false,
+        feedback: { tone: "Warning", title: "copy unavailable", message: "select the shared text and copy it before leaving." } }]);
+    });
+  };
   return (
     <>
       <h1 className={styles.heading}>
@@ -334,7 +335,8 @@ function ShareCaptureContent({
               <FeedbackNotice
                 content={result.feedback}
                 announcement="Assertive"
-                actions={result.retryable ? [{ label: result.review ? "review and save" : "check save", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }] : undefined}
+                actions={result.retryable ? [{ label: result.review ? "review and save" : "retry same save", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }]
+                  : plainText && captureState?.kind === "unconfirmed" ? [{ label: "copy text", onClick: copyCapture }, { label: "reload", onClick: () => window.location.reload() }] : undefined}
                 returnFocus={() => resultArea.current}
               />
             )}

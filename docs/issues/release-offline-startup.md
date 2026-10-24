@@ -31,6 +31,7 @@ identity linking with configured providers.
 resolved when the paired cutover and these journeys are qualified. episode
 offline playback, catalog and reading parity are separate releases.
 
-the installed upgrade and live provider checks remain release work. retain the
-released writing journal; apk-update draft warnings concern other memory-only
-forms.
+the installed upgrade and live provider checks remain release work. the owner's
+2026-10-23 [online-first writing cutover](release-online-first-writing.md)
+supersedes journal preservation with exact-store disposal through a temporary
+maintenance build. unrelated memory-only forms retain their update protection.

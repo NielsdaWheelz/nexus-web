@@ -5,7 +5,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import Textarea from "@/components/ui/Textarea";
 import { NoteConflict, useWriting, WritingRefreshNotice } from "./NoteNotices";
 import { adoptText, flushText, readText, useText, type TextEditBase } from "@/lib/notes/texts";
-import { readWriting } from "@/lib/notes/journal";
+import { readWriting } from "@/lib/notes/writes";
 import type { Schema } from "@/lib/api/wire";
 import type {
   BodyOccurrence,
@@ -151,7 +151,7 @@ export default function PageTitleEditor({
         }}
         onCompositionStart={(event) => {
           if (!canEdit || readWriting().paused) return;
-          composing.current = { value: event.currentTarget.value, acknowledged: readText(occurrence.noteRef)?.acked ?? null, consumed_reference: null };
+          composing.current = { value: event.currentTarget.value, acknowledged: readText(occurrence.noteRef)?.acked ?? null };
           setPreedit(event.currentTarget.value);
           session.boundary();
           session.refreshCommands();

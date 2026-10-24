@@ -57,8 +57,7 @@ export type Unlink = Schema<"Unlink">;
 /** A pending predecessor is an exact queued insertion; its version is supplied
  * only by that write's acknowledgement before a dependent request is sealed. */
 export interface PendingPositionProof {
-  intent_id: string;
-  draft_id: string | null;
+  write: import("./writes").WriteHandle;
   requested_link_id: string;
   source_ref: string;
   version: number;

@@ -339,3 +339,10 @@ and source arrival remain resource-owned.
     warns before their actual loss; model selection alone is clean. accepted
     server runs continue after local discard, navigation or reload.
 24. every chat create names its id; every fork rename names the title it replaces.
+
+passage questions consume only their submitted rich input on server acceptance,
+through `ConversationCommands.execute(command, onAcceptance)`. newer editor input
+and an existing saved annotation remain. a fresh question ensures a highlight
+without creating a note. highlight creation and chat admission can partially
+succeed; unknown admission retries the same command, while definitive refusal
+requires a reviewed new command. generation completion does not own input reset.

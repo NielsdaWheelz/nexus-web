@@ -170,8 +170,8 @@ export function apiTransportFeedback(
 
 let reloadHeld: () => boolean = () => false;
 
-/** Writing that a reload would lose holds the automatic reload; the stale-build
- * feedback still offers it. One holder; the returned function releases it. */
+/** The document guard holds automatic updates while live work remains. One holder;
+ * the stale-build feedback still offers a deliberate reload. */
 export function holdWireReload(held: () => boolean): () => void {
   reloadHeld = held;
   return () => {
