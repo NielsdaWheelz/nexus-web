@@ -92,7 +92,10 @@ clock across offer/condition promotion. updates and owner withdrawal do not invo
 discard. activity dismissal checks the current token and busy state before removing
 an optional offer and calling its discard callback. an inverse's visible control
 says `remove undo`; popup close never invokes it. required conditions have no
-generic dismissal.
+generic dismissal. react owners use `useWorkspaceCondition`; live command owners
+use `retainCondition` and update/withdraw its exact handle. in activity, an
+unconfirmed write retains attention and its focused, busy retry through sending.
+only owner settlement removes required recovery.
 
 `ActivityControl` reserves rail/header space even when empty. its fixed badge
 shows attention count, otherwise an available-undo dot; the accessible name gives

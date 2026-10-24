@@ -8,13 +8,14 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-feedback activity against `a0db94b3f`: +577 authored runtime lines (1,122 added,
-545 deleted), all in web source. passive receipts and one shared activity list
+feedback activity against `a0db94b3f`: +668 authored runtime lines (1,268 added,
+600 deleted), all in web source. passive receipts and one shared activity list
 replace the in-flow footer, feedback chrome measurements, competing suppression
 rules and orphaned generic action failures. consumption owners expose named exact
 inverses and recheck send admission after progress preparation; receipt expiry
 does not retire domain recovery. existing producer contracts are cut over together.
 main's online-only writing, pane sections and direct controls retain their owners.
+live write/send owners project required conditions through exact retry settlement.
 no backend, wire, schema or dependency change. docs and deleted disposable cases
 are excluded; historical area counts and totals retain their stated bases.
 
