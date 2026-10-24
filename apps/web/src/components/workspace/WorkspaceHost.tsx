@@ -71,8 +71,7 @@ export default function WorkspaceHost() {
   const isMobile = useIsMobileViewport();
   const latestWorkspace = useLatestWorkspace();
   const interactionOwner = useInteractionOwner();
-  const [isMaximized, setIsMaximized] = useState(false);
-  const maximized = isMaximized && !isMobile;
+  const maximized = store.desktopMaximized && !isMobile;
   const panes = useMemo(
     () =>
       state.panes.map((pane) => ({
@@ -239,7 +238,7 @@ export default function WorkspaceHost() {
       {isMobile ? null : (
         <WorkspacePaneStrip
           state={state}
-          isMaximized={isMaximized}
+          isMaximized={store.desktopMaximized}
           items={panes.map(({ pane, label }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
@@ -254,14 +253,9 @@ export default function WorkspaceHost() {
             scrollPaneIntoView(paneId);
             requestPaneFocus(paneId);
           }}
-          onToggleMaximize={(paneId) => {
-            contentActivation.current = null;
-            const restoring = isMaximized && latestWorkspace().state.active_primary_pane_id === paneId;
-            store.activatePane(paneId);
-            setIsMaximized(!restoring);
-          }}
+          onMaximize={store.maximizePane}
+          onRestoreCanvas={store.restoreCanvas}
           onMove={store.movePane}
-          onRestore={store.activatePane}
           onMinimize={store.minimizePane}
           onClose={store.closePane}
         />
