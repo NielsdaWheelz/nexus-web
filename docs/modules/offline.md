@@ -18,6 +18,8 @@ open can promote the complete saved presentation to the ordinary live pane;
 reader intent pins the saved view so a late reply cannot discard interaction.
 offline opens stay saved across reconnect. `?view=downloaded` explicitly pins the
 package, and `?view=live` explicitly selects the current server presentation.
+media location links retain `loc` alongside at most one `view=downloaded|live`;
+unknown query keys, unknown view values and duplicate selectors are refused.
 live refusal keeps usable downloaded content. saved transcripts use the shared
 reader with no progress port, annotations or automatic playback highlighting.
 contents, selection/copy and published timestamp seeks remain available.

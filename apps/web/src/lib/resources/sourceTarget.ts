@@ -37,7 +37,8 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
       return { kind: "invalid_destination", reason: "location_too_long" };
     if (query.getAll("loc").length !== 1 || url.hash || locatedQuery || route.locator === null)
       return { kind: "invalid_destination", reason: "invalid_reader_destination" };
-    if (route.id === "media" && [...query.keys()].every((key) => key === "loc")) {
+    if (route.id === "media" && [...query.keys()].every((key) => key === "loc" || key === "view") &&
+        (!query.has("view") || query.getAll("view").length === 1 && (query.get("view") === "downloaded" || query.get("view") === "live"))) {
       const destination = parseReaderDestination(query.get("loc")!);
       if (destination) return { kind: "reader_destination", destination };
     }
