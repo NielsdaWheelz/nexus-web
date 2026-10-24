@@ -1,16 +1,16 @@
 "use client";
 
 // Every Nexus page but Root, one tree for both surfaces.
-import { ArrowLeft, RotateCcw, X } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, RotateCcw } from "lucide-react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import { assertNever } from "@/lib/assertNever";
 import { tabState } from "@/lib/nexus/rows";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
-import { paneActions } from "@/lib/workspace/paneActions";
+import { paneControls } from "@/lib/workspace/paneControls";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import { NexusTitleFailure } from "./NexusRow";
@@ -35,6 +35,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
 
 function ManageTabs({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
   const triggers = useRef(new Map<string, HTMLButtonElement>());
+  const stateDescriptionId = useId();
   const [focusPaneId, setFocusPaneId] = useState<string | null>(null);
   useLayoutEffect(() => {
     if (focusPaneId === null) return;
@@ -54,7 +55,6 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
     <section className={styles.page}>
       <Header
         title={mobile ? "all tabs" : "Manage tabs"}
-        subtitle={mobile ? undefined : "Open, close, restore, or reorder workspace tabs."}
         onBack={controller.back}
       />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} />
@@ -63,42 +63,60 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
         <ul>
           {controller.panes.map((pane) => (
             <li key={pane.id}>
-              <button className={styles.tabOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={pane.presentation.title} aria-current={pane.current ? "page" : undefined}
-                ref={mobile ? (element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); } : undefined}
+              <button className={styles.tabOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={mobile && pane.visibility === "minimized" ? `restore ${pane.presentation.title}` : pane.presentation.title} aria-current={pane.current ? "page" : undefined}
+                aria-describedby={mobile ? undefined : `${stateDescriptionId}-${pane.id}`}
+                ref={(element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); }}
                 onClick={(event) => {
                   const detail = prepareActionSelect(event, null);
                   if (detail) controller.openPane(pane.id, detail.openIntent);
                 }}
                 onKeyDown={(event) => {
+                  if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing)) {
+                    event.preventDefault();
+                    return;
+                  }
                   const detail = prepareActionSelect(event, null);
                   if (detail) controller.openPane(pane.id, detail.openIntent);
                 }}>
                 <span className={styles.tabIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
-                  {mobile ? tabState(pane) === "Open" ? null : <small>{tabState(pane).toLowerCase()}</small> : <small>{tabState(pane)} tab</small>}
+                  {mobile ? tabState(pane) === "Open" ? null : <small>{tabState(pane).toLowerCase()}</small> : <small id={`${stateDescriptionId}-${pane.id}`}>{controller.desktopMaximized && pane.current ? "maximized" : tabState(pane).toLowerCase()} tab</small>}
                 </span>
               </button>
               <div className={styles.tabActions}>
-                <ActionMenu
-                  label={`more actions for ${pane.presentation.title}`}
-                  triggerRef={mobile ? undefined : (element) => {
-                    if (element) triggers.current.set(pane.id, element);
-                    else triggers.current.delete(pane.id);
-                  }}
-                  source={{ kind: "Immediate", subjectKey: `nexus-tab:${pane.id}`, title: pane.presentation.title, content: { sections: [{ id: "Pane", label: null, options: paneActions({
-                    state: controller.workspaceState,
-                    paneId: pane.id,
-                    onMinimize: controller.minimizePane,
-                    onRestore: controller.restorePane,
-                    onMove: controller.movePane,
-                    onClose: close,
-                  }) }] } }}
-                />
-                <Button
-                  iconOnly
-                  tabIndex={mobile ? undefined : -1}
-                  aria-label={`${mobile ? "close" : "Close"} ${pane.presentation.title}`}
-                  onClick={() => close(pane.id)}
-                  icon={<X size={18} aria-hidden="true" />} />
+                {paneControls({ state: controller.workspaceState, paneId: pane.id, title: pane.presentation.title, desktopMaximized: controller.desktopMaximized, isMobile: mobile }).map((control) => {
+                  const Icon = control.icon;
+                  return <Button
+                    key={control.slot}
+                    iconOnly
+                    icon={<Icon size={18} aria-hidden="true" />}
+                    aria-label={control.label}
+                    aria-disabled={control.disabledReason !== null || undefined}
+                    tooltip={{ text: control.disabledReason ?? control.tooltip }}
+                    onPointerDown={(event) => {
+                      if (isTopmostInteractionOwner("Nexus")) event.currentTarget.focus({ preventScroll: true });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      if (!event.repeat && !event.nativeEvent.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey) event.currentTarget.click();
+                    }}
+                    onClick={(event) => {
+                      if (!isTopmostInteractionOwner("Nexus")) return;
+                      event.currentTarget.focus({ preventScroll: true });
+                      switch (control.command) {
+                        case "minimize": {
+                          const selection = controller.minimizePane(pane.id);
+                          if (mobile && selection !== null) setFocusPaneId(pane.id);
+                          return;
+                        }
+                        case "maximize": controller.maximizePane(pane.id); return;
+                        case "restore_canvas": controller.restoreCanvas(pane.id); return;
+                        case "close": close(pane.id); return;
+                        default: assertNever(control.command);
+                      }
+                    }}
+                  />;
+                })}
               </div>
             </li>
           ))}
@@ -110,7 +128,10 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
           <ul>
             {controller.closedPanes.map((pane) => (
               <li key={pane.id}>
-                <button className={styles.tabOpen} type="button" aria-label={`${mobile ? "restore" : "Restore"} ${pane.presentation.title}`} onClick={() => controller.restoreClosedPane(pane.id)}>
+                <button className={styles.tabOpen} type="button" aria-label={`${mobile ? "restore" : "Restore"} ${pane.presentation.title}`} onClick={() => controller.restoreClosedPane(pane.id)}
+                  onKeyDown={(event) => {
+                    if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing)) event.preventDefault();
+                  }}>
                   <RotateCcw size={18} aria-hidden="true" />
                   <span>{pane.presentation.title}</span>
                 </button>

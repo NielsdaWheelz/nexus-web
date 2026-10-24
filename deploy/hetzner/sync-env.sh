@@ -10,24 +10,28 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ROOT_DIR
-readonly SSH_TARGET="nexus@5.78.194.235"
-readonly -a SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15)
+readonly SSH_TARGET="nexus@nexus-prod"
+readonly -a SSH_OPTIONS=(
+  -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15
+  -o HostKeyAlias=5.78.194.235 -o StrictHostKeyChecking=yes
+)
 
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
 BACKUP_ENV="${NEXUS_BACKUP_ENV:-${ROOT_DIR}/deploy/env/env-prod-backup}"
 MEMORY_CONFIG="${NEXUS_MEMORY_CLIENT_CONFIG:-}"
+TUNNEL_TOKEN_SOURCE="${NEXUS_CLOUDFLARED_TOKEN_FILE:-}"
 
 # The keys the running backend requires. Compose fails closed on the few it
 # interpolates itself (POSTGRES_*, CADDY_*); the rest are read by the app.
 readonly REQUIRED_KEYS="
 NEXUS_ENV APP_PUBLIC_URL SUPABASE_ISSUER SUPABASE_JWKS_URL SUPABASE_AUDIENCES
-NEXUS_INTERNAL_SECRET CADDY_SITE CADDY_ACME_EMAIL DATABASE_URL
+NEXUS_INTERNAL_SECRET CADDY_SITE DATABASE_URL
 POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD R2_S3_API_ORIGIN R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY R2_BUCKET NEXUS_HANDLE_KEY
 GENERATION_API_PROVIDERS POSTGRES_IMAGE
-CADDY_IMAGE PARSER_TEMP_ROOT
+CADDY_IMAGE CLOUDFLARED_IMAGE PARSER_TEMP_ROOT
 "
 readonly BACKUP_KEYS="
 R2_BACKUP_S3_API_ORIGIN R2_BACKUP_BUCKET R2_BACKUP_ACCESS_KEY_ID R2_BACKUP_SECRET_ACCESS_KEY
@@ -105,17 +109,24 @@ readonly APPLICATION="${TEMPORARY}/application.env"
 
 require_shape "$APPLICATION" "the application env" "$REQUIRED_KEYS"
 require_shape "$BACKUP_ENV" "the backup env" "$BACKUP_KEYS"
-if grep -Eq '^(MEMORY_CLIENT_CONFIG_PATH|NEXUS_MEMORY_CLIENT_CONFIG_FILE)=' "$APPLICATION"; then
-  die "Compose and the publisher own memory configuration paths"
+if grep -Eq '^(MEMORY_CLIENT_CONFIG_PATH|NEXUS_MEMORY_CLIENT_CONFIG_FILE|NEXUS_CLOUDFLARED_TOKEN_FILE)=' "$APPLICATION"; then
+  die "Compose and the publisher own private configuration paths"
+fi
+if grep -Eq '^(TUNNEL_TOKEN|CLOUDFLARED_TOKEN|CLOUDFLARE_API_TOKEN|CLOUDFLARE_API_KEY|TAILSCALE_AUTH_KEY|TAILSCALE_API_KEY|TS_API_CLIENT_SECRET|TAILSCALE_OAUTH_CLIENT_SECRET)=' "$APPLICATION"; then
+  die "management credentials must not enter the application config"
 fi
 for key in $BACKUP_KEYS; do
   grep -Eq "^${key}=" "$APPLICATION" && \
     die "backup credentials must not enter the application config"
 done
-for key in POSTGRES_IMAGE CADDY_IMAGE; do
+for key in POSTGRES_IMAGE CADDY_IMAGE CLOUDFLARED_IMAGE; do
   [[ "$(value_of "$key" "$APPLICATION")" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
     die "${key} must be an immutable image reference by sha256 digest"
 done
+[[ "$(value_of CLOUDFLARED_IMAGE "$APPLICATION")" =~ ^cloudflare/cloudflared@sha256:[0-9a-f]{64}$ ]] || \
+  die "CLOUDFLARED_IMAGE must pin the official connector by sha256 digest"
+[[ "$(value_of CADDY_SITE "$APPLICATION")" == nexus-api.nielseriknandal.com ]] || \
+  die "CADDY_SITE must be nexus-api.nielseriknandal.com"
 [[ "$(value_of DATABASE_URL "$APPLICATION")" == *"@postgres:5432/"* ]] || \
   die "DATABASE_URL must address the Compose-local postgres service"
 [[ "$(value_of R2_BACKUP_S3_API_ORIGIN "$BACKUP_ENV")" =~ ^https://[0-9a-f]{32}\.r2\.cloudflarestorage\.com$ ]] || \
@@ -149,5 +160,23 @@ REMOTE_DIRECTORY="$(
 [[ "$REMOTE_DIRECTORY" =~ ^/tmp/nexus-config\.[A-Za-z0-9]{8}$ ]] || \
   die "the host returned an invalid config transfer path"
 publish "$MEMORY" /etc/nexus/memory-config "" json 10001
+if [ -n "$TUNNEL_TOKEN_SOURCE" ]; then
+  [ -s "$TUNNEL_TOKEN_SOURCE" ] || die "the supplied tunnel token file is missing or empty"
+  readonly TUNNEL_TOKEN="${TEMPORARY}/tunnel.token"
+  cp "$TUNNEL_TOKEN_SOURCE" "$TUNNEL_TOKEN"
+  token_digest="$(sha256sum "$TUNNEL_TOKEN" | cut -d' ' -f1)"
+  captured_token="/etc/nexus/tunnel-config/${token_digest}.token"
+  timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    sudo install -d -o root -g root -m 0700 /etc/nexus/tunnel-config
+  publish "$TUNNEL_TOKEN" /etc/nexus/tunnel-config /etc/nexus/cloudflared-token token 65532
+else
+  captured_token="$(timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+    sudo readlink -e /etc/nexus/cloudflared-token)" || die "supply the initial private tunnel token"
+fi
+[[ "$captured_token" =~ ^/etc/nexus/tunnel-config/[0-9a-f]{64}\.token$ ]] || \
+  die "the tunnel token pointer must resolve to its private content-addressed file"
+timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+  sudo test -s "$captured_token" || die "publish the tunnel token before application configuration"
+printf '\nNEXUS_CLOUDFLARED_TOKEN_FILE=%s\n' "$captured_token" >>"$APPLICATION"
 publish "$APPLICATION" /etc/nexus/config /etc/nexus/current.env env root
 publish "$BACKUP_ENV" /etc/nexus/backup-config /etc/nexus/backup.env env root

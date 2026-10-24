@@ -55,8 +55,8 @@ packages = ["nexus"]
 
 [tool.uv.sources]
 universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "5d52e6a266c9769dafa318a24c21236db8929903" }
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "2cf44a10910204d547cbdf00654deebdb60af413" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "4c3b540047630526ce4f5293ba49fb2bb5150ca4" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "602a5604cb2ceefa961564efd7edcebfb9ac49bc" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "61eb591a9b287483a3b7fba1c3c6e7c7095e1c67" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "5a37102bc73c1af0c23e63c5b70df320661f63ed" }
 
 [tool.ruff]
@@ -87,6 +87,7 @@ extraPaths = [".."]
 include = [
     "nexus",
     "scripts/disposable_runtime.py",
+    "scripts/lab_codex.py",
     "scripts/lab_auth_cleanup.py",
     "scripts/lab_fake_codex.py",
     "scripts/lab_fake_providers.py",

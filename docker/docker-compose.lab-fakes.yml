@@ -5,7 +5,8 @@ volumes:
 x-fake-worker: &fake-worker
   environment:
     PROVIDER_ENDPOINT_OVERRIDES: '{"openai":"https://fake-providers:8443"}'
-    NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+    NEXUS_CODEX_ENDPOINT: unix:///tmp/codex-daemon-10001/app-server.sock
+    NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
   volumes:
     - lab_fake_codex:/tmp/codex-daemon-10001
   depends_on:

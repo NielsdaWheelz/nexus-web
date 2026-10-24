@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from provider_runtime.agent_runtime import CodexEndpoint
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
@@ -32,7 +33,8 @@ class Runtime:
     catalog: Catalog
     tools: Toolbox
     providers: ProviderRuntime | None
-    codex_socket: Path
+    codex_endpoint: CodexEndpoint
+    codex_cwd_root: Path
 
 
 def run_generation_job[R](
@@ -70,7 +72,8 @@ def run_generation_job[R](
                 catalog=Catalog(settings, tools),
                 tools=tools,
                 providers=build_provider_runtime(settings, client),
-                codex_socket=settings.codex_native_socket,
+                codex_endpoint=settings.codex_endpoint,
+                codex_cwd_root=settings.codex_cwd_root,
             )
             return await work(db, runtime)
 

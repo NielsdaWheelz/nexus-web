@@ -426,7 +426,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               </div>
               <div id={detailId} ref={detailPanel} hidden={!expanded}>
                 {expanded ? <div className={styles.detailContent}>
-                  <p>{podcast.description?.trim() || "no description from the publisher."}</p>
+                  <p className={styles.description}>{podcast.description?.trim() || "no description from the publisher."}</p>
                   <ContributorRoleGroups credits={podcast.contributors} />
                   <div className={styles.detailLinks}>
                     {podcast.website_url !== null ? <a href={podcast.website_url} target="_blank" rel="noopener noreferrer">website</a> : null}

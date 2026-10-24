@@ -13,11 +13,17 @@ human-triggered release. Do not mutate production Compose services, the host
 | Product database | Hetzner Postgres with pgvector |
 | Object storage, database backups | Cloudflare R2 |
 | Authentication | Supabase Auth only |
-| API TLS | Caddy on the Hetzner host |
+| api tls and public ingress | cloudflare edge and named outbound tunnel; private caddy http |
 
 Public hosts are `nexus.nielseriknandal.com` (frontend) and
-`api.nexus.nielseriknandal.com` (API). The VPS is `nexus-api-worker` at
-`5.78.194.235`.
+`nexus-api.nielseriknandal.com` (api). the vps is `nexus-api-worker`, administered
+as `nexus@nexus-prod` over tailscale. its public address is transport only;
+provider and host firewalls admit only tailscale's encrypted udp transport.
+
+`deploy/cloudflare/tunnel-config.json` owns the public route and
+`deploy/cloudflare/api-rules.json` owns api-only waf/cache behavior. visitors use
+the public website normally. the shared fleet grants policy belongs to
+`dev-server`; production receives operator ssh but no peer application access.
 
 The release identity is one full lowercase Git `source_sha`. It binds the Vercel
 deployment, the API and worker image digests, and the expected Alembic revision.
@@ -59,10 +65,10 @@ and the locked vercel cli under `apps/web/node_modules`. the controller uses
 export VERCEL_TOKEN=<vercel-token>
 ```
 
-`gh` supplies GitHub credentials; SSH to `nexus@5.78.194.235` must be
+`gh` supplies GitHub credentials; ssh to `nexus@nexus-prod` must be
 non-interactive with passwordless `sudo` on the host.
 
-Production coordinates are committed, not ambient: SSH `nexus@5.78.194.235`,
+production coordinates are committed, not ambient: ssh `nexus@nexus-prod`,
 web `nexus.nielseriknandal.com`, Vercel project `nexus-web` /
 `prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs`, team `niels-erik-nandals-projects` /
 `team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing a coordinate is a reviewed
@@ -78,28 +84,28 @@ The host contract is cgroup v2 with the memory controller, Docker Engine 28 or
 newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
 1900 MiB of physical memory, 1 GiB of swap, 256 MiB of available memory and
 2 GiB free under `/`.
-preflight measures each of these; after both candidate image pulls, the release
+preflight measures each of these; after application and connector image pulls, the release
 requires the same 2 gib disk reserve again before stopping writers.
 Vercel custom-domain auto-assignment must stay
 disabled and Vercel Authentication must protect previews only, so the staged
 production-target deployment is publicly probeable before promotion.
 
-the api has a 384 MiB memory ceiling with container swap disabled. the seven
-service ceilings total 2224 MiB; these are independent limits, not reserved
+the api has a 384 MiB memory ceiling with container swap disabled. the eight
+service ceilings total 2352 MiB; these are independent limits, not reserved
 host ram. the 2 GiB host must be qualified against the actual concurrent working
 set, cache reclaim, memory pressure and request completion. summing separate
 historical peaks does not establish that workload's demand; a passing preflight
 does not establish its capacity. swap does not count toward physical memory or
 the available-memory floor.
 
-the seven long-lived services belong to `system-nexus.slice` under
+the eight long-lived services belong to `system-nexus.slice` under
 `system.slice`. its persistent `MemorySwapMax=0` enforces no-swap for their
 whole subtree, including when a runtime reload resets a container's leaf limit
 to `max`. each container keeps its own declared memory ceiling; the slice adds
 no aggregate memory cap or cpu/i/o weight. grouping them creates one sibling
 in the host's resource hierarchy, so capacity qualification still uses the
 actual workload. backup and migration one-offs retain their separate compose
-limits and are outside this seven-service proof.
+limits and are outside this eight-service proof.
 
 postgres has a 512 MiB ceiling with container swap disabled. its startup command
 sets `shared_buffers=64MB`, budgeting 64 MiB of shared database cache within that
@@ -203,8 +209,10 @@ host backup lock from before preflight until it exits (see
    script, service and timer; give the backup one-off (uid 10001) the receipt
    root `/var/backups/nexus/r2`; reload systemd, enable the boot guard, enable
    and start the nightly timer and start the resource slice.
-3. **images** — pull both digests; prove the OCI revision label and the baked
-   runtime identity against the manifest; require 2 gib free under `/` again.
+3. **images** — pull both application digests; prove the oci revision label and
+   baked runtime identity against the manifest. pull the pinned connector, prove
+   its non-root credential access, and require 2 gib free under `/` again.
+   validate/install private caddy configuration before service recreation.
 4. **backup** — read the current Alembic revision, prove it descends from the
    candidate head, stop `api`, `worker-interactive` and `worker-background`,
    then stop the codex host with at least 45 seconds of grace and require exit 0
@@ -217,12 +225,11 @@ host backup lock from before preflight until it exits (see
 5. **migrate** — `alembic upgrade head`, then re-read the revision.
 6. **up** — `docker compose up --detach --wait`, then require every service
    healthy. prove the persistent parent unit/property and kernel swap max/current
-   are zero, all seven actual process cgroups descend from it, and each actual
+   are zero, all eight actual process cgroups descend from it, and each actual
    memory cap matches compose with zero swap usage. report the leaf swap limit
    separately; a leaf `max` does not override the parent's zero.
-7. **caddy** — adapt the candidate Caddyfile through the running proxy, write
-   it in place (the bind mount keeps its inode), `caddy reload`, and require
-   the loaded config to equal the adapted candidate.
+7. **caddy** — reload the already installed candidate and require the loaded
+   config to equal the adapted candidate.
 8. **health** — the API's private `/version` and `/readyz`; every application
    container running the manifest digest; one public `https://<api-host>/version`
    fetch that must serve the SHA with `Cache-Control: no-store`.
@@ -442,7 +449,7 @@ run the seed once inside the running background worker, with the production
 owner's user id:
 
 ```bash
-ssh nexus@5.78.194.235 'sudo docker exec "$(sudo docker ps --quiet \
+ssh nexus@nexus-prod 'sudo docker exec "$(sudo docker ps --quiet \
   --filter label=com.docker.compose.project=nexus \
   --filter label=com.docker.compose.service=worker-background \
   --filter label=com.docker.compose.oneoff=False)" \
@@ -461,7 +468,7 @@ Run it in a one-off `migration` container (the API image, 512 MiB, its own
 cgroup), not inside `worker-background`, whose 448 MiB belongs to its job child:
 
 ```bash
-ssh nexus@5.78.194.235 'sudo env API_IMAGE=<deployed api digest> \
+ssh nexus@nexus-prod 'sudo env API_IMAGE=<deployed api digest> \
   WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
   docker compose --project-name nexus --env-file /etc/nexus/current.env \
   --file /etc/nexus/docker-compose.yml --profile release \
@@ -500,7 +507,8 @@ deleting archives outside it is a reviewed operator decision.
 | Production topology and isolation | `deploy/hetzner/docker-compose.yml` |
 | Codex credential-state boot guard | `deploy/hetzner/codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
 | Nightly backup | `deploy/hetzner/nightly-backup.sh`, `nexus-nightly-backup.service`, `nexus-nightly-backup.timer` |
-| API TLS and routing | `deploy/hetzner/Caddyfile` |
+| api public tls, routing and waf/cache | `deploy/cloudflare/tunnel-config.json`, `deploy/cloudflare/api-rules.json` |
+| private api proxy | `deploy/hetzner/Caddyfile` |
 | Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
 | Streamed database backup and retention | `python/nexus/release_backup.py` |

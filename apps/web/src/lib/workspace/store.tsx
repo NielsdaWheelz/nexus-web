@@ -81,6 +81,8 @@ export type SecondaryPanePatch = Partial<
 >;
 interface Data {
   state: WorkspaceState;
+  /** Provider-local desktop mode; mobile suspends its projection. Never saved. */
+  desktopMaximized: boolean;
   /** Session-local: leaving a foreground source permanently revokes its async opening. */
   readonly foregroundGeneration: number;
   columnWidthPx: number;
@@ -173,6 +175,7 @@ function createWorkspaceStore(
   let mounted = false;
   let data: Data = {
     state: initial,
+    desktopMaximized: false,
     foregroundGeneration: 0,
     columnWidthPx,
     recentlyClosedPanes: [],
@@ -332,6 +335,20 @@ function createWorkspaceStore(
 
   const commands = {
     activatePane,
+    maximizePane(paneId: string): WorkspaceSelection | null {
+      if (!find(paneId)) return null;
+      const next = activated(data.state, paneId);
+      if (next !== data.state || !data.desktopMaximized)
+        commit(next, { desktopMaximized: true });
+      return selection();
+    },
+    restoreCanvas(paneId: string): WorkspaceSelection | null {
+      if (!find(paneId)) return null;
+      const next = activated(data.state, paneId);
+      if (next !== data.state || data.desktopMaximized)
+        commit(next, { desktopMaximized: false });
+      return selection();
+    },
     activateAdjacentPane(input: { direction: WorkspaceAdjacentPaneDirection }) {
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
       const index = visible.findIndex(
