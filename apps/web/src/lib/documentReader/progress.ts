@@ -337,8 +337,9 @@ export function createProgressSync(
       if (next.kind === "Canonical") hooks.remote(next.snapshot, true);
     } catch (error) {
       if (mine === generation) {
+        // Reconciliation reads own load failures; the fence keeps saves paused.
         failed = true;
-        if (state.kind === "LoadFailed") state = { ...state, retrying: false, error };
+        state = { kind: "LoadFailed", recovery: "RetryPosition", retrying: false, error };
       }
       throw error;
     } finally {
