@@ -137,7 +137,7 @@ export default function CollectionRow({
       triggerRef={moreRef} returnFocus={returnFocus}
     />
   ) : rowActionsAvailable && podcast !== null && row.resourceRef === null ? (
-    <PodcastMenu subject={podcast} subjectKey={`collection:${row.id}`} sections={sections}
+    <PodcastMenu subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
       actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }} />
   ) : rowActionsAvailable && (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu

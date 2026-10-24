@@ -20,7 +20,7 @@ import PodcastDestinationChooser from "./PodcastDestinationChooser";
 import PodcastImportProgress from "./PodcastImportProgress";
 import styles from "./PodcastCommands.module.css";
 
-interface Props {
+export interface AcquisitionProps {
   readonly target: PodcastTarget;
   readonly title: string;
   readonly mode: "follow" | "current_episodes";
@@ -31,7 +31,7 @@ interface Props {
   readonly returnFocusFallback?: ReturnFocusTarget;
   readonly onClose: () => void;
 }
-export default function PodcastAcquisitionDialog(props: Props) {
+export default function PodcastAcquisitionDialog(props: AcquisitionProps) {
   const [destination, setDestination] = useState<string | null>(null);
   const focusStage = useCallback((element: HTMLDivElement | null) => { element?.focus({ preventScroll: true }); }, []);
   const choosing = props.mode === "current_episodes" && destination === null;
@@ -43,14 +43,14 @@ export default function PodcastAcquisitionDialog(props: Props) {
       <div key={choosing ? "choose" : libraryId ?? "personal"} ref={focusStage} tabIndex={-1} role="group" aria-label={choosing ? "choose an import destination" : props.mode === "follow" ? "review subscription" : "review import"} className={styles.form}>
         {choosing ? <>
           <p>choose one destination for this import.</p>
-          <PodcastDestinationChooser target={props.target} mode="current_episodes" onChoose={setDestination} />
+          <PodcastDestinationChooser target={props.target} onChoose={setDestination} />
           <div className={styles.actions}><Button onClick={props.onClose}>cancel</Button></div>
         </> : <AcquisitionReview {...props} libraryId={libraryId} onChangeDestination={() => setDestination(null)} />}
       </div>
     </div>
   </Dialog>;
 }
-function AcquisitionReview({ target, title, mode, libraryId, onAccepted, createdLibrary, onClose, onChangeDestination }: Props & { readonly onChangeDestination: () => void }) {
+export function AcquisitionReview({ target, title, mode, libraryId, onAccepted, createdLibrary, onClose, onChangeDestination }: AcquisitionProps & { readonly onChangeDestination: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
   const live = useRef(false);

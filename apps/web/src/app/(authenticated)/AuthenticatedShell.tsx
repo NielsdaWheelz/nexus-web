@@ -24,7 +24,7 @@ import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { MobileReaderCompositionContext } from "@/components/workspace/PaneShell";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
-import ResourceActionsProvider, { ResourceActionDefect } from "@/lib/actions/ResourceActionsProvider";
+import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actions/ResourceActionsProvider";
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import { useWritingReceive } from "@/lib/api/writingReceive";
@@ -168,7 +168,7 @@ function Workspace(props: {
                         <GlobalPlayerProvider accountId={accountId}>
                           <ResourceActionsProvider>
                             <AuthenticatedWorkspaceErrorBoundary>
-                              <ResourceActionDefect />
+                              <ResourceActionPresentation />
                               <MediaAdmissionsHost />
                               <ImportsProvider>
                                 <MediaContinuationHost />

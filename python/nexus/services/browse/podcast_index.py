@@ -17,7 +17,6 @@ from nexus.schemas.browse import (
     PodcastPreview,
     PodcastPreviewEpisode,
     PodcastPreviewEpisodes,
-    PodcastPreviewFacts,
     PreviewResolution,
 )
 from nexus.services.browse.targets import (
@@ -142,7 +141,11 @@ def search(q: str, *, limit: int) -> list[PodcastCandidate]:
             PodcastCandidate(
                 target=target,
                 resolution=PreviewResolution(),
-                kind_facts=PodcastFacts(podcast_ref=podcast.podcast_ref),
+                kind_facts=PodcastFacts(
+                    podcast_ref=podcast.podcast_ref,
+                    feed_href=podcast.feed_url,
+                    website_href=podcast.website_url,
+                ),
                 **_shown(podcast),
             )
         )
@@ -202,7 +205,7 @@ def preview_podcast(
         target=handle,
         source_href=podcast.website_url or podcast.feed_url,
         resolution=PreviewResolution(),
-        kind_facts=PodcastPreviewFacts(
+        kind_facts=PodcastFacts(
             podcast_ref=podcast.podcast_ref,
             feed_href=podcast.feed_url,
             website_href=podcast.website_url,

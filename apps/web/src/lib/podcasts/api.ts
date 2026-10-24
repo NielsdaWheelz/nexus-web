@@ -160,23 +160,6 @@ export function podcastRefreshRequestAnnouncement(count: number): string {
     : `Refresh requested for ${count} show${count === 1 ? "" : "s"}`;
 }
 
-/** Read-only snapshot; apply retries use these exact observed versions. */
-export async function prepareEpisodeConsumption(
-  podcastId: string, state: EpisodeState, signal: AbortSignal,
-): Promise<Schema<"PodcastEpisodeConsumptionPreparedOut">> {
-  return (await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes/consumption/prepare", "post">>(
-    `/api/podcasts/${podcastId}/episodes/consumption/prepare`,
-    { method: "POST", body: JSON.stringify({ state }), signal },
-  )).data;
-}
-
-/** Transport only. The account command owner retains exact retry bytes and publishes outcomes. */
-export async function applyEpisodeConsumption(podcastId: string, body: string, signal: AbortSignal) {
-  return (await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes/consumption", "put">>(
-    `/api/podcasts/${podcastId}/episodes/consumption`, { method: "PUT", body, signal },
-  )).data;
-}
-
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({
   kind: "PodcastEpisodeQuery",
   podcast_id: podcastId,

@@ -102,6 +102,8 @@ class VideoFacts(_Out):
 
 class PodcastFacts(_Out):
     podcast_ref: str
+    feed_href: str
+    website_href: str | None
 
 
 class _Candidate[Source: BrowseSource](_Out):
@@ -179,12 +181,6 @@ class VideoPreviewFacts(_Out):
     embed_href: str
 
 
-class PodcastPreviewFacts(_Out):
-    podcast_ref: str
-    feed_href: str
-    website_href: str | None
-
-
 class EpisodePreviewFacts(_Out):
     podcast_ref: str
     episode_ref: str
@@ -240,7 +236,7 @@ class VideoPreview(_Preview):
 class PodcastPreview(_Preview):
     kind: Literal["Podcast"] = "Podcast"
     source: Literal[BrowseSource.PodcastIndex] = BrowseSource.PodcastIndex
-    kind_facts: PodcastPreviewFacts
+    kind_facts: PodcastFacts
     episodes: PodcastPreviewEpisodes
 
 

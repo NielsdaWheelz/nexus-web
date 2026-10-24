@@ -12,8 +12,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.errors import ApiErrorCode, ConflictError
+from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
+from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas import playback_sessions as wire
 from nexus.services import library_listing
 from nexus.services.playback_source import episode_playback_source
@@ -30,7 +30,7 @@ def capture(
     source = body.source
     query = normalize("NFC", source.query.strip(_JS_WHITESPACE)).lower()
     if isinstance(source, wire.LibraryQueueCapture):
-        label, ids = library_listing.playback_source_ids(
+        label, ids = library_listing.ordered_selection_ids(
             db,
             viewer_id,
             source.library_id,
@@ -40,7 +40,12 @@ def capture(
         )
         provenance = wire.LibraryQueueSource(**source.model_dump(), label=label)
     else:
-        label, ids = episodes.playback_source_ids(
+        if not db.scalar(
+            text(f"SELECT :podcast_id IN ({visible_podcast_ids_cte_sql()})"),
+            {"viewer_id": viewer_id, "podcast_id": source.podcast_id},
+        ):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+        label, ids = episodes.ordered_selection_ids(
             db, viewer_id, source.podcast_id, state=source.state, sort=source.sort
         )
         provenance = wire.PodcastQueueSource(**source.model_dump(), label=label)

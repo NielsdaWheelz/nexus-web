@@ -163,6 +163,7 @@ export default function BrowsePreviewPaneBody() {
         : null;
   usePreviewTitleHint(target, preview?.title);
   usePaneChrome({
+    podcastMetadata: preview?.kind === "Podcast" ? { kind: "DiscoveryPodcastPreview", preview } : undefined,
     resourceActions: podcast === null || owned !== null ? undefined : { kind: "Podcast", subject: podcast },
     header:
       failure !== null
@@ -173,7 +174,7 @@ export default function BrowsePreviewPaneBody() {
               kind: "Resource",
               resource: {
                 status: "Ready",
-                creditGroups: [
+                creditGroups: preview.kind === "Podcast" ? [] : [
                   {
                     kind: "Role",
                     label: "Source",
@@ -236,10 +237,9 @@ export default function BrowsePreviewPaneBody() {
           description={description}
           facts={["Podcast Index"]}
           links={[
-            { label: "Open source", href: preview.source_href },
-            { label: "RSS feed", href: preview.kind_facts.feed_href },
+            { label: "open feed", href: preview.kind_facts.feed_href },
             ...(website !== null
-              ? [{ label: "Website", href: website }]
+              ? [{ label: "open source", href: website }]
               : []),
           ]}
           note="Previewing does not subscribe or add episodes."

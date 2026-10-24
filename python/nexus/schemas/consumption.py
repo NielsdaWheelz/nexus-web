@@ -160,6 +160,12 @@ class Finish(Closed):
     removed: RemovedItem | None
 
 
+class ConsumptionOverrideOut(Closed):
+    """The register revision acknowledged by a single state write or exact finish inverse."""
+
+    override_revision: int = Field(strict=True, ge=1)
+
+
 class NaturalEndIn(Closed):
     terminal_listening: ListeningIn
     expected_override_revision: _Int32 | None

@@ -105,11 +105,11 @@ function SearchResults({ query }: { query: SearchQuery }) {
   });
   const results = list.items;
   const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
-    targets: results.flatMap(row => row.item.ref.startsWith("podcast:") ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
+    targets: results.flatMap(row => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
     refresh: `${list.current}:${list.running}:${list.requestedKey}`,
   });
   const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
-  const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") ? {
+  const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? {
     target: { kind: "Canonical", podcast_id: row.item.ref.slice(8) }, title: row.item.label,
     facts: list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
       : !list.fresh || list.running !== null ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: row.item.ref.slice(8) }),

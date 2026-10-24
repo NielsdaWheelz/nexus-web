@@ -341,6 +341,7 @@ function useServerState<D>(
   load: Load<D>,
   readPolicy: string,
   catalog?: CatalogRead<D>,
+  onDefect?: (defect: Defect) => void,
 ) {
   const admissionGeneration = useRemoteGeneration();
   const account = useOptionalAuthenticatedAccount();
@@ -352,7 +353,8 @@ function useServerState<D>(
       (restored.source.kind === "live" || restored.source.snapshot_id === catalog?.snapshot_id)
       ? { key: stateKey, data: restored.data, source: restored.source } : null,
   [stateKey, restored, key, accountId, firstAccount, catalog?.snapshot_id]);
-  const fail = useThrowLater();
+  const throwHere = useThrowLater();
+  const fail = onDefect ?? throwHere;
   const signIn = useUnauthenticatedApiHandler();
   const seed = useServerSeed<D>(key);
   // A seed paints its key's first arrival, which then skips its fetch.
@@ -534,8 +536,10 @@ export function usePaneFreeServerValue<T>(input: {
   readonly load: Load<T>;
   readonly readPolicy?: string;
   readonly catalog?: CatalogRead<T>;
+  /** An account owner relays defects below its retained command state. */
+  readonly onDefect?: (defect: Defect) => void;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input.catalog);
+  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input.catalog, input.onDefect);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

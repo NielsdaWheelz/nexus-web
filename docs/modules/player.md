@@ -58,7 +58,7 @@ quick reads and suggestions own no playback sequence. browse owns previews;
    viewer's row (taking the viewer lock before the media, as teardown does).
 8. A mounted reader or player of a media flushes and pauses its unsaved
    progress before unread, reset and undo of that media, and reads the
-   server's after (`holdProgress`). bulk podcast state writes use the same
+   server's after (`holdProgress`). bulk collection state writes use the same
    boundary for their fixed target ids. every started preparation settles;
    one failure prevents the write, and only successfully prepared holder/id
    pairs reconcile. fulfillment proves acknowledgment or authoritative
@@ -72,12 +72,20 @@ quick reads and suggestions own no playback sequence. browse owns previews;
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
    place) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own
-   acknowledgement); a move only on an idle lane at the exact revision on
-   screen. A lost answer blocks the lane until "check" or a read past its
+   acknowledgement); a move or reviewed collection batch only on an idle
+   lane at the exact revision on screen. A lost answer blocks the lane until "check" or a read past its
    revision settles it; a refusal reaches its caller. A membership write is
    refused as a conflict only when the revision moved, so the lane then waits
    for a read past it; a move's conflict leaves the floor alone, since the
    server also refuses a move whose row went hidden at an unchanged revision.
+
+[collection actions](collection-actions.md) owns finite bulk selection, atomic
+state/inverse semantics and reviewed lectern appends.
+
+single unread, reset and finish-undo acknowledgements return their resulting
+override revision. the account owner orders inverse offers by these revisions,
+not response arrival time; late older acknowledgements cannot replace newer
+inverses. inert collection choices preserve still-valid earlier offers.
 
 ## Backend owners
 
@@ -104,7 +112,7 @@ quick reads and suggestions own no playback sequence. browse owns previews;
 - `state.py` — sole DML owner of `consumption_overrides`,
   `reader_engagement_states` and `consumption_completion_facts`: the player
   read, the reader cursor composition, listening and preview writes, finish,
-  undo, unread, reset, the natural-end settle, the podcast batch state and
+  undo, unread, reset, the natural-end settle, the collection batch state and
   media teardown. `settle_natural_end_in_txn` composes completion/removal with
   browser cursor persistence; `natural_end_is_settled` inspects the full retry
   postcondition without reapplying it.
@@ -132,9 +140,9 @@ PUT    /lectern/items/{media_id}      {placement: First | After{media_id} | null
 DELETE /lectern/items/{media_id}?expected_order_revision=... -> {order_revision}
 PUT    /lectern/items/{media_id}/position {before_media_id: UUID | null, expected_order_revision} -> {media_ids, order_revision}
 POST   /media/{id}/finish             {leave_lectern} -> Finish
-POST   /media/{id}/finish/undo        Finish -> 204
-POST   /media/{id}/unread             -> 204
-POST   /media/{id}/progress/reset     -> 204
+POST   /media/{id}/finish/undo        Finish -> {override_revision}
+POST   /media/{id}/unread             -> {override_revision}
+POST   /media/{id}/progress/reset     -> {override_revision}
 POST   /media/{id}/natural-end        {terminal_listening, expected_override_revision} -> 204
 GET    /media/{id}/player             -> PlayerDescriptor (404 when not playable)
 PUT    /media/{id}/listening-state    ListeningIn -> ListeningPositionOut
@@ -193,7 +201,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   membership write's conflict until a read passes it, writes say "lectern is
   not ready · load lectern". `lecternNext` serves reader navigation only;
   `lib/lectern/api.ts` is the transport.
-- `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
+- `lib/consumption/state.tsx` — single and collection state writes with untimed exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the
   reader and player join. `ResourceActionsProvider` owns the consumption
   commands above pane lifetime; sending or unconfirmed undo remains a required

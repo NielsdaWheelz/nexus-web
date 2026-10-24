@@ -41,3 +41,17 @@ export async function writeLecternItem(input: {
     },
   )).data.order_revision;
 }
+
+/** A whole-resource snapshot is reviewed once. Sending never reselects or rebases it. */
+export async function prepareCollectionLectern(target: Schema<"CollectionLecternPrepareRequest">["target"], signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/lectern/collections/prepare", "post">>("/api/lectern/collections/prepare", {
+    method: "POST", body: JSON.stringify({ target }), signal,
+  })).data;
+}
+
+/** Transport only; the existing lectern lane admits and retains this exact batch. */
+export async function writeCollectionLectern(body: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/lectern/collections", "put">>("/api/lectern/collections", {
+    method: "PUT", body, signal,
+  })).data;
+}

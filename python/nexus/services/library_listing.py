@@ -15,7 +15,12 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.collection_page import CollectionQuery, parse_collection_query
-from nexus.schemas.library import LibraryEntriesPageOut, LibraryMediaEntryOut, LibraryOrderOut
+from nexus.schemas.library import (
+    LibraryEntriesPageOut,
+    LibraryMediaEntryOut,
+    LibraryMetadataOut,
+    LibraryOrderOut,
+)
 from nexus.services import libraries
 from nexus.services.collection_keyset import (
     Direction,
@@ -218,6 +223,33 @@ def list_library_entries(
     )
 
 
+def metadata(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryMetadataOut:
+    """Native library facts and exact canonical visible physical count in one read snapshot.
+
+    All counts its non-system union; subscriptions never expand into media. Dates
+    are the library record timestamps, not subscription, refresh or ownership facts.
+    """
+    library = libraries.access(db, viewer_id, library_id, lock=False)
+    dates = db.execute(
+        text("SELECT created_at, updated_at FROM libraries WHERE id = :id"), {"id": library_id}
+    ).one()
+    count = db.execute(
+        text(f"SELECT count(*) FROM ({library_media_rows_sql()}) members"),
+        {"viewer_id": viewer_id, "library_id": library_id},
+    ).scalar_one()
+    return LibraryMetadataOut(
+        library=library.out(viewer_id),
+        kind="personal"
+        if library.is_default
+        else "system"
+        if library.system_key is not None
+        else "named",
+        created_at=dates.created_at,
+        updated_at=dates.updated_at,
+        media_count=count,
+    )
+
+
 def count_default_root_inventory(db: Session, *, viewer_id: UUID, library_id: UUID) -> int:
     if not libraries.access(db, viewer_id, library_id, lock=False).is_default:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Only All has a root inventory")
@@ -227,13 +259,13 @@ def count_default_root_inventory(db: Session, *, viewer_id: UUID, library_id: UU
     ).scalar_one()
 
 
-def playback_source_ids(
+def ordered_selection_ids(
     db: Session, viewer_id: UUID, library_id: UUID, view: EntryView
 ) -> tuple[str, list[UUID]]:
     """Complete logical view in listing order, under the caller's read snapshot.
 
     Only physical media memberships participate; subscription rules never expand.
-    The playback owner applies audio eligibility and text matching afterward.
+    Consumers apply their own eligibility and text matching afterward.
     """
     library = libraries.access(db, viewer_id, library_id, lock=False)
     if view.projection == "unfiled" and not library.is_default:

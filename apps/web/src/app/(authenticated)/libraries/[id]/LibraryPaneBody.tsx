@@ -6,7 +6,7 @@
 // completion and hands them to the server, which validates and combines them;
 // the text filter stays local.
 
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useRef } from "react";
 import { Plus } from "lucide-react";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
@@ -17,7 +17,7 @@ import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -32,9 +32,8 @@ import { catalogLibrary, catalogEntries, catalogLibraryShows } from "@/lib/catal
 import { remoteReady } from "@/lib/native/admission";
 import { getLibraryPodcasts, type PodcastSection } from "@/lib/podcasts/api";
 import { ApiError, isApiError } from "@/lib/api/client";
-import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useServerValue, useThrowLater, type Visit, type ServerValue } from "@/lib/api/serverState";
+import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import {
   listRowStatus,
   pageQuery,
@@ -53,7 +52,6 @@ import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   entriesPage,
   getLibrary,
-  leaveLibrary,
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
@@ -90,7 +88,6 @@ import {
   usePaneReturnReady,
   usePaneScrollRetention,
 } from "@/lib/workspace/paneReturnMemento";
-import { useLatestWorkspace } from "@/lib/workspace/store";
 
 const DETAIL = definePaneVisitDataKey<Visit<Library>>("Library.Detail");
 const SHOWS = definePaneVisitDataKey<Visit<PodcastSection>>("Library.Podcasts");
@@ -114,7 +111,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   const active = usePaneIsActive();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
-  const fail = useThrowLater();
   const query = new URLSearchParams(
     VIEW_KEYS.flatMap((key) => {
       const value = params.get(key);
@@ -235,7 +231,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   const text = filterRows.query.trim();
   const visible = shown.filter((entry) => matchesPaneFilterQuery(text, fields(entry)));
 
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const isAll = library?.is_default === true;
   const supportsOrder = live && remoteReady() && library?.can_manage === true && !isAll;
   const ordered = live && query === "" && text === "" && !isAll
@@ -305,24 +300,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     },
     [id, refetchDetail, refetchEntries, refreshSuggestionFeed],
   );
-  // Leaving asks first in the pane; the left library's panes settle like a deleted one's.
-  const workspace = useLatestWorkspace();
-  const [leaving, setLeaving] = useState<"Asked" | "Running" | null>(null);
-  const leave = async () => {
-    if (leaving !== "Asked") return;
-    setLeaving("Running");
-    try {
-      await leaveLibrary(id);
-      settleDeletedResourcePanes({
-        workspace: workspace(),
-        deletedRef: `library:${id}`,
-        fallbackHref: "/libraries",
-      });
-    } catch (error) {
-      setFeedback(libraryErrorFeedback(error, "You didn’t leave the library", fail));
-    }
-    setLeaving(null);
-  };
   const addContent: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
     ? {
       kind: "command",
@@ -348,16 +325,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     returnFocus: () => inputRef.current,
   });
   const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
-  if (live && remoteReady() && library?.can_leave) {
-    menuActions.push({
-      kind: "command",
-      id: "ViewAction.Library.Leave",
-      label: "Leave library…",
-      tone: "danger",
-      restoreFocusOnClose: false,
-      onSelect: () => setLeaving("Asked"),
-    });
-  }
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
     primaryAction: addContent,
@@ -484,21 +451,6 @@ function LibraryPane({ id }: { readonly id: string }) {
       <PaneSurface
         state={<>
           {ordering !== undefined ? renderOrderNotice({ order: order.state, active, paneId: runtime?.paneId ?? null }) : null}
-          {leaving ? (
-            <FeedbackNotice
-              content={{
-                tone: "Warning",
-                title: `Leave “${name}”?`,
-                message: "You lose access to what only it files. An admin can invite you again.",
-              }}
-              announcement="Assertive"
-              actions={[
-                { label: "Leave library", onClick: () => void leave() },
-                { label: "Cancel", onClick: () => setLeaving(null) },
-              ]}
-            />
-          ) : null}
-          {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
           {list.status === "ready" && (loadFailure !== null || summaries.error !== null) ? (
             <MediaSummaryNotice
               error={loadFailure ?? summaries.error}

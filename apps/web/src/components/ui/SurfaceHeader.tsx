@@ -55,6 +55,7 @@ export default function SurfaceHeader({
   identityId,
   primaryAction,
   resourceActions,
+  podcastMetadata,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -66,6 +67,7 @@ export default function SurfaceHeader({
   header: PaneHeaderModel;
   identityId: string;
   resourceActions?: PaneChrome["resourceActions"];
+  podcastMetadata?: PaneChrome["podcastMetadata"];
   primaryAction?: {
     readonly action: PanePrimaryAction;
     readonly onActivate: (event:
@@ -201,7 +203,7 @@ export default function SurfaceHeader({
               </>
             ) : null}
             {resourceActions?.kind === "Podcast" && resourceRef === undefined ? (
-              <PodcastMenu subject={resourceActions.subject} actionFocus={actionFocus}
+              <PodcastMenu subject={resourceActions.subject} metadataSubject={podcastMetadata} actionFocus={actionFocus}
                 subjectKey={identityId} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={[{ id: "Pane", actions: paneActions }, { id: "View", actions: menuActions }]}
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}

@@ -41,12 +41,12 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   });
   const entries = context.status === "ready" ? context.data.items : [];
   const actionFacts = usePodcastActionFacts({ scope: `Chat.Context:${conversationId}`,
-    targets: entries.flatMap(entry => entry.item.ref.startsWith("podcast:") ? [{ kind: "Canonical" as const, podcast_id: entry.item.ref.slice(8) }] : []),
+    targets: entries.flatMap(entry => entry.item.ref.startsWith("podcast:") && entry.item.preview.body.kind === "named" && !entry.item.missing ? [{ kind: "Canonical" as const, podcast_id: entry.item.ref.slice(8) }] : []),
     refresh: `${refreshKey}:${revision}:${metadata}:${context.status === "ready" ? context.generation : ""}`,
   });
   const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
   const failure = context.status === "loading" ? null : context.error;
-  const podcastFor = (item: Schema<"ContextOut">["items"][number]["item"]): PodcastActionSubject | undefined => item.ref.startsWith("podcast:") ? {
+  const podcastFor = (item: Schema<"ContextOut">["items"][number]["item"]): PodcastActionSubject | undefined => item.ref.startsWith("podcast:") && item.preview.body.kind === "named" && !item.missing ? {
     target: { kind: "Canonical", podcast_id: item.ref.slice(8) }, title: item.label,
     facts: failure !== null
       ? { kind: "Failed", error: failure, retry: context.refetch, retrying: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }

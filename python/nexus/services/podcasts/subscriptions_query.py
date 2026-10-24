@@ -35,6 +35,8 @@ SubscriptionFilter = Literal["all", "has_new", "not_in_library"]
 class PodcastState:
     subscribed: bool
     has_episodes: bool
+    feed_url: str
+    website_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +64,7 @@ def podcast_states(
 ) -> dict[UUID, PodcastState]:
     rows = db.execute(
         text(f"""
-        SELECT p.id, EXISTS(SELECT 1 FROM ({active_subscription_rows_sql()}) s
+        SELECT p.id, p.feed_url, p.website_url, EXISTS(SELECT 1 FROM ({active_subscription_rows_sql()}) s
                              WHERE s.podcast_id=p.id) AS subscribed,
                EXISTS(SELECT 1 FROM podcast_episodes pe
                       JOIN ({library_entries.library_media_ids_cte_sql(library_param="(SELECT id FROM libraries WHERE is_default AND owner_user_id=:viewer_id)")}) vm ON vm.media_id=pe.media_id
@@ -71,7 +73,10 @@ def podcast_states(
     """),
         {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     )
-    return {row.id: PodcastState(row.subscribed, row.has_episodes) for row in rows}
+    return {
+        row.id: PodcastState(row.subscribed, row.has_episodes, row.feed_url, row.website_url)
+        for row in rows
+    }
 
 
 def action_facts(

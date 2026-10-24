@@ -19,7 +19,7 @@ import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "./PodcastCommands.module.css";
 
-interface Props {
+export interface StopProps {
   readonly podcastId: string;
   readonly title: string;
   readonly libraryId: string | null;
@@ -29,7 +29,7 @@ interface Props {
   readonly returnFocusFallback?: ReturnFocusTarget;
   readonly successFocus?: ReturnFocusTarget;
 }
-export default function PodcastStopDialog(props: Props) {
+export default function PodcastStopDialog(props: StopProps) {
   const { ctx } = useActionRuntime();
   const scopeId = useId();
   const [scope, setScope] = useState<{ readonly id: string; readonly name: string } | null>(null);
@@ -76,12 +76,12 @@ export default function PodcastStopDialog(props: Props) {
             </div>
             {scopes.error !== null ? <FeedbackNotice content={podcastErrorMessage(scopes.error, "couldn’t refresh removal scopes.")} announcement="Polite" actions={[{ label: "retry scopes", onClick: scopes.refetch }]} /> : null}
           </> : null}
-      {localReady && (!cleanup || scopes.status === "ready") ? <StopPreview key={libraryId ?? "all"} {...props} libraryId={libraryId}
+      {localReady && (!cleanup || scopes.status === "ready") ? <StopReview key={libraryId ?? "all"} {...props} libraryId={libraryId}
         onSaved={() => { accepted.current = true; props.onClose(); }} /> : <div className={styles.actions}><Button onClick={props.onClose}>cancel</Button></div>}
     </div>
   </Dialog>;
 }
-function StopPreview({ podcastId, title, libraryId, episodes, onClose, onSaved }: Props & { readonly onSaved: () => void }) {
+export function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }: StopProps & { readonly onSaved: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
   const live = useRef(false);

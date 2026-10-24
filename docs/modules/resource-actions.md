@@ -8,6 +8,24 @@ them; the web labels, orders, confirms and runs them through each verb's owner.
 resource subjects share those verbs. both row families use that same resource
 ellipsis; an outline bullet separately exposes its exact relationship commands.
 
+podcasts and libraries share metadata and finite collection actions through the
+same catalog/projectors. `Metadata` selects an explicit media, podcast, library or
+supplied discovery subject; it never treats collection ids as media ids. podcast
+metadata is local catalog inspection; discovery metadata names its directory
+provenance. library details contains native collection facts. for podcasts, source
+means the supplied homepage; feed is a separate native rss link. absent facts grant
+no action.
+
+podcast subscription, libraries and more share one finite inline subject across
+ordinary rows and headers. at compact widths the complete menu retains every
+command once. library cards retain their single scoped removal shortcut. captured
+evidence and outline relationships acquire no resource shortcuts. menus retain
+their prepared canonical-facts lifecycle; opening a bulk dialog starts its own
+selection read. [collection actions](collection-actions.md) owns batch semantics.
+filtered view descriptors include their state in their presentation ids; canonical
+whole-resource descriptors retain canonical ids. menu identities distinguish
+selection scope while execution keeps the same catalog command ids.
+
 ## contract
 
 - `GET /resource-items/{ref}/actions` → `ResourceActionsOut {ref, label, activation, missing,
@@ -42,9 +60,12 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
   the overlays (metadata, library settings, podcast settings and fixed
   podcast subscription/import/unsubscribe/cleanup reviews).
-  action defects are thrown by `ResourceActionDefect` beneath the existing workspace
-  boundary; the account command owner and its feedback remain above containment.
-  an unconfirmed podcast request and its loss guard therefore survive an action defect.
+  `ResourceActionPresentation` renders overlays and throws reported action defects
+  beneath the existing workspace boundary. overlay state, identity-gated dismissal,
+  account command owners and their feedback remain above containment. a review
+  read/render defect therefore cannot discard another command's recovery.
+  unconfirmed podcast, consumption and lectern requests and their loss guards
+  therefore survive an action defect.
 - a row ellipsis supplies `action_ref` in either family. when it differs from the
   displayed passage, management appears in `source: {label}`. row composition
   omits loaded open/fork; `any-pointer: coarse` adds exactly one local fork from

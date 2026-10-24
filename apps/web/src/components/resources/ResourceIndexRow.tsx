@@ -33,7 +33,7 @@ export default function ResourceIndexRow({ item: supplied, occurrenceKey, match 
   nestedContent?: ReactNode;
 }) {
   const item = useResolvedResourceItem(supplied);
-  if (podcastSubject !== undefined && (podcastSubject.target.kind !== "Canonical" || item.ref !== `podcast:${podcastSubject.target.podcast_id}`))
+  if (podcastSubject !== undefined && (podcastSubject.target.kind !== "Canonical" || item.ref !== `podcast:${podcastSubject.target.podcast_id}` || item.preview.body.kind !== "named" || item.missing))
     throw new Error("podcast action subject does not match the live resource ref");
   const body = item.preview.body;
   const metadata = resourceMetadata({ item, matchMethod, occurrenceLabel });
