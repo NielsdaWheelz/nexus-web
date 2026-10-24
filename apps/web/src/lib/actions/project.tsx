@@ -31,7 +31,7 @@ import {
 import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
-import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
+import { LECTERN_INTENT_COPY, lecternFull } from "@/lib/lectern/lectern";
 import { deleteLibrary, leaveLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
@@ -138,6 +138,7 @@ export function projectLecternAction({
     else if (collectionPending !== null) disabledReason = collectionPending.phase === "Unconfirmed" ? "resolve the unconfirmed lectern change first." : "finish the current lectern change first.";
     else if (retry) disabledReason = "lectern couldn’t be loaded; retry checking it";
     else if (needsRead) disabledReason = "checking lectern membership";
+    else if (intent === "Ensure" && lecternFull(read)) disabledReason = BLOCKED_COPY.CapacityReached;
   }
   return {
     kind: "command",
