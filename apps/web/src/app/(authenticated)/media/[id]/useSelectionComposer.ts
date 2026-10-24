@@ -4,6 +4,7 @@
 // owners settle independently of dismissal and never replace newer input.
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { copyWriting } from "@/components/notes/NoteNotices";
@@ -75,8 +76,7 @@ function reconcileDeletedNote(entry: ComposerDraft): ComposerDraft {
     isDeletedResource(`note_block:${entry.issue.saved.id}`);
   if (!baseDeleted && !conflictDeleted) return entry;
   return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, load: "Ready" as const, publication: null } : {}),
-    issue: { kind: "Deleted", message: "this note was deleted. copy any changes you want to keep." },
-    status: null };
+    issue: { kind: "Deleted", message: "this note was deleted. copy any changes you want to keep." } };
 
 }
 
@@ -347,7 +347,7 @@ export function useSelectionComposer(input: {
         base: { kind: "Absent" }, body: carried?.body ?? emptyBody(), revision: 0,
         selection: carried?.selection ?? null, history: carried?.history ?? emptyNoteBodyHistory(),
         load: highlightId ? "Loading" : "Ready", operation: null,
-        issue: null, status: null, referenceActive: false, attachmentActive: false,
+        issue: null, referenceActive: false, attachmentActive: false,
         sourceMediaId: boundSource.mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
       });
     }
@@ -412,7 +412,7 @@ export function useSelectionComposer(input: {
     const owns = () => activeRef.current && interaction.current === openingId &&
       (current.current === null || current.current.id === openingId && current.current.ownsFocus) && get(entry.id)?.revision === submitted.revision;
     const run = async () => {
-      store.update(entry.id, value => ({ ...value, operation: { id: submitted.commandId, kind: command.kind }, issue: null, status: "saving…" }));
+      store.update(entry.id, value => ({ ...value, operation: { id: submitted.commandId, kind: command.kind }, issue: null }));
       try {
         let intent: WritingIntent;
         const creating = submitted.highlightId === null;
@@ -449,7 +449,7 @@ export function useSelectionComposer(input: {
           if (state.kind !== "unconfirmed") return;
           const irreducible = !canRetryWriting(admitted);
           const message = irreducible ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded.";
-          store.update(entry.id, value => ({ ...value, status: null,
+          store.update(entry.id, value => ({ ...value,
             issue: { kind: "Failed", message: `save not confirmed. ${message}` } }));
           if (current.current?.draftId !== entry.id) notice = feedback.offer({ key: `passage-save:${admitted.id}`, announcement: "Polite",
             content: { tone: "Warning", title: "passage save not confirmed", message },
@@ -480,9 +480,6 @@ export function useSelectionComposer(input: {
           } },
           write: null,
           issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your input remains in this tab.", saved: base, linksVersion },
-          status: value.revision === submitted.revision
-            ? command.kind === "Delete" ? "note deleted" : savedNote && accepted ? "note saved" : "highlight saved"
-            : null,
         }));
         const next = get(entry.id);
         if (next && next.publication === null && command.kind !== "Delete") void readNote(entry.id, highlightId, false);
@@ -496,7 +493,7 @@ export function useSelectionComposer(input: {
         if (continuation) await continuation(highlightId, owns);
       } catch (error) {
         if (ctx.sessionSignal().aborted) return;
-        store.update(entry.id, value => ({ ...value, operation: null, status: null,
+        store.update(entry.id, value => ({ ...value, operation: null,
           issue: { kind: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED" ? "Source" : "Failed", message: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
             ? "the source changed. select it again before saving or sending."
             : "couldn’t confirm this change. your input remains in this tab." } }));
@@ -546,7 +543,8 @@ export function useSelectionComposer(input: {
   };
 
   const restoreEditor = () => {
-    setPickerDraftId(null);
+    // Expose the parent modal before the editor consumes its focus request.
+    flushSync(() => setPickerDraftId(null));
     if (current.current) show({ ...current.current, focus: true, ownsFocus: true, serial: ++serial.current });
   };
   const chooseChat = () => {
@@ -690,7 +688,7 @@ export function useSelectionComposer(input: {
       const quoteHref = readerHighlightChatIntentHref({ destination: observed ? { kind: "Existing", conversationId: observed.conversation.id } : { kind: "New" }, key });
       const href = observed ? `${conversationViewHref(observed.conversation.id, observed.active_leaf_message_id)}${quoteHref.slice(quoteHref.indexOf("#"))}` : quoteHref;
       if (question.kind === "Blank" || recovery !== null) {
-        store.update(entry.id, value => ({ ...value, operation: null, status: "quoted chat ready" }));
+        store.update(entry.id, value => ({ ...value, operation: null }));
         return { target: { href, labelHint: "chat" }, title: "quoted chat ready", openLabel: "open chat",
           ...(recovery !== null ? { entry: { kind: "ComposeReaderQuestion" as const, text: question.kind === "Text" ? question.content : "", selection } } : {}) };
       }
@@ -714,8 +712,7 @@ export function useSelectionComposer(input: {
           return { ...value, chatIssue: null,
             ...(consume ? { body: initialBody(value.base), revision: value.revision + 1,
               selection: null, history: emptyNoteBodyHistory() } : {}),
-            destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination,
-            status: consume ? "message sent" : null };
+            destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
       if (result.kind === "Pending" && current.current?.draftId !== entry.id) sendNotice = feedback.offer({
@@ -878,20 +875,20 @@ export function useSelectionComposer(input: {
     compositionStart() { if (draft) store.update(draft.id, entry => ({ ...entry, revision: entry.revision + 1 })); },
     edit(edit: NoteEdit) {
       if (draft) store.update(draft.id, (entry) => ({ ...entry, body: edit.after, revision: entry.revision + 1,
-        selection: edit.selectionAfter, history: recordNoteBodyEdit(entry.history, edit), status: null }));
+        selection: edit.selectionAfter, history: recordNoteBodyEdit(entry.history, edit) }));
     },
     selection(selection: NoteEdit["selectionAfter"]) { if (draft) store.update(draft.id, (entry) => ({ ...entry, selection })); },
     historyBoundary() { if (draft) store.update(draft.id, (entry) => ({ ...entry, history: { ...entry.history, group: entry.history.group + 1 } })); },
     undo() {
       if (!draft) return;
       store.update(draft.id, (entry) => { const edit = entry.history.undo.at(-1); return edit ? { ...entry, body: edit.before, selection: edit.selectionBefore, revision: entry.revision + 1,
-        history: { undo: entry.history.undo.slice(0, -1), redo: [...entry.history.redo, edit], group: entry.history.group + 1 }, status: null } : entry; });
+        history: { undo: entry.history.undo.slice(0, -1), redo: [...entry.history.redo, edit], group: entry.history.group + 1 } } : entry; });
       restoreHistoryFocus();
     },
     redo() {
       if (!draft) return;
       store.update(draft.id, (entry) => { const edit = entry.history.redo.at(-1); return edit ? { ...entry, body: edit.after, selection: edit.selectionAfter, revision: entry.revision + 1,
-        history: { undo: [...entry.history.undo, edit], redo: entry.history.redo.slice(0, -1), group: entry.history.group + 1 }, status: null } : entry; });
+        history: { undo: [...entry.history.undo, edit], redo: entry.history.redo.slice(0, -1), group: entry.history.group + 1 } } : entry; });
       restoreHistoryFocus();
     },
     save() { if (draft) void submit({ command: { kind: "Save" }, source: current.current }); },

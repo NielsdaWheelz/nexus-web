@@ -50,7 +50,6 @@ export interface ComposerDraft {
   load: "Loading" | "Ready" | "Failed";
   operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" | "Delete" } | null;
   issue: DraftIssue | null;
-  status: string | null;
   referenceActive: boolean;
   attachmentActive: boolean;
   sourceMediaId: string;

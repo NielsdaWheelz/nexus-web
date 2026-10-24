@@ -203,31 +203,25 @@ deletion on refresh, and that call is removed. An unresolved Highlight after
 content changes stays visible in Evidence or Connections rather than
 disappearing or silently repointing to the wrong location.
 
-the reader composer uses the account-scoped writing journal and existing
-`notes/writes` owner for highlight and note commands; chat admission uses the
-shared chat command owner. create identities, captured sources and absolute
-versioned updates remain fixed for retry. acknowledgement adopts saved identity
-and base facts without replacing authored prose or reopening an editor.
+the reader composer keeps unsubmitted rich input in account-scoped memory and
+submits explicit commands through `notes/writes`; chat admission uses the shared
+chat command owner. fixed identities, captured sources and absolute versioned
+updates survive retries. acknowledgement adopts saved identity/base facts without
+replacing newer prose or reopening an editor. dismissal abandons unsubmitted
+input; attachment loss keeps its existing guard. submitted work settles in its
+owner after dismissal and offers recovery/navigation when needed.
 
-mobile observations allocate no composer branch, journal or source-chat lookup.
-explicit compose, highlight and ensure entries share one preparation path with
-desktop selection and saved marks. preparation fixes canonical media, generation
-and request identities before awaiting the existing highlight slot and journal.
-retained passages contain only visual anchor fields and their separate quote;
-capture-only command metadata never enters the journal's passage schema.
-a command submits its frozen target, never a later render's selection. copy and
-opening more require no authoring. a failed command retains its target and the
-existing writing recovery; a late result cannot focus or dismiss a newer
-interaction.
+mobile observation creates no draft, write or source-chat lookup. explicit note
+or ask opens the same rich composer used on desktop; initial ask never sends.
+commands submit the frozen passage, never a later selection. an empty paragraph
+without a note saves only its highlight; saving an existing empty note keeps it.
+chat conversion uses the rich grammar, independently of note emptiness. sending
+ensures the highlight and submits the question without saving its annotation.
 
-saving a note and sending a chat remain distinct commands. authored changes
-checkpoint through the writing journal; passage text is never submitted as a chat
-side effect. chat preparation belongs to that visit until dispatch; dispatch
-transfers the immutable request to the shared chat command owner. a new-chat
-request belongs to its pane even when no chat composer is mounted, while an
-existing-chat request belongs to the account and conversation. hiding the reader
-keeps authored drafts and pending commands. a retired visit cannot restore its
-presentation through a late callback.
+routine saving/saved/sent receipts have no state or renderer. operation/write/chat
+owners supply pending control availability. failures, conflicts, uncertain saves
+and sends retain visible recovery, exact retry requests and actionable late
+result navigation. later edits or departure revoke automatic handoff authority.
 
 ## Reader Presentation
 
@@ -251,63 +245,44 @@ in the visible band are marked), and the document-map rail shows marker
 locations across the document. Evidence owns neither highlight persistence nor
 mutation behavior.
 
-desktop admitted selection keeps its anchored composer and focused rich editor
-below the icon actions; touch input in that viewport preserves native handles
-until the editor is tapped. the highlighter applies the displayed colour and its
-disclosure opens the shared five-colour picker without remounting the editor.
-saved-highlight actions retain their canonical descriptors and permissions.
+desktop selection opens an anchored, focused rich composer: primary icon row,
+then a one-line input that grows to its bounded editor scrollport. mobile retains
+native selection and its passive highlight/note/ask/more bar; explicit composition
+uses a sheet whose guarded custom header is highlight/save/ask/more. desktop adds
+colour and existing-chat split controls. shortcuts appear only in tooltips.
 
-mobile uses the existing viewport classification for every input device. after
-250 ms without observed source activity, one provisional passage offers
-`highlight`, `note`, `ask` and `more`; ask is absent when quoting is unavailable.
-there is no passive editor, quote preview or keyboard focus. highlight saves
-yellow directly; an equivalent saved highlight shows inactive `highlighted`.
-more owns copy, colour, share and applicable saved-highlight actions without
-claiming a note draft merely by opening.
+copy, share, canonical resource actions, clamped source preview, colours on mobile,
+empty-note deletion and close live in overflow. copy and close do not wait for
+remote resource actions or pending writes. existing-chat actions use the newest
+updated chat linked to this source; an explicit choice replaces it without a
+send. `ConversationDestinationOverlay` composes `PickerSurface` and the existing
+search owner; the reader restores its caret after selection or dismissal.
 
-note and ask freeze the passage and open the shared composer body in `MobileSheet`,
-titled `note on passage` or `ask about passage`. the sheet shows a short source
-quote and keeps the same note history, destinations and recovery controls;
-choosing ask sends nothing. the sheet grants focus to a ready editor for an
-explicit note/ask entry; its own loading focus preserves the pending request,
-while user focus changes cancel it. tapping a saved mark explicitly opens this same
-composer; overlapping marks first offer `choose highlight`. closing preserves
-authored work without reconstructing the native range or reopening its actions.
-evidence retains its resource menu.
+opening a saved mark loads its viewer note before editing; overlapping marks
+first offer `choose highlight`. the desktop highlighter's disclosure retains
+five-colour selection without remounting the editor. mobile observation retains
+its 250 ms source-activity settle period and never opens the keyboard.
 
 mobile bounds and draft reselection require `apply selection`. invalid or
-collapsed proposals keep the instruction's cancel action; no old valid range is
-substituted. apply freezes the confirmed capture before button focus, validates
-the owned session and invokes the existing command once. bounds submission shows
-`applying…` without cancellation; relocation retains its exact-quote rule.
-reselection names the draft and source publication, and only apply carries its
-body and history. cancel, dismissal, navigation, source replacement, deactivation,
-disposal, hiding, blur or viewport-policy change retires it without changing the
-authored draft. desktop bounds admission remains immediate.
+collapsed proposals keep cancel; no old valid range substitutes. apply freezes
+the confirmed capture before button focus and validates its owned session once.
+bounds submission shows `applying…` without cancellation and retains exact-quote
+relocation. only confirmed reselection carries body/history; cancel, dismissal,
+navigation, source replacement, deactivation, disposal, hiding, blur or viewport
+policy change retires it. desktop bounds admission remains immediate.
 
-opening an existing mark loads its viewer note before editing. enter saves the
-current rich body; a canonical empty paragraph on a fresh passage creates only
-the highlight, while an existing note keeps its id and links when saved empty.
-shift-enter retains the editor's newline command. the platform modifier plus
-enter starts a new quoted chat; adding shift uses the displayed existing chat.
-both retain the annotation body and history without saving note edits. the footer
-names that destination and offers a paged chooser; destination and frozen branch
-belong to the visit draft, including after dismissal. unresolved reader chat
-admission blocks fresh sends across that visit's passages until its command
-owner settles. see [chat](chat.md) for conversion, continuation and recovery.
-a fresh unmodified, nonrepeating
-backspace on an already empty paragraph at its collapsed start deletes the
-persisted note globally. composition, selected content, last-character deletion,
-whitespace, breaks, code and embeds do not trigger that command. a visible
-`delete empty note` button invokes the same operation.
+enter saves; shift-enter inserts a line; cmd/ctrl-enter uses new chat and adding
+shift uses the selected existing chat. a fresh unmodified, nonrepeating backspace
+at the collapsed start of an already empty paragraph deletes its saved note
+globally. composition, selected content, last-character deletion, whitespace,
+breaks, code and embeds do not trigger deletion. overflow's
+`delete empty note (keep highlight)` invokes the same operation. unresolved chat
+admission blocks fresh sends across the visit until its command owner settles.
 
-observation, opening, typing, blur and dismissal never submit a note or chat.
-authored edits retain their journal, caret and history under the writing owner's
-recovery contract; the native range is never journaled. desktop composition uses
-live source geometry and pins an unavailable draft inside its pane. mobile's
-compact actions use the separate endpoint-aware placement contract in
-[overlays](overlays.md#reader-action-placement), without resizing or scrolling the
-source. passive dismissal retires its candidate, not authored work.
+outer dismissal discards unsubmitted input; child dismissal keeps it. passage
+geometry and native selection remain reader-owned; shared overlay placement,
+keyboard containment, dismissal and focus policy remain in
+[overlays](overlays.md#reader-action-placement).
 
 The canonical passage/document scope and typed highlight association contract
 is
@@ -318,8 +293,8 @@ is
 reader quote-to-chat is highlight-first. `new chat` sends a nonblank note-field
 prompt through existing atomic chat admission, with the canonical quote and the
 model selection frozen at invocation; annotation edits remain unsaved. blank
-text opens the quoted new-chat composer without a run. `existing chat…` retains
-the typed quote handoff without sending that field. [chat](chat.md#reader-quote-to-chat-immutable-snapshot)
+text opens the quoted new-chat composer without a run. the existing-chat action follows the same blank-open/nonblank-send contract
+for the selected source chat. [chat](chat.md#reader-quote-to-chat-immutable-snapshot)
 owns exact send retries and quote snapshots.
 
 On send the server row-locks the Highlight, derives the canonical `exact`,

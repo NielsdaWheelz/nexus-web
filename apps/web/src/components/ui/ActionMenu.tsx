@@ -48,6 +48,9 @@ import styles from "./ActionMenu.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
+// Moving focus into a sheet can dismiss the IME. Admit after its geometry quiets;
+// there is no portable keyboard-transition completion event.
+const MOBILE_ADMISSION_QUIET_MS = 150;
 const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 const FAILED: FeedbackContent = { tone: "Warning", title: "actions couldn’t load" };
 
@@ -105,6 +108,7 @@ type Invocation = {
   readonly feedback: FeedbackContent | null;
   readonly meaning: string | null;
   readonly geometry: readonly number[] | null;
+  readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
 };
 
 /** Displayed meaning excludes closures and availability; execution reads current descriptors. */
@@ -234,7 +238,7 @@ export default function ActionMenu({
   const requested = invocation !== null;
   const candidate = invocation !== null && (content !== null || feedback !== null);
   const sheet = candidate && invocation?.mobile === true;
-  const visible = invocation?.visible ?? false;
+  const visible = invocation?.visible === true && invocation.admission === null;
   const busy = invocation?.attempt?.timer != null;
   useMobileChromeHold(invocation !== null);
   const menu = useAnchoredPosition<HTMLDivElement>(trigger, {
@@ -258,6 +262,7 @@ export default function ActionMenu({
     const active = current.current;
     if (!active) return;
     if (active.attempt?.timer) clearTimeout(active.attempt.timer);
+    if (active.admission?.timer) clearTimeout(active.admission.timer);
     skipReturn.current = true;
     if (returnFocus) restoreFocus(active.mobile && modalLayer.current ? modalLayer.current : layer);
     change(null);
@@ -276,6 +281,7 @@ export default function ActionMenu({
   const begin = (edge: "first" | "last", retry = false) => {
     const previous = current.current;
     if (retry && (!previous || previous.subject !== source.subjectKey || source.kind !== "Prepared")) return;
+    if (previous?.admission?.timer) clearTimeout(previous.admission.timer);
     const now = performance.now();
     const attempt: Attempt | null = source.kind === "Prepared" ? {
       controller: new AbortController(), expires: now + PREPARATION_BUDGET_MS, timer: null,
@@ -287,6 +293,7 @@ export default function ActionMenu({
       touch: retry ? false : wasOverlayInvokedByTouch(),
       attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
       meaning: null, geometry: null,
+      admission: mobile ? { phase: "Focus", timer: null } : null,
     });
     if (attempt && source.kind === "Prepared") {
       attempt.timer = setTimeout(() => fail(attempt, FAILED), Math.max(0, attempt.expires - performance.now()));
@@ -299,10 +306,23 @@ export default function ActionMenu({
     close(true);
     announce("actions changed. reopen to see current options.");
   };
+  const settleMobile = () => {
+    const active = current.current;
+    const admission = active?.admission;
+    if (!active || !admission || admission.phase === "Focus") return;
+    if (admission.timer) clearTimeout(admission.timer);
+    admission.phase = "Settling";
+    admission.timer = setTimeout(() => {
+      admission.timer = null;
+      if (current.current?.admission !== admission) return;
+      admission.phase = "Ready";
+      checks.current.publish();
+    }, MOBILE_ADMISSION_QUIET_MS);
+  };
   const stable = () => {
     const active = current.current;
     const node = surface();
-    if (!active || !trigger.current?.isConnected || !trigger.current.getClientRects().length) return false;
+    if (!active || active.admission !== null || !trigger.current?.isConnected || !trigger.current.getClientRects().length) return false;
     if (active.subject !== latest.current.subjectKey || active.title !== latest.current.title ||
       active.viewport !== viewportGeometry()) return false;
     if (active.meaning === null) return true;
@@ -328,7 +348,7 @@ export default function ActionMenu({
       closeRef.current(false);
       return;
     }
-    if (active.viewport !== viewportGeometry()) {
+    if (active.admission === null && active.viewport !== viewportGeometry()) {
       if (active.visible) invalidate(); else closeRef.current(false);
       return;
     }
@@ -345,6 +365,7 @@ export default function ActionMenu({
       closeRef.current(false);
       return;
     }
+    if (active.admission !== null && active.admission.phase !== "Ready") return;
     if (active.meaning !== null) {
       if (!stable()) invalidate();
       return;
@@ -364,9 +385,10 @@ export default function ActionMenu({
       clearTimeout(active.attempt.timer);
       active.attempt.timer = null;
     }
-    if (content || !active.visible) {
+    if (content || !active.visible || active.admission !== null) {
       change({
         ...active, visible: true, feedback: content ? null : active.feedback,
+        viewport: viewportGeometry(), admission: null,
         meaning: content ? meaning(source.title, content) : null,
         geometry: content ? geometry(trigger.current, node, active.mobile) : null,
       });
@@ -374,8 +396,8 @@ export default function ActionMenu({
       else if (content) announce("");
     }
   };
-  const checks = useRef({ stable, invalidate, close, surface, publish });
-  checks.current = { stable, invalidate, close, surface, publish };
+  const checks = useRef({ stable, invalidate, close, surface, publish, settleMobile });
+  checks.current = { stable, invalidate, close, surface, publish, settleMobile };
   // Source and invocation are read after every commit; callback identity is not
   // a lifecycle boundary or permission to publish.
   useLayoutEffect(() => { checks.current.publish(); });
@@ -385,7 +407,7 @@ export default function ActionMenu({
     if (!requested) return;
     const press = (event: PointerEvent) => {
       releasePress.current?.();
-      if (!current.current?.visible || checks.current.stable()) return;
+      if (!current.current?.visible || current.current.admission !== null || checks.current.stable()) return;
       const { pointerId, button } = event;
       // A moved menu can leave the old coordinate outside its surface. Consume
       // that press before the kernel, then keep only its delivery listeners
@@ -428,11 +450,17 @@ export default function ActionMenu({
       checks.current.invalidate();
     };
     const departure = (event: FocusEvent) => {
+      const active = current.current;
+      if (active?.admission?.phase === "Focus" && event.target instanceof Node && modalLayer.current?.element?.contains(event.target)) {
+        active.admission.phase = "Settling";
+        checks.current.settleMobile();
+      }
       const node = checks.current.surface();
       if (event.target instanceof Node && !root.current?.contains(event.target) && !node?.contains(event.target)
         && !modalLayer.current?.element?.contains(event.target)) checks.current.close(false);
     };
     const resize = () => {
+      if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (current.current?.visible) checks.current.invalidate(); else checks.current.close(false);
     };
     const retire = () => checks.current.close(false);
@@ -440,9 +468,11 @@ export default function ActionMenu({
       const node = checks.current.surface();
       if (event.target instanceof Node && node?.contains(event.target)) return;
       if (current.current?.mobile && event.target instanceof Node && modalLayer.current?.element?.contains(event.target)) return;
+      if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (!checks.current.stable()) checks.current.invalidate();
     };
     const observer = new ResizeObserver(() => {
+      if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (!checks.current.stable()) checks.current.invalidate();
     });
     if (trigger.current) observer.observe(trigger.current);
@@ -477,6 +507,7 @@ export default function ActionMenu({
     releasePress.current?.();
     const active = current.current;
     if (active?.attempt?.timer) clearTimeout(active.attempt.timer);
+    if (active?.admission?.timer) clearTimeout(active.admission.timer);
     active?.attempt?.controller.abort();
   }, []);
   const report = useRef(onOpenChange);
@@ -486,7 +517,7 @@ export default function ActionMenu({
     report.current?.(true);
     return () => report.current?.(false);
   }, [visible]);
-  const focusKey = invocation?.meaning ?? invocation?.feedback;
+  const focusKey = invocation?.admission ?? invocation?.meaning ?? invocation?.feedback;
   // Ready focus precedes the removed failure notice's deferred return focus.
   // Initial content stays hidden until its measured publication commits.
   useLayoutEffect(() => {
@@ -754,6 +785,12 @@ export default function ActionMenu({
       interactionLayer={modalLayer} returnFocusTo={() => returnFocusTo?.() ?? trigger.current}
       skipReturnFocus={() => skipReturn.current} focusKey={focusKey}
       initialFocus={(panel) => {
+        const active = current.current;
+        if (active?.admission) {
+          active.admission.phase = "Settling";
+          checks.current.settleMobile();
+          return panel;
+        }
         if (current.current?.touch) return panel;
         if (!hasChoices) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...panel.querySelectorAll<HTMLElement>("[data-menu-row]")];
