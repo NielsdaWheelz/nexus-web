@@ -74,7 +74,7 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 | `reference` | an embed note's stored label, or `embedded resource` |
 
 two row families compose the same resource facts. indexes serve collection panes,
-search and future chat context: native title links, applicable bibliography,
+search and chat context: native title links, applicable bibliography,
 consumption and time, existing resource actions, and podcast-show artwork. indexes
 never create outline sessions, disclosure or editors. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
@@ -83,11 +83,14 @@ the shell requires `Index` (title and metadata), `Search` (also one excerpt) or
 `Details` (wrapping operational/instructional content). index/search reserve empty
 lines and ellipsize individual fields; content length and arriving state never
 add lines. typography may enlarge the shared line geometry. the row's `indexRow`
-container owns adaptation: above 479px, show up to three observed author names;
-at 479px and below, show the first and a passive omitted count. hide routine
-reading state below 480px and remaining time below 360px. year/count keep their
-own slots. hidden names leave the tab order; focused hidden links/shortcuts return
-to that row's surviving more/title. no surname inference or author-only control.
+container owns adaptation at its explicit base text size: above `32em - 1px`,
+show up to three observed author names; at or below that boundary, show the first
+and a passive omitted count. hide routine reading state there and remaining time at
+`24em - 1px`. the default 15px type gives 479/359px boundaries; enlarged text
+compacts earlier. each visible name retains at least an ellipsis-sized slot;
+year/count keep their own slots. hidden names leave the tab order; focused hidden
+links/shortcuts return to that row's surviving more/title. no surname inference or
+author-only control.
 
 search uses one literal evidence line: a matching passage wins over an item's own
 match, and its link retains that passage's exact activation. prose titles identify
@@ -160,7 +163,7 @@ cancel or lost ownership aborts the hold; a completed hold consumes its click.
 opening never executes. authorized exact unlink preserves both resources and all
 other edges. unavailable navigation can retain a focusable context-only bullet.
 provenance details keep useful creation/rationale; routine “linked by” is omitted.
-future chat context uses an independent accessible remove control and its supplied
+chat context uses an independent accessible remove control and its supplied
 aggregate `detach_context` mutation, never one arbitrarily chosen admission edge.
 
 lists use nested `ul/li` and labelled native controls. branches start collapsed and
