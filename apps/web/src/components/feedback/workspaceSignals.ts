@@ -1,6 +1,7 @@
 import type {
   FeedbackAction,
   FeedbackContent,
+  FeedbackCondition,
   FeedbackOffer,
   OfferInput,
   WorkspaceCondition,
@@ -119,6 +120,13 @@ export function createWorkspaceSignals() {
     commit({ ...snapshot, entries, transient });
     runClock();
   };
+  const condition = (key: string, token: object, notice: WorkspaceCondition | null) => {
+    if (notice === null) return remove(key, token);
+    const old = snapshot.entries.find((entry) => entry.key === key);
+    if (old?.kind === "Condition" && old.token === token && old.notice === notice) return;
+    // hook registrations may replay before the provider's strict-mode setup.
+    replace({ id: old?.id ?? nextId++, key, token, kind: "Condition", notice, rank: PRIORITY[notice.priority], undo: false, onDismiss: null });
+  };
   return {
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -153,13 +161,18 @@ export function createWorkspaceSignals() {
         withdraw() { if (active) remove(key, token); },
       };
     },
-    condition(key: string, token: object, notice: WorkspaceCondition | null) {
-      if (notice === null) return remove(key, token);
-      const old = snapshot.entries.find((entry) => entry.key === key);
-      if (old?.kind === "Condition" && old.token === token && old.notice === notice) return;
-      // hook registrations may replay before the provider's strict-mode setup.
-      replace({ id: old?.id ?? nextId++, key, token, kind: "Condition", notice, rank: PRIORITY[notice.priority], undo: false, onDismiss: null });
+    retainCondition({ key, ...notice }: WorkspaceCondition & { key: string }): FeedbackCondition {
+      const token = {};
+      if (active) condition(key, token, notice);
+      return {
+        update(next) {
+          if (active && snapshot.entries.some((entry) => entry.key === key && entry.token === token))
+            condition(key, token, next);
+        },
+        withdraw() { if (active) remove(key, token); },
+      };
     },
+    condition,
     withdrawCondition: remove,
     dismiss(entry: WorkspaceSignal) {
       if (!active) return;

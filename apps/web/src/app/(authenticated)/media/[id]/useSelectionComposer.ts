@@ -8,7 +8,7 @@ import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { copyWriting } from "@/components/notes/NoteNotices";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -116,7 +116,12 @@ export function useSelectionComposer(input: {
   const serial = useRef(0);
   const activeRef = useRef(active);
   activeRef.current = active;
-  const show = useCallback((next: Opening | null) => { current.current = next; interaction.current = next?.id ?? null; setOpening(next); }, []);
+  const inspectClosed = useRef(new Set<() => void>());
+  const show = useCallback((next: Opening | null) => {
+    const previous = current.current?.draftId;
+    current.current = next; interaction.current = next?.id ?? null; setOpening(next);
+    if (previous !== next?.draftId) for (const inspect of inspectClosed.current) inspect();
+  }, []);
   useEffect(() => { if (!active) { show(null); setPickerDraftId(null); for (const entry of store.getSnapshot()) store.remove(entry.id); } }, [active, show, store]);
   useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
   const previousPublication = useRef(publication);
@@ -132,7 +137,10 @@ export function useSelectionComposer(input: {
     window.addEventListener("blur", cancelReselection);
     return () => { document.removeEventListener("visibilitychange", retire); window.removeEventListener("blur", cancelReselection); };
   }, [cancelReselection]);
-  useEffect(() => () => { current.current = null; interaction.current = null; reselecting.current = null; activeRef.current = false; }, []);
+  useEffect(() => () => {
+    current.current = null; interaction.current = null; reselecting.current = null; activeRef.current = false;
+    for (const inspect of inspectClosed.current) inspect();
+  }, []);
   useEffect(() => {
     const moved = (event: Event) => {
       const source = current.current;
@@ -408,6 +416,7 @@ export function useSelectionComposer(input: {
     }
     if (!entry.highlightId && !reader.measurePassage(entry.passage)) return;
     const submitted = { ...entry, commandId: commandId ?? createRandomId() };
+    const generation = readWriting().generation;
     const openingId = source.id;
     const owns = () => activeRef.current && interaction.current === openingId &&
       (current.current === null || current.current.id === openingId && current.current.ownsFocus) && get(entry.id)?.revision === submitted.revision;
@@ -443,23 +452,33 @@ export function useSelectionComposer(input: {
         }
         const admitted = admitWriting(intent);
         store.update(entry.id, value => ({ ...value, write: admitted, operation: { id: admitted.id, kind: command.kind } }));
-        let notice: ReturnType<typeof feedback.offer> | null = null;
-        const stop = admitted.subscribe(() => {
+        let notice: ReturnType<typeof feedback.retainCondition> | null = null;
+        let irreducible: boolean | null = null;
+        const inspect = () => {
           const state = admitted.read();
-          if (state.kind !== "unconfirmed") return;
-          const irreducible = !canRetryWriting(admitted);
+          if (readWriting().generation !== generation || state.kind === "accepted" || state.kind === "refused" || state.kind === "abandoned") {
+            notice?.withdraw(); return;
+          }
+          if (state.kind === "unconfirmed") irreducible = !canRetryWriting(admitted);
+          if (irreducible === null) return;
           const message = irreducible ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded.";
           store.update(entry.id, value => ({ ...value,
             issue: { kind: "Failed", message: `save not confirmed. ${message}` } }));
-          if (current.current?.draftId !== entry.id) notice = feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `passage-save:${admitted.id}`, announcement: "Polite",
-            content: { tone: "Warning", title: "passage save not confirmed", message },
-            actions: irreducible ? [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) },
-              { label: "reload", onClick: () => { window.location.reload(); } }]
-              : [{ label: "retry same save", onClick: admitted.retry }] });
-        });
-        void admitted.settled.then(() => { stop(); notice?.withdraw(); }, stop);
+          if (current.current?.draftId === entry.id && notice === null) return;
+          const condition = { priority: "Write" as const, needsAttention: true, announcement: "Polite" as const,
+            content: { tone: "Warning" as const, title: "passage save not confirmed", message },
+            actions: irreducible ? [{ label: "copy text", onClick: () => { if (readWriting().generation === generation) copyWriting(feedback, submitted.body.body_text); } },
+              { label: "reload", onClick: () => { if (readWriting().generation === generation) window.location.reload(); } }] as const
+              : [{ label: "retry same save", commandKey: `passage-save:${admitted.id}:retry`, busy: state.kind === "queued" || state.kind === "sending",
+                onClick: () => { if (readWriting().generation === generation) admitted.retry(); } }] as const };
+          if (notice) notice.update(condition); else notice = feedback.retainCondition({ key: `passage-save:${admitted.id}`, ...condition });
+        };
+        inspectClosed.current.add(inspect);
+        const stop = admitted.subscribe(inspect);
+        const retire = () => { stop(); inspectClosed.current.delete(inspect); notice?.withdraw(); };
+        void admitted.settled.then(retire, retire);
         const ack = await admitted.settled;
-        if (ctx.sessionSignal().aborted) return;
+        if (ctx.sessionSignal().aborted || readWriting().generation !== generation) return;
         annotations.acknowledge(ack);
         const highlightId = ack.identities.find(identity => identity.kind === "highlight" && identity.requested_id === submitted.referenceSource.highlight_id)?.canonical_id ?? submitted.highlightId ?? submitted.referenceSource.highlight_id;
         const canonicalNoteId = ack.identities.find(identity => identity.kind === "note_block" && identity.requested_id === submitted.noteId)?.canonical_id ?? submitted.noteId;
@@ -492,7 +511,7 @@ export function useSelectionComposer(input: {
         // acknowledgement adopts identity/base only: no editor replacement, focus or dismissal.
         if (continuation) await continuation(highlightId, owns);
       } catch (error) {
-        if (ctx.sessionSignal().aborted) return;
+        if (ctx.sessionSignal().aborted || readWriting().generation !== generation) return;
         store.update(entry.id, value => ({ ...value, operation: null,
           issue: { kind: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED" ? "Source" : "Failed", message: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
             ? "the source changed. select it again before saving or sending."
@@ -656,7 +675,34 @@ export function useSelectionComposer(input: {
         latest !== undefined && !latest.referenceActive && !latest.attachmentActive &&
         (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
     };
-    let sendNotice: ReturnType<typeof feedback.offer> | null = null;
+    const account = ctx.sessionSignal();
+    let sendNotice: ReturnType<typeof feedback.retainCondition> | null = null;
+    let sendFeedback: FeedbackContent | null = null;
+    let sendRecovery: "Unconfirmed" | "RefreshRequired" | null = null;
+    let stopSend: (() => void) | null = null;
+    const inspectSend = () => {
+      const state = owner.getSnapshot();
+      if (account.aborted || !owner.isActive() || state.kind === "Idle" || state.command.kind !== "Send" || state.command.runId !== runId) {
+        sendNotice?.withdraw(); stopSend?.(); stopSend = null; inspectClosed.current.delete(inspectSend); return;
+      }
+      if (state.kind !== "Busy") { sendFeedback = state.feedback; sendRecovery = state.kind; }
+      if (sendFeedback === null || current.current?.draftId === entry.id && sendNotice === null) return;
+      const condition = { priority: "Write" as const, needsAttention: true, announcement: "Polite" as const,
+        content: sendRecovery === "Unconfirmed" ? { ...sendFeedback, title: "highlight saved; send not confirmed" } : sendFeedback,
+        actions: [{ label: sendRecovery === "RefreshRequired" ? "refresh chat" : "retry same send",
+          commandKey: `passage-send:${runId}:${sendRecovery}`, busy: state.kind === "Busy",
+          onClick: (intent: OpenIntent) => {
+            const current = owner.getSnapshot();
+            if (account.aborted || !owner.isActive() || current.kind === "Idle" || current.command.kind !== "Send" || current.command.runId !== runId) return;
+            void openAsyncResult({ ctx, intent, disposition: "Fork",
+              create: async () => {
+                const outcome = await owner.retry(intent);
+                return account.aborted ? null : chatOutcome(entry, outcome, target, true);
+              },
+            }).catch(error => { if (!account.aborted) onError(error, "chat retry didn’t finish"); });
+          } }] as const };
+      if (sendNotice) sendNotice.update(condition); else sendNotice = feedback.retainCondition({ key: `passage-send:${runId}`, ...condition });
+    };
     const execute = async (): Promise<OpenResult | null> => {
       let ensured: string | null = null;
       await submit({ command: { kind: "Ensure" }, source, continuation: id => { ensured = id; } });
@@ -703,8 +749,9 @@ export function useSelectionComposer(input: {
         ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
           insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
         : { kind: "New" as const }, content: question.content, selection, reader_selection: { key: preview.key, revision: preview.revision } };
+      inspectClosed.current.add(inspectSend);
+      stopSend = owner.subscribe(inspectSend);
       const result = await owner.execute({ kind: "Send", request, runId, viewId: pane.paneId, openIntent }, () => {
-        sendNotice?.withdraw();
         store.update(entry.id, value => {
           if (value.chatAttempt?.runId !== runId) return value;
           const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.attachmentActive;
@@ -715,11 +762,7 @@ export function useSelectionComposer(input: {
             destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
-      if (result.kind === "Pending" && current.current?.draftId !== entry.id) sendNotice = feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
-        key: `passage-send:${runId}`, announcement: "Polite",
-        content: { tone: "Warning", title: "highlight saved; send not confirmed", message: "the request may have succeeded." },
-        actions: [{ label: "retry same send", onClick: () => { void owner.retry().then(result => chatOutcome(entry, result, target, true)).catch(error => onError(error, "chat retry didn’t finish")); } }],
-      });
+      inspectSend();
       return chatOutcome(entry, result, target, true);
     };
     try {
@@ -734,6 +777,7 @@ export function useSelectionComposer(input: {
       if (failure.kind === "Defect") onError(failure.error, "Chat couldn’t be prepared");
     }
     finally {
+      if (!owner.isActive() || owner.getSnapshot().kind === "Idle") inspectSend();
       store.update(entry.id, value => value.chatAttempt?.kind === "Preparing" && value.chatAttempt.runId === runId ? { ...value, chatAttempt: null } : value);
     }
   };

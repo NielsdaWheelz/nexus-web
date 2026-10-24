@@ -66,23 +66,30 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
         : { kind: "body", policy: "explicit", note_id: submitted.publication.request.note_id,
           body_pm_json: submitted.body.body_pm_json, expected: captureLane(ref, "body", submitted.base.version) });
       draft.set(current => ({ ...current, write, failure: null }));
-      let notice: ReturnType<typeof feedback.offer> | null = null;
+      let notice: ReturnType<typeof feedback.retainCondition> | null = null;
+      let irreducible: boolean | null = null;
+      const copy = () => { if (readWriting().generation === generation) copyWriting(feedback, submitted.body.body_text); };
       const inspect = () => {
         const state = write.read();
-        if (mounted.current || state.kind !== "unconfirmed" || readWriting().generation !== generation) return;
-        const irreducible = !canRetryWriting(write);
-        notice = feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `item-save:${write.id}`, announcement: "Polite",
-          content: { tone: "Warning", title: "item save not confirmed", message: irreducible
+        if (readWriting().generation !== generation || state.kind === "accepted" || state.kind === "refused" || state.kind === "abandoned") {
+          notice?.withdraw(); return;
+        }
+        if (state.kind === "unconfirmed") irreducible = !canRetryWriting(write);
+        if (irreducible === null || mounted.current && notice === null) return;
+        const condition = { priority: "Write" as const, needsAttention: true, announcement: "Polite" as const,
+          content: { tone: "Warning" as const, title: "item save not confirmed", message: irreducible
             ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded." },
-          actions: irreducible ? [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) },
-            { label: "reload", onClick: () => window.location.reload() }]
-            : [{ label: "retry same save", onClick: write.retry }, { label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) }],
-        });
+          actions: irreducible ? [{ label: "copy text", onClick: copy },
+            { label: "reload", onClick: () => { if (readWriting().generation === generation) window.location.reload(); } }] as const
+            : [{ label: "retry same save", commandKey: `item-save:${write.id}:retry`, busy: state.kind === "queued" || state.kind === "sending",
+              onClick: () => { if (readWriting().generation === generation) write.retry(); } }, { label: "copy text", onClick: copy }] as const,
+        };
+        if (notice) notice.update(condition); else notice = feedback.retainCondition({ key: `item-save:${write.id}`, ...condition });
       };
       inspectClosed.current = inspect;
       const stop = write.subscribe(inspect);
       void write.settled.then(() => { stop(); notice?.withdraw(); }, error => {
-        stop();
+        stop(); notice?.withdraw();
         if (!mounted.current && readWriting().generation === generation) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `item-save:${write.id}`, announcement: "Polite",
           content: { tone: "Warning", title: "couldn’t save this item", message: isApiError(error) ? error.message : "review its destination before saving again." },
           actions: [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) }] });

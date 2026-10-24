@@ -64,11 +64,17 @@ export interface FeedbackOffer {
   update(notice: WorkspaceNotice): void;
   withdraw(): void;
 }
+export interface FeedbackCondition {
+  update(notice: WorkspaceCondition): void;
+  withdraw(): void;
+}
 export interface FeedbackContextValue {
   receipt(content: Pick<FeedbackContent, "tone" | "title">): void;
   /** settlement removes its current condition; the short fact is presentation only. */
   settleCondition(input: { key: string; content: Pick<FeedbackContent, "tone" | "title"> }): void;
   offer(input: OfferInput): FeedbackOffer;
+  /** A live command owner retains required recovery through its exact settlement. */
+  retainCondition(input: WorkspaceCondition & { key: string }): FeedbackCondition;
 }
 export const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
 const Scope = createContext<{ active: boolean; mayRestoreFocus: () => boolean; returnFocus: () => HTMLElement | null } | null>(null);

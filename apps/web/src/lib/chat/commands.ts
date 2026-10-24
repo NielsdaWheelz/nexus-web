@@ -509,8 +509,10 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       pending = null;
       running = null;
       handoff = null;
-      listeners.clear();
       state = IDLE_COMMAND;
+      // Retirement changes state without delivering a settled tree.
+      for (const listener of [...listeners]) listener.changed();
+      listeners.clear();
     },
   };
 }
