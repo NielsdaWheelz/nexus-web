@@ -360,8 +360,8 @@ export function useSelectionComposer(input: {
     show({ id: createRandomId(), draftId: prepared.id, focus, ownsFocus: prepared.restored ? focus : true, serial: ++serial.current, mode });
     void prepared.ready().catch(error => {
       if (ctx.sessionSignal().aborted) return;
-      store.update(prepared.id, entry => ({ ...entry, issue: { kind: "Failed", message: "your draft could not be prepared. your words are kept." } }));
-      onError(error, "draft couldn’t be prepared");
+      store.update(prepared.id, entry => ({ ...entry, issue: { kind: "Failed", message: "passage input couldn’t be prepared." } }));
+      onError(error, "passage input couldn’t be prepared");
     });
   };
 

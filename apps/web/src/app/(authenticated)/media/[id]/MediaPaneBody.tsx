@@ -635,7 +635,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
       actions={verbs.bounds.phase === "Selecting" ? [{ label: "cancel", onClick: verbs.cancelBounds }] : undefined}
     /> : null}
     {isMobile && verbs.composer.reselection ? <FeedbackNotice announcement="Polite"
-      content={{ tone: "Neutral", title: "select a passage for this draft." }}
+      content={{ tone: "Neutral", title: "select the passage again." }}
       actions={[{ label: "cancel", onClick: verbs.dismissSelection }]} /> : null}
   </>, [isMobile, verbs.bounds, verbs.cancelBounds, verbs.composer.reselection, verbs.dismissSelection, verbs.selectionIssue]);
   useMobileChromeHold(isMobile && paneActive && paneVisible && annotationNotice !== null);
