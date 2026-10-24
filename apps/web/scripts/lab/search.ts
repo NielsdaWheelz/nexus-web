@@ -1,7 +1,8 @@
 // three retained search checks; invoke only through the disposable runtime.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 import type { components } from "@/lib/api/wire.gen";
@@ -9,6 +10,16 @@ import { browserRequest } from "./browser";
 import { readLabContext } from "./context";
 
 const context = readLabContext();
+const fixturePath = join(context.artifacts_dir, "search-fixture.json");
+const evidencePath = join(context.artifacts_dir, "search-evidence.private.json");
+const resultPath = join(context.artifacts_dir, "search-retained.private.json");
+const facts: Record<string, unknown> = { scope: null, atomic: null, evidence: null };
+async function saveFacts() {
+  const pending = `${resultPath}.pending`;
+  await writeFile(pending, JSON.stringify(facts), { mode: 0o600 });
+  await rename(pending, resultPath);
+}
+await saveFacts();
 const python = String.raw`import asyncio, json, os, sys
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -30,6 +41,7 @@ from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.search.query import build_discovery_query, scope_from_uri
 factory = get_session_factory()
 fixture_file = Path(context["artifacts_dir"]) / "search-fixture.json"
+evidence_file = Path(context["artifacts_dir"]) / "search-evidence.private.json"
 mode = sys.argv[1]
 
 def ids(db, owner):
@@ -95,7 +107,6 @@ if mode == "seed":
         db.commit()
     fixture={"viewer":str(viewer),"other":str(other),"a":str(a),"b":str(b),"hidden":str(hidden),"left":str(left),"right":str(right),"person":str(person.contributor_id),"handle":person.handle,"bodies":bodies,"fragment_id":fragment_id}
     fixture_file.write_text(json.dumps(fixture)); fixture_file.chmod(0o600)
-    print(json.dumps(fixture))
 else:
     f=json.loads(fixture_file.read_text()); a,b=UUID(f["a"]),UUID(f["b"])
     if mode == "scope":
@@ -176,28 +187,39 @@ else:
             anchor="chunk" if scheme=="content_chunk" else "fragment"
             assert passage["item"]["activation"]["href"]=="/media/"+str(a)+"#"+anchor+"-"+identity, "canonical occurrence activation differs"
             return {"passage":passage,"start":locator["start_offset"],"end":locator["end_offset"]}
-        print(json.dumps(asyncio.run(evidence_check())))
+        proof=asyncio.run(evidence_check())
+        descriptor=os.open(evidence_file,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+        with os.fdopen(descriptor,"w") as handle:
+            json.dump(proof,handle)
     else:
         raise AssertionError("unknown retained check")`;
 const execute = promisify(execFile);
-async function run(mode: string): Promise<string> {
+async function run(mode: string): Promise<void> {
+  facts[mode] = { started: true };
+  await saveFacts();
   try {
-    const { stdout } = await execute(join(context.worktree, "python/.venv/bin/python"), ["-c", python, mode], {
+    await execute(join(context.worktree, "python/.venv/bin/python"), ["-c", python, mode], {
       cwd: context.worktree, env: process.env, timeout: 60_000, maxBuffer: 1024 * 1024,
     });
-    return stdout.trim();
+    facts[mode] = { python_complete: true };
+    await saveFacts();
   } catch (error) {
     const diagnostic = error instanceof Error && "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
     const assertion = diagnostic.split("\n").find(line => line.startsWith("AssertionError:"));
+    facts[mode] = { python_complete: false, error_type: error instanceof Error ? error.name : "unknown" };
+    await saveFacts();
     throw new Error(`search ${mode} failed${assertion ? `: ${assertion}` : ""}`);
   }
 }
 // justify-type-assertion: the owned fixture emits exactly these public ids.
-const fixture = JSON.parse(await run("seed")) as { a: string; b: string; left: string; right: string; fragment_id: string };
+await run("seed");
+const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string };
 const browser = await chromium.launch({
   args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
 });
 try {
+  const browserRequests: Array<Record<string, unknown>> = [];
+  facts.browser_requests = browserRequests;
   const session = await browser.newContext({ storageState: context.browser_state_file });
   const page = await session.newPage();
   await page.goto(context.web_origin, { waitUntil: "domcontentloaded" });
@@ -211,27 +233,44 @@ try {
       headers: {},
       body: null,
     });
+    const observed: Record<string, unknown> = { scope, status: response.status };
+    browserRequests.push(observed);
+    await saveFacts();
     assert.equal(response.status, 200, "browser search request failed");
     // justify-type-assertion: the search route returns the generated page directly; the BFF preserves its body.
     const body = JSON.parse(response.body) as components["schemas"]["SearchResourcesResponse"];
+    Object.assign(observed, { phase: body.phase, view: body.view,
+      refs: Array.isArray(body.results) ? body.results.map(row => row.item.ref) : null });
+    await saveFacts();
     assert.equal(body.phase, "lexical", "browser returned the wrong search phase");
     assert.equal(body.view, "resources", "browser returned the wrong search view");
     assert.ok(Array.isArray(body.results), "browser search page has no results array");
     return body;
   }
   await run("scope");
-  assert.deepEqual(new Set((await search()).results.map(row => row.item.ref)), new Set([`media:${fixture.a}`, `media:${fixture.b}`]));
-  assert.deepEqual((await search(`library:${fixture.left}`)).results.map(row => row.item.ref), [`media:${fixture.a}`]);
-  assert.deepEqual((await search(`library:${fixture.right}`)).results.map(row => row.item.ref), [`media:${fixture.b}`]);
+  const all = await search();
+  const left = await search(`library:${fixture.left}`);
+  const right = await search(`library:${fixture.right}`);
+  facts.scope = { python_complete: true, browser_observed: true };
+  await saveFacts();
+  assert.deepEqual(new Set(all.results.map(row => row.item.ref)), new Set([`media:${fixture.a}`, `media:${fixture.b}`]));
+  assert.deepEqual(left.results.map(row => row.item.ref), [`media:${fixture.a}`]);
+  assert.deepEqual(right.results.map(row => row.item.ref), [`media:${fixture.b}`]);
+  facts.scope = { python_complete: true, passed: true };
+  await saveFacts();
   console.log("scope isolation passed");
   await run("atomic");
   console.log("atomic replacement passed (canonical text attempt and contributor batch; worker fences separate)");
   // justify-type-assertion: the fixture emits the canonical generated occurrence shape.
-  const proof = JSON.parse(await run("evidence")) as {
+  await run("evidence");
+  const proof = JSON.parse(await readFile(evidencePath, "utf8")) as {
     passage: components["schemas"]["SearchOccurrenceOut"]; start: number; end: number;
   };
   const evidence = proof.passage;
   const row = (await search(`media:${fixture.a}`)).results[0];
+  facts.evidence = { python_complete: true, oracle_ref: evidence.item.ref,
+    browser_passage_matches: isDeepStrictEqual(row.matching_passage, evidence) };
+  await saveFacts();
   assert.deepEqual(row.matching_passage, evidence, "browser evidence differs from canonical reader");
   await page.goto(`${context.web_origin}/search?${new URLSearchParams({ q: "labneedle", kinds: "documents", scope: `media:${fixture.a}` })}`, { waitUntil: "domcontentloaded" });
   assert.ok(evidence.match, "oracle passage has no literal evidence");
@@ -267,7 +306,13 @@ try {
       return actualStart === start && actualStart + Array.from(literal).length === end;
     });
   }, { fragment: fixture.fragment_id, literal: evidence.match.excerpt.text, start: proof.start, end: proof.end }, { timeout: 15_000 });
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), reader_highlight_complete: true, passed: true };
+  await saveFacts();
   console.log("owner evidence passed");
+} catch (error) {
+  facts.browser_error_type = error instanceof Error ? error.name : "unknown";
+  await saveFacts();
+  throw error;
 } finally {
   await browser.close();
 }
