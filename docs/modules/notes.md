@@ -351,7 +351,10 @@ quoted chat without changing the saved note. bodies use `NoteBody`'s canonical
 `body_pm_json`/`body_text`; edits and focus use `NoteEdit`/`FocusSelection`.
 composition and nested controls keep their own keys. one active composer owns its caret, rich body and undo history. outer dismissal,
 reader replacement or another passage discards unsubmitted input silently. nested
-chooser dismissal preserves it. no per-passage buffer inventory or restart restore. canonical
+chooser dismissal preserves it. no per-passage buffer inventory or restart restore. its nested query/link/upload
+cells use the existing surface scope while keeping the real visit identity.
+only its upload owner participates in outer-abandonment confirmation; confirmed
+abandonment aborts that browser pipeline. accepted media remains on the server. canonical
 rich equality determines changed input; a model or quote choice alone is clean.
 saving a passage and sending its text as chat remain separate explicit operations.
 

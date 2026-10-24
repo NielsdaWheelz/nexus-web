@@ -4,6 +4,8 @@
 // owners settle independently of dismissal and never replace newer input.
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { copyWriting } from "@/components/notes/NoteNotices";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -37,7 +39,7 @@ import { useOutlineSession, type NoteEdit } from "@/lib/notes/useOutlineSession"
 import { OutlineSessionContext, ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
-import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { AnnotationStore } from "./annotations";
 import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type ReaderChatIssue } from "./selectionDrafts";
@@ -88,6 +90,8 @@ export function useSelectionComposer(input: {
   const { reader, annotations, active, isMobile, onError } = input;
   const latestWorkspace = useLatestWorkspace();
   const feedback = useFeedback();
+  const guard = useWorkGuard();
+  const visitId = usePaneVisitIdentity();
   const { ctx } = useActionRuntime();
   const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
   const inheritedSession = useContext(OutlineSessionContext);
@@ -149,6 +153,10 @@ export function useSelectionComposer(input: {
 
   const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
   const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
+  const canAbandon = () => {
+    const id = current.current?.draftId;
+    return id === undefined || guard.confirmLoss({ scopes: [], ownerIds: [noteEditorAttachmentOwnerId(visitId, `reader-draft:${id}`)] });
+  };
   const destination = draft?.destination ?? null;
   const defaultId = draft?.load === "Ready" && destination?.kind === "Resolving" ? draft.id : null;
   const defaultSource = draft?.sourceMediaId ?? null;
@@ -355,6 +363,9 @@ export function useSelectionComposer(input: {
     return { id, ready, mediaId: boundSource.mediaId, generation, restored: false };
   };
   const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null, mode: Opening["mode"]) => {
+    const previous = current.current && get(current.current.draftId);
+    const replacing = previous && (carried !== null || !(highlightId ? previous.highlightId === highlightId : samePassage(previous.passage, passage)));
+    if (replacing && !canAbandon()) return;
     const prepared = prepare(passage, highlightId, carried);
     setPickerDraftId(null);
     show({ id: createRandomId(), draftId: prepared.id, focus, ownsFocus: prepared.restored ? focus : true, serial: ++serial.current, mode });
@@ -367,11 +378,7 @@ export function useSelectionComposer(input: {
 
   const highlightDeleted = useCallback((id: string) => {
     if (store.getSnapshot().some((entry) => entry.id === current.current?.draftId && entry.highlightId === id)) show(null);
-    for (const entry of store.getSnapshot()) if (entry.highlightId === id) {
-      store.update(entry.id, (value) => ({ ...value, highlightId: null, highlight: null, base: { kind: "Absent" },
-        issue: { kind: "Deleted", message: "this highlight was deleted. your words are kept; select a passage to save them again." },
-        publication: null, load: "Ready", status: null }));
-    }
+    for (const entry of store.getSnapshot()) if (entry.highlightId === id) store.remove(entry.id);
   }, [show, store]);
 
   const submit = ({ command, source, commandId, continuation }: {
@@ -502,12 +509,18 @@ export function useSelectionComposer(input: {
   };
 
   const captureCommand = async (capture: SelectionCapture, command: Extract<Command, { kind: "Ensure" | "Highlight" }>): Promise<{ id: string; isCurrent: () => boolean } | null> => {
-    const prepared = prepare(capture, annotations.twin(capture.anchor), null);
-    const source: Opening = { id: createRandomId(), draftId: prepared.id, focus: false, ownsFocus: true, serial: ++serial.current, mode: "Note" };
+    const highlightId = annotations.twin(capture.anchor);
+    const activeOpening = current.current;
+    const activeEntry = activeOpening && get(activeOpening.draftId);
+    const sameOwner = activeEntry && (highlightId ? activeEntry.highlightId === highlightId : samePassage(activeEntry.passage, capture));
+    if (!sameOwner && !canAbandon()) return null;
+    const prepared = prepare(capture, highlightId, null);
+    const source: Opening = sameOwner && activeOpening ? activeOpening
+      : { id: createRandomId(), draftId: prepared.id, focus: false, ownsFocus: true, serial: ++serial.current, mode: "Note" };
     const entry = get(prepared.id);
     if (!entry || entry.operation || preparing.current.has(entry.id)) return null;
     preparing.current.add(entry.id);
-    show(null);
+    if (!sameOwner) show(null);
     interaction.current = source.id;
     let result: { id: string; isCurrent: () => boolean } | null = null;
     try {
@@ -778,6 +791,7 @@ export function useSelectionComposer(input: {
     reselect() {
       const shown = reader.getState().document;
       if (!draft || draft.operation || shown.status !== "ready" || shown.refreshing) return;
+      if (!canAbandon()) return;
       const next: Reselection = { id: createRandomId(), draftId: draft.id, identity: shown.doc.identity, mode: opening?.mode ?? "Note" };
       reselecting.current = next; setReselection(next); show(null); reader.focusSource();
     },
@@ -848,6 +862,7 @@ export function useSelectionComposer(input: {
     },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
+      if (!canAbandon()) return;
       const returnFocus = current.current?.ownsFocus;
       const id = current.current?.draftId;
       if (id) store.remove(id);

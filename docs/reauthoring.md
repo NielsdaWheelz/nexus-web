@@ -8,13 +8,15 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-online-first writing against `bdae1bb52`: -3,553 authored runtime lines
-(1,566 added, 5,119 deleted). deletes the account journal, recovery panel, passage
+online-first writing against `bdae1bb52`: -3,516 authored runtime lines
+(1,611 added, 5,127 deleted). deletes the account journal, recovery panel, passage
 shelf, writing startup/storage gates and native export protocol. live owners retain
 exact requests, bounded retries, version/undo proofs and narrow autosave exit risk.
-no backend schema or wire change. scoped deltas: writing/text/outline -1,983;
-editors/notices -668; passage composer -239; resource authoring -182;
-pages/capture/document lifetime -249; android -233; api/auth boundaries +1.
+passage input and nested forms use existing surface scope; pending uploads retain
+their loss guard and abort their exact browser pipeline on confirmed abandonment.
+no backend schema or wire change. scoped deltas: android -233; pages/capture/document lifetime
+-243; passage composer -219; resource authoring -182; editors/notices -657; api/auth boundaries
++1; writing/text/outline -1,983.
 docs and disposable qualification cases are excluded; earlier area totals retain
 their stated bases. paired deployment and actual-phone store retirement remain
 in `docs/issues/release-online-first-writing.md`.

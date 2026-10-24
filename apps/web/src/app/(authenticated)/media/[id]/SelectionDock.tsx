@@ -17,6 +17,7 @@ import { useResourceActions } from "@/lib/actions/useResourceActions";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
+import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { prepareActionSelect, projectActionControlState, type ActionDescriptor, type ActionSelectDetail, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
@@ -309,6 +310,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   readonly returnFocus: () => HTMLElement | null;
 }) {
   const { composer, menu } = verbs;
+  const visitScope = usePaneVisitWorkScope();
   const feedback = useFeedback();
   const { draft, opening } = composer;
   const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
@@ -373,7 +375,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
               onSelect: ({ triggerEl }) => verbs.share(triggerEl) }} />}
         </div>
-        <div className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}>
+        <div className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
+          onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
+          <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
           {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
             containingNoteRef={draft.base.kind === "Present" ? `note_block:${draft.base.id}` : null}
             body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label={isMobile ? opening.mode === "Ask" ? "question about passage" : "note on passage" : "note or question"}
@@ -385,6 +389,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             onContinueChat={canQuote ? () => composer.continueChat() : undefined} onEmptyBackspace={composer.deleteNote}
             />
             : !draft.issue ? <FeedbackStatus content={{ tone: "Neutral", title: "loading your note…" }} announcement="Polite" /> : null}
+          </PaneReturnVisitScope>
         </div>
         {canQuote ? <>
           <div className={styles.chatFooter}>
