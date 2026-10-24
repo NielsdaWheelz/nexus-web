@@ -15,7 +15,8 @@ and downloaded reading-copy shapes remain current and unchanged. public text
 asset/note requests all gain captured identity fencing, with no old request arm.
 audit exhaustive kind switches
 and refuse part reading-copy creation at both capability and service boundaries.
-no compatibility branch. piece downloads remain unavailable.
+no compatibility branch. piece downloads remain unavailable. complete the shared
+[https/http2 release prerequisites](release-web-http2.md) when pairing these clients.
 
 drain existing `media_content_reindex_job` work before cutover: the new payload
 requires explicit structural and partition keys plus nullable preparation-command
