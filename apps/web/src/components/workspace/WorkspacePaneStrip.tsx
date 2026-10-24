@@ -34,6 +34,8 @@ import { PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
+import type { WorkspaceTargetActivationResult, WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { paneActions } from "@/lib/workspace/paneActions";
 import { useLatestWorkspace, type WorkspaceSelection } from "@/lib/workspace/store";
@@ -86,7 +88,7 @@ function StripTab(props: {
     control: Control,
     menuDefault?: (event: ButtonKey) => void,
   ) => void;
-  readonly onActivate: () => void;
+  readonly onActivate: (event: TargetActivationEvent) => void;
   readonly onClose: () => void;
 }) {
   const { item } = props;
@@ -113,7 +115,7 @@ function StripTab(props: {
         aria-current={item.isActive ? "page" : undefined}
         aria-describedby={props.descriptionId}
         aria-keyshortcuts="ArrowLeft ArrowRight Home End ArrowDown Delete Backspace Shift+M Shift+F10"
-        title={item.label}
+        title={`${item.label}. shift-click or shift-enter opens in a new pane`}
         onMouseDown={(event) => {
           if (!hasActiveInteractionOwner()) sortable.listeners?.onMouseDown?.(event);
         }}
@@ -168,7 +170,7 @@ export default function WorkspacePaneStrip(props: {
   readonly state: WorkspaceState;
   readonly items: readonly StripItem[];
   readonly isMaximized: boolean;
-  readonly onActivate: (paneId: string) => void;
+  readonly onActivate: (paneId: string, disposition: WorkspaceTargetDisposition) => WorkspaceTargetActivationResult | null;
   readonly onRestore: (paneId: string) => void;
   readonly onMinimize: (paneId: string) => void;
   readonly onClose: (paneId: string) => WorkspaceSelection | null;
@@ -271,6 +273,14 @@ export default function WorkspacePaneStrip(props: {
     focus({ paneId, control: "menu" });
     menus.current.get(paneId)?.click();
   };
+  const activate = (paneId: string, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume") return;
+    const result = props.onActivate(paneId, { kind: activation.intent === "new_pane" ? "Fork" : "Follow" });
+    if (result && result.kind !== "Cancelled" && result.kind !== "CreatedPane") reveal(result.paneId);
+  };
   const onKeyDown = (
     event: ButtonKey,
     index: number,
@@ -278,11 +288,16 @@ export default function WorkspacePaneStrip(props: {
     menuDefault?: (event: ButtonKey) => void,
   ) => {
     if (
-      event.defaultPrevented || event.nativeEvent.isComposing ||
+      event.defaultPrevented ||
       event.metaKey || event.ctrlKey || event.altKey || hasActiveInteractionOwner() ||
       !(event.target instanceof Node) || !strip.current?.contains(event.target)
     ) return;
     const paneId = items[index]!.paneId;
+    if (control === "activate" && event.key === "Enter") {
+      activate(paneId, event);
+      return;
+    }
+    if (event.nativeEvent.isComposing) return;
     if (event.shiftKey && event.key.toLowerCase() === "m") {
       event.preventDefault();
       if (!event.repeat) props.onToggleMaximize(paneId);
@@ -382,6 +397,7 @@ export default function WorkspacePaneStrip(props: {
               const actions = paneActions({
                 state: props.state,
                 paneId: item.paneId,
+                onOpen: paneId => props.onActivate(paneId, { kind: "Fork" }),
                 onMinimize: props.onMinimize,
                 onRestore: props.onRestore,
                 onMove: move,
@@ -417,10 +433,7 @@ export default function WorkspacePaneStrip(props: {
                     if (heldPointer.current === null) reveal(item.paneId);
                   }}
                   onKeyDown={(event, control, menuDefault) => onKeyDown(event, index, control, menuDefault)}
-                  onActivate={() => {
-                    reveal(item.paneId);
-                    props.onActivate(item.paneId);
-                  }}
+                  onActivate={event => activate(item.paneId, event)}
                   onClose={() => close(item.paneId)}
                 />
               );

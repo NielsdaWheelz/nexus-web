@@ -31,7 +31,9 @@ function pinnedOrigin(name, localDefault) {
   return url;
 }
 
-const nexus = pinnedOrigin("NEXUS_EXTENSION_NEXUS_ORIGIN", "http://localhost:3000");
+const nexus = pinnedOrigin("NEXUS_EXTENSION_NEXUS_ORIGIN", "https://127.0.0.1:3000");
+if (nexus.protocol !== "https:")
+  throw new Error("NEXUS_EXTENSION_NEXUS_ORIGIN must be an https origin");
 const storage = pinnedOrigin("NEXUS_EXTENSION_STORAGE_ORIGIN", "http://127.0.0.1:8333");
 
 rmSync(outputDir, { recursive: true, force: true });

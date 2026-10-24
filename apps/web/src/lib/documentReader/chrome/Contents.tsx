@@ -4,9 +4,12 @@
 // names a publication's recorded defects.
 import type { ReactElement } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import ActionMenu from "@/components/ui/ActionMenu";
+import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { useReaderState, type Reader } from "../DocumentReader";
 import type { SourceIssue, TocNode } from "../model";
 import { ReaderLink } from "../navigation";
+import type { ReaderDestination } from "../location";
 import styles from "./chrome.module.css";
 
 export function Contents({
@@ -28,12 +31,19 @@ export function Contents({
     return null;
   const list = (nodes: readonly TocNode[]) => (
     <ul className={styles.toc}>
-      {nodes.map(({ id, label, at, sectionId, children }) => (
-        <li key={id}>
-          {at ? (
+      {nodes.map(({ id, label, at, sectionId, children }) => {
+        const chapter = ready.doc.kind === "text" ? ready.doc.transcriptNavigation?.chapters.find((chapter) => chapter.id === id) ?? null : null;
+        const target: ReaderDestination["target"] | null = !at ? null : chapter ? { kind: "time", ms: chapter.startMs }
+          : { kind: "point", point: { kind: "text", ...at } };
+        const destination = target && { source_identity: ready.doc.identity, target };
+        const href = destination ? reader.navigation?.href(destination) ?? null : null;
+        return <li key={id}>
+          <div className={styles.tocRow}>
+          {target ? (
             <ReaderLink
               reader={reader}
-              target={{ kind: "point", point: { kind: "text", ...at } }}
+              target={target}
+              className={styles.tocLink}
               aria-current={
                 sectionId !== null && sectionId === current
                   ? "location"
@@ -45,9 +55,23 @@ export function Contents({
           ) : (
             <span>{label}{ready.doc.kind === "text" && ready.doc.format === "transcript" ? <span className="sr-only">; no transcript at this time</span> : null}</span>
           )}
+          {destination !== null || chapter !== null ? <ActionMenu label={`more actions for ${label}`} source={{ kind: "Immediate", subjectKey: `reader-contents:${ready.doc.identity}:${id}`, title: label,
+            content: { sections: [{ id: "Open", label: null, options: [{ kind: "link", id: "OpenInPane", label: "open in new pane",
+              ...(href === null ? { href: null, disabled: true as const } : { href }),
+              disabledReason: !at && chapter ? "no transcript at this time" : href === null ? "opening this location in a new pane is unavailable" : undefined,
+              onActivate: (event) => {
+                const activation = workspaceTargetActivationIntent(event);
+                if (activation.kind === "Unowned") return "unhandled";
+                event.preventDefault();
+                if (activation.kind === "Consume" || !destination || !reader.navigation) return "consumed";
+                return reader.navigation.activate(destination, "new_pane", () => {}) === "Accepted" ? "handled-new-pane" : "consumed";
+              },
+            }] }] },
+          }} /> : null}
+          </div>
           {children.length > 0 ? list(children) : null}
-        </li>
-      ))}
+        </li>;
+      })}
     </ul>
   );
   return (

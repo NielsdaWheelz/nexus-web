@@ -209,8 +209,7 @@ export function useNexusController() {
     return selection;
   }
 
-  // Named tab switches and direct restores bypass canonical destination activation.
-  // Let the launcher close before their local focus handoff.
+  // Reopening a closed tab is management, with its local focus handoff after closure.
   useEffect(() => {
     if (open || pendingTabFocus.current === null) return;
     const paneId = pendingTabFocus.current;
@@ -268,16 +267,9 @@ export function useNexusController() {
     return [pageOwner.id];
   }
 
-  function dispatch(target: Dispatchable, activation: NexusTargetActivation, discardOwnerIds: readonly string[]): WorkspaceTargetActivationResult {
+  function dispatch(target: Dispatchable, activation: NexusTargetActivation, discardOwnerIds: readonly string[]): WorkspaceTargetActivationResult | null {
     if (target.kind === "PaneOpen") {
-      const pane = panes.find(candidate => candidate.id === target.paneId)!;
-      if (activation.disposition.kind === "Fork") {
-        const visit = state.panes.find(candidate => candidate.id === pane.id)!.current_visit;
-        return dispatch({ kind: "InternalHref", href: pane.href, labelHint: visit.title_hint ?? undefined }, activation, discardOwnerIds);
-      }
-      if (!guard.confirmLoss({ scopes: [], ownerIds: discardOwnerIds })) return { kind: "Cancelled" };
-      workspace.activatePane(pane.id);
-      return { kind: "ActivatedExisting", paneId: pane.id };
+      return workspace.activateWorkspacePane({ paneId: target.paneId, disposition: activation.disposition, discardOwnerIds });
     }
     const request: WorkspaceTargetActivationRequest = target.kind === "OpenDailyPage" ? {
       originPaneId: state.active_primary_pane_id, target: { href: `/daily/${target.date.value}` },
@@ -382,9 +374,9 @@ export function useNexusController() {
           }
         : target;
     const result = dispatch(materialized, activation, sourceOwnerIds(target));
-    if (result.kind === "Cancelled") return result;
+    if (!result || result.kind === "Cancelled") return result;
     setAnnouncement("");
-    finishNavigation(materialized.kind === "PaneOpen" && activation.disposition.kind === "Follow" ? result.paneId : null);
+    finishNavigation(null);
     if (!row?.source) return result;
     const pane = materialized.kind === "PaneOpen" ? panes.find((pane) => pane.id === materialized.paneId)! : null;
     const href = materialized.kind === "InternalHref" ? materialized.href : pane?.href ?? null;
@@ -780,7 +772,7 @@ export function useNexusController() {
     clearAddDefect: () => setAddDefect(null),
     manageTabs: () => { if (guardExit({ kind: "Root" }) === "accepted") setPage({ kind: "ManageTabs" }); },
     openPane(paneId: string, intent: OpenIntent) {
-      run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
+      return run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     },
     closePane,
     minimizePane: (paneId: string) => keepWorkspaceSelection(workspace.minimizePane(paneId)),

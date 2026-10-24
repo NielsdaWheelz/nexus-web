@@ -73,6 +73,7 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
           initialState={initial.current}
           seeds={{}}
           entryFailure={null}
+          locationLinkFailure={null}
         /></CatalogProvider>
       </AuthenticatedWorkspaceErrorBoundary>
     </DeviceWorkspaceContext>;

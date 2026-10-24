@@ -60,10 +60,11 @@ make worker-interactive
 make worker-background
 ```
 
-open `http://localhost:3000`. `WEB_PORT` selects both the listener and public
-origin. `make web` refreshes storage cors for that port before starting next,
-including localhost, loopback and android-emulator origins. `make down` stops
-services and preserves data.
+provide a trusted pem chain and key through `NEXUS_WEB_TLS_CERT_FILE` and
+`NEXUS_WEB_TLS_KEY_FILE`, then open `https://127.0.0.1:3000`. `WEB_PORT` selects
+the public listener; `APP_PUBLIC_URL` names its exact https origin. `make web`
+builds and serves the canonical http2 package and refreshes storage cors for
+that origin. changes use build/restart. `make down` stops services and preserves data.
 
 ## disposable verification
 
@@ -211,7 +212,7 @@ deployment does not update the apk behind `/android`.
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Building it runs `bun run build:shelf` in `apps/web` to regenerate the git-ignored packaged shelf (Downloads, see `docs/modules/offline.md`). Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require an explicit hosted origin, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> android shell. building regenerates the ignored packaged ui. debug defaults to `https://127.0.0.1:3000` with `adb reverse tcp:3000 tcp:3000`; a private issuer needs `-PnexusAndroidDebugCaFile=/absolute/ca.pem` and separate browser trust for custom-tab login. release uses system trust and requires its explicit hosted origin, version and signing inputs. see [device startup](docs/modules/device-startup.md).
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> Firefox capture extension (manifest, icons; bundles built into the git-ignored `dist/` by `bun run build:extension` from `apps/web/src/extension/`): saves the current article or a linked PDF/EPUB into chosen libraries. See `docs/modules/ingest.md`.
 - `python/` -> backend package: see `python/README.md`

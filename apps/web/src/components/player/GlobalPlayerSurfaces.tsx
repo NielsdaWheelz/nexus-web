@@ -35,7 +35,7 @@ import { usePlayerPresentation } from "@/lib/player/presentation";
 import * as Player from "@/lib/player/playerRuntime";
 import { useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useWorkspaceStore } from "@/lib/workspace/store";
+import { useLatestWorkspace } from "@/lib/workspace/store";
 import QueuePanel, { QueueStatus } from "./QueuePanel";
 import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlaybackControls";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -254,7 +254,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const { state, queue, preferences, pendingPlayback, playbackSubject, supportsSilenceSkipping } = Player.usePlayerSession();
   const presentation = usePlayerPresentation();
   const commands = Player.usePlayerCommands();
-  const workspace = useWorkspaceStore();
+  const latestWorkspace = useLatestWorkspace();
   const isMobile = useIsMobileViewport();
   const priorMode = useRef(isMobile);
   const modeChanged = priorMode.current !== isMobile;
@@ -342,9 +342,17 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     presentation.regionRef.current = isMobile ? null : element;
   }, [isMobile, presentation.regionRef]);
   const linkRuntime: TargetLinkActivationRuntime = {
-    activateTarget: input => workspace.activateWorkspaceTarget({
-      ...input, originPaneId: workspace.state.active_primary_pane_id,
-    }),
+    activateTarget: input => {
+      const workspace = latestWorkspace();
+      return workspace.activateWorkspaceTarget({ ...input, originPaneId: workspace.state.active_primary_pane_id });
+    },
+  };
+  const opened = () => {
+    sourceOpened.current = true;
+    focusedControl.current = null;
+    setPicker(null);
+    setSheetOpen(false);
+    setQueueOpen(false);
   };
 
   useMobileChromeSurface(footerRef, isMobile);
@@ -433,7 +441,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   }, [queue.phase, queue.error]);
   const openQueue = <Button ref={queueRef} size="comfortable" icon={<Icon.ListMusic />} aria-label="up next"
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
-    onClick={() => { if (isMobile) { sourceOpened.current = false; setSheetOpen(true); } else setQueueOpen(value => !value); }}>up next</Button>;
+    onClick={() => { sourceOpened.current = false; if (isMobile) setSheetOpen(true); else setQueueOpen(value => !value); }}>up next</Button>;
   const absentCopy = pendingPlayback !== null ? "preparing playback…"
     : !queue.known ? queue.error === null ? "loading queue…" : "couldn’t load queue"
     : retained ? queue.header?.current_entry_id === null ? "queue finished" : "playback stopped" : "nothing queued";
@@ -489,11 +497,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         const handled = activateTargetLink({ event, runtime: linkRuntime,
           target: { href: sourceHref, labelHint: source.descriptor.title },
         });
-        if (handled === "handled-default" || handled === "handled-new-pane") {
-          sourceOpened.current = sheetShown;
-          focusedControl.current = null;
-          setSheetOpen(false);
-        }
+        if (handled === "handled-default" || handled === "handled-new-pane") opened();
       };
       const identityButton = <Identity state={state} size={44}
         label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={state.error ?? settingsStatus ?? status} />;
@@ -614,7 +618,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       const chaptersPanel = <section className={styles.panel} aria-label="chapters">
         <h2 className={styles.panelTitle}>chapters</h2>
         <ChapterContext />
-        <ChapterList state={state} presentation="embedded" />
+        <ChapterList state={state} presentation="embedded" onOpened={opened} />
       </section>;
       const toggle = (kind: "Playback" | "Chapters") => {
         if (shownPicker === kind) { setPicker(null); return; }
@@ -683,7 +687,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           <section className={`${styles.panel} ${styles.chapterPanel}`} aria-label="chapters">
             <h2 className={styles.panelTitle}>chapters</h2>
             <ChapterContext />
-            <ChapterList state={state} presentation="popup" />
+            <ChapterList state={state} presentation="popup" onOpened={opened} />
           </section>
         </PickerSurface>
       </>;
@@ -721,10 +725,10 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       {overlays}
       <PickerSurface active={!isMobile && presentation.visible && queueOpen} onClose={() => setQueueOpen(false)} title="up next"
         anchor={() => returnFocus(queueRef.current)} returnFocusFallback={() => returnFocus(null)} placement="above"
-        skipReturnFocus={() => document.activeElement instanceof HTMLElement && document.activeElement !== document.body
-          && !document.activeElement.closest('[role="dialog"][aria-label="up next"]')}
+        skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+          && !document.activeElement.closest('[role="dialog"][aria-label="up next"]'))}
         className={styles.queuePicker} initialFocus={panel => panel.querySelector<HTMLHeadingElement>("h2")}>
-        <div ref={queueScrollRef} className={styles.queueScrollport}><QueuePanel announce={setAnnouncement} scrollport={() => queueScrollRef.current} /></div>
+        <div ref={queueScrollRef} className={styles.queueScrollport}><QueuePanel announce={setAnnouncement} scrollport={() => queueScrollRef.current} runtime={linkRuntime} onOpened={opened} /></div>
       </PickerSurface>
       <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }} ariaLabel="now playing" handleLabel="collapse player"
         skipReturnFocus={() => sourceOpened.current}
@@ -738,7 +742,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         }}>
         <div ref={sheetContentRef} className={styles.sheetContent} role="region" aria-label="media player">
           {sheetPlayerContent}
-          <QueuePanel key="queue" announce={setAnnouncement} scrollport={() => sheetContentRef.current?.parentElement ?? null} />
+          <QueuePanel key="queue" announce={setAnnouncement} scrollport={() => sheetContentRef.current?.parentElement ?? null} runtime={linkRuntime} onOpened={opened} />
         </div>
       </MobileSheet>
     </div>

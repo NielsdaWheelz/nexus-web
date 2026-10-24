@@ -45,7 +45,7 @@ function SelectionAction({ action, blockedReason = null }: {
   const activate = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     if (action.kind === "link") {
       if (action.onActivate) action.onActivate(event);
-      else activateTargetLink({ event, runtime, target: { href: action.href } });
+      else activateTargetLink({ event, runtime, target: action.href === null ? null : { href: action.href } });
       return;
     }
     const detail = prepareActionSelect(event, event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
@@ -59,7 +59,8 @@ function SelectionAction({ action, blockedReason = null }: {
   const tooltip = { text: reason ? `${description}. ${reason}` : description };
   return <>
     {action.kind === "link" ? (
-      <ButtonLink href={action.href} aria-disabled={reason !== null || undefined} iconOnly icon={icon} tone={tone}
+      <ButtonLink {...(action.href === null ? { href: null, "aria-disabled": true as const }
+        : { href: action.href, "aria-disabled": reason !== null || undefined })} iconOnly icon={icon} tone={tone}
         className={styles.selectionIcon} tooltip={tooltip} aria-label={action.label}
         aria-describedby={reason ? reasonId : undefined} data-action-id={action.id}
         data-workspace-rich-target="true" onClick={activate} onKeyDown={activate} />

@@ -59,13 +59,14 @@ export function activateTargetLink(input: {
   if (activation.kind === "Unowned") return "unhandled";
   event.preventDefault();
   if (activation.kind === "Consume") return "consumed";
-  const result = activation.intent === "default" && input.onDefault ? input.onDefault() : runtime.activateTarget({
+  const local = activation.intent === "default" ? input.onDefault : undefined;
+  const result = local ? local() : runtime.activateTarget({
     target: { ...input.target, href },
     disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" },
     entry: input.entry,
     discardOwnerIds: input.discardOwnerIds,
   });
-  if (result?.kind === "Cancelled") return "consumed";
+  if (result === null || (!local && result === undefined) || result?.kind === "Cancelled") return "consumed";
   return activation.intent === "new_pane" ? "handled-new-pane" : "handled-default";
 }
 

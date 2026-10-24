@@ -1,6 +1,7 @@
 // Public source links and workspace arrivals name the same target. Coordinates
 // come from the source owner after landing, never from a display excerpt.
 import type { Schema } from "@/lib/api/wire";
+import { parseChatFindDestination, type ChatFindDestination } from "@/lib/chat/findDestination";
 import { parseReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { isCanonicalUuid } from "@/lib/validation";
@@ -9,7 +10,8 @@ import { MAX_WORKSPACE_HREF_LENGTH, parseWorkspaceHref } from "@/lib/workspace/w
 export type SourceTargetKey = Schema<"ResolveSourceTargetRequest">["target"];
 export type SourceArrivalTarget = SourceTargetKey
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
-  | { readonly kind: "invalid_destination"; readonly reason: "invalid_reader_destination" };
+  | { readonly kind: "chat_destination"; readonly destination: ChatFindDestination; readonly leaf_id: string }
+  | { readonly kind: "invalid_destination"; readonly reason: "invalid_reader_destination" | "location_too_long" };
 export type SourceTarget = Schema<"SourceTargetOut">;
 export type SourceLocator = Extract<SourceTarget["location"], { kind: "located" }>["locator"];
 
@@ -31,12 +33,21 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
   if (route.id === "media" && query.has("x_post"))
     return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   if (query.has("loc")) {
-    const destination = parseReaderDestination(query.get("loc")!);
-    if (route.id !== "media" || query.getAll("loc").length !== 1 ||
-      `${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH ||
-      url.hash || locatedQuery || destination === null)
+    if (`${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH)
+      return { kind: "invalid_destination", reason: "location_too_long" };
+    if (query.getAll("loc").length !== 1 || url.hash || locatedQuery || route.locator === null)
       return { kind: "invalid_destination", reason: "invalid_reader_destination" };
-    return { kind: "reader_destination", destination };
+    if (route.id === "media" && [...query.keys()].every((key) => key === "loc")) {
+      const destination = parseReaderDestination(query.get("loc")!);
+      if (destination) return { kind: "reader_destination", destination };
+    }
+    if (route.id === "conversation" && [...query.keys()].every((key) => key === "loc" || key === "leaf")) {
+      const leaf = query.get("leaf");
+      const destination = parseChatFindDestination(query.get("loc")!);
+      if (leaf && isCanonicalUuid(leaf) && query.getAll("leaf").length === 1 && destination)
+        return { kind: "chat_destination", destination, leaf_id: leaf };
+    }
+    return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   }
   const match = /^#(quote|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
   if (match && isCanonicalUuid(match[2])) {

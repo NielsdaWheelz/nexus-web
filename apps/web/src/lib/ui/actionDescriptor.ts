@@ -102,12 +102,11 @@ export type ActionDescriptor =
     })
   | (ActionBase & {
       readonly kind: "link";
-      readonly href: string;
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly restoreFocusOnClose?: boolean;
       readonly state?: never;
       readonly render?: never;
-    })
+    } & ({ readonly href: string } | { readonly href: null; readonly disabled: true }))
   | (ActionBase & {
       readonly kind: "custom";
       readonly render: (

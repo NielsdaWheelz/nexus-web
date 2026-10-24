@@ -23,6 +23,7 @@ import {
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import Button from "./Button";
 import ButtonLink from "./ButtonLink";
 import OverflowMenuButton from "./OverflowMenuButton";
@@ -32,8 +33,8 @@ import styles from "./SurfaceHeader.module.css";
 export interface SurfaceHeaderNavigation {
   canGoBack: boolean;
   canGoForward: boolean;
-  onBack: () => void;
-  onForward: () => void;
+  onBack: (event: TargetActivationEvent) => void;
+  onForward: (event: TargetActivationEvent) => void;
 }
 
 const RECOVERY = {
@@ -142,6 +143,8 @@ export default function SurfaceHeader({
               icon={<ChevronLeft />}
               className={styles.navigationButton}
               onClick={navigation.onBack}
+              onKeyDown={navigation.onBack}
+              tooltip={{ text: "shift-click or shift-enter opens in a new pane" }}
               disabled={!navigation.canGoBack}
               aria-label={`Go back${scope}`}
             />
@@ -150,6 +153,8 @@ export default function SurfaceHeader({
               icon={<ChevronRight />}
               className={styles.navigationButton}
               onClick={navigation.onForward}
+              onKeyDown={navigation.onForward}
+              tooltip={{ text: "shift-click or shift-enter opens in a new pane" }}
               disabled={!navigation.canGoForward}
               aria-label={`Go forward${scope}`}
             />
@@ -168,12 +173,12 @@ export default function SurfaceHeader({
               <>
                 {primary.kind === "link" ? (
                   <ButtonLink
-                    href={primary.href}
+                    {...(primary.href === null ? { href: null, "aria-disabled": true as const }
+                      : { href: primary.href, "aria-disabled": primary.disabled || undefined })}
                     iconOnly
                     icon={primary.icon}
                     className={styles.headerButton}
                     aria-label={primary.label}
-                    aria-disabled={primary.disabled || undefined}
                     aria-describedby={primary.disabledReason ? reasonId : undefined}
                     tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
                     data-action-id={primary.id}

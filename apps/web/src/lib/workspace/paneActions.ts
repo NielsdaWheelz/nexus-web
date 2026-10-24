@@ -1,10 +1,13 @@
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { WorkspaceState } from "@/lib/workspace/model";
+import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
+import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 
 /** Shared tab management vocabulary; callers own commands and focus. */
 export function paneActions({
   state,
   paneId,
+  onOpen,
   onMinimize,
   onRestore,
   onMove,
@@ -12,6 +15,7 @@ export function paneActions({
 }: {
   readonly state: WorkspaceState;
   readonly paneId: string;
+  readonly onOpen: (paneId: string) => WorkspaceTargetActivationResult | null;
   readonly onMinimize: (paneId: string) => void;
   readonly onRestore: (paneId: string) => void;
   readonly onMove: (input: { paneId: string; beforePaneId: string | null }) => void;
@@ -27,6 +31,20 @@ export function paneActions({
   const last = index === state.panes.length - 1;
 
   return [
+    {
+      id: "pane-open-new",
+      kind: "link",
+      label: "open in new pane",
+      href: pane.current_visit.href,
+      onActivate: event => {
+        const activation = workspaceTargetActivationIntent(event);
+        if (activation.kind === "Unowned") return "unhandled";
+        event.preventDefault();
+        if (activation.kind === "Consume") return "consumed";
+        const result = onOpen(paneId);
+        return result && result.kind !== "Cancelled" ? "handled-new-pane" : "consumed";
+      },
+    },
     {
       id: minimized ? "pane-restore" : "pane-minimize",
       kind: "command",

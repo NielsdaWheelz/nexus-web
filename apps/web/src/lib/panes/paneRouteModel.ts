@@ -303,6 +303,7 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     if (id === "conversation") {
       const query = new URLSearchParams(search);
       query.delete("leaf");
+      query.delete("loc");
       viewSearch = query.size ? `?${query}` : "";
     }
     const routeKey = `${id}:${pathname}${viewSearch}`;
@@ -349,7 +350,7 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
   const arrival = route.id === "media"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post"]
-    : route.id === "conversation" ? ["message"] : [];
+    : route.id === "conversation" ? ["message", "loc"] : [];
   for (const key of arrival) query.delete(key);
   query.sort();
   return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
@@ -372,6 +373,7 @@ export function matchWorkspaceTargetHref(currentHref: string, targetHref: string
   if (url.search || url.hash) return targetHref;
   const retained = parseWorkspaceHref(currentHref)!;
   retained.searchParams.delete("message");
+  retained.searchParams.delete("loc");
   retained.hash = "";
   return `${retained.pathname}${retained.search}${retained.hash}`;
 }

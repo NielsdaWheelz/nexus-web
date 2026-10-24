@@ -13,7 +13,9 @@ minimum and overflow horizontally. one roving stop records the pane id and title
 or menu control. active, in-view, focused and minimized are separate facts.
 
 plain left/right wrap focus through every title; home/end reach the ends.
-enter/space on a title activates, restores if needed, and enters pane content.
+ordinary title activation selects/restores that exact pane and enters content.
+shift-click/shift-enter opens a fresh independent copy immediately after the
+clicked pane, including an inactive/minimized pane; its state remains unchanged.
 down, context-menu or shift+f10 open that item's menu. tab exits from the current
 roving control; menu return keeps more as that stop. delete/backspace close once
 per press, and shift+m toggles maximize once per press for the focused item.
@@ -21,7 +23,8 @@ global mod+shift+left/right retain the separate sequential traversal contract.
 there are no global shift-letter commands.
 
 `lib/workspace/paneActions.ts` supplies the strip and manage tabs with explicit
-target commands: minimize/restore, move earlier/later, close. the strip adds
+target actions: open in new pane, minimize/restore, move earlier/later, close.
+opening uses an admission-aware canonical link; management remains commands. the strip adds
 maximize/restore layout; [workspace](workspace.md#layout-modes) owns its geometry
 and lifetime. disabled actions retain their explanations: keep one stored-visible
 pane, or already first/last. menu management retains strip focus, unless a new
@@ -54,6 +57,14 @@ it preserves pane objects, activation, visits and histories, returns false for
 missing/self/unchanged moves, and commits one changed array. a changed move
 announces its position. move commands provide the keyboard and touch alternative
 to dragging; there is no keyboard pickup mode.
+
+## history
+
+header back/forward use the shared gesture classifier and required store
+history disposition. ordinary activation traverses; shifted activation peeks
+into a fresh pane. menus expose “open previous page in new pane” and “open next
+page in new pane”; empty stacks retain disabled reasons. menu selection rechecks
+the captured current and adjacent visit ids, including equal-href occurrences.
 
 ## Sequential Traversal
 

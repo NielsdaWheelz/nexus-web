@@ -14,6 +14,7 @@ import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { SourceArrivalTarget, SourceTarget } from "@/lib/resources/sourceTarget";
 import type { ReaderDestination } from "@/lib/documentReader/location";
+import type { ChatFindDestination } from "@/lib/chat/findDestination";
 import { getInteractionOwner, hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -23,6 +24,7 @@ import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from
 interface ArrivalIntent {
   readonly activationId: string;
   readonly target: SourceArrivalTarget;
+  readonly purpose: "Open" | "RestoreVisit";
   readonly phase: "Pending" | "Applied" | "Retired";
   readonly sourceIdentity: string | null;
 }
@@ -37,7 +39,8 @@ export interface SourceArrivalContext {
 
 export type SourceArrivalApplyTarget =
   | { readonly kind: "source"; readonly source: SourceTarget }
-  | { readonly kind: "reader_destination"; readonly destination: ReaderDestination };
+  | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
+  | { readonly kind: "chat_destination"; readonly destination: ChatFindDestination; readonly leaf_id: string };
 
 export type SourceArrivalOutcome = "Applied" | "Unavailable" | "Cancelled" | "FailureHandled";
 export interface SourceArrivalFailure {
@@ -55,8 +58,14 @@ interface ArrivalStatus {
 export function useSourceArrival(input: {
   readonly ready: boolean;
   readonly sourceIdentity: string | null;
+  /** Only the destination reader can decide whether its copied view was restored. */
+  readonly restoreVisit?: {
+    readonly visitId: string;
+    readonly sourceIdentity: string | null;
+    readonly outcome: "Pending" | "Restored" | "Absent" | "Failed";
+  };
   readonly apply: (target: SourceArrivalApplyTarget, context: SourceArrivalContext) => Promise<SourceArrivalOutcome>;
-  readonly onAttempt?: (signal: AbortSignal) => void;
+  readonly onAttempt?: (signal: AbortSignal, target: SourceArrivalTarget) => void;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "useSourceArrival");
   const active = usePaneIsActive();
@@ -113,7 +122,8 @@ export function useSourceArrival(input: {
       operation.current?.abort();
       remember({ ...intent, phase: "Retired" });
       publishStatus(null);
-    } else if (retireFailure && matching && status.failure !== null) {
+    } else if (retireFailure && (intent.phase === "Applied" || matching && status.failure !== null)) {
+      operation.current?.abort();
       remember({ ...intent, phase: "Retired" });
       publishStatus(null);
     }
@@ -122,7 +132,7 @@ export function useSourceArrival(input: {
   useLayoutEffect(() => {
     const delivery = runtime.paneEntryDelivery;
     if (delivery?.entry.kind !== "InspectSource") return;
-    const next: ArrivalIntent = { activationId: delivery.activationId, target: delivery.entry.target, phase: "Pending", sourceIdentity: null };
+    const next: ArrivalIntent = { activationId: delivery.activationId, target: delivery.entry.target, purpose: delivery.entry.purpose, phase: "Pending", sourceIdentity: null };
     write(next);
     if (!runtime.claimPaneEntryDelivery(delivery)) return;
     if (mobile && !(next.target.kind === "reader_destination" && next.target.destination.target.kind === "evidence_item")) runtime.closeSecondaryPane({ restoreFocus: false });
@@ -135,6 +145,7 @@ export function useSourceArrival(input: {
 
   const activationId = intent?.activationId ?? null;
   const { ready, sourceIdentity } = input;
+  const restoreOutcome = input.restoreVisit?.outcome ?? null;
   useLayoutEffect(() => () => {
     operation.current?.abort();
     operation.current = null;
@@ -161,6 +172,18 @@ export function useSourceArrival(input: {
     const previous = currentStatus.current;
     const admitted = previous?.visitId === visitId && previous.activationId === intent.activationId;
     if (admitted && previous.failure !== null && previous.sourceIdentity === sourceIdentity) return;
+    if (intent.purpose === "RestoreVisit") {
+      if (!ready) return;
+      const decision = latest.current.input.restoreVisit;
+      if (decision && (decision.visitId !== visitId || decision.sourceIdentity !== sourceIdentity || decision.outcome === "Pending")) return;
+      if (decision?.outcome === "Restored" || decision?.outcome === "Failed") {
+        remember({ ...intent, sourceIdentity, phase: decision.outcome === "Restored" ? "Applied" : "Retired" });
+        publishStatus({ visitId, activationId: intent.activationId, sourceIdentity, pending: false,
+          // A failed copied-view attempt remains with the reader's navigation failure.
+          failure: null });
+        return;
+      }
+    }
     if (!admitted || !operation.current || operation.current.signal.aborted) {
       operation.current?.abort();
       operation.current = new AbortController();
@@ -170,16 +193,16 @@ export function useSourceArrival(input: {
     const pending: ArrivalStatus = { visitId, activationId: intent.activationId, sourceIdentity, pending: true, failure: null };
     if (!admitted) {
       publishStatus(pending);
-      latest.current.input.onAttempt?.(signal);
+      latest.current.input.onAttempt?.(signal, intent.target);
     }
     if (signal.aborted || captured.current?.phase === "Retired") return;
     if (!ready && intent.target.kind !== "invalid_destination") return;
     if (intent.target.kind === "invalid_destination") {
-      publishStatus({ ...pending, pending: false, failure: { title: "couldn’t open that location", error: null } });
+      publishStatus({ ...pending, pending: false, failure: { title: intent.target.reason === "location_too_long" ? "this location link is too long" : "this location link is invalid", error: null } });
       return;
     }
     if (intent.target.kind === "reader_destination" && intent.target.destination.source_identity !== sourceIdentity) {
-      publishStatus({ ...pending, pending: false, failure: { title: sourceIdentity === null ? "couldn’t open that location" : "this location belongs to a different source version", error: null } });
+      publishStatus({ ...pending, pending: false, failure: { title: sourceIdentity === null ? "this match is no longer available" : "the document changed. search again to find this passage", error: null } });
       return;
     }
     if (intent.sourceIdentity !== null && intent.sourceIdentity !== sourceIdentity) {
@@ -203,7 +226,7 @@ export function useSourceArrival(input: {
     const run = async () => {
       try {
         let target: SourceArrivalApplyTarget | null;
-        if (intent.target.kind === "reader_destination") target = intent.target;
+        if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
         else {
           const { data } = await apiFetch<ApiJson<"/resource-items/source-targets/resolve", "post">>(
             "/api/resource-items/source-targets/resolve",
@@ -246,11 +269,13 @@ export function useSourceArrival(input: {
             publishStatus({ ...pending, pending: false });
             break;
           case "Unavailable":
+            controller.abort();
             remember({ ...pinnedIntent, phase: "Pending" });
-            publishStatus({ ...pending, pending: false, failure: { title: "couldn’t open that location", error: null } });
+            publishStatus({ ...pending, pending: false, failure: { title: intent.target.kind === "chat_destination" || intent.target.kind === "reader_destination" && (intent.target.destination.target.kind === "range" || intent.target.destination.target.kind === "pdf_find") ? "this match is no longer available" : "couldn’t open that location", error: null } });
             break;
           case "Cancelled":
           case "FailureHandled":
+            controller.abort();
             remember({ ...pinnedIntent, phase: "Retired" });
             publishStatus({ ...pending, pending: false });
             break;
@@ -259,6 +284,7 @@ export function useSourceArrival(input: {
       } catch (error) {
         if (!current() || handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }
+        controller.abort();
         publishStatus({ ...pending, pending: false, failure: { title: "couldn’t open that location", error } });
       }
     };
@@ -269,7 +295,7 @@ export function useSourceArrival(input: {
     // The stable activation id owns one operation. apply reads current host
     // callbacks; acknowledging the same intent does not create another arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: activation, visit and source identity own the operation
-  }, [activationId, ready, runtime.visitId, sourceIdentity, workspace, publishStatus, remember]);
+  }, [activationId, ready, restoreOutcome, runtime.visitId, sourceIdentity, workspace, publishStatus, remember]);
 
   useEffect(() => {
     if (!active || intent?.phase !== "Applied") return;

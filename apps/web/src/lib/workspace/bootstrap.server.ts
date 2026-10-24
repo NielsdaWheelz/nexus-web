@@ -12,6 +12,7 @@ import type { WorkspaceBootstrap } from "@/lib/workspace/bootstrap";
 import { enterWorkspace } from "@/lib/workspace/model";
 import {
   normalizeWorkspaceHref,
+  MAX_WORKSPACE_HREF_LENGTH,
   parseWorkspaceHref,
   resolveTodayHref,
 } from "@/lib/workspace/workspaceHref";
@@ -40,6 +41,7 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
   // `/` and paths that are not canonical resume. A launcher command belongs to
   // entry, never to a pane; bare /daily is today.
   const url = parseWorkspaceHref(requestPath);
+  const locationLinkFailure = url?.searchParams.has("loc") && `${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH ? "TooLong" : null;
   const canonical = url && url.pathname !== "/" && `${url.pathname}${url.search}` === requestPath
     ? normalizeWorkspaceHref(parseNexusOpenUrl(url)?.href ?? requestPath)
     : null;
@@ -78,6 +80,7 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
     readerProfile: profile.data,
     initialState,
     seeds: { [pane.id]: seeded },
+    locationLinkFailure,
   };
 }
 

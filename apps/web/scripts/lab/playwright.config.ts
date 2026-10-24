@@ -18,6 +18,9 @@ export default defineConfig({
   expect: { timeout: 10_000 * rate },
   use: {
     browserName: "chromium",
+    launchOptions: {
+      args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
+    },
     baseURL: context.web_origin,
     storageState: context.browser_state_file,
     actionTimeout: 15_000 * rate,

@@ -57,14 +57,31 @@ its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
 the lab builds or reuses the canonical web production package, including its
-public assets, then serves a private standalone runtime without hot reload.
+public assets, then serves the canonical tls/http2 standalone runtime without hot reload.
 build constants match the server's public key, exact loopback origin and source
-sha; each server receives a fresh closed runtime environment. readiness establishes
+sha; each server receives a fresh closed runtime environment. the existing public
+web port uses https; next's private loopback upstream has no public entrypoint.
+readiness verifies identity through `probe-web.mjs` using normal ca/hostname
+verification and negotiated h2. readiness establishes
 service health and identity; the driver owns assertions and deadlines. exit zero alone proves only
 what that driver actually checked. teardown uses exact compose/auth ownership,
 including `down --rmi local`; current labs create no per-run images. unrelated
 images and other runs' resources neither fail cleanup nor become its targets.
 incomplete owned cleanup turns success into exit 125 and retains recovery inputs.
+
+the required private `web_tls` context contains `ca_file` and
+`leaf_spki_sha256`. each run owns a fresh root and leaf; chromium trusts only
+that exact leaf through its scoped spki exception. this is separate from the
+readiness client's normal certificate verification; no global trust store or
+`ignoreHTTPSErrors` setting changes. native browser/device profiles must establish
+their own explicit trust before qualification.
+
+setup requests use `browserRequest` in `scripts/lab/browser.ts`, preserving real
+browser http2, cookies and origin checks. an about:blank page first opens the
+same-origin `/robots.txt`, which runs no application or autosave. playwright's
+`page.request` and `route.fetch` use an http1 node client and cannot qualify this
+edge. temporary delayed-response cases may pause the actual browser response
+with cdp; they must preserve the server's request, response and mutation identity.
 
 auth teardown and recorded recovery share `python/scripts/lab_auth_cleanup.py`:
 list exact `com.supabase.cli.project=<auth project>` containers in all states,

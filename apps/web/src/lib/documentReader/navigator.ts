@@ -33,7 +33,8 @@ export type NavSnapshot = Pick<NavState, "mode" | "origin" | "originUnavailable"
 type To = ReaderTarget | Placement;
 export interface Positioner {
   capture(): Placement | null;
-  position(to: To, signal: AbortSignal): Promise<NavOutcome>;
+  /** Position cancellation ends with movement; inspection paint retains its host's lifetime. */
+  position(to: To, signal: AbortSignal, inspectionSignal: AbortSignal | null): Promise<NavOutcome>;
 }
 export interface Navigator {
   state(): NavState;
@@ -77,6 +78,7 @@ interface Request {
   readonly departure: Placement | null;
   readonly previous: NavSnapshot;
   readonly operation: NavigationFailure["operation"];
+  inspectionSignal: AbortSignal | null;
 }
 
 export function createNavigator(
@@ -132,6 +134,7 @@ export function createNavigator(
       departure,
       previous,
       operation,
+      inspectionSignal: null,
     };
     request = next;
     const origin: NavState["origin"] =
@@ -162,6 +165,7 @@ export function createNavigator(
       const back = await surface()?.position(
         req.departure,
         req.controller.signal,
+        null,
       );
       if (request !== req) return { kind: "Cancelled" };
       if (req.controller.signal.aborted) outcome = { kind: "Cancelled" };
@@ -202,7 +206,7 @@ export function createNavigator(
       const outcome: NavOutcome = to === null
         ? { kind: "Unavailable", reason: "TargetUnavailable" }
         : handle
-          ? await handle.position(to, req.controller.signal)
+          ? await handle.position(to, req.controller.signal, req.inspectionSignal)
           : { kind: "Unavailable", reason: "PositioningFailed" };
       if (
         to !== null && request === req && !req.controller.signal.aborted &&
@@ -212,7 +216,7 @@ export function createNavigator(
         // Keep the completed intent through late layout. PDF commands may
         // focus or depend on mutable viewer state; retain their placement.
         reflowTarget =
-          "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdf")
+          "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdf" || to.kind === "pdf_find")
             ? handle?.capture() ?? null
             : to;
       }
@@ -230,6 +234,7 @@ export function createNavigator(
       if (signal?.aborted) return { kind: "Cancelled" };
       const req = begin("inspect", "Open");
       if (req === null) return { kind: "Unavailable", reason: "CaptureUnavailable" };
+      req.inspectionSignal = signal ?? null;
       // The signal owns this request, never whichever request is current later.
       const abort = () => {
         req.controller.abort();

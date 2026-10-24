@@ -31,7 +31,13 @@ technology-ownership, import, and module-boundary model.
 
 `apps/web/package.json` owns `bun run build`: `build:next` removes generated
 `.next`, copies pdf.js assets and builds next; `scripts/package-standalone.mjs`
-packages public and static assets for `.next/standalone/server.js`. production
+packages public and static assets with `.next/standalone/serve.mjs`, replacing
+Next's generated HTTP/1 entrypoint. the canonical server requires a certificate
+and key and serves TLS with HTTP/2 only on `PORT`/`HOSTNAME`; Next binds a private
+kernel-assigned loopback port. `probe-web.mjs` verifies `/version` over HTTP/2
+with an explicit CA. streams retain their existing application API and lifetime.
+`make web` builds and starts this package; development uses build/restart.
+Vercel owns its managed frontend TLS edge and uses `build:next`. production
 builds start without the previous `.next` cache so installed dependency patches
 reach the generated bundles. each build pays the full compilation cost.
 the lab reuses a completed package under its documented source/slot/public-key

@@ -820,7 +820,7 @@ export function useSelectionComposer(input: {
       if (sourceNow.mediaId !== entry.sourceMediaId || sourceNow.generation !== entry.referenceSource.expected_reader_generation) {
         store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Source", message: "this source changed. select the passage again. your draft is kept" } })); return null;
       }
-      const live = get(entry.id)?.highlight;
+      const live = await liveHighlight(ensured);
       if (!live || live.anchor.media_id !== entry.sourceMediaId || live.exact !== entry.passage.quote || (entry.highlight &&
         live.version !== entry.highlight.version)) {
         store.update(entry.id, value => ({ ...value, operation: null, highlight: entry.highlight ?? value.highlight,
@@ -984,10 +984,10 @@ export function useSelectionComposer(input: {
       const issue = draft?.chatIssue;
       if (issue?.kind === "Model" || issue?.kind === "Catalog") void sendChat(issue.destination, "default", { selection: issue.selection });
     },
-    openChat() {
+    openChat(intent: OpenIntent) {
       if (!draft || draft.destination.kind !== "Selected") return;
       const tree = draft.destination.snapshot.kind === "Ready" ? draft.destination.snapshot.tree : null;
-      pane.activateTarget({ target: { href: tree ? conversationViewHref(draft.destination.id, tree.active_leaf_message_id) : `/conversations/${draft.destination.id}`, labelHint: draft.destination.title }, disposition: { kind: "Fork" } });
+      pane.activateTarget({ target: { href: tree ? conversationViewHref(draft.destination.id, tree.active_leaf_message_id) : `/conversations/${draft.destination.id}`, labelHint: draft.destination.title }, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     },
     reference(): ReferenceInputHost | null {
       if (!draft || draft.load !== "Ready") return null;

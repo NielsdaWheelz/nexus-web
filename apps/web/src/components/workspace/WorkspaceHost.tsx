@@ -254,11 +254,11 @@ export default function WorkspaceHost() {
             isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
           }))}
-          onActivate={(paneId) => {
+          onActivate={(paneId, disposition) => {
             contentActivation.current = null;
-            store.activatePane(paneId);
-            scrollPaneIntoView(paneId);
-            requestPaneFocus(paneId);
+            const result = store.activateWorkspacePane({ paneId, disposition });
+            if (result && result.kind !== "Cancelled") scrollPaneIntoView(result.paneId);
+            return result;
           }}
           onToggleMaximize={(paneId) => {
             contentActivation.current = null;
@@ -317,8 +317,8 @@ export default function WorkspaceHost() {
                   isActive={pane.id === activeId}
                   resetKey={`${pane.id}:${pane.current_visit.id}:${route.routeKey}`}
                   slotMinWidth={isMobile || maximized ? "100%" : `${slot.widthPx}px`}
-                  onBack={pane.history.back.length ? () => {
-                    if (store.goBackPane(pane.id) === "committed") requestPaneFocus(pane.id);
+                  onBack={pane.history.back.length ? intent => {
+                    store.goBackPane(pane.id, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
                   } : null}
                 >
                   <PaneShell

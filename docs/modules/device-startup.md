@@ -5,6 +5,13 @@ lazy chunks, fonts and static assets at the configured owned origin, regardless
 of connectivity. next owns hosted delivery and the same-origin bff. both builds
 use the same workspace, pane controllers and resource owners.
 
+debug defaults to `https://127.0.0.1:3000`, reached through adb reverse.
+`nexusAndroidDebugCaFile` optionally generates debug-only trust for the exact
+owned host alongside system roots. the custom-tab browser establishes its own
+trust; apk trust does not provision that browser. release uses normal system
+trust. the [canonical web edge](../local-rules/codebase.md#web-production-build)
+requires http2; packaged assets retain their local delivery below.
+
 ## ownership
 
 `DeviceSession` is the native account authority. one private `AtomicFile` holds

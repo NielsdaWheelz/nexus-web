@@ -25,7 +25,7 @@ export type WorkspaceTargetDisposition =
 export type WorkspacePaneEntry =
   | { readonly kind: "ComposeChat"; readonly text: string }
   | { readonly kind: "ComposePage"; readonly title: string }
-  | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget }
+  | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget; readonly purpose: "Open" | "RestoreVisit" }
   // a fresh chat pane: review the complete reader question with its observed model.
   | { readonly kind: "ComposeReaderQuestion"; readonly text: string; readonly selection: Selection | null }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)

@@ -87,6 +87,7 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
                   source={{ kind: "Immediate", subjectKey: `nexus-tab:${pane.id}`, title: pane.presentation.title, content: { sections: [{ id: "Pane", label: null, options: paneActions({
                     state: controller.workspaceState,
                     paneId: pane.id,
+                    onOpen: paneId => controller.openPane(paneId, "new_pane"),
                     onMinimize: controller.minimizePane,
                     onRestore: controller.restorePane,
                     onMove: controller.movePane,

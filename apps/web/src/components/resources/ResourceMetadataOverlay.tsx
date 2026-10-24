@@ -101,6 +101,7 @@ export default function ResourceMetadataOverlay(props: {
   readonly open: boolean;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget;
+  readonly skipReturnFocus?: () => boolean;
   readonly onClose: () => void;
 }) {
   const { subject, ...frame } = props;
