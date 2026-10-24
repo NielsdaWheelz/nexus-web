@@ -196,6 +196,7 @@ export function FindResults({
     return {
       id: String(index),
       kind: "search_result",
+      presentation: "Index",
       // Desktop keeps the list open; mobile hides the sheet once the surface shows the match.
       primary: {
         kind: "button",

@@ -149,7 +149,7 @@ function BrowseToolbar({ query, inputRef, onQuery }: {
     }}
     sort={youTube ? {
       label: "YouTube sort", value: query.sort,
-      choices: [{ value: "Relevance", label: "Relevance" }, { value: "Newest", label: "Newest first" }],
+      choices: [{ value: "Relevance", label: "Relevance" }, { value: "Newest", label: "Newest source publication" }],
       onChange: (value) => onQuery({ ...query, sort: value === "Newest" ? "Newest" : "Relevance" }),
     } : undefined}
     chips={{ items: chips, onRemove: (id) => onQuery(withBrowseFilters(query, {

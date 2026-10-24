@@ -1,297 +1,147 @@
 .row {
   position: relative;
-  container-type: inline-size;
-  display: grid;
+  container: indexRow / inline-size;
+  font-size: var(--text-base);
   min-width: 0;
   max-width: 100%;
-  grid-template-columns: [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
-  grid-template-rows: auto auto;
-  column-gap: var(--space-2);
-  row-gap: var(--space-1);
-  align-items: center;
-  padding: var(--space-2);
   border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
   transition: background-color var(--duration-fast) var(--ease-glide);
 }
 
-.row.withVisual {
-  grid-template-columns: [visual] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+}
+
+.withVisual {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .leadingVisual {
-  grid-column: visual;
-  grid-row: 1 / span 2;
+  display: inline-flex;
   align-self: start;
 }
 
-.row:has(a.primary:hover),
-.row:has(button.primary:hover:not(:disabled)),
-.row:focus-within {
+.content {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.row:where(:has(a.primary:hover), :has(button.primary:hover:not(:disabled)), :focus-within) {
   background: var(--surface-1);
 }
 
-/* Selection outranks hover and focus by weight; the left rule is the mark a
-   colour change cannot take away. */
-.row.selected,
-.row.selected:has(a.primary:hover),
-.row.selected:has(button.primary:hover:not(:disabled)),
-.row.selected:focus-within {
+.row.selected {
   background: var(--accent-muted);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.titleCell {
+.titleLine {
   min-width: 0;
-  grid-column: content;
-  grid-row: 1;
-}
-
-.secondary {
-  display: contents;
-}
-
-.separator {
-  display: none;
+  block-size: 1lh;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
 }
 
 .primary {
-  display: inline;
+  display: block;
   min-width: 0;
   max-width: 100%;
+  padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: start;
   text-decoration: none;
 }
 
-button.primary {
-  cursor: pointer;
-}
+button.primary { cursor: pointer; width: 100%; }
+button.primary:disabled { cursor: not-allowed; opacity: 0.6; }
+a.primary:hover { text-decoration: underline; }
 
-button.primary:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.primary:focus-visible::after {
-  content: "";
-  position: absolute;
-  inset: 2px;
-  z-index: 1;
-  border: var(--focus-ring-width) solid var(--ring);
-  border-radius: var(--radius-sm);
+.primary:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .title {
-  color: var(--ink);
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-tight);
-  line-height: var(--leading-snug);
-  overflow-wrap: anywhere;
-}
-
-.supporting,
-.status,
-.evidence {
-  min-width: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.supporting,
-.status {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
 }
 
-.supporting {
-  grid-column: content;
-  grid-row: 2;
-  line-height: var(--leading-normal);
-}
-
-.supporting
-  :is(
-    a,
-    button,
-    input,
-    select,
-    textarea,
-    summary,
-    [role="button"],
-    [role="link"]
-  ) {
-  position: relative;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-.status {
-  display: inline-flex;
-  max-width: min(18rem, 34cqi);
-  grid-column: status;
-  grid-row: 1 / span 2;
-  align-items: center;
-  font-variant-numeric: tabular-nums;
-  line-height: var(--leading-snug);
-}
-
-.evidence {
-  grid-column: content / end;
-  grid-row: 3;
-  line-height: var(--leading-normal);
-  overflow-wrap: anywhere;
-}
-
-.primaryControl,
-.actions,
-.expanded {
-  position: relative;
-  z-index: 2;
+.metadata,
+.excerpt {
   min-width: 0;
+  block-size: 1lh;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
-.primaryControl,
-.actions {
+/* single-line clips contain the link's own focus indicator. */
+.metadata a:focus-visible,
+.excerpt a:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.excerpt > a:only-child {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: inherit;
+}
+
+.controls {
+  position: relative;
   display: inline-flex;
-  grid-row: 1 / span 2;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
-}
-
-.primaryControl {
-  max-width: min(22rem, 30cqi);
-  grid-column: primary;
-}
-
-:where(.primaryControl) > * {
+  gap: var(--space-1);
   min-width: 0;
-  max-width: 100%;
 }
 
-.actions {
-  grid-column: actions;
-}
+.controls > * { flex: none; }
+.details { align-items: start; }
+.details .titleLine { block-size: auto; }
+.details .title { white-space: normal; overflow-wrap: anywhere; }
+.body { min-width: 0; overflow-wrap: anywhere; color: var(--ink-muted); font-size: var(--text-sm); }
 
-.expanded {
-  grid-column: content / end;
-  grid-row: 3;
-}
-
-/* Wrapped: supporting, status, evidence and the panel take full lines. */
-.wrapped .supporting {
-  grid-column: content / end;
-  overflow: visible;
-  white-space: normal;
-}
-
-.wrapped :is(.status, .evidence, .expanded) {
-  grid-column: content / end;
-  grid-row: auto;
-  max-width: none;
-  overflow: visible;
-  white-space: normal;
-}
-
-.wrapped :is(.primaryControl, .actions) {
-  grid-row: 1;
-}
-
-@container (max-width: 520px) or (max-width: 18rem) {
-  .row:not(.wrapped) .secondary {
-    display: flex;
-    min-width: 0;
-    grid-column: content / end;
-    grid-row: 2;
-    align-items: baseline;
-    overflow: hidden;
-    white-space: nowrap;
-  }
-
-  /* Adjacency, not geometry, places the separator after the supporting cell. */
-  .row:not(.wrapped) .supporting {
-    flex: 0 1 auto;
-    grid-column: auto;
-    grid-row: auto;
-  }
-
-  .row:not(.wrapped) .status {
-    flex: none;
-    max-width: 50%;
-    grid-column: auto;
-    grid-row: auto;
-  }
-
-  .separator {
-    display: inline;
-    flex: none;
-    padding: 0 var(--space-1);
-    color: var(--ink-faint);
-  }
-
-  .primaryControl {
-    max-width: min(12rem, 38cqi);
-    grid-column: primary-narrow;
-    grid-row: 1;
-  }
-
-  .actions {
-    grid-column: actions-narrow;
-    grid-row: 1;
+@container indexRow (max-width: calc(32em - 1px)) {
+  .controls :global([data-action-control-key]:not([data-action-control-key="Playback"])),
+  .controls :global([data-resource-actions]:not(:has([data-action-control-key="Playback"]))) {
+    display: none;
   }
 }
 
-@container (max-width: 18rem) {
-  .row:not(.wrapped) .titleCell {
-    grid-column: content / end;
-  }
-
-  .row:not(.wrapped) .primaryControl {
-    grid-column: content / actions;
-    grid-row: 3;
-    max-width: 100%;
-  }
-
-  .row:not(.wrapped) .actions {
-    grid-column: actions / end;
-    grid-row: 3;
-  }
-
-  .row:not(.wrapped) .expanded {
-    grid-row: 4;
-  }
-}
-
-/* The Solar, at its most restrained: a lamp at the leading edge and a leaf
-   terminal on hover, focus and selection; at rest the row paints as in the
-   other rooms, and the dimmer silences both without moving a pixel. */
-:global([data-theme="elvish"]) .row {
-  isolation: isolate;
-}
-
+:global([data-theme="elvish"]) .row { isolation: isolate; }
 :global([data-theme="elvish"]) .row::before,
 :global([data-theme="elvish"]) .row::after {
   content: "";
   position: absolute;
   opacity: 0;
   transition: opacity var(--duration-instant) var(--ease-glide);
+  pointer-events: none;
 }
-
 :global([data-theme="elvish"]) .row::before {
   inset: 0;
   z-index: -1;
-  background-image: radial-gradient(
-    120px 40px at 12px 50%,
-    color-mix(in srgb, var(--accent) 9%, transparent),
-    transparent
-  );
+  background-image: radial-gradient(120px 40px at 12px 50%, color-mix(in srgb, var(--accent) 9%, transparent), transparent);
 }
-
-/* Inside the row's own padding: it ends where the title's first glyph begins. */
 :global([data-theme="elvish"]) .row::after {
   inset-block: 0;
   inset-inline-start: 0;
@@ -302,105 +152,13 @@ button.primary:disabled {
   mask: var(--elvish-leaf) center / 10px 10px no-repeat;
   -webkit-mask: var(--elvish-leaf) center / 10px 10px no-repeat;
 }
-
-/* The trigger list is the row's own hover and focus, kept at base weight by
-   `:where()` so the selected rule below wins on order. */
-:global([data-theme="elvish"])
-  .row:where(
-    :has(a.primary:hover),
-    :has(button.primary:hover:not(:disabled)),
-    :focus-within
-  )::before,
-:global([data-theme="elvish"])
-  .row:where(
-    :has(a.primary:hover),
-    :has(button.primary:hover:not(:disabled)),
-    :focus-within
-  )::after {
+:global([data-theme="elvish"]) .row:where(:has(a.primary:hover), :has(button.primary:hover:not(:disabled)), :focus-within)::before,
+:global([data-theme="elvish"]) .row:where(:has(a.primary:hover), :has(button.primary:hover:not(:disabled)), :focus-within)::after {
   opacity: calc(0.9 * var(--ornament));
   transition: opacity var(--duration-fast) var(--ease-glide);
 }
+:global([data-theme="elvish"]) .selected::after { opacity: var(--ornament); }
 
-:global([data-theme="elvish"]) .selected::after {
-  opacity: var(--ornament);
-}
-
-/* The container owns width; its descendant grid owns the media layout. */
-.mediaRow {
-  container: mediaRow / inline-size;
-  min-width: 0;
-  max-width: 100%;
-  position: relative;
-}
-
-.mediaCollection {
-  padding: var(--space-2);
-  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
-}
-
-.mediaGrid {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-1) var(--space-2);
-  min-width: 0;
-}
-
-.mediaWithoutLeading {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.mediaLeading {
-  display: inline-flex;
-  align-items: flex-start;
-}
-
-.mediaContent {
-  min-width: 0;
-}
-
-.mediaTitle {
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-snug);
-  overflow-wrap: anywhere;
-}
-
-.mediaTitle a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.mediaTitle a:hover {
-  text-decoration: underline;
-}
-
-.mediaTitle a:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.mediaControls {
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  align-items: center;
-  min-width: 0;
-  gap: var(--space-1);
-}
-
-.mediaExpanded {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
-@container mediaRow (max-width: 479px) {
-  .mediaControls :global([data-action-control-key]:not([data-action-control-key="Playback"])),
-  .mediaControls :global([data-resource-actions]:not(:has([data-action-control-key="Playback"]))) {
-    display: none;
-  }
-}
-
-:global([data-mobile="true"]) .mediaRow .mediaControls > * {
+:global([data-mobile="true"]) .row .controls > * {
   --control-min-size: 48px;
 }

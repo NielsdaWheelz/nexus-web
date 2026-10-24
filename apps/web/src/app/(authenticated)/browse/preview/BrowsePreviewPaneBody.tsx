@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { podcastActionFacts } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import MediaActions from "@/components/media/MediaActions";
+import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import CollectionView from "@/components/collections/CollectionView";
 import {
@@ -30,7 +31,7 @@ import {
   type BrowsePreview,
 } from "@/lib/browse/api";
 import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
-import { formatDisplayNumber } from "@/lib/display/format";
+import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
@@ -123,6 +124,7 @@ function PreviewEpisodes({ preview }: {
 }
 
 export default function BrowsePreviewPaneBody() {
+  const display = useRenderEnvironment();
   const pane = requirePaneRuntime(usePaneRuntime(), "BrowsePreviewPaneBody");
   const router = usePaneRouter();
   const params = usePaneSearchParams();
@@ -266,6 +268,8 @@ export default function BrowsePreviewPaneBody() {
         ) : null}
         <div>
           {audio ? <p>{audio.podcast_title}</p> : null}
+          <ContributorRoleGroups credits={preview.contributors} />
+          {preview.published_at ? <p>source published: <time dateTime={preview.published_at}>{formatDisplayDate(preview.published_at, display, { dateStyle: "medium" })}</time></p> : null}
           <p>{description ?? "No summary from source."}</p>
           <a
             href={preview.source_href}
@@ -295,7 +299,6 @@ export default function BrowsePreviewPaneBody() {
             : preview.kind === "Video" ? "video" : "web_article",
           title: preview.title,
           contributors: preview.contributors,
-          publication_date: preview.published_at,
         }}
         knownDescriptor={null}
         density="Row"

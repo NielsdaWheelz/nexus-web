@@ -19,6 +19,7 @@ export default function KeybindingsPaneBody() {
           returnScope="Settings.Keybindings.Commands"
           rows={Object.entries(SHORTCUTS).map(([id, shortcut]) =>
             presentSettingsRow({
+              presentation: "Details",
               id,
               title: shortcut.label,
               description: shortcut.description,
@@ -36,7 +37,7 @@ export default function KeybindingsPaneBody() {
       >
         <CollectionView
           returnScope="Settings.Keybindings.PaneStrip"
-          rows={PANE_STRIP_SHORTCUTS.map(presentSettingsRow)}
+          rows={PANE_STRIP_SHORTCUTS.map(item => presentSettingsRow({ ...item, presentation: "Details" }))}
           status="ready"
           ariaLabel="Pane strip shortcuts"
           surface={false}

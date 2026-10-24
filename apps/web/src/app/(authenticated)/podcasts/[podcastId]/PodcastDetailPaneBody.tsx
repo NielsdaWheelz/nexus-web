@@ -212,7 +212,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const destinations = ready?.data.destinations ?? [];
   const namedDestinations = destinations.filter(destination => !destination.is_default);
   const libraryRows: CollectionRowView[] = namedDestinations.map(destination => ({
-    id: destination.library_id, kind: "library",
+    id: destination.library_id, kind: "library", presentation: "Index",
     primary: { kind: "link", href: `/libraries/${destination.library_id}`, paneLabelHint: libraryDisplayName(destination) },
     title: { text: libraryDisplayName(destination) }, contributors: [], publicationDate: null,
     context: null, activity: null, exceptionalStatus: null,
@@ -427,7 +427,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               <div id={detailId} ref={detailPanel} hidden={!expanded}>
                 {expanded ? <div className={styles.detailContent}>
                   <p>{podcast.description?.trim() || "no description from the publisher."}</p>
-                  <ContributorRoleGroups credits={podcast.contributors.filter(credit => credit.role !== "author")} />
+                  <ContributorRoleGroups credits={podcast.contributors} />
                   <div className={styles.detailLinks}>
                     {podcast.website_url !== null ? <a href={podcast.website_url} target="_blank" rel="noopener noreferrer">website</a> : null}
                     <a href={podcast.feed_url} target="_blank" rel="noopener noreferrer">rss feed</a>

@@ -28,7 +28,8 @@ their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
 warnings and import progress remain.
 local removal uses the permission from the same current section read as its rows.
 
-at row content widths at or below 479px the shortcut moves into more. named menus
+index rows use the shared compact layout below 32em; headers move shortcuts into
+more at 479px and below. named menus
 contain distinct local occurrence removal and canonical global unsubscribe; all
 contains the canonical action once. hiding a focused shortcut returns focus to
 more. removal captures displayed successor ids at selection; acknowledged success

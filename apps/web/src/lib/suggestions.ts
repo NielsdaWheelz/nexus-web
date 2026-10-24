@@ -70,6 +70,7 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
     });
   }
   return {
+    presentation: "Index",
     id: target.ref,
     kind: "podcast",
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },

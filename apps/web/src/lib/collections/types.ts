@@ -66,6 +66,7 @@ export type ExceptionalStatus = {
 
 interface CollectionRowBase {
   readonly id: string;
+  readonly presentation: "Index" | "Details";
   readonly primary: ResourceRowPrimary;
   readonly title: {
     readonly text: string;

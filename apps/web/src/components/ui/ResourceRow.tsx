@@ -2,6 +2,7 @@
 
 import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { cx } from "@/lib/ui/cx";
+import { assertNever } from "@/lib/assertNever";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import styles from "./ResourceRow.module.css";
 
@@ -24,142 +25,65 @@ export type ResourceRowPrimary =
     }
   | { kind: "static" };
 
-/** Ordinary index geometry; title navigation stays native and controls are separate. */
+type RowContent =
+  | { kind: "Index"; metadata: ReactNode }
+  | { kind: "Search"; metadata: ReactNode; excerpt: ReactNode }
+  | { kind: "Details"; body: ReactNode };
+
+/**
+ * One index geometry: two reserved text lines, or three for search. Details alone
+ * wrap operational content. Width adaptation belongs to this named container;
+ * native title navigation, passive artwork and independent controls keep owners.
+ */
 export default function ResourceRow({
-  primary,
-  title,
-  supporting,
-  status,
-  evidence,
-  leadingVisual,
-  primaryControl,
-  actions,
-  expanded,
-  selected,
-  wrapped = false,
-  as: Root = "li",
-  rootProps,
-  media = false,
+  primary, title, content, leadingVisual, controls, selected, as: Root = "li", rootProps,
 }: {
-  readonly media?: boolean;
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
-  readonly supporting?: ReactNode;
-  readonly status?: ReactNode;
-  readonly evidence?: ReactNode;
+  readonly content: RowContent;
   readonly leadingVisual?: ReactNode;
-  readonly primaryControl?: ReactNode;
-  readonly actions?: ReactNode;
-  readonly expanded?: ReactNode;
+  readonly controls?: ReactNode;
   readonly selected?: boolean;
-  readonly wrapped?: boolean;
   readonly as?: "li" | "div";
-  readonly rootProps?: HTMLAttributes<HTMLElement> &
-    Partial<Record<`data-${string}`, string | boolean>>;
+  readonly rootProps?: HTMLAttributes<HTMLElement> & Partial<Record<`data-${string}`, string | boolean>>;
 }) {
-  if (media) return (
-    <Root
-      {...rootProps}
-      className={cx(styles.mediaRow, styles.mediaCollection, selected && styles.selected, rootProps?.className)}
-    >
-      <div className={cx(styles.mediaGrid, !leadingVisual && styles.mediaWithoutLeading)}>
-        {leadingVisual ? <div className={styles.mediaLeading}>{leadingVisual}</div> : null}
-        <div className={styles.mediaContent}>
-          <div className={styles.mediaTitle} data-row-title="" dir="auto">
-            {primary.kind === "link" ? (
-              <a
-                ref={primary.ref}
-                href={primary.href}
-                data-row-focusable=""
-                data-pane-label-hint={primary.paneLabelHint}
-                target={primary.target}
-                rel={primary.rel}
-              >
-                {title}
-              </a>
-            ) : title}
-          </div>
-          {supporting}{evidence}{status}
-        </div>
-        <div className={styles.mediaControls}>{primaryControl}{actions}</div>
-        {expanded ? <div className={styles.mediaExpanded} data-row-expanded="">{expanded}</div> : null}
+  const label = <span className={styles.title} data-row-title="" dir="auto">{title}</span>;
+  let activation: ReactNode;
+  switch (primary.kind) {
+    case "link": activation = <a
+      ref={primary.ref} className={styles.primary} data-row-focusable=""
+      href={primary.href} data-pane-label-hint={primary.paneLabelHint}
+      target={primary.target} rel={primary.rel}
+    >{label}</a>; break;
+    case "button": activation = <button
+      type="button" className={styles.primary} data-row-focusable=""
+      disabled={primary.disabled || primary.busy} aria-busy={primary.busy || undefined}
+      aria-label={primary.label}
+      onClick={(event) => {
+        if (!isInteractiveTarget(event.target, event.currentTarget)) void primary.onActivate(event.currentTarget);
+      }}
+    >{label}</button>; break;
+    case "static": activation = <div className={styles.primary}>{label}</div>; break;
+    default: assertNever(primary);
+  }
+  let secondary: ReactNode;
+  switch (content.kind) {
+    case "Details": secondary = <div className={styles.body} data-row-expanded="">{content.body}</div>; break;
+    case "Index":
+    case "Search": secondary = <>
+      <div className={styles.metadata}>{content.metadata}</div>
+      {content.kind === "Search" ? <div className={styles.excerpt}>{content.excerpt}</div> : null}
+    </>; break;
+    default: assertNever(content);
+  }
+  return <Root {...rootProps} className={cx(styles.row, selected && styles.selected, rootProps?.className)}>
+    <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details)}>
+      {leadingVisual ? <div className={styles.leadingVisual}>{leadingVisual}</div> : null}
+      <div className={styles.content}>
+        <div className={styles.titleLine}>{activation}</div>
+        {secondary}
       </div>
-    </Root>
-  );
-  const label = (
-    <span className={styles.title} data-row-title="" dir="auto">
-      {title}
-    </span>
-  );
-  return (
-    <Root
-      className={cx(
-        styles.row,
-        Boolean(leadingVisual) && styles.withVisual,
-        wrapped && styles.wrapped,
-        selected && styles.selected,
-      )}
-      {...rootProps}
-    >
-      {leadingVisual ? (
-        <div className={styles.leadingVisual}>{leadingVisual}</div>
-      ) : null}
-      <div className={styles.titleCell}>
-        {primary.kind === "link" ? (
-          <a
-            ref={primary.ref}
-            className={styles.primary}
-            data-row-focusable=""
-            href={primary.href}
-            data-pane-label-hint={primary.paneLabelHint}
-            target={primary.target}
-            rel={primary.rel}
-          >
-            {label}
-          </a>
-        ) : primary.kind === "button" ? (
-          <button
-            type="button"
-            className={styles.primary}
-            data-row-focusable=""
-            disabled={primary.disabled || primary.busy}
-            aria-busy={primary.busy || undefined}
-            aria-label={primary.label}
-            onClick={(event) => {
-              if (!isInteractiveTarget(event.target, event.currentTarget))
-                void primary.onActivate(event.currentTarget);
-            }}
-          >
-            {label}
-          </button>
-        ) : (
-          <div className={styles.primary}>{label}</div>
-        )}
-      </div>
-      {supporting || evidence || status ? (
-        <div className={styles.secondary}>
-          {supporting ? (
-            <div className={styles.supporting}>{supporting}</div>
-          ) : null}
-          {evidence ? <div className={styles.evidence}>{evidence}</div> : null}
-          {supporting && status && !wrapped ? (
-            <>
-              <span className={styles.separator} aria-hidden="true">
-                ·
-              </span>
-              <span className="sr-only">, </span>
-            </>
-          ) : null}
-          {status ? <div className={styles.status}>{status}</div> : null}
-        </div>
-      ) : null}
-      {primaryControl ? (
-        <div className={styles.primaryControl} data-row-primary-control="">
-          {primaryControl}
-        </div>
-      ) : null}
-      {actions ? <div className={styles.actions}>{actions}</div> : null}
-      {expanded ? <div className={styles.expanded} data-row-expanded="">{expanded}</div> : null}
-    </Root>
-  );
+      {controls ? <div className={styles.controls}>{controls}</div> : null}
+    </div>
+  </Root>;
 }
