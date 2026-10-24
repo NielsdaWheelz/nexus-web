@@ -14,6 +14,10 @@ import SortableList from "@/components/sortable/SortableList";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { catalogMedia } from "@/lib/catalog/selectors";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
+import { useLocalContent } from "@/lib/offline/localContent";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import type { QueueCommand, QueueEntry, QueueSource } from "@/lib/player/queue";
 import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
@@ -75,7 +79,17 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
   const upcoming = queue.entries.filter((_, index) => index + queue.offset >= firstUpcoming).slice(0, prefix);
   const current = header?.current_entry ?? null;
   const visible = current === null ? upcoming : [current, ...upcoming];
-  const summaries = useMediaSummaryIds(visible.map(entry => entry.media_id));
+  const online = useRemoteAdmission() === "Ready";
+  const catalog = useCatalogState();
+  const downloads = useLocalContent();
+  const summaries = useMediaSummaryIds(online ? visible.map(entry => entry.media_id) : []);
+  const loaded = state.kind === "Loaded" && state.source.kind === "Episode" ? state.source.descriptor : null;
+  const title = (entry: QueueEntry) =>
+    (loaded?.media_id === entry.media_id ? loaded.title : null) ??
+    (online ? summaries.resolve(entry.media_id)?.title : null) ??
+    (catalog.data === null ? null : catalogMedia(catalog.data, entry.media_id)?.title) ??
+    downloads.index?.items.find(item => item.media_id === entry.media_id)?.title ??
+    (online && summaries.pending(entry.media_id) ? "loading episode…" : "episode unavailable");
   const ready = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
   const failure = queue.failure?.kind === "Episode" && queue.failure.entry_id === current?.id ? queue.failure : null;
   const failed = failure !== null;
@@ -120,7 +134,7 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
   };
   const rows: CollectionRowView[] = upcoming.map(entry => ({
     id: entry.id, kind: "podcast_episode", presentation: "Index", primary: { kind: "link", href: `/media/${entry.media_id}` },
-    title: { text: summaries.resolve(entry.media_id)?.title ?? (summaries.pending(entry.media_id) ? "loading episode…" : "episode unavailable") },
+    title: { text: title(entry) },
     contributors: [], publicationDate: null, context: null, activity: null, exceptionalStatus: null,
     resourceRef: null, selected: false,
   }));
@@ -140,8 +154,8 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
     },
   } : { kind: "Saving" } };
   const render = (entry: QueueEntry, position: number, isCurrent: boolean) => {
-    const title = summaries.resolve(entry.media_id)?.title ?? (summaries.pending(entry.media_id) ? "loading episode…" : "episode unavailable");
-    const name = `${title}, position ${position}`;
+    const episodeTitle = title(entry);
+    const name = `${episodeTitle}, position ${position}`;
     const index = upcoming.findIndex(item => item.id === entry.id);
     const successor = queue.entries[queue.entries.findIndex(item => item.id === entry.id) + 2];
     const laterUnknown = position + 1 < (header?.count ?? 0) && successor === undefined;
@@ -156,11 +170,11 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
         action("next", "play next", <ListStart />, () => { void move(entry.id, upcoming[0]?.id ?? null); }, index === 0 ? "already next in queue" : null),
         action("earlier", "move earlier", <ArrowUp />, () => {
           pendingFocus.current = { entryId: entry.id, trigger: document.activeElement };
-          void move(entry.id, upcoming[index - 1]!.id).then(accepted => { if (accepted) announce(`“${title}” moved earlier`); });
+          void move(entry.id, upcoming[index - 1]!.id).then(accepted => { if (accepted) announce(`“${episodeTitle}” moved earlier`); });
         }, index === 0 ? "already first in the upcoming queue" : null),
         action("later", "move later", <ArrowDown />, () => {
           pendingFocus.current = { entryId: entry.id, trigger: document.activeElement };
-          void move(entry.id, successor?.id ?? null).then(accepted => { if (accepted) announce(`“${title}” moved later`); });
+          void move(entry.id, successor?.id ?? null).then(accepted => { if (accepted) announce(`“${episodeTitle}” moved later`); });
         }, position === (header?.count ?? 0) ? "already last in queue" : laterUnknown ? "show more episodes before moving later" : null),
       ] : []),
       ...(!isCurrent || failed ? [action("remove", "remove from queue", <Trash2 />, () => { void remove(entry, position); })] : []),
@@ -170,7 +184,7 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
         .find(row => row.dataset.collectionRowId === entry.id);
       return row?.querySelector<HTMLElement>('[data-queue-action="more"]') ?? row?.querySelector<HTMLElement>("[data-row-focusable]") ?? heading.current;
     };
-    return <ResourceRow as="div" primary={{ kind: "link", href: `/media/${entry.media_id}` }} title={<>{title}<span className="sr-only">, position {position}</span></>}
+    return <ResourceRow as="div" primary={{ kind: "link", href: `/media/${entry.media_id}` }} title={<>{episodeTitle}<span className="sr-only">, position {position}</span></>}
       content={{ kind: "Index", metadata: <span>position {position} of {header?.count ?? 0}</span> }}
       rootProps={{ "data-collection-row-id": entry.id, "aria-current": isCurrent ? "true" : undefined, "aria-label": name }}
       controls={<>
@@ -197,10 +211,10 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
         header.source.kind === "Library" ? [header.source.entry_type?.replaceAll("_", " "), header.source.projection?.replaceAll("_", " "), header.source.completion].filter(Boolean).join(" · ") : header.source.kind === "Podcast" ? header.source.state.replaceAll("_", " ") : null].filter(Boolean).join(" · ")}</p>
     </div> : header !== null ? <p className={styles.eyebrow}>custom queue</p> : null}
     {queue.known ? <p className={styles.eyebrow}>{header?.count ?? 0} queued · {remaining} upcoming</p> : null}
-    {summaries.error !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "episodes couldn’t be loaded" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
+    {online && summaries.error !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "episodes couldn’t be loaded" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
     {failure !== null && current !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: failure.title === null ? "episode unavailable" : `couldn’t play “${failure.title}”` }} actions={ready ? [
-      { label: "retry", onClick: () => select(current.id) },
       { label: "skip", onClick: () => { const next = upcoming[0]; if (next === undefined) commands.next(); else select(next.id); } },
+      { label: "retry", onClick: () => select(current.id) },
     ] : undefined} /> : null}
     {current !== null ? <div><h3 className={styles.panelTitle}>current</h3>{render(current, (header?.current_index ?? 0) + 1, true)}</div> : queue.known ? <p>{header && header.count > 0 ? "queue finished" : "nothing queued"}</p> : null}
     {upcoming.length > 0 ? <div><h3 className={styles.panelTitle}>upcoming</h3>

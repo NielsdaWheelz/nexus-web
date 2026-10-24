@@ -31,7 +31,7 @@ const sourceLink = (href: string | null) => href === null ? null : <a href={href
 
 function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; readonly open: boolean }) {
   const display = useRenderEnvironment();
-  const source = usePaneFreeServerValue({ key: open ? `metadata:podcast:${podcastId}` : null, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: signal => getPodcastDetail(podcastId, signal) });
+  const source = usePaneFreeServerValue({ key: open ? `metadata:podcast:${podcastId}` : null, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
   if (source.status === "loading") return <PaneLoadingState label="loading metadata…" announcement="Polite" />;
   if (source.status === "failed") return <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t load metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
   const { podcast, episode_counts: counts } = source.data;

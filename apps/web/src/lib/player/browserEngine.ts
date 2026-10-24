@@ -46,7 +46,8 @@ import {
 } from "@/lib/player/playerRuntime";
 
 type ListeningIn = Schema<"ListeningIn">;
-type ListeningPosition = Schema<"ListeningPositionOut">;
+/** The listening fences a descriptor or a refused write's canonical observation supplies. */
+type ListeningPosition = Pick<PlayerDescriptor, "position_ms" | "reset_epoch" | "consumption_override_revision">;
 
 export interface BrowserEngineDeps {
   terminal(input: { readonly mediaId: string; readonly subject: string; readonly advance: boolean; readonly body: Promise<Schema<"NaturalEndIn">> }): Promise<void>;
@@ -159,7 +160,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             method: "PUT",
             body: JSON.stringify(body),
           });
-          current.overrideRevision = data.consumption_override_revision;
+          current.overrideRevision = data.state.consumption_override_revision;
           if (current === episode) set({ synced: true });
           publishChange("Consumption");
         } catch (error) {
@@ -169,10 +170,11 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           const status = isApiError(error) ? error.status : 0;
           if (isApiError(error) && status === 409) {
             // The listening was reset elsewhere: the reset wins, so take its position and epoch.
-            // justify-type-assertion: the 409 carries this route's authoritative position tuple.
-            const server = error.details?.current as ListeningPosition;
+            // justify-type-assertion: the 409 carries this route's canonical observation.
+            const { state: server } = error.details?.current as Schema<"EpisodeConsumptionObservation">;
             current.queued = null; // sampled under the old epoch
-            adoptInto(current, server);
+            adoptInto(current, { position_ms: server.position_ms ?? 0, reset_epoch: server.reset_epoch,
+              consumption_override_revision: server.consumption_override_revision });
           } else if (status === 0 || status >= 500) {
             // The attached episode retries on the tick or `online`.
             return;
@@ -501,7 +503,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         "Listening",
         observation(false),
       );
-      set({ source: { kind: "Episode", descriptor }, playbackSubject: crypto.randomUUID() });
+      set({ source: { kind: "Episode", descriptor, packageId: null }, playbackSubject: crypto.randomUUID() });
       showSession();
     },
     async preview(descriptor: PreviewAudioDescriptor) {

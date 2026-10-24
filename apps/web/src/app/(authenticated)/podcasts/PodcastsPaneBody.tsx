@@ -4,7 +4,7 @@
 // them to the server, which validates them; the text filter stays local.
 // A selected scope owns its label read independently of the closed choices.
 
-import { useCallback, useId, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -32,7 +32,9 @@ import {
   type PodcastRow,
 } from "@/lib/podcasts/api";
 import { remoteReady } from "@/lib/native/admission";
-import { useCatalogRead } from "@/lib/catalog/provider";
+import { useCatalogRead, useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
+import { oldestRevision, type ConsumptionStamp } from "@/lib/consumption/listening";
+import { isApiError } from "@/lib/api/client";
 import { catalogPodcasts, catalogLibraries, catalogLibrary } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import {
@@ -50,7 +52,7 @@ import {
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
 
-const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastRow>>(
+const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastRow, ConsumptionStamp>>(
   "Podcasts.Subscriptions",
 );
 const LIBRARIES = definePaneVisitDataKey<ListSnapshot<Library>>("Podcasts.LibraryChoices");
@@ -88,11 +90,17 @@ export default function PodcastsPaneBody() {
   const query = new URLSearchParams({ sort, filter });
   if (libraryId !== null) query.set("library_id", libraryId);
   const key = query.toString();
-  const savedPodcasts = useCatalogRead(value => catalogPodcasts(value, new URLSearchParams(key)));
+  const savedPodcasts = useCatalogRead(value => {
+    const page = catalogPodcasts(value, new URLSearchParams(key));
+    return page === null ? null : { ...page, metadata: { consumption_revision: value.value.consumption_revision } };
+  });
   const savedLibraries = useCatalogRead(catalogLibraries);
-  const stale = `${useChangeStamp("Podcasts")}:${librariesRevision}:${useMediaQueryRevision()}`;
-  const list = useServerList<PodcastRow>({
+  // The index orders and filters by unplayed counts, so it is one consumption group.
+  const group = useLiveGroup(`podcasts?${key}`);
+  const stale = `${useChangeStamp("Podcasts")}:${librariesRevision}:${useMediaQueryRevision()}:${group.stale}`;
+  const rawList = useServerList<PodcastRow, ConsumptionStamp>({
     catalog: savedPodcasts,
+    foldMetadata: oldestRevision,
     key: `/podcasts?${key}`,
     stale,
     pageSize: 100,
@@ -102,6 +110,31 @@ export default function PodcastsPaneBody() {
     fetchPage: (cursor, limit, signal) =>
       listPodcasts(pageQuery(key, cursor, limit), signal),
   });
+  // Relevance is the saved episodes of the scope's unfiltered shows: every followed show,
+  // or the selected library's subscriptions; never narrowed by has_new/not_in_library.
+  const catalog = useCatalogState();
+  const scopedEpisodes = useMemo(() => {
+    const raw = catalog.raw;
+    if (raw === null) return new Set<string>();
+    const shows = new Set(libraryId === null
+      ? raw.value.shows.flatMap(row => row.index === null ? [] : [row.detail.podcast.id])
+      : raw.libraryShows.get(libraryId)?.subscriptions.map(row => row.podcast.id) ?? []);
+    return new Set(raw.value.episodes.flatMap(row => shows.has(row.podcast_id) ? [row.media_id] : []));
+  }, [catalog.raw, libraryId]);
+  usePromoteLiveGroup(group, rawList.source.kind === "live" && rawList.complete && rawList.failure === null && rawList.metadata !== null
+    ? [rawList.metadata.consumption_revision] : null, scopedEpisodes);
+  const saved = useMemo(() => {
+    if (catalog.data === null) return null;
+    try {
+      const page = catalogPodcasts(catalog.data, new URLSearchParams(key));
+      return page === null ? null : { items: page.items,
+        source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
+    } catch (error) { if (isApiError(error)) return null; throw error; }
+  }, [catalog.data, key]);
+  const list = useMemo((): typeof rawList => group.live || saved === null ? rawList : {
+    ...rawList, source: saved.source, status: "ready", items: saved.items, fresh: false,
+    metadata: null, current: true, complete: true, orderRevision: null,
+  }, [group.live, rawList, saved]);
   const actionFacts = (id: string): PodcastActionSubject["facts"] => list.failure !== null
     ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
     : list.source.kind !== "live" || !remoteReady() || !list.fresh || list.running !== null
@@ -125,7 +158,7 @@ export default function PodcastsPaneBody() {
     visit: SELECTED_LIBRARY,
     load: signal => {
       if (selectedLibraryId === null) throw new Error("selected library read requires a library id");
-      return getLibrary(selectedLibraryId, signal);
+      return getLibrary(selectedLibraryId, signal).then(read => read.data);
     },
   });
   const selectedLibraryFailure = selectedLibrary.status !== "loading" && selectedLibrary.error !== null

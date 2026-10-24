@@ -271,12 +271,11 @@ class RecoveryAction(_Action):
 
 
 class DownloadAction(_Action):
-    """What android needs to keep this media offline: an episode's audio or a reading copy."""
+    """An admitted acquisition subject; native resolves its source and playback authority."""
 
     kind: Literal["Download"] = "Download"
     media_kind: DownloadKind
     title: str
-    audio_url: str | None
 
 
 class OpenSourceAction(_Action):

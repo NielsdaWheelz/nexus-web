@@ -1,306 +1,62 @@
-// The Downloads screen: one list for episodes and reading copies, rendered from
-// Android's snapshot with the same copy online and offline. A ready reading
-// copy opens here in ShelfReader; everything else is a row with its actions.
-import { useCallback, useEffect, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
+// The isolated shelf reads non-episode copies. Download management belongs to the workspace.
+import { useEffect, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import Dialog from "@/components/ui/Dialog";
-import {
-  offlineCall,
-  useOfflineSnapshot,
-  type FailureReason,
-  type OfflineItem,
-  type OfflineSnapshot,
-} from "@/lib/offline/bridge";
-import type { ProgressView } from "@/lib/documentReader/ports";
-import { formatByteCount } from "@/lib/text/formatByteCount";
+import Button from "@/components/ui/Button";
+import { localCall, localMutation, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
 import ShelfReader from "./ShelfReader";
 import styles from "./shelf.module.css";
 
-interface Confirmation {
-  readonly title: string;
-  readonly body: string;
-  readonly action: string;
-  readonly tone: "danger" | null;
-  readonly run: () => void;
-}
-
-const FAILURE_COPY: Record<FailureReason, string> = {
-  AuthorizationRequired: "sign in required",
-  SourceUnavailable: "source unavailable",
-  Changed: "source changed · retry",
-  Storage: "not enough storage",
-  Network: "network interrupted",
-  Server: "server unavailable",
-  Invalid: "not a playable file",
-  Stopped: "stopped by Android",
-};
-
-const KIND_COPY: Record<OfflineItem["kind"], string> = {
-  podcast_episode: "Episode",
-  pdf: "PDF",
-  epub: "EPUB",
-  web_article: "Web article",
-};
-
-const POSITION_COPY: Record<ProgressView["kind"], string> = {
-  Canonical: "Position synced",
-  Pending: "Position saved on this device",
-  Conflict: "Position needs your choice",
-  ContentChanged:
-    "A newer source version exists. This downloaded copy and its position remain only on this device.",
-  SourceUnavailable: "Position kept locally · source unavailable",
-};
-
-const SHELF_DATE = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-function statusCopy(item: OfflineItem, snapshot: OfflineSnapshot): string {
-  switch (item.state) {
-    case "Queued":
-      return [
-        item.attempts > 0 ? "Retrying after interruption" : "Download queued",
-        snapshot.policy === "UnmeteredOnly" ? "waits for Wi-Fi" : null,
-        snapshot.items.some((other) => other.state === "Downloading")
-          ? "another download is active"
-          : null,
-      ].filter((part) => part !== null).join(" · ");
-    case "Downloading":
-      return item.total === null
-        ? formatByteCount(item.received)
-        : `${formatByteCount(item.received)} of ${formatByteCount(item.total)}`;
-    case "Ready":
-      return [
-        "Downloaded",
-        formatByteCount(item.sizeBytes),
-        item.savedAt === null ? null : `saved ${SHELF_DATE.format(new Date(item.savedAt))}`,
-      ].filter((part) => part !== null).join(" · ");
-    case "Failed":
-      return `Download failed · ${FAILURE_COPY[item.failure!]}`;
-    case "Removing":
-      // The player or an open reader still holds the file; it goes when released.
-      return item.kind === "podcast_episode"
-        ? "Removes when playback stops"
-        : "Removes when closed";
-  }
-}
-
-const isReading = (item: OfflineItem) => item.kind !== "podcast_episode";
-
 export default function Shelf() {
-  const snapshot = useOfflineSnapshot();
-  const [openId, setOpenId] = useState<string | null>(null);
-  const openRef = useRef<string | null>(null);
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { index, error } = useLocalContent();
   const [hash, setHash] = useState(() => window.location.hash);
-
-  const run = useCallback((op: string, args: Record<string, unknown> = {}) => {
-    setError(null);
-    void offlineCall(op, args).catch(() =>
-      setError("Nexus couldn’t change that download. Try again."),
-    );
-  }, []);
-
-  const openCopy = useCallback((mediaId: string) => {
-    const previous = openRef.current;
-    if (previous === mediaId) return;
-    // The bridge handles frames in order, so the old lease is released first.
-    if (previous !== null) void offlineCall("close", { mediaId: previous }).catch(() => undefined);
-    openRef.current = null;
-    setOpenId(null);
-    setError(null);
-    offlineCall("open", { mediaId }).then(
-      () => {
-        openRef.current = mediaId;
-        setOpenId(mediaId);
-      },
-      () => setError("This downloaded copy could not be opened."),
-    );
-  }, []);
-
-  const closeCopy = useCallback(() => {
-    const mediaId = openRef.current;
-    if (mediaId === null) return;
-    void offlineCall("close", { mediaId }).catch(() => undefined);
-    openRef.current = null;
-    setOpenId(null);
-  }, []);
-
-  // `#open={id}`: a launch link or an in-shelf app link to a ready copy.
+  const [opened, setOpened] = useState<LocalItem | null>(null);
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const mediaId = /^#open=([0-9a-f-]{36})$/.exec(hash)?.[1] ?? null;
+  const candidate = index?.items.find(item => item.media_id === mediaId && item.kind !== "podcast_episode" && item.state === "Ready") ?? null;
   useEffect(() => {
-    const onHashChange = () => setHash(window.location.hash);
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    const changed = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", changed);
+    return () => window.removeEventListener("hashchange", changed);
   }, []);
+  const currentCandidate = useRef(candidate);
+  currentCandidate.current = candidate;
+  const availableId = opened?.media_id === mediaId ? mediaId : candidate?.media_id ?? null;
   useEffect(() => {
-    const mediaId = /^#open=([0-9a-f-]{36})$/.exec(hash)?.[1];
-    if (mediaId === undefined || snapshot === null) return;
-    window.history.replaceState(null, "", window.location.pathname);
-    setHash("");
-    const item = snapshot.items.find((candidate) => candidate.mediaId === mediaId);
-    if (item?.state === "Ready" && isReading(item)) openCopy(mediaId);
-  }, [hash, snapshot, openCopy]);
-
-  const remove = (item: OfflineItem) => {
-    const removeNow = () => {
-      if (openRef.current === item.mediaId) closeCopy();
-      run("remove", { mediaId: item.mediaId });
+    if (availableId === null) return;
+    let active = true;
+    setFailure(null);
+    void localCall("open", { media_id: availableId }).then(() => {
+      if (active) setOpened(currentCandidate.current);
+    }, () => { if (active) setFailure("this downloaded copy couldn’t be opened"); });
+    return () => {
+      active = false;
+      setOpened(null);
+      void localCall("close", { media_id: availableId });
     };
-    if (item.progress === null || item.progress.kind === "Canonical") {
-      removeNow();
-      return;
-    }
-    setConfirmation({
-      title: "Remove downloaded copy?",
-      body: "Its position saved on this device has not reached Nexus and will be lost.",
-      action: "Remove copy and position",
-      tone: "danger",
-      run: removeNow,
-    });
+  }, [availableId]);
+  const back = () => { void localCall("open_hosted", { path: "/downloads" }).catch(() => setFailure("couldn’t open downloads · try again")); };
+  const item = opened === null ? null : index?.items.find(row => row.media_id === opened.media_id) ?? opened;
+  const remove = () => {
+    if (item === null) return;
+    void localMutation("remove", { media_id: item.media_id }).then(back,
+      () => setFailure("removal not confirmed · try again"));
   };
-
-  const dialog = confirmation === null ? null : (
-    <Dialog open onClose={() => setConfirmation(null)} title={confirmation.title}>
-      <div className={styles.dialogBody}>
-        <p>{confirmation.body}</p>
-        <div className={styles.actions}>
-          <Button emphasis="strong" tone={confirmation.tone ?? undefined} onClick={() => {
-            setConfirmation(null);
-            confirmation.run();
-          }}>{confirmation.action}</Button>
-          <Button onClick={() => setConfirmation(null)}>
-            Cancel
-          </Button>
-        </div>
+  return <main className={`${styles.shell} ${styles.readerShell}`}>
+    <header className={styles.readerHeader}>
+      <Button onClick={back}>downloads</Button>
+      {item === null ? null : <h1>{item.title}</h1>}
+    </header>
+    {failure === null ? null : <FeedbackNotice content={{ tone: "Warning", title: failure }} announcement="Assertive" />}
+    {item !== null ? <ShelfReader key={item.media_id} item={item} onRemove={() => { if (item.progress !== null && item.progress.kind !== "Canonical") setConfirmRemoval(true); else remove(); }} />
+      : <FeedbackState content={{ tone: error === null && index === null ? "Neutral" : "Warning",
+        title: error?.message ?? (index === null ? "opening downloaded copy…" : "downloaded copy unavailable") }} announcement="Polite" />}
+    {confirmRemoval ? <Dialog open title="remove downloaded copy?" onClose={() => setConfirmRemoval(false)}>
+      <p>its reading position has not reached nexus and will be lost.</p><div className={styles.actions}>
+        <Button tone="danger" onClick={() => { setConfirmRemoval(false); remove(); }}>remove copy and position</Button>
+        <Button onClick={() => setConfirmRemoval(false)}>cancel</Button>
       </div>
-    </Dialog>
-  );
-  const alert = error === null ? null : <FeedbackNotice content={{ tone: "Warning", title: "download change not confirmed", message: error }} announcement="Assertive" />;
-
-  const opened = snapshot?.items.find((item) => item.mediaId === openId);
-  const openedReady = opened?.state === "Ready";
-  // A copy that stops being Ready while open (purge, a remove elsewhere) closes.
-  useEffect(() => {
-    if (openId !== null && !openedReady) closeCopy();
-  }, [openId, openedReady, closeCopy]);
-
-  if (snapshot === null) {
-    return (
-      <main className={styles.shell}>
-        <FeedbackState content={{ tone: "Neutral", title: "opening downloads…" }} announcement="Polite" />
-      </main>
-    );
-  }
-  if (opened !== undefined && openedReady) {
-    return (
-      <main className={`${styles.shell} ${styles.readerShell}`}>
-        <header className={styles.readerHeader}>
-          <Button onClick={closeCopy}>Downloads</Button>
-          <div>
-            <h1 title={opened.title}>{opened.title}</h1>
-            <p>{statusCopy(opened, snapshot)}</p>
-          </div>
-        </header>
-        {alert}
-        <ShelfReader key={opened.mediaId} item={opened} onRemove={() => remove(opened)} />
-        {dialog}
-      </main>
-    );
-  }
-
-  const section = (label: string, items: readonly OfflineItem[]) =>
-    items.length === 0 ? null : (
-      <section aria-label={label}>
-        <h2 className={`${styles.label} ${styles.sectionTitle}`}>{label}</h2>
-        <ul className={styles.list}>
-          {items.map((item) => (
-            <li key={item.mediaId} className={styles.row}>
-              <div>
-                <p className={styles.label}>{KIND_COPY[item.kind]}</p>
-                <h3 className={styles.rowTitle}>
-                  <button type="button" onClick={() => run("openHosted", { path: `/media/${item.mediaId}` })}>
-                    {item.title}
-                  </button>
-                </h3>
-                <FeedbackStatus content={{ tone: item.state === "Failed" ? "Warning" : "Neutral", title: statusCopy(item, snapshot) }} announcement="None" />
-                {item.progress === null ? null : (
-                  <FeedbackStatus content={{ tone: item.progress.kind === "Canonical" || item.progress.kind === "Pending" ? "Neutral" : "Warning", title: POSITION_COPY[item.progress.kind] }} announcement="None" />
-                )}
-              </div>
-              <div className={styles.rowActions}>
-                {item.state === "Ready" && isReading(item) ? (
-                  <Button aria-label={`Open ${item.title}`}
-                    onClick={() => openCopy(item.mediaId)}>Open</Button>
-                ) : null}
-                {item.state === "Queued" || item.state === "Downloading" ? (
-                  <Button onClick={() => run("cancel", { mediaId: item.mediaId })}>Cancel</Button>
-                ) : null}
-                {item.state === "Failed" ? (
-                  <Button onClick={() => run("retry", { mediaId: item.mediaId })}>Retry</Button>
-                ) : null}
-                {item.state === "Ready" || item.state === "Failed" ? (
-                  <Button tone="danger" aria-label={`Remove ${item.title}`}
-                    onClick={() => remove(item)}>Remove</Button>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-    );
-
-  const downloaded = snapshot.items.reduce(
-    (total, item) => (item.state === "Ready" ? total + item.sizeBytes : total),
-    0,
-  );
-  return (
-    <main className={styles.shell}>
-      <header className={styles.hero}>
-        <p className={`${styles.label} ${styles.eyebrow}`}>Nexus</p>
-        <h1>Downloads</h1>
-        <Button onClick={() => run("openHosted", { path: "/" })}>
-          Back to Nexus
-        </Button>
-      </header>
-      {alert}
-      {snapshot.authRequired ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: "sign in to sync downloads", message: "downloads stay on this device. sign in to download more and sync reading positions." }}
-          announcement="Polite"
-          actions={[{ label: "open nexus", onClick: () => run("openHosted", { path: "/" }) }]}
-        />
-      ) : null}
-      <div className={styles.summary}>
-        <span>{formatByteCount(downloaded)} downloaded</span>
-        <label className={styles.policy}>
-          <input
-            type="checkbox"
-            checked={snapshot.policy === "AnyConnected"}
-            onChange={(event) => {
-              if (!event.currentTarget.checked) {
-                run("policy", { value: "UnmeteredOnly" });
-                return;
-              }
-              setConfirmation({
-                title: "Allow all downloads over mobile data?",
-                body: "This releases every download waiting for Wi-Fi.",
-                action: "Allow mobile data",
-                tone: null,
-                run: () => run("policy", { value: "AnyConnected" }),
-              });
-            }}
-          />
-          <span>Download over mobile data</span>
-        </label>
-      </div>
-      {snapshot.items.length === 0 ? <FeedbackState content={{ tone: "Neutral", title: "no downloads" }} announcement="None" /> : null}
-      {section("Listening", snapshot.items.filter((item) => !isReading(item)))}
-      {section("Reading", snapshot.items.filter(isReading))}
-      {dialog}
-    </main>
-  );
+    </Dialog> : null}
+  </main>;
 }

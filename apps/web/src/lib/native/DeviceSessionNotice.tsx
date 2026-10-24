@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useCatalogState } from "@/lib/catalog/provider";
+import { retryListeningRead, useListening } from "@/lib/consumption/listening";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
@@ -14,6 +15,8 @@ import { sessionCheck, sessionSignIn } from "./client";
 export function DeviceSessionNotice() {
   const admission = useRemoteAdmission();
   const catalog = useCatalogState();
+  const listening = useListening();
+  const [readingListening, setReadingListening] = useState(false);
   const { calendarTimeZone } = useAuthenticatedAccount();
   const environment = useRenderEnvironment();
   const snapshot = catalog.status?.snapshot ?? (catalog.data === null ? null : catalog.data.value);
@@ -54,5 +57,15 @@ export function DeviceSessionNotice() {
       : admission === "Unavailable" || result === "Failed" ? [{ label: "try again", onClick: () => { setResult(null); void sessionCheck().catch(() => setResult("Failed")); } }]
       : catalogFailure && admission === "Ready" ? [{ label: "retry", onClick: () => void catalog.refresh(), busy: catalog.accepting || catalog.status?.refreshing }] : undefined,
   } : null);
+  useWorkspaceCondition("device-listening", listening.error === null ? null : {
+    priority: "Action",
+    content: { tone: "Warning", title: "listening progress couldn’t be read",
+      message: "saved progress has been kept. lists may be out of date." },
+    announcement: "Polite",
+    actions: [{ label: "retry", busy: readingListening, onClick: () => {
+      setReadingListening(true);
+      void retryListeningRead().finally(() => setReadingListening(false));
+    } }],
+  });
   return null;
 }

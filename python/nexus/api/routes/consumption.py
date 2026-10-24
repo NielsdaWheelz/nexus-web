@@ -21,7 +21,7 @@ from nexus.schemas.suggestions import (
     SuggestionViewOut,
 )
 from nexus.services import suggestion_shortlists, suggestions
-from nexus.services.consumption import collections, lectern, state
+from nexus.services.consumption import collections, lectern, observation, state
 
 router = APIRouter(tags=["consumption"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -67,8 +67,14 @@ def append_collection_lectern(
 
 
 @router.get("/lectern")
-def get_lectern(viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[wire.LecternOut]:
-    return Data(data=lectern.get_lectern(db, viewer.user_id))
+def get_lectern(
+    viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> wire.ConsumptionData[wire.LecternOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    data = lectern.get_lectern(db, viewer.user_id)
+    return observation.stamp(
+        db, viewer.user_id, data, [row.media_summary.media_id for row in data.items]
+    )
 
 
 @router.put("/lectern/items/{media_id}")
@@ -152,7 +158,8 @@ def reset_progress(media_id: UUID, viewer: ViewerDep) -> Data[wire.ConsumptionOv
     return Data(data=state.reset_progress(viewer.user_id, media_id))
 
 
-@router.post("/media/{media_id}/natural-end", status_code=204)
-def settle_natural_end(media_id: UUID, body: wire.NaturalEndIn, viewer: ViewerDep) -> Response:
-    state.settle_natural_end(viewer.user_id, media_id, body)
-    return Response(status_code=204)
+@router.post("/media/{media_id}/natural-end")
+def settle_natural_end(
+    media_id: UUID, body: wire.NaturalEndIn, viewer: ViewerDep
+) -> Data[wire.EpisodeConsumptionObservation]:
+    return Data(data=state.settle_natural_end(viewer.user_id, media_id, body))

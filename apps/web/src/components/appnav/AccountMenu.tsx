@@ -6,16 +6,19 @@ import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
 import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
 import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useGuardedSignOut, useWorkGuard } from "@/lib/unsavedWork";
+import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import { pauseWriting, readWriting, resumeWriting, stopWritingRuntime } from "@/lib/notes/writes";
 import { unbindNativePlayer } from "@/lib/player/nativeEngine";
-import { offlineAvailable, offlineCall } from "@/lib/offline/bridge";
+import { localContentAvailable, localCall } from "@/lib/offline/localContent";
+import { useWorkspaceStore } from "@/lib/workspace/store";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -67,7 +70,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
           return;
         }
         message = "offline data couldn’t be fully removed. your session is still open. retry sign out.";
-        if (offlineAvailable) await offlineCall("purge");
+        if (localContentAvailable) await localCall("purge");
         message = "sign out couldn’t finish. your session is still open.";
       }, () => {
         if (installedApp) { if (live.current && readWriting().account_id === null) refreshDevice(); return; }
@@ -124,7 +127,7 @@ export default function AccountMenu(props: {
   renderTrigger: ComponentProps<typeof ActionMenu>["renderTrigger"];
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
-  const guard = useWorkGuard();
+  const workspace = useWorkspaceStore();
   const signOut = useContext(SignOutContext);
   // justify-defect: the authenticated shell mounts the one sign-out owner above every menu.
   if (!signOut) throw new Error("AccountMenu must be used within a SignOutProvider");
@@ -173,14 +176,26 @@ export default function AccountMenu(props: {
       disabled: signOut.busy,
     },
   ];
-  // Android's packaged shelf; the bridge loads it in place of the workspace.
-  if (offlineAvailable) {
+  if (localContentAvailable) {
     options.splice(2, 0, {
-      kind: "command",
-      id: "downloads",
-      label: "Downloads",
-      icon: <Download size={16} aria-hidden="true" />,
-      onSelect: () => { if (guard.confirmDocumentExit()) void offlineCall("showDownloads"); },
+      kind: "custom", id: "downloads", label: "Downloads",
+      render: ({ closeMenu, closeMenuWithoutFocus, presentation }) => {
+        const navigate = (event: TargetActivationEvent) => {
+          const result = activateTargetLink({ event, target: { href: "/downloads" }, runtime: {
+            activateTarget: ({ target, disposition }) => workspace.activateWorkspaceTarget({
+              originPaneId: workspace.state.active_primary_pane_id, target, disposition,
+            }),
+          } });
+          if (result === "handled-default" || result === "handled-new-pane") closeMenuWithoutFocus();
+          else if (result === "consumed") closeMenu();
+        };
+        return <ButtonLink href="/downloads" data-workspace-rich-target="true" className={collection.row}
+          role={presentation === "menu" ? "menuitem" : undefined} tabIndex={presentation === "menu" ? -1 : 0}
+          onClick={navigate} onKeyDown={navigate}>
+          <Download size={16} className={collection.adornment} aria-hidden="true" />
+          <span className={collection.content}>Downloads</span>
+        </ButtonLink>;
+      },
     });
   }
 

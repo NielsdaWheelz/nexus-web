@@ -2,7 +2,7 @@
 
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { Captions } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
@@ -142,7 +142,7 @@ function PlaybackPosition({ mediaId, reader, transcriptReaderKey }: {
 }
 
 /** Show notes as html with their `m:ss` / `h:mm:ss` times as seek buttons. */
-function showNotes(media: MediaDetail, hrefForTime: (ms: number) => string | null): string | null {
+function showNotes(media: { readonly title: string; readonly description_html: string | null; readonly description_text: string | null }, hrefForTime: (ms: number) => string | null): string | null {
   const html =
     media.description_html?.trim() ||
     (media.description_text?.trim()
@@ -158,6 +158,7 @@ function showNotes(media: MediaDetail, hrefForTime: (ms: number) => string | nul
       : null);
   if (!html) return null;
   const root = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html").body.firstElementChild!;
+  if (!root.textContent?.trim()) return null;
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts: Text[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode())
@@ -176,13 +177,32 @@ function showNotes(media: MediaDetail, hrefForTime: (ms: number) => string | nul
         else button.type = "button";
         button.className = styles.seek;
         button.dataset.seekMs = String(ms);
-        button.setAttribute("aria-label", `Seek to ${part}`);
+        button.setAttribute("aria-label", `play ${media.title} at ${part}`);
         button.textContent = part;
         return button;
       }),
     );
   }
   return root.innerHTML;
+}
+
+/** One publisher-notes presenter for live and downloaded sources; documents stay with their source owner. */
+export function PublisherNotes({ title, html, text = null, hrefForTime, onOpenTime }: {
+  readonly title: string;
+  readonly html: string | null;
+  readonly text?: string | null;
+  readonly hrefForTime: (ms: number) => string | null;
+  readonly onOpenTime: (event: TargetActivationEvent, ms: number) => void;
+}) {
+  const notes = useMemo(() => showNotes({ title, description_html: html, description_text: text }, hrefForTime), [title, html, text, hrefForTime]);
+  if (notes === null) return null;
+  const activate = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
+    const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
+    if (ms !== null && ms !== undefined) onOpenTime(event, Number(ms));
+  };
+  return <PaneSection title="show notes" className={styles.showNotes} onClick={activate} onKeyDown={activate}>
+    <HtmlRenderer htmlSanitized={notes} headingLevelOffset={2} className={styles.showNotesBody} />
+  </PaneSection>;
 }
 
 /** Publisher notes remain expanded host content; video retains its embed behavior. */
@@ -195,7 +215,6 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
   readonly transcriptReaderKey: string | null;
 }) {
   const identity = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc.identity : null);
-  const notes = useMemo(() => showNotes(media, (ms) => identity === null ? null : reader.navigation?.href({ source_identity: identity, target: { kind: "time", ms } }) ?? null), [identity, media, reader]);
   const [locationUnavailable, setLocationUnavailable] = useState(false);
   const openTime = (event: TargetActivationEvent, ms: number) => {
     const play = () => {
@@ -258,16 +277,8 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
     {(media.kind === "video" || !media.playerDescriptor) && (source?.source_url || media.canonical_source_url) ?
       <a href={source?.source_url || media.canonical_source_url!} target="_blank" rel="noopener noreferrer" className={styles.textButton}>open in source</a> : null}
     {media.kind === "podcast_episode" && identity !== null ? <PlaybackPosition mediaId={media.id} reader={reader} transcriptReaderKey={transcriptReaderKey} /> : null}
-    {notes ? <PaneSection title="show notes" className={styles.showNotes}
-      onClick={(event) => {
-        const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
-        if (ms) openTime(event, Number(ms));
-      }}
-      onKeyDown={(event) => {
-        const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
-        if (ms) openTime(event, Number(ms));
-      }}>
-      <HtmlRenderer htmlSanitized={notes} headingLevelOffset={2} className={styles.showNotesBody} />
-    </PaneSection> : null}
+    <PublisherNotes title={media.title} html={media.description_html} text={media.description_text}
+      hrefForTime={ms => identity === null ? null : reader.navigation?.href({ source_identity: identity, target: { kind: "time", ms } }) ?? null}
+      onOpenTime={openTime} />
   </div>;
 }

@@ -34,7 +34,6 @@ from nexus.services.collection_keyset import (
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import primary_creator_rows_sql
 from nexus.services.library_entries import library_media_rows_sql, unfiled_media_ids_sql
-from nexus.services.reading_time import reading_time_rows_sql
 
 
 def _nullable(column: str, direction: Direction, value: KeysetValueKind) -> tuple[SortKey, ...]:
@@ -122,7 +121,9 @@ def entry_fact_rows_sql(
             f"LEFT JOIN ({projection.engagement_fact_rows_sql()}) eng ON eng.media_id=md.id"
         )
     if remaining:
-        joins.append(f"LEFT JOIN ({reading_time_rows_sql()}) duration ON duration.media_id=md.id")
+        joins.append(
+            f"LEFT JOIN ({projection.remaining_time_rows_sql()}) duration ON duration.media_id=md.id"
+        )
     return f"""
         WITH membership AS MATERIALIZED ({membership}), facts AS (
             SELECT membership.*, md.kind AS media_kind, lower(btrim(md.title)) AS title_key,

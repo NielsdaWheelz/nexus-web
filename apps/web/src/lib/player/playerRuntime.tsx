@@ -3,7 +3,9 @@
 /**
  * The playback command owner. Queue identity spans engine loads; occurrence ids
  * fence selection and end independently of media identity. Browser queue writes
- * are durable before activation; Android owns its queue/cursor in the service.
+ * are durable before activation; Android owns its queue/cursor in the service and
+ * resolves each activation from a downloaded lease or its own descriptor read.
+ * Android starts never await an api descriptor read in the renderer.
  * Sources prepare complete captures before replacement. All engine starts share
  * one latest-intent lane, while an already-sent write always resolves first.
  * Queue absence is actionable only after authority confirms it. Creation never
@@ -66,7 +68,8 @@ export interface PreviewAudioDescriptor {
 
 export type PlayerDescriptor = Schema<"PlayerDescriptor">;
 export type PlayerSource =
-  | { readonly kind: "Episode"; readonly descriptor: PlayerDescriptor }
+  /** `packageId`: the downloaded recording the native engine loaded; null when streaming. */
+  | { readonly kind: "Episode"; readonly descriptor: PlayerDescriptor; readonly packageId: string | null }
   | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor };
 export type PlayerPhase = "Buffering" | "Playing" | "Paused" | "Ended";
 
@@ -257,7 +260,7 @@ export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
     : null;
 }
 
-/** The server's current descriptor within the existing load deadline. */
+/** The browser engine's current descriptor within the existing load deadline. */
 async function freshDescriptor(
   mediaId: string,
   signal: AbortSignal | null,
@@ -268,7 +271,7 @@ async function freshDescriptor(
       `/api/media/${mediaId}/player`, { signal, cache: "no-store" },
     ),
   });
-  return body.data;
+  return body.data.descriptor;
 }
 
 export function GlobalPlayerProvider({
@@ -863,7 +866,7 @@ export function GlobalPlayerProvider({
           if (mine !== latest.current) return "Superseded";
           frozen = captureQueue(captured.media_ids, mediaId, captured.source);
         }
-        const descriptor = await read(mine);
+        const descriptor = androidShell ? null : await read(mine);
         if (mine !== latest.current) return "Superseded";
         committing = true;
         commitGeneration = latest.current + 1;

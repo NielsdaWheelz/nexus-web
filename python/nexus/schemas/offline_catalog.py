@@ -12,7 +12,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import TranscriptState
-from nexus.schemas.consumption import LecternOut
+from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.consumption import EpisodeConsumptionState, LecternOut
 from nexus.schemas.conversation import ConversationListItemOut
 from nexus.schemas.library import LibraryOut
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -78,6 +79,7 @@ class CatalogLibraryOut(_Closed):
 class CatalogMediaOut(_Closed):
     summary: MediaSummaryOut
     is_unfiled: bool
+    remaining_seconds: float | None
     order: MediaOrder
 
 
@@ -110,6 +112,8 @@ class CatalogEpisodeOut(_Closed):
     podcast_id: UUID
     transcript_state: TranscriptState
     episode_state: Literal["unplayed", "in_progress", "played"]
+    consumption: EpisodeConsumptionState
+    source_duration_ms: int | None
     order: EpisodeOrder
 
 
@@ -138,11 +142,12 @@ def _orders(values: list[BaseModel]) -> None:
 
 
 class OfflineCatalogOut(_Closed):
-    format_version: Literal[1]
+    format_version: Literal[2]
     wire_revision: int
     account_id: UUID
     snapshot_id: UUID
     captured_at: datetime
+    consumption_revision: OrderRevision
     libraries: list[CatalogLibraryOut]
     media: list[CatalogMediaOut]
     library_media: list[CatalogLibraryMediaOut]

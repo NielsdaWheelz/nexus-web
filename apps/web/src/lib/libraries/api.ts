@@ -13,6 +13,7 @@ import { publishChange } from "@/lib/api/changes";
 import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Move, Snapshot } from "@/lib/collections/order";
+import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
 export type Library = Schema<"LibraryOut">;
 export type LibraryEntry = Schema<"LibraryMediaEntryOut">;
@@ -40,8 +41,9 @@ export function librariesPage(query: URLSearchParams, signal?: AbortSignal) {
   return data<ListPage<Library>>(`/api/libraries?${query}`, signal);
 }
 
-export function getLibrary(id: string, signal?: AbortSignal) {
-  return data<Library>(libraryPath(id), signal);
+/** Stamped with its read snapshot's consumption revision; observations reach native. */
+export async function getLibrary(id: string, signal?: AbortSignal): Promise<StampedRead<Library>> {
+  return stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}", "get">>(libraryPath(id), { signal }));
 }
 
 export async function createLibrary(
@@ -75,15 +77,15 @@ export async function deleteLibrary(id: string): Promise<void> {
   publishChange("Libraries", "Entries");
 }
 
-export function entriesPage(
+/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
+export async function entriesPage(
   id: string,
   query: URLSearchParams,
   signal?: AbortSignal,
 ) {
-  return data<Schema<"LibraryEntriesPageOut">>(
-    `${libraryPath(id)}/entries?${query}`,
-    signal,
-  );
+  const { data, consumption_revision } = stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+    `${libraryPath(id)}/entries?${query}`, { signal }));
+  return { ...data, metadata: { consumption_revision } };
 }
 
 export async function libraryOrder(libraryId: string, signal: AbortSignal): Promise<Snapshot> {

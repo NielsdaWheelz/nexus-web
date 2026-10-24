@@ -47,7 +47,7 @@ export default function LibrarySettingsDialog({
   const library = usePaneFreeServerValue({
     key: `/libraries/${libraryId}`,
     stale: useChangeStamp("Libraries"),
-    load: (signal) => getLibrary(libraryId, signal),
+    load: async (signal) => (await getLibrary(libraryId, signal)).data,
   });
   const current = library.status === "ready" ? library.data : null;
   const guard = useWorkGuard();

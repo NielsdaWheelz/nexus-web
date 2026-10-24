@@ -4,7 +4,7 @@ import { useEffect, useState, type ComponentProps } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
-import { useResourceActions } from "@/lib/actions/useResourceActions";
+import { useDeviceActions, useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
@@ -51,6 +51,7 @@ export default function ContextualActionMenu({
   }, []);
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
+  const device = useDeviceActions(resourceRef ?? null, title);
   const groups: MenuContent["sections"][number][] = sections
     .filter((section) => section.actions.length > 0)
     .map((section) => ({ id: section.id, label: {
@@ -79,6 +80,10 @@ export default function ContextualActionMenu({
   if (state?.kind === "Failed" && state.connectionRequired) groups.push({
     id: "Resource", label: null, options: [{ kind: "command", id: "Resource.ConnectionRequired", label: "requires a connection", disabled: true, onSelect: () => {} }],
   });
+  // Device facts compose beside the remote facts; a remote verb with the same id wins.
+  const remote = new Set(state?.kind === "Ready" ? state.options.map(action => action.id) : []);
+  const local = device.filter(action => !remote.has(action.id) && !omitResourceActions.includes(action.id));
+  if (local.length > 0) groups.push({ id: "Device", label: "on this device", options: local });
   const content: MenuContent = { sections: groups.map((section) => ({
     ...section,
     label: groups.length > 1 || (showSourceSubject && section.id === "Resource") ? section.label : null,

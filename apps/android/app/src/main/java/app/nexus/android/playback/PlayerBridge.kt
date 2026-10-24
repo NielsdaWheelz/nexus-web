@@ -18,10 +18,10 @@ import java.util.concurrent.ExecutionException
 import java.util.UUID
 
 /**
- * `window.nexusQueueSession` on the hosted origin: the web's json request frames go to
+ * `window.nexusPlayer` on the hosted origin: the web's json request frames go to
  * the playback service as one custom command, its replies come back with the
  * request's id, and its snapshot pushes reach the document that said hello. The
- * object name is the compatibility identity; frames are trusted and parsed by
+ * frames are bounded and parsed by
  * the service, which owns every decision.
  */
 @SuppressLint("RequiresFeature") // reply proxies exist only after install() found WEB_MESSAGE_LISTENER
@@ -29,7 +29,7 @@ internal class PlayerBridge(
     private val webView: WebView,
     private val controller: () -> MediaController?,
 ) {
-    private val framing = OwnedOriginWebMessage(webView, "nexusQueueSession", BuildConfig.NEXUS_BASE_URL, ::onMessage)
+    private val framing = OwnedOriginWebMessage(webView, "nexusPlayer", BuildConfig.NEXUS_BASE_URL, ::onMessage)
     private var subscriber: JavaScriptReplyProxy? = null
     private var hello: String? = null // the document's hello frame, re-sent to a restarted service
     private var latest: String? = null
@@ -73,6 +73,11 @@ internal class PlayerBridge(
         }
     }
 
+    fun onControllerUnavailable() {
+        latest = null
+        subscriber?.postMessage("{\"unavailable\":true}")
+    }
+
     fun close() {
         onPageStarted()
         framing.close()
@@ -94,6 +99,7 @@ internal class PlayerBridge(
         }
         if (frame != null) frame.put("document_id", documentId)
         when {
+            message.data.toByteArray(Charsets.UTF_8).size > 64 * 1024 -> answer(failure("Limit"))
             frame != null && frame.optString("op").startsWith("queue_") && message.data.toByteArray(Charsets.UTF_8).size > PlaybackStore.MESSAGE_BYTES -> answer(failure("Limit"))
             frame == null || !frame.has("op") -> answer(failure("Invalid"))
             frame.getString("op") == "hello" -> {

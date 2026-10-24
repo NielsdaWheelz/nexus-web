@@ -1854,6 +1854,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/episode-download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Episode Download */
+        get: operations["get_episode_download_media__media_id__episode_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/episode-download/transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Episode Download Transcript */
+        get: operations["get_episode_download_transcript_media__media_id__episode_download_transcript_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/file": {
         parameters: {
             query?: never;
@@ -3630,6 +3664,7 @@ export interface components {
         };
         /** CatalogEpisodeOut */
         CatalogEpisodeOut: {
+            consumption: components["schemas"]["EpisodeConsumptionState"];
             /**
              * Episode State
              * @enum {string}
@@ -3646,6 +3681,8 @@ export interface components {
              * Format: uuid
              */
             podcast_id: string;
+            /** Source Duration Ms */
+            source_duration_ms: number | null;
             transcript_state: components["schemas"]["TranscriptState"];
         };
         /** CatalogLibraryMediaOut */
@@ -3688,6 +3725,8 @@ export interface components {
             /** Is Unfiled */
             is_unfiled: boolean;
             order: components["schemas"]["MediaOrder"];
+            /** Remaining Seconds */
+            remaining_seconds: number | null;
             summary: components["schemas"]["MediaSummaryOut"];
         };
         /** CatalogNoteOut */
@@ -4274,6 +4313,69 @@ export interface components {
              */
             kind: "Consumption";
         };
+        /** ConsumptionData[CollectionPage[PodcastEpisodeListItemOut]] */
+        ConsumptionData_CollectionPage_PodcastEpisodeListItemOut__: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["CollectionPage_PodcastEpisodeListItemOut_"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[CollectionPage[PodcastListItemOut]] */
+        ConsumptionData_CollectionPage_PodcastListItemOut__: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["CollectionPage_PodcastListItemOut_"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[LecternOut] */
+        ConsumptionData_LecternOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["LecternOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[LibraryEntriesPageOut] */
+        ConsumptionData_LibraryEntriesPageOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["LibraryEntriesPageOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[LibraryMetadataOut] */
+        ConsumptionData_LibraryMetadataOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["LibraryMetadataOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[LibraryOut] */
+        ConsumptionData_LibraryOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["LibraryOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[LibraryPodcastOut] */
+        ConsumptionData_LibraryPodcastOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["LibraryPodcastOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[LibraryPodcastsOut] */
+        ConsumptionData_LibraryPodcastsOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["LibraryPodcastsOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[PodcastDetailOut] */
+        ConsumptionData_PodcastDetailOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["PodcastDetailOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
         /**
          * ConsumptionOut
          * @description The viewer's read state of the media: the override, else progress, else engagement.
@@ -4767,14 +4869,6 @@ export interface components {
         Data_CollectionPage_NotePageSummaryOut__: {
             data: components["schemas"]["CollectionPage_NotePageSummaryOut_"];
         };
-        /** Data[CollectionPage[PodcastEpisodeListItemOut]] */
-        Data_CollectionPage_PodcastEpisodeListItemOut__: {
-            data: components["schemas"]["CollectionPage_PodcastEpisodeListItemOut_"];
-        };
-        /** Data[CollectionPage[PodcastListItemOut]] */
-        Data_CollectionPage_PodcastListItemOut__: {
-            data: components["schemas"]["CollectionPage_PodcastListItemOut_"];
-        };
         /** Data[CollectionPage[ViewerInvitationOut]] */
         Data_CollectionPage_ViewerInvitationOut__: {
             data: components["schemas"]["CollectionPage_ViewerInvitationOut_"];
@@ -4823,6 +4917,14 @@ export interface components {
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
         };
+        /** Data[EpisodeConsumptionObservation] */
+        Data_EpisodeConsumptionObservation_: {
+            data: components["schemas"]["EpisodeConsumptionObservation"];
+        };
+        /** Data[EpisodeDownloadOut] */
+        Data_EpisodeDownloadOut_: {
+            data: components["schemas"]["EpisodeDownloadOut"];
+        };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
             data: components["schemas"]["ExtensionSessionOut"];
@@ -4867,10 +4969,6 @@ export interface components {
         Data_LecternOrderOut_: {
             data: components["schemas"]["LecternOrderOut"];
         };
-        /** Data[LecternOut] */
-        Data_LecternOut_: {
-            data: components["schemas"]["LecternOut"];
-        };
         /** Data[LecternWriteOut] */
         Data_LecternWriteOut_: {
             data: components["schemas"]["LecternWriteOut"];
@@ -4879,17 +4977,9 @@ export interface components {
         Data_LibraryDestinationsOut_: {
             data: components["schemas"]["LibraryDestinationsOut"];
         };
-        /** Data[LibraryEntriesPageOut] */
-        Data_LibraryEntriesPageOut_: {
-            data: components["schemas"]["LibraryEntriesPageOut"];
-        };
         /** Data[LibraryInvitationOut] */
         Data_LibraryInvitationOut_: {
             data: components["schemas"]["LibraryInvitationOut"];
-        };
-        /** Data[LibraryMetadataOut] */
-        Data_LibraryMetadataOut_: {
-            data: components["schemas"]["LibraryMetadataOut"];
         };
         /** Data[LibraryOrderOut] */
         Data_LibraryOrderOut_: {
@@ -4906,18 +4996,6 @@ export interface components {
         /** Data[LibraryPlacementsOut] */
         Data_LibraryPlacementsOut_: {
             data: components["schemas"]["LibraryPlacementsOut"];
-        };
-        /** Data[LibraryPodcastOut] */
-        Data_LibraryPodcastOut_: {
-            data: components["schemas"]["LibraryPodcastOut"];
-        };
-        /** Data[LibraryPodcastsOut] */
-        Data_LibraryPodcastsOut_: {
-            data: components["schemas"]["LibraryPodcastsOut"];
-        };
-        /** Data[ListeningPositionOut] */
-        Data_ListeningPositionOut_: {
-            data: components["schemas"]["ListeningPositionOut"];
         };
         /** Data[MediaFileOut] */
         Data_MediaFileOut_: {
@@ -4967,9 +5045,9 @@ export interface components {
         Data_PlaybackSnapshotOut_: {
             data: components["schemas"]["PlaybackSnapshotOut"];
         };
-        /** Data[PlayerDescriptor] */
-        Data_PlayerDescriptor_: {
-            data: components["schemas"]["PlayerDescriptor"];
+        /** Data[PlayerActivationOut] */
+        Data_PlayerActivationOut_: {
+            data: components["schemas"]["PlayerActivationOut"];
         };
         /** Data[PodcastActionFactsOut] */
         Data_PodcastActionFactsOut_: {
@@ -4978,10 +5056,6 @@ export interface components {
         /** Data[PodcastAdmissionOut] */
         Data_PodcastAdmissionOut_: {
             data: components["schemas"]["PodcastAdmissionOut"];
-        };
-        /** Data[PodcastDetailOut] */
-        Data_PodcastDetailOut_: {
-            data: components["schemas"]["PodcastDetailOut"];
         };
         /** Data[PodcastEpisodeFromDiscoveryOut] */
         Data_PodcastEpisodeFromDiscoveryOut_: {
@@ -5042,6 +5116,10 @@ export interface components {
         /** Data[ReaderSelectionPreview] */
         Data_ReaderSelectionPreview_: {
             data: components["schemas"]["ReaderSelectionPreview"];
+        };
+        /** Data[ReaderTranscriptDocumentOut] */
+        Data_ReaderTranscriptDocumentOut_: {
+            data: components["schemas"]["ReaderTranscriptDocumentOut"];
         };
         /** Data[ReadingCopyOut] */
         Data_ReadingCopyOut_: {
@@ -5355,11 +5433,9 @@ export interface components {
         };
         /**
          * DownloadAction
-         * @description What android needs to keep this media offline: an episode's audio or a reading copy.
+         * @description An admitted acquisition subject; native resolves its source and playback authority.
          */
         DownloadAction: {
-            /** Audio Url */
-            audio_url: string | null;
             /** Blocked */
             blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
             /**
@@ -5431,6 +5507,90 @@ export interface components {
             id: string;
             initial_note: components["schemas"]["InitialHighlightNote"] | null;
         };
+        /** EpisodeConsumptionEntry */
+        EpisodeConsumptionEntry: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            state: components["schemas"]["EpisodeConsumptionState"];
+        };
+        /** EpisodeConsumptionObservation */
+        EpisodeConsumptionObservation: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            state: components["schemas"]["EpisodeConsumptionState"];
+        };
+        /**
+         * EpisodeConsumptionState
+         * @description Raw stored listening facts; source duration belongs to the saved rendition/catalog.
+         */
+        EpisodeConsumptionState: {
+            /** Consumption Override Revision */
+            consumption_override_revision: number | null;
+            /** Consumption Override Status */
+            consumption_override_status: ("finished" | "unread") | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Lectern Member */
+            lectern_member: boolean;
+            /** Position Ms */
+            position_ms: number | null;
+            /** Reset Epoch */
+            reset_epoch: number;
+        };
+        /** EpisodeContentAbsent */
+        EpisodeContentAbsent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Absent";
+        };
+        /** EpisodeContentUnavailable */
+        EpisodeContentUnavailable: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Unavailable";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "TooLarge" | "E_MEDIA_NOT_READY";
+        };
+        /** EpisodeDownloadOut */
+        EpisodeDownloadOut: {
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /**
+             * Format Version
+             * @constant
+             */
+            format_version: 1;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            playback_baseline: components["schemas"]["EpisodePlaybackBaselineOut"];
+            rendition: components["schemas"]["EpisodeRenditionOut"];
+            /** Show Notes */
+            show_notes: components["schemas"]["EpisodeContentAbsent"] | components["schemas"]["EpisodeShowNotesAvailable"] | components["schemas"]["EpisodeContentUnavailable"];
+            /** Source Key */
+            source_key: string;
+            /** Transcript */
+            transcript: components["schemas"]["EpisodeContentAbsent"] | components["schemas"]["EpisodeTranscriptAvailable"] | components["schemas"]["EpisodeContentUnavailable"];
+        };
         /** EpisodeOrder */
         EpisodeOrder: {
             /** Duration Asc */
@@ -5441,6 +5601,14 @@ export interface components {
             newest: number;
             /** Oldest */
             oldest: number;
+        };
+        /** EpisodePlaybackBaselineOut */
+        EpisodePlaybackBaselineOut: {
+            observation: components["schemas"]["EpisodeConsumptionObservation"];
+            /** Pause Shortening Mode */
+            pause_shortening_mode: ("Off" | "Natural") | null;
+            /** Playback Rate */
+            playback_rate: number;
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -5484,6 +5652,50 @@ export interface components {
             podcast_ref: string;
             /** Podcast Title */
             podcast_title: string;
+        };
+        /** EpisodeRenditionOut */
+        EpisodeRenditionOut: {
+            /** Artwork Url */
+            artwork_url: string | null;
+            /** Chapters */
+            chapters: components["schemas"]["ChapterOut"][];
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Podcast Id */
+            podcast_id: string | null;
+            /** Stream Url */
+            stream_url: string;
+            /** Subtitle */
+            subtitle: string | null;
+            /** Title */
+            title: string;
+        };
+        /** EpisodeShowNotesAvailable */
+        EpisodeShowNotesAvailable: {
+            /** Html */
+            html: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Available";
+        };
+        /** EpisodeTranscriptAvailable */
+        EpisodeTranscriptAvailable: {
+            /** Byte Count */
+            byte_count: number;
+            /**
+             * Coverage
+             * @enum {string}
+             */
+            coverage: "partial" | "full";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Available";
+            /** Sha256 */
+            sha256: string;
         };
         /** EpubCandidate */
         EpubCandidate: {
@@ -6903,15 +7115,6 @@ export interface components {
             /** Position Ms */
             position_ms: number;
         };
-        /** ListeningPositionOut */
-        ListeningPositionOut: {
-            /** Consumption Override Revision */
-            consumption_override_revision: number | null;
-            /** Position Ms */
-            position_ms: number;
-            /** Reset Epoch */
-            reset_epoch: number;
-        };
         /** ListeningStateOut */
         ListeningStateOut: {
             /** Duration Ms */
@@ -7916,13 +8119,14 @@ export interface components {
             captured_at: string;
             /** Chats */
             chats: components["schemas"]["CatalogChatOut"][];
+            consumption_revision: components["schemas"]["OrderRevision"];
             /** Episodes */
             episodes: components["schemas"]["CatalogEpisodeOut"][];
             /**
              * Format Version
              * @constant
              */
-            format_version: 1;
+            format_version: 2;
             lectern: components["schemas"]["LecternOut"];
             /** Libraries */
             libraries: components["schemas"]["CatalogLibraryOut"][];
@@ -8466,6 +8670,11 @@ export interface components {
              * @enum {string}
              */
             type: "audio_time_range" | "video_time_range";
+        };
+        /** PlayerActivationOut */
+        PlayerActivationOut: {
+            descriptor: components["schemas"]["PlayerDescriptor"];
+            observation: components["schemas"]["EpisodeConsumptionObservation"];
         };
         /**
          * PlayerDescriptor
@@ -14434,7 +14643,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LecternOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LecternOut_"];
                 };
             };
         };
@@ -14941,7 +15150,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LibraryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15036,7 +15245,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryEntriesPageOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LibraryEntriesPageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15335,7 +15544,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryMetadataOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LibraryMetadataOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15571,7 +15780,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryPodcastsOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LibraryPodcastsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15603,7 +15812,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LibraryPodcastOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LibraryPodcastOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16536,6 +16745,71 @@ export interface operations {
             };
         };
     };
+    get_episode_download_media__media_id__episode_download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_EpisodeDownloadOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_episode_download_transcript_media__media_id__episode_download_transcript_get: {
+        parameters: {
+            query: {
+                source_key: string;
+                sha256: string;
+            };
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ReaderTranscriptDocumentOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_media_file_media__media_id__file_get: {
         parameters: {
             query?: never;
@@ -16693,7 +16967,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ListeningPositionOut_"];
+                    "application/json": components["schemas"]["Data_EpisodeConsumptionObservation_"];
                 };
             };
             /** @description Validation Error */
@@ -16788,11 +17062,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_EpisodeConsumptionObservation_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -16822,7 +17098,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PlayerDescriptor_"];
+                    "application/json": components["schemas"]["Data_PlayerActivationOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17773,7 +18049,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_PodcastListItemOut__"];
+                    "application/json": components["schemas"]["ConsumptionData_CollectionPage_PodcastListItemOut__"];
                 };
             };
         };
@@ -17861,7 +18137,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PodcastDetailOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_PodcastDetailOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17892,7 +18168,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_PodcastEpisodeListItemOut__"];
+                    "application/json": components["schemas"]["ConsumptionData_CollectionPage_PodcastEpisodeListItemOut__"];
                 };
             };
             /** @description Validation Error */

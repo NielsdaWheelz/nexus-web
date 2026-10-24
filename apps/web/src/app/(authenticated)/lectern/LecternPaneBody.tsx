@@ -4,7 +4,7 @@
 // title_asc, title_desc; absent = custom), a local text filter, drag to move one row (custom
 // order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
 
-import { useCallback, useId, useRef } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
@@ -26,7 +26,7 @@ import {
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
-import { useCatalogState } from "@/lib/catalog/provider";
+import { useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { catalogLectern } from "@/lib/catalog/selectors";
 import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -39,6 +39,7 @@ import {
   lecternItems,
   useLectern,
   useLecternCommands,
+  useLecternConsumptionRevision,
   useLecternOrder,
 } from "@/lib/lectern/lectern";
 import { filterFields, ordered, selectLectern } from "@/lib/lectern/select";
@@ -84,16 +85,29 @@ function failure(error: unknown, title: string): FeedbackContent {
 
 export default function LecternPaneBody() {
   const live = useLectern();
+  const liveRevision = useLecternConsumptionRevision();
   const catalog = useCatalogState();
   const saved = catalog.data === null ? null : catalogLectern(catalog.data);
-  const source: ReadSource = live.status === "ready" || catalog.data === null ? LIVE_SOURCE : {
+  // Relevance is the saved selection itself; a local natural end hides its row from `saved`.
+  const members = useMemo(() => new Set(catalog.raw?.value.lectern.items.map(item => item.media_summary.media_id) ?? []), [catalog.raw]);
+  const group = useLiveGroup("lectern");
+  usePromoteLiveGroup(group, live.status === "ready" && live.source.kind === "live" && live.error === null && liveRevision !== null ? [liveRevision] : null, members);
+  // The shared lectern read has its own invalidation; a dated group rereads it on receipts.
+  const { refetch: refetchLectern } = live;
+  const datedStale = useRef(group.stale);
+  useEffect(() => {
+    if (group.live || datedStale.current === group.stale) return;
+    datedStale.current = group.stale;
+    refetchLectern();
+  }, [group.live, group.stale, refetchLectern]);
+  const showingSaved = saved !== null && catalog.data !== null && !group.live;
+  const source: ReadSource = !showingSaved || catalog.data === null ? LIVE_SOURCE : {
     kind: "catalog", snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at,
   };
-  const lectern: ServerValue<Lectern> = live.status === "ready" ? live : saved === null ?
-    !remoteReady() && !catalog.loading ? { status: "failed", retrying: false, refetch: live.refetch,
-      error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") } : live : {
+  const lectern: ServerValue<Lectern> = showingSaved ? {
     status: "ready", data: saved, source, generation: 0, error: null, refreshing: false, refetch: live.refetch,
-  };
+  } : live.status === "ready" || saved !== null || remoteReady() || catalog.loading ? live : { status: "failed", retrying: false, refetch: live.refetch,
+    error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") };
   const liveShown = lectern.status === "ready" && source.kind === "live";
   const { ensure } = useLecternCommands();
   const order = useLecternOrder();
@@ -153,8 +167,10 @@ export default function LecternPaneBody() {
   const visible = source.kind === "live" && sort === "" && query === ""
     ? projectOrder(shown, (item) => item.media_summary.media_id, order)
     : selectLectern(items, valid ? sort : "", query);
+  // A saved lectern is complete, so offline capture uses its effective rows, never rendered ones.
   const capture: PlaybackSource = async selected => {
-    if (source.kind !== "live" || !remoteReady() || !valid || lectern.status !== "ready" || lectern.error !== null || lectern.refreshing || order.state.pending !== null)
+    if (!valid || lectern.status !== "ready" ||
+        source.kind === "live" && (!remoteReady() || lectern.error !== null || lectern.refreshing || order.state.pending !== null))
       throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current lectern before starting this queue");
     const media_ids = visible
       .filter(item => item.media_summary.media_kind === "podcast_episode" && item.media_summary.can_play)

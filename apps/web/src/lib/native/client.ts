@@ -29,9 +29,10 @@ function readCatalogStatusValue(value: unknown): CatalogStatus {
   if (!isRecord(value) || Object.keys(value).sort().join(",") !== "last_error,refreshing,snapshot" || typeof value.refreshing !== "boolean") throw invalidReply();
   const snapshot = value.snapshot;
   const error = value.last_error;
-  if (snapshot !== null && (!isRecord(snapshot) || Object.keys(snapshot).sort().join(",") !== "captured_at,snapshot_id" || typeof snapshot.snapshot_id !== "string" || typeof snapshot.captured_at !== "string" || !Number.isFinite(Date.parse(snapshot.captured_at)))) throw invalidReply();
+  if (snapshot !== null && (!isRecord(snapshot) || Object.keys(snapshot).sort().join(",") !== "captured_at,consumption_revision,snapshot_id" || typeof snapshot.snapshot_id !== "string" || typeof snapshot.captured_at !== "string" || !Number.isFinite(Date.parse(snapshot.captured_at)) ||
+    typeof snapshot.consumption_revision !== "string" || !/^[1-9][0-9]{0,18}$/.test(snapshot.consumption_revision))) throw invalidReply();
   if (error !== null && (!isRecord(error) || Object.keys(error).sort().join(",") !== "code,message" || typeof error.code !== "string" || typeof error.message !== "string")) throw invalidReply();
-  return { snapshot: snapshot === null ? null : { snapshot_id: String(snapshot.snapshot_id), captured_at: String(snapshot.captured_at) }, refreshing: value.refreshing,
+  return { snapshot: snapshot === null ? null : { snapshot_id: String(snapshot.snapshot_id), captured_at: String(snapshot.captured_at), consumption_revision: String(snapshot.consumption_revision) }, refreshing: value.refreshing,
     last_error: error === null ? null : { code: String(error.code), message: String(error.message) } };
 }
 export function subscribeCatalogStatus(listener: (status: CatalogStatus) => void): () => void {

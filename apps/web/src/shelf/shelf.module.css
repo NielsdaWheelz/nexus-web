@@ -8,8 +8,7 @@
   --mobile-pane-content-offset: 0px;
 }
 
-/* globals.css locks the workspace viewport because panes scroll internally;
-   the shelf list is one scrolling document. */
+/* The isolated reader owns its viewport; the workspace shell is absent. */
 html,
 body {
   height: auto;
@@ -45,113 +44,6 @@ body {
     max(var(--space-3), env(safe-area-inset-bottom));
 }
 
-.hero {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  align-items: baseline;
-  padding-bottom: var(--space-5);
-}
-
-/* Small mono capitals: the eyebrow, section titles and row kinds. */
-.label {
-  margin: 0;
-  color: var(--ink-faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-regular);
-  letter-spacing: var(--tracking-widest);
-  text-transform: uppercase;
-}
-
-.eyebrow {
-  flex-basis: 100%;
-  color: var(--accent);
-}
-
-.hero h1 {
-  flex: 1;
-  margin: 0;
-  font-family: var(--font-eb-garamond);
-  font-size: clamp(2.25rem, 11vw, var(--text-display-2));
-  font-weight: var(--weight-regular);
-  line-height: var(--leading-tight);
-  letter-spacing: var(--tracking-tight);
-}
-
-.summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3) var(--space-6);
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4) 0;
-  border-top: var(--stroke-hairline) solid var(--edge);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.policy {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-  min-height: var(--size-xl);
-  color: var(--ink);
-}
-
-.sectionTitle {
-  margin-top: var(--space-8);
-}
-
-.list {
-  margin: var(--space-3) 0 0;
-  padding: 0;
-  border-top: var(--stroke-hairline) solid var(--edge);
-  list-style: none;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-4) var(--space-6);
-  align-items: start;
-  padding: var(--space-5) 0;
-  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
-}
-
-.rowTitle {
-  margin: var(--space-2) 0 0;
-  font-family: var(--font-eb-garamond);
-  font-size: var(--text-xl);
-  font-weight: var(--weight-regular);
-  line-height: var(--leading-snug);
-}
-
-.rowTitle button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  text-wrap: balance;
-}
-
-
-.rowActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  align-items: baseline;
-  justify-content: flex-end;
-}
-
-.dialogBody p {
-  margin: 0 0 var(--space-5);
-  color: var(--ink-muted);
-  line-height: var(--leading-relaxed);
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -171,11 +63,6 @@ body {
   border-bottom: var(--stroke-hairline) solid var(--edge);
 }
 
-.readerHeader > div {
-  flex: 1;
-  min-width: 0;
-}
-
 .readerHeader h1 {
   overflow: hidden;
   margin: 0;
@@ -185,14 +72,6 @@ body {
   line-height: var(--leading-snug);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.readerHeader p {
-  margin: var(--space-1) 0 0;
-  color: var(--ink-faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--tracking-wide);
 }
 
 .documentReader {
@@ -210,13 +89,6 @@ body {
   margin: 0 0 var(--space-2);
 }
 
-.readerActions > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .readerMapPanel {
   flex: 4.5 1 0;
   min-width: 0;
@@ -229,14 +101,4 @@ body {
   flex: 5.5 1 0;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 0;
-}
-
-@media (width <= 36rem) {
-  .row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rowActions {
-    justify-content: flex-start;
-  }
 }

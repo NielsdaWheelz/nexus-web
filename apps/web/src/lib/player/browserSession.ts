@@ -42,6 +42,10 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       return saved;
     } catch (cause) {
       handleUnauthenticatedApiError(cause);
+      if (!known) {
+        error = "couldn’t load queue";
+        publish();
+      }
       throw cause;
     }
   };

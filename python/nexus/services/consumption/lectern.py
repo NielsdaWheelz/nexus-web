@@ -22,7 +22,7 @@ from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFo
 from nexus.schemas import collection_actions as collection_wire
 from nexus.schemas import consumption as wire
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.services.consumption import projection, viewer_txn
+from nexus.services.consumption import observation, projection, viewer_txn
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.users import lock_viewer
 
@@ -301,7 +301,7 @@ def lock_viewers_for_media_in_txn(db: Session, *, media_id: UUID) -> list[UUID]:
     viewer_ids = list(
         db.scalars(
             text(
-                "SELECT user_id FROM consumption_queue_items WHERE media_id = :id ORDER BY user_id"
+                "SELECT user_id FROM consumption_queue_items WHERE media_id = :id UNION SELECT user_id FROM podcast_listening_states WHERE media_id = :id UNION SELECT user_id FROM consumption_overrides WHERE media_id = :id ORDER BY user_id"
             ),
             {"id": media_id},
         )
@@ -361,6 +361,7 @@ def _require_revision(db: Session, viewer_id: UUID, expected: int) -> None:
 
 
 def _advance_revision(db: Session, viewer_id: UUID) -> int:
+    observation.advance(db, viewer_id)
     return db.execute(
         text("""
             UPDATE users SET lectern_order_revision = nextval('collection_order_revision_seq')

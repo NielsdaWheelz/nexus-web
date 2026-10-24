@@ -2,18 +2,20 @@
 
 /**
  * The Android shell's audio engine: a thin client of the native service behind
- * `window.nexusQueueSession`, which owns playback, listening writes, activity and natural ends.
+ * `window.nexusPlayer`, which owns playback, listening facts, activity and natural ends.
  *
- * Frames are trusted json in the grammar of `window.nexusDownloads`: both ends ship in one release
- * train, and the object's name is the compatibility identity (its absence means an older app).
+ * Frames are bounded snake_case json; both ends ship in one release train, and the
+ * object's name is the compatibility identity (its absence means an older app).
  *   request {id, op, ...args} -> reply {id, ok: true, snapshot?} | {id, ok: false, error}
- *   push    {snapshot} on every change and each second while playing
+ *   push    {snapshot} on every change and each second while playing; {unavailable: true}
+ *           when the service controller disconnects (not an empty player)
  * Session ops carry `key` and `expected_load_id`; the service checks the load at application.
  * A stale command has no effect. Replies cannot replace an intervening confirmed load.
  * Queue installs stage <=100 occurrences per frame and commit paused; routine snapshots
- * carry a header, with revision-bound pages. Known descriptors stage metadata/chapters
- * as an outage candidate, adopted only after native transport failure. Origin refusal
- * retires that candidate. Ordinary close detaches; explicit account departure unbinds.
+ * carry a header, with revision-bound pages. Native resolves each activation itself: a
+ * downloaded package's lease, else its own descriptor read; no renderer authority.
+ * `listening_revision` invalidates the fixed listening projection. Ordinary close
+ * detaches; explicit account departure unbinds.
  */
 
 import {
@@ -22,28 +24,151 @@ import {
   type Engine,
   type EngineState,
   type PlayerDescriptor,
+  type PlayerSource,
+  type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
-import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest } from "@/lib/player/queue";
+import { announceListeningRevision, listeningSourceReconnected, setObservationTransport } from "@/lib/consumption/listening";
+import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest, type QueueSource } from "@/lib/player/queue";
+import {
+  expectArray, expectBoolean, expectCanonicalRfcUuid, expectExactRecord, expectFiniteNumber, expectNonnegativeInteger,
+  expectNullableString, expectOneOf, expectRecord, expectString,
+} from "@/lib/validation";
 
 interface Port {
   postMessage(frame: string): void;
   onmessage: ((event: { readonly data: unknown }) => void) | null;
 }
 
-type NativeSnapshot = Omit<EngineState, "playbackSubject" | "playbackFailed"> & { readonly load_id: string | null; readonly playback_failed: boolean; readonly snapshot_id: number };
+interface NativeSnapshot {
+  readonly snapshot_id: number;
+  readonly source:
+    | { readonly kind: "Episode"; readonly descriptor: Omit<PlayerDescriptor, "chapters">; readonly package_id: string | null }
+    | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor; readonly package_id: null }
+    | null;
+  readonly queue: QueueHeader | null;
+  readonly load_id: string | null;
+  readonly phase: EngineState["phase"];
+  readonly position_ms: number;
+  readonly duration_ms: number;
+  readonly buffered_ms: number;
+  readonly rate: number;
+  readonly shorten_pauses: boolean;
+  readonly shorten_pauses_saved_ms: number;
+  readonly error: string | null;
+  readonly playback_failed: boolean;
+  readonly synced: boolean;
+  readonly consumption_revision: number;
+  readonly listening_revision: string;
+}
 type Reply = { readonly id: number; readonly ok: true; readonly snapshot?: NativeSnapshot;
   readonly entries?: QueueEntry[]; readonly chapters?: PlayerDescriptor["chapters"]; readonly chapter_count?: number };
 type Frame =
   | { readonly snapshot: NativeSnapshot }
+  | { readonly unavailable: true }
   | Reply
   | { readonly id: number; readonly ok: false; readonly error: string };
+
+// ---- strict frame decoding at the native boundary ----
+// Descriptors, chapters and queue sources are the same-deploy server's types that native
+// carries verbatim; only their object shape and identity fields are checked here.
+
+const REVISION = /^(0|[1-9][0-9]{0,18})$/;
+function expectRevision(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!REVISION.test(value)) throw new TypeError(`${name} must be a decimal revision`);
+  return value;
+}
+const nullable = <T,>(raw: unknown, decode: (value: unknown) => T): T | null => raw === null ? null : decode(raw);
+
+function decodeEntry(raw: unknown, name: string): QueueEntry {
+  const value = expectExactRecord(raw, ["id", "media_id"], name);
+  return { id: expectCanonicalRfcUuid(value.id, `${name}.id`), media_id: expectCanonicalRfcUuid(value.media_id, `${name}.media_id`) };
+}
+
+function decodeHeader(raw: unknown): QueueHeader {
+  const value = expectExactRecord(raw, ["queue_id", "revision", "current_entry_id", "current_entry", "current_index", "count", "source", "can_restore"], "queue");
+  return {
+    queue_id: expectCanonicalRfcUuid(value.queue_id, "queue.queue_id"),
+    revision: expectRevision(value.revision, "queue.revision"),
+    current_entry_id: nullable(value.current_entry_id, raw => expectCanonicalRfcUuid(raw, "queue.current_entry_id")),
+    current_entry: nullable(value.current_entry, raw => decodeEntry(raw, "queue.current_entry")),
+    current_index: nullable(value.current_index, raw => expectNonnegativeInteger(raw, "queue.current_index")),
+    count: expectNonnegativeInteger(value.count, "queue.count"),
+    // justify-type-assertion: the queue source is the server's capture provenance, stored verbatim.
+    source: nullable(value.source, raw => expectRecord(raw, "queue.source") as QueueSource),
+    can_restore: expectBoolean(value.can_restore, "queue.can_restore"),
+  };
+}
+
+function decodeSource(raw: unknown): NativeSnapshot["source"] {
+  const value = expectExactRecord(raw, ["kind", "package_id", "descriptor"], "source");
+  const kind = expectOneOf(value.kind, ["Episode", "Preview"] as const, "source.kind");
+  const descriptor = expectRecord(value.descriptor, "source.descriptor");
+  if (kind === "Preview") {
+    if (value.package_id !== null) throw new TypeError("source.package_id must be null for a preview");
+    expectString(descriptor.target, "source.descriptor.target");
+    // justify-type-assertion: a preview descriptor is the renderer's own frozen bridge input, echoed back.
+    return { kind, descriptor: descriptor as unknown as PreviewAudioDescriptor, package_id: null };
+  }
+  expectCanonicalRfcUuid(descriptor.media_id, "source.descriptor.media_id");
+  // justify-type-assertion: an episode descriptor is the server's PlayerDescriptor (or a lease's rendition in that shape).
+  return { kind, descriptor: descriptor as unknown as Omit<PlayerDescriptor, "chapters">,
+    package_id: nullable(value.package_id, raw => expectCanonicalRfcUuid(raw, "source.package_id")) };
+}
+
+function decodeSnapshot(raw: unknown): NativeSnapshot {
+  const value = expectExactRecord(raw, ["snapshot_id", "source", "queue", "load_id", "phase", "position_ms", "duration_ms",
+    "buffered_ms", "rate", "shorten_pauses", "shorten_pauses_saved_ms", "error", "playback_failed", "synced",
+    "consumption_revision", "listening_revision"], "snapshot");
+  return {
+    snapshot_id: expectNonnegativeInteger(value.snapshot_id, "snapshot_id"),
+    source: nullable(value.source, decodeSource),
+    queue: nullable(value.queue, decodeHeader),
+    load_id: nullable(value.load_id, raw => expectCanonicalRfcUuid(raw, "load_id")),
+    phase: expectOneOf(value.phase, ["Buffering", "Playing", "Paused", "Ended"] as const, "phase"),
+    position_ms: expectNonnegativeInteger(value.position_ms, "position_ms"),
+    duration_ms: expectNonnegativeInteger(value.duration_ms, "duration_ms"),
+    buffered_ms: expectNonnegativeInteger(value.buffered_ms, "buffered_ms"),
+    rate: expectFiniteNumber(value.rate, "rate"),
+    shorten_pauses: expectBoolean(value.shorten_pauses, "shorten_pauses"),
+    shorten_pauses_saved_ms: expectNonnegativeInteger(value.shorten_pauses_saved_ms, "shorten_pauses_saved_ms"),
+    error: expectNullableString(value.error, "error"),
+    playback_failed: expectBoolean(value.playback_failed, "playback_failed"),
+    synced: expectBoolean(value.synced, "synced"),
+    consumption_revision: expectNonnegativeInteger(value.consumption_revision, "consumption_revision"),
+    listening_revision: expectRevision(value.listening_revision, "listening_revision"),
+  };
+}
+
+function decodeFrame(data: unknown): Frame {
+  const value = expectRecord(JSON.parse(expectString(data, "frame")), "frame");
+  if (!("id" in value)) {
+    if ("unavailable" in value) {
+      if (expectExactRecord(value, ["unavailable"], "frame").unavailable !== true) throw new TypeError("frame.unavailable must be true");
+      return { unavailable: true };
+    }
+    return { snapshot: decodeSnapshot(expectExactRecord(value, ["snapshot"], "frame").snapshot) };
+  }
+  const id = expectNonnegativeInteger(value.id, "frame.id");
+  if (!expectBoolean(value.ok, "frame.ok")) return { id, ok: false, error: expectString(expectExactRecord(value, ["id", "ok", "error"], "frame").error, "frame.error") };
+  for (const key of Object.keys(value))
+    if (!["id", "ok", "snapshot", "entries", "chapters", "chapter_count"].includes(key)) throw new TypeError(`frame.${key} is not a reply field`);
+  return {
+    id, ok: true,
+    ...(value.snapshot === undefined ? {} : { snapshot: decodeSnapshot(value.snapshot) }),
+    ...(value.entries === undefined ? {} : { entries: expectArray(value.entries, (entry, index) => decodeEntry(entry, `entries[${index}]`), "entries") }),
+    // justify-type-assertion: chapters are the server's ChapterOut rows from the loaded descriptor.
+    ...(value.chapters === undefined ? {} : { chapters: expectArray(value.chapters, (chapter, index) => expectRecord(chapter, `chapters[${index}]`), "chapters") as unknown as PlayerDescriptor["chapters"] }),
+    ...(value.chapter_count === undefined ? {} : { chapter_count: expectNonnegativeInteger(value.chapter_count, "chapter_count") }),
+  };
+}
 
 const port =
   typeof window === "undefined"
     ? undefined
-    : (window as Window & { nexusQueueSession?: Port }).nexusQueueSession;
+    : (window as Window & { nexusPlayer?: Port }).nexusPlayer;
 
 export const nativePlayerAvailable = port !== undefined;
 
@@ -52,11 +177,17 @@ const REPLY_TIMEOUT_MS = 5_000;
 const LOAD_TIMEOUT_MS = 20_000;
 // The port survives engine/account replacement; late replies must never reuse a new call's id.
 let nextId = 1;
-let activeUnbind: (() => Promise<void>) | null = null;
+let active: { readonly unbind: () => Promise<void>; readonly retryListening: (mediaId: string) => Promise<void> } | null = null;
 
 /** Explicit account departure; ordinary renderer teardown leaves the native service playing. */
 export async function unbindNativePlayer(): Promise<void> {
-  if (activeUnbind !== null) await activeUnbind();
+  if (active !== null) await active.unbind();
+}
+
+/** Explicit retry of one media's suspended delivery; native rechecks access and fences. */
+export async function retryNativeListening(mediaId: string): Promise<void> {
+  if (active === null) throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player is not connected. reload the app and try again.");
+  await active.retryListening(mediaId);
 }
 
 /** The bridge's finite availability outcomes; other replies remain defects. */
@@ -69,7 +200,7 @@ function nativeUnavailable(error: unknown): error is Error {
 export function createNativeEngine(
   onResponding: (responding: boolean) => void,
 ): Engine {
-  if (port === undefined) throw new Error("window.nexusQueueSession is unavailable");
+  if (port === undefined) throw new Error("window.nexusPlayer is unavailable");
   const listeners = new Set<() => void>();
   const pending = new Map<
     number,
@@ -86,33 +217,55 @@ export function createNativeEngine(
     if (responding === value) return;
     responding = value;
     onResponding(value);
+    if (value) listeningSourceReconnected();
   };
 
-  const publish = ({ load_id, snapshot_id, playback_failed, ...snapshot }: NativeSnapshot) => {
-    if (snapshot_id <= snapshotId) return;
-    snapshotId = snapshot_id;
-    if (snapshot.consumptionRevision !== state.consumptionRevision)
+  const publish = (snapshot: NativeSnapshot) => {
+    if (snapshot.snapshot_id <= snapshotId) return;
+    snapshotId = snapshot.snapshot_id;
+    announceListeningRevision(snapshot.listening_revision);
+    if (snapshot.consumption_revision !== state.consumptionRevision)
       publishChange("Consumption");
+    const loadId = snapshot.load_id;
+    const pushed = snapshot.source;
     // Keep the source's identity across position pushes, so session readers do not re-render.
-    const same =
-      load_id === state.playbackSubject && JSON.stringify(snapshot.source) === JSON.stringify(state.source?.kind === "Episode"
-        ? { ...state.source, descriptor: { ...state.source.descriptor, chapters: undefined } } : state.source);
-    const source = snapshot.source?.kind === "Episode"
-      ? { ...snapshot.source, descriptor: { ...snapshot.source.descriptor,
-          chapters: load_id === chaptersSubject ? chapters : [] } }
-      : snapshot.source;
-    state = { ...snapshot, queue: JSON.stringify(snapshot.queue) === JSON.stringify(state.queue) ? state.queue : snapshot.queue,
-      source: same ? state.source : source, playbackSubject: load_id, playbackFailed: playback_failed };
-    if (source?.kind === "Episode" && load_id !== null && load_id !== chaptersSubject) {
-      chaptersSubject = load_id;
+    const held = state.source;
+    const same = loadId === state.playbackSubject && pushed?.kind === held?.kind &&
+      (pushed?.kind !== "Episode" || held?.kind === "Episode" && pushed.package_id === held.packageId) &&
+      JSON.stringify(pushed?.descriptor) === JSON.stringify(held?.kind === "Episode" ? { ...held.descriptor, chapters: undefined } : held?.descriptor);
+    const source: PlayerSource | null = pushed === null ? null : pushed.kind === "Episode"
+      ? { kind: "Episode", packageId: pushed.package_id,
+          descriptor: { ...pushed.descriptor, chapters: loadId === chaptersSubject ? chapters : [] } }
+      : { kind: "Preview", descriptor: pushed.descriptor };
+    state = {
+      source: same ? state.source : source,
+      queue: JSON.stringify(snapshot.queue) === JSON.stringify(state.queue) ? state.queue : snapshot.queue,
+      playbackSubject: loadId,
+      phase: snapshot.phase,
+      positionMs: snapshot.position_ms,
+      durationMs: snapshot.duration_ms,
+      bufferedMs: snapshot.buffered_ms,
+      rate: snapshot.rate,
+      shortenPauses: snapshot.shorten_pauses,
+      shortenPausesSavedMs: snapshot.shorten_pauses_saved_ms,
+      error: snapshot.error,
+      playbackFailed: snapshot.playback_failed,
+      synced: snapshot.synced,
+      consumptionRevision: snapshot.consumption_revision,
+    };
+    if (source?.kind === "Episode" && loadId !== null && loadId !== chaptersSubject) {
+      chaptersSubject = loadId;
       chapters = [];
-      void readChapters(source.descriptor.media_id, load_id);
+      void readChapters(source.descriptor.media_id, loadId);
     }
     for (const listener of listeners) listener();
   };
   port.onmessage = (event) => {
+    // A malformed frame is a native contract defect for the boundary, never a guess.
+    const frame = decodeFrame(event.data);
+    // The service controller disconnected: confirmed state survives, commands wait.
+    if ("unavailable" in frame) return respond(false);
     respond(true);
-    const frame = JSON.parse(event.data as string) as Frame;
     if (!("id" in frame)) return publish(frame.snapshot);
     const waiting = pending.get(frame.id);
     if (waiting === undefined) return; // an expired reply cannot replace a newer pushed snapshot
@@ -146,7 +299,7 @@ export function createNativeEngine(
         },
       });
       const frame = JSON.stringify({ ...args, id, op });
-      if (new TextEncoder().encode(frame).byteLength > (op.startsWith("queue_") || op.startsWith("known_") ? 32 * 1024 : 64 * 1024)) {
+      if (new TextEncoder().encode(frame).byteLength > (op.startsWith("queue_") || op === "observe_consumption" ? 32 * 1024 : 64 * 1024)) {
         pending.delete(id);
         window.clearTimeout(timer);
         reject(new Error("Limit"));
@@ -259,21 +412,6 @@ export function createNativeEngine(
     uncertain = false;
     return state.queue;
   };
-  const prepareKnown = async (id: string, descriptor: PlayerDescriptor, isCurrent: () => boolean) => {
-    const { chapters, ...metadata } = descriptor;
-    try {
-      await call("known_begin", { preparation_id: id, descriptor: metadata, count: chapters.length });
-      for (let offset = 0; offset < chapters.length; offset += 20) {
-        if (!bound || !isCurrent()) throw new Error("Stale");
-        await call("known_chunk", { preparation_id: id, offset, chapters: chapters.slice(offset, offset + 20) });
-      }
-      if (!bound || !isCurrent()) throw new Error("Stale");
-      await call("known_commit", { preparation_id: id });
-    } catch (error) {
-      await call("known_cancel", { preparation_id: id }).catch(() => undefined);
-      throw queueError(error);
-    }
-  };
   const queue: NativeQueueOwner = {
     known: () => snapshotId > 0,
     uncertain: () => uncertain,
@@ -282,13 +420,12 @@ export function createNativeEngine(
       try { return (await call("queue_page", input)).entries ?? []; }
       catch (error) { throw queueError(error); }
     },
-    async replace({ state: next, expected_revision, is_current, known_descriptor }) {
+    async replace({ state: next, expected_revision, is_current }) {
       const begin = { queue_id: next.queue_id, expected_revision, count: next.entries.length,
         current_entry_id: next.current_entry_id, source: next.source };
       if (!bound) throw queueError(new Error("NotConnected"));
       if (!is_current()) throw queueError(new Error("Stale"));
       if (uncertain) throw new QueueCommandError("couldn’t confirm queue change");
-      if (known_descriptor !== null) await prepareKnown(next.queue_id, known_descriptor, is_current);
       try { await call("queue_begin", begin); } catch (error) { throw queueError(error); }
       let committed = false;
       try {
@@ -306,10 +443,7 @@ export function createNativeEngine(
           uncertain = true;
           await readQueue().catch(() => undefined);
         }
-        else {
-          await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
-          await call("known_cancel", { preparation_id: next.queue_id }).catch(() => undefined);
-        }
+        else await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
         throw queueError(error);
       }
     },
@@ -325,8 +459,12 @@ export function createNativeEngine(
       }
     },
   };
-  const unbind = async () => { bound = false; await call("unbind", {}, { timeoutMs: LOAD_TIMEOUT_MS }); };
-  activeUnbind = unbind;
+  const owner = {
+    unbind: async () => { bound = false; await call("unbind", {}, { timeoutMs: LOAD_TIMEOUT_MS }); },
+    retryListening: async (mediaId: string) => { await command("retry_listening", { media_id: mediaId }); },
+  };
+  active = owner;
+  setObservationTransport(async (account_id, observations) => { await call("observe_consumption", { account_id, observations }); });
   void call("hello").catch(() => undefined);
 
   return {
@@ -338,7 +476,6 @@ export function createNativeEngine(
       return () => listeners.delete(listener);
     },
     async load(descriptor, play, positionMs) {
-      await prepareKnown(crypto.randomUUID(), descriptor, () => bound);
       await command("load", { media_id: descriptor.media_id, play, position_ms: positionMs }, LOAD_TIMEOUT_MS);
     },
     preview: descriptor => command("preview", { descriptor }, LOAD_TIMEOUT_MS).then(() => {}),
@@ -357,9 +494,9 @@ export function createNativeEngine(
     seekTo({ positionMs, expectedSubject }) {
       const subject = expectedSubject ?? state.playbackSubject;
       if (subject === null || subject !== state.playbackSubject) return;
-      keyed("seek", { positionMs: Math.max(0, Math.round(positionMs)) });
+      keyed("seek", { position_ms: Math.max(0, Math.round(positionMs)) });
     },
-    skipBy: (deltaMs) => keyed("skip", { deltaMs }),
+    skipBy: (deltaMs) => keyed("skip", { delta_ms: deltaMs }),
     setRate: (value) => preference("rate", { value }),
     setShortenPauses: (on) => preference("sessionShortenPauses", { on }),
     async prepareProgressFence(mediaId) {
@@ -384,7 +521,10 @@ export function createNativeEngine(
     },
     dismiss: async () => { await command("dismiss", {}, LOAD_TIMEOUT_MS); },
     close() {
-      if (activeUnbind === unbind) activeUnbind = null;
+      if (active === owner) {
+        active = null;
+        setObservationTransport(null);
+      }
       port.onmessage = null;
       for (const { reject } of pending.values()) reject(new Error("Closed"));
       pending.clear();

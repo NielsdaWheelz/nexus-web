@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChartColumn,
   Compass,
+  Download,
   FileText,
   Globe,
   Keyboard,
@@ -40,6 +41,7 @@ import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // path, default label, icon. The first match wins.
 const ROUTES = {
+  downloads: ["downloads", "Downloads", Download],
   lectern: ["lectern", "Lectern", ListMusic],
   libraries: ["libraries", "Libraries", Library],
   library: ["libraries/:id", "Library", Library],
@@ -102,7 +104,7 @@ const IN_PLACE = new Set<PaneRouteId>([
 ]);
 // Not shareable by pathname: private or transient routes (resource panes
 // share their resource instead).
-const UNSHARED = new Set<PaneRouteId>(["conversationNew", "pageNew", "search", "dailyDate"]);
+const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate"]);
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
@@ -187,7 +189,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
 const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
-  const section = SECTION[id] ?? (pattern[0] as DestinationId);
+  const section = id === "downloads" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
   const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
@@ -202,7 +204,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
       ? { kind: "Resource", pendingLabel }
       : pattern.length === 1
         ? { kind: "Section", context: "None" }
-        : { kind: "Section", context: "Destination", destinationId: section },
+        : { kind: "Section", context: "Destination", destinationId: section! },
     returnKind,
     bodyMode: BODY_MODE[returnKind],
     queryNavigation: IN_PLACE.has(id) ? "in-place" : null,

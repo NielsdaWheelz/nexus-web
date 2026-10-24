@@ -11,6 +11,13 @@ assets and authorizes no command. hosted reads keep their existing owners.
 the existing bff exposes `/api/offline-catalog`. query parameters are refused.
 responses require the current wire revision and are private/no-store.
 
+format 2 adds the positive decimal-string `consumption_revision`, each episode’s
+raw `consumption` and nullable `source_duration_ms`, and each media’s raw nullable
+`remaining_seconds`. source duration may change with feed metadata independently
+of the consumption watermark; a stored listening duration of zero stays unknown.
+text and listening remaining-time ordering use the same consumption projection
+as live library entries. clients retain canonical title ranks for numeric ties.
+
 one read-only repeatable-read transaction selects the complete projection. existing
 domain owners supply visibility, membership, summaries and total-order plans.
 postgres assigns named integer ranks; clients filter those ranks rather than
@@ -73,10 +80,26 @@ online writes never await this work. catalog adoption emits no ordinary changes.
 shared read hooks carry an explicit live/catalog source. new covered queries paint
 complete saved results, then stage a complete live reread before promotion.
 catalog generations never share cursors or summary overlays. complete mounted live
-results survive disconnection; new offline queries use the saved snapshot.
-library heading/entries/subscriptions and podcast heading/episodes promote as
-groups at their pane owners. authoritative live errors retain their existing
+results of consumption-independent views survive disconnection; new offline
+queries use the saved snapshot. authoritative live errors retain their existing
 meaning. saved summary callers bypass live media-summary resolution.
+
+readers see the saved index projected over this device's listening facts
+([player](player.md), `lib/consumption/listening.ts`) before filtering and sorting:
+summaries, episode states, show unfinished/unplayed counts, `has_new`, remaining
+seconds and lectern membership. unaffected rows keep their exact saved values.
+remaining sorts compare raw seconds (missing last, then the canonical title rank);
+the unplayed sort compares effective counts (then the recent-episode rank). the
+raw snapshot's per-episode observations go to native for media it retains.
+
+library heading/entries/subscriptions, podcast heading/episodes, the podcast
+index and the lectern are consumption groups owned by their panes
+(`useLiveGroup`). lost remote admission returns a covered group wholly to its
+saved projection; afterwards it promotes only when every part is a complete live
+read, no relevant (unfiltered saved membership) local delivery is pending, and
+every part's stamped `consumption_revision` covers the highest relevant observed
+revision, all checked against current facts at commit. a promoted connected group
+stays live. live list pages each carry their stamp; a traversal covers its oldest.
 `PaneChrome.displayTitle` belongs to the shown body, so an independently refreshed
 workspace title cannot put a new heading above a saved group. navigation labels
 retain their existing best-known presentation policy.

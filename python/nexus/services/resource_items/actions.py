@@ -184,7 +184,6 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
                 blocked=None,
                 media_kind=cast(DownloadKind, kind),
                 title=media.summary.title,
-                audio_url=media.audio_url,
             )
         )
     return actions
