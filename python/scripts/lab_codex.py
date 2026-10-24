@@ -110,7 +110,10 @@ def _inspect(
         timeout=_remaining(deadline, 15),
     )
     if result.returncode:
-        if "No such" in result.stderr:
+        missing = "No such" in result.stderr or (
+            kind == "network" and f"network {name} not found" in result.stderr
+        )
+        if result.stdout.strip() == "[]" and missing:
             return None
         raise RuntimeError(f"docker {kind} observation unavailable")
     return json.loads(result.stdout)[0]
