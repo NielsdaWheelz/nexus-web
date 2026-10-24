@@ -29,13 +29,13 @@ EMBEDDING_DIMENSIONS = TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS
 def prepare_embeddings() -> None:
     """Load configured embedding SDK code before API readiness; no network or clients.
 
-    The fixed OpenAI provider has no public runtime preparation hook. Its public SDK
-    and the runtime's lazy public class are loaded here so local import work does not
-    consume the first query's deadline. Unconfigured APIs retain lazy imports.
+    The SDK facade leaves its resource/type graph lazy; load the public embedding
+    resource before readiness so first use does not consume request deadlines. Resolve
+    the runtime's public class here too. Unconfigured APIs retain lazy imports.
     """
     if get_settings().openai_api_key is None:
         return
-    import_module("openai")
+    import_module("openai.resources.embeddings")
     # The public facade resolves ProviderRuntime lazily, without loading generation SDKs.
     _ = import_module("provider_runtime").ProviderRuntime
 
@@ -80,6 +80,8 @@ async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list
     )
     from provider_runtime.errors import CredentialMissing
 
+    from nexus.provider_http import provider_ssl_context
+
     inputs = tuple(str(text or "").strip() for text in texts)
     if not inputs:
         return []
@@ -93,9 +95,14 @@ async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list
         dimensions=Present(EMBEDDING_DIMENSIONS),
     )
 
-    async with httpx.AsyncClient(trust_env=False) as client:
+    async with httpx.AsyncClient(
+        trust_env=False, verify=provider_ssl_context(settings.provider_ca_pem)
+    ) as client:
         runtime = ProviderRuntime(
-            Credentials(openai=credential.key), http_client=client, retry=retry
+            Credentials(openai=credential.key),
+            http_client=client,
+            retry=retry,
+            endpoint_overrides=settings.provider_endpoint_overrides,
         )
         response = await runtime.embed(call, credential=credential)
     vectors = [[float(value) for value in vector] for vector in response.embeddings]

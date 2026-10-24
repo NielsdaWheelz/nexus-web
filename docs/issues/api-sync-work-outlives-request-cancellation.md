@@ -29,6 +29,14 @@ the actual in-flight provider client; the operation joins its tasks. this fixes
 that read boundary, not the synchronous suggestions/write/sigterm paths described
 here. search's contract lives in [the search module](../modules/search.md).
 
+`api/routes/resource_items.py:search_resource_targets` remains a synchronous
+request. its nonidentity picker search now waits for database-wide admission in
+`services/search/pickers.py:search_targets`. a disconnected browser cannot stop
+that handler thread; after the admission wait it can still issue its search.
+the existing database statement timeout remains its backstop. admission bounds
+concurrent expensive reads, not this route's request lifetime; bounded browser
+search phases and async tools own their separate aggregate deadlines.
+
 fix: define cancellation ownership across the request, synchronous handler
 and database session before changing cleanup. preserve one session owner,
 transaction atomicity and honest uncertain-commit handling. do not treat an

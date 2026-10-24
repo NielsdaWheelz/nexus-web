@@ -26,7 +26,7 @@ from typing import Literal, cast, get_args
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -40,6 +40,7 @@ from nexus.db.models import (
     ProcessingStatus,
     XArticleInspection,
 )
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_repeatable_read_db, transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
@@ -84,6 +85,7 @@ from nexus.services.import_history import (
 )
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.reader_publication import read_publication_generation
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.x_identity import (
@@ -521,11 +523,11 @@ def confirm_session(
         )
         raise
 
-    with transaction(db):
+    def publish() -> tuple[Published, bool]:
         sa.lock_identity(db, f"upload_session:{session_id}")
         session = _owned(db, viewer_id, origin_kind, session_id, lock=False)
         if session.published_at is not None:
-            return _published(session)
+            return _published(session), False
         _require_current(session, generation)
         now = _now(db)
         capture = current.capture
@@ -603,10 +605,18 @@ def confirm_session(
             stage="Upload",
             failure_code=None,
         )
-        logger.info("upload_published", upload_session_id=str(session_id), media_id=str(media.id))
         result = _published(session)
-        record_input_change(db)
-        return result
+        db.flush()
+        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+        record_input_change(db, owners=(f"media:{media.id}",))
+        return result, True
+
+    result, newly_published = retry_serializable(db, "upload.confirm", publish)
+    if newly_published:
+        logger.info(
+            "upload_published", upload_session_id=str(session_id), media_id=str(result.media_id)
+        )
+    return result
 
 
 def _new_media(
@@ -649,6 +659,7 @@ def _new_media(
             )
         )
     db.flush()
+    projection.refresh(db, "media", [media.id])
     return media
 
 

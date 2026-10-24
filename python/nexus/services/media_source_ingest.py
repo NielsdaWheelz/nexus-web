@@ -23,6 +23,7 @@ from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from sqlalchemy import exists, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -39,8 +40,11 @@ from nexus.db.models import (
     XThreadPost,
     XThreadSource,
 )
-from nexus.db.retries import retry_read_committed, retry_serializable
-from nexus.db.session import transaction
+from nexus.db.retries import (
+    TransactionRestart,
+    integrity_constraint_name,
+    retry_serializable,
+)
 from nexus.errors import (
     ApiErrorCode,
     ConflictError,
@@ -65,6 +69,7 @@ from nexus.services import source_types as st
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.reader_publication import ensure_reader_publication
 from nexus.services.remote_file import remote_file_kind_from_url
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
@@ -296,6 +301,7 @@ def _new_media(db: Session, spec: UrlSourceSpec, *, url: str, actor_id: UUID) ->
     )
     db.add(media)
     db.flush()
+    projection.refresh(db, "media", [media.id])
     return media
 
 
@@ -327,37 +333,47 @@ def accept_url_source(
     """
 
     def admit() -> FromUrlOut:
-        with transaction(db):
-            sa.lock_identity(db, f"attempt:{id}")
-            # A replay only reads after this: keep teardown from removing its
-            # media between the attempt and destination reads.
-            if (sent := db.get(MediaSourceAttempt, id, with_for_update={"read": True})) is not None:
-                if sent.created_by_user_id != viewer_id:
-                    raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
-            superseded = db.execute(
-                text(
-                    "SELECT media_id, created_by_user_id FROM media_source_supersessions"
-                    " WHERE source_attempt_id = :id FOR SHARE"
-                ),
-                {"id": id},
-            ).one_or_none()
-            if superseded is not None:
-                if superseded.created_by_user_id != viewer_id:
-                    raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
-                latest = sa.latest_attempt(db, superseded.media_id, lock=False)
-                assert latest is not None
-                return _from_url_out(db, latest, id).model_copy(update={"source_attempt_id": id})
-            if sent is not None:
-                return _from_url_out(db, sent, id)
-            libraries.resolve_writable_destinations(db, viewer_id, library_ids)
-            payload: dict[str, object] = {"library_ids": [str(i) for i in library_ids]}
-            if ingest_purpose is not None:
-                payload["ingest_purpose"] = ingest_purpose
+        sa.lock_identity(db, f"attempt:{id}")
+        # A replay only reads after this: keep teardown from removing its
+        # media between the attempt and destination reads.
+        if (sent := db.get(MediaSourceAttempt, id, with_for_update={"read": True})) is not None:
+            if sent.created_by_user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
+        superseded = db.execute(
+            text(
+                "SELECT media_id, created_by_user_id FROM media_source_supersessions"
+                " WHERE source_attempt_id = :id FOR SHARE"
+            ),
+            {"id": id},
+        ).one_or_none()
+        if superseded is not None:
+            if superseded.created_by_user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
+            latest = sa.latest_attempt(db, superseded.media_id, lock=False)
+            assert latest is not None
+            return _from_url_out(db, latest, id).model_copy(update={"source_attempt_id": id})
+        if sent is not None:
+            return _from_url_out(db, sent, id)
+        libraries.resolve_writable_destinations(db, viewer_id, library_ids)
+        payload: dict[str, object] = {"library_ids": [str(i) for i in library_ids]}
+        if ingest_purpose is not None:
+            payload["ingest_purpose"] = ingest_purpose
+        try:
             result = _accept_url(db, viewer_id, id, url, library_ids, payload, request_id)
-            record_input_change(db)
-            return result
+            db.flush()
+        except IntegrityError as exc:
+            if integrity_constraint_name(exc) not in {
+                "media_source_attempts_pkey",
+                "uq_media_source_attempts_media_attempt",
+                "uix_media_canonical_url",
+            }:
+                raise
+            raise TransactionRestart from exc
+        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+        record_input_change(db, owners=(f"media:{result.media_id}",))
+        return result
 
-    return retry_read_committed(db, "accept_url_source", admit)
+    return retry_serializable(db, "accept_url_source", admit)
 
 
 def read_source_attempt(
@@ -413,7 +429,16 @@ def accept_system_url_source(
             ApiErrorCode.E_INVALID_KIND,
             f"URL source produced {kind!r}; expected {expected_kind!r}.",
         )
-    return _accept_url(db, actor_user_id, id, url, None, {}, request_id)
+    try:
+        return _accept_url(db, actor_user_id, id, url, None, {}, request_id)
+    except IntegrityError as exc:
+        if integrity_constraint_name(exc) not in {
+            "media_source_attempts_pkey",
+            "uq_media_source_attempts_media_attempt",
+            "uix_media_canonical_url",
+        }:
+            raise
+        raise TransactionRestart from exc
 
 
 def _accept_url(
@@ -847,7 +872,6 @@ def retry_source(
         latest = sa.latest_attempt(db, media.id, lock=True)
         landed = db.get(MediaSourceAttempt, sa.successor_id(expected_attempt_id))
         if landed is not None and landed.media_id == media.id:
-            db.commit()
             return _admission(landed)
         if latest is None or latest.id != expected_attempt_id:
             raise _stale(latest, "The inspected source attempt is no longer current.")
@@ -860,8 +884,7 @@ def retry_source(
             db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RetrySource")
         )
         result = _admission(successor)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"media:{media.id}",))
         return result
 
     return retry_serializable(db, "retry_source", admit)
@@ -904,7 +927,6 @@ def reprocess_failed_stored_epub(
             )
         landed = db.get(MediaSourceAttempt, sa.successor_id(expected.id))
         if landed is not None and landed.media_id == media.id:
-            db.commit()
             return _admission(landed)
         if latest is None or latest.id != expected.id:
             raise _stale(latest, "The inspected source attempt is no longer current.")
@@ -919,8 +941,7 @@ def reprocess_failed_stored_epub(
             SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="ReprocessSource"),
         )
         result = _admission(successor)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"media:{media.id}",))
         return result
 
     return retry_serializable(db, "reprocess_failed_stored_epub", admit)
@@ -947,13 +968,11 @@ def refresh_source(
         latest = sa.latest_attempt(db, media.id, lock=True)
         landed = db.get(MediaSourceAttempt, sa.successor_id(expected_attempt_id))
         if landed is not None and landed.media_id == media.id:
-            db.commit()
             return _admission(landed)
         if latest is None or latest.id != expected_attempt_id:
             raise _stale(latest, "The inspected source attempt is no longer current.")
         facts = sa.recovery_facts(db, media, latest, viewer_id=viewer_id)
         if latest.status in st.IN_FLIGHT and latest.job_id is not None and not facts.repairable:
-            db.commit()
             return _admission(latest)
         if not sa.source_refreshable(facts):
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Nothing to refresh.")
@@ -962,8 +981,7 @@ def refresh_source(
             ensure_reader_publication(db, media_id=media.id)
         successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
         result = _admission(successor)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"media:{media.id}",))
         return result
 
     return retry_serializable(db, "refresh_source", admit)
@@ -993,7 +1011,6 @@ def repair_source(
         offer = sa.source_recovery(sa.recovery_facts(db, media, latest, viewer_id=viewer_id))
         if not isinstance(offer, RepairSourceOffer):
             if latest.status in st.IN_FLIGHT:
-                db.commit()
                 return answer
             raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Nothing to repair.")
         _require_unpublished_document(db, media)
@@ -1001,7 +1018,6 @@ def repair_source(
         sa.record_event(
             db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RepairSource")
         )
-        db.commit()
         return answer
 
     return retry_serializable(db, "repair_source", admit)

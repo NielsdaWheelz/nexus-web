@@ -2,14 +2,15 @@
 
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_read_committed
-from nexus.db.session import transaction
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas import podcast as wire
 from nexus.services import library_entries
 from nexus.services.browse.targets import ResolvedEpisode
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 from .feed import EpisodeFacts
@@ -42,43 +43,44 @@ def acquire_episode(
     show = resolved.podcast
 
     def attempt() -> wire.PodcastEpisodeFromDiscoveryOut:
-        with transaction(db):
-            # The alias locks precede the show row lock, as for every episode writer.
-            lock_aliases(db, f"{PROVIDER}:{show.podcast_ref}", aliases_of(episode))
-            podcast_id = upsert_show(db, show)
-            result = ingest_episodes(
-                db,
-                viewer_id=viewer_id,
-                podcast_id=podcast_id,
-                feed_url=show.feed_url,
-                episodes=[episode],
-            )
-            media_id = result.media_ids[0]
-            if media_id is None:
-                raise identity_conflict()
-            outcomes = {}
-            for library_id in dict.fromkeys(body.named_library_ids):
-                if library_entries.entry_exists(
-                    db, library_id, library_entries.podcast_target(podcast_id)
-                ):
-                    outcomes[library_id] = "IncludedThroughPodcast"
-                elif library_entries.entry_exists(
-                    db, library_id, library_entries.media_target(media_id)
-                ):
-                    outcomes[library_id] = "AlreadyPresent"
-                else:
-                    outcomes[library_id] = "Added"
-            library_entries.assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, media_id, body.named_library_ids
-            )
-            record_input_change(db)
-            return wire.PodcastEpisodeFromDiscoveryOut(
-                href=f"/media/{media_id}",
-                media_id=media_id,
-                destination_outcomes=[
-                    wire.PodcastDestinationOutcomeOut(library_id=library_id, outcome=outcome)
-                    for library_id, outcome in outcomes.items()
-                ],
-            )
+        # The alias locks precede the show row lock, as for every episode writer.
+        lock_aliases(db, f"{PROVIDER}:{show.podcast_ref}", aliases_of(episode))
+        podcast_id = upsert_show(db, show)
+        result = ingest_episodes(
+            db,
+            viewer_id=viewer_id,
+            podcast_id=podcast_id,
+            feed_url=show.feed_url,
+            episodes=[episode],
+        )
+        media_id = result.media_ids[0]
+        if media_id is None:
+            raise identity_conflict()
+        outcomes = {}
+        for library_id in dict.fromkeys(body.named_library_ids):
+            if library_entries.entry_exists(
+                db, library_id, library_entries.podcast_target(podcast_id)
+            ):
+                outcomes[library_id] = "IncludedThroughPodcast"
+            elif library_entries.entry_exists(
+                db, library_id, library_entries.media_target(media_id)
+            ):
+                outcomes[library_id] = "AlreadyPresent"
+            else:
+                outcomes[library_id] = "Added"
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media_id, body.named_library_ids
+        )
+        db.flush()
+        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+        record_input_change(db, owners=(f"media:{media_id}",))
+        return wire.PodcastEpisodeFromDiscoveryOut(
+            href=f"/media/{media_id}",
+            media_id=media_id,
+            destination_outcomes=[
+                wire.PodcastDestinationOutcomeOut(library_id=library_id, outcome=outcome)
+                for library_id, outcome in outcomes.items()
+            ],
+        )
 
-    return retry_read_committed(db, "acquire_podcast_episode", attempt)
+    return retry_serializable(db, "acquire_podcast_episode", attempt)

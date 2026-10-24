@@ -7,11 +7,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import integrity_constraint_name
+from nexus.db.retries import TransactionRestart, integrity_constraint_name
 from nexus.services.browse.targets import ResolvedPodcast
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import PodcastTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .provider import PROVIDER
@@ -44,25 +46,24 @@ def upsert_show(db: Session, show: ResolvedPodcast) -> UUID:
     existing = by_ref or by_feed
     if existing is None:
         try:
-            with db.begin_nested():
-                podcast_id = db.scalar(
-                    text("""
-                        INSERT INTO podcasts (
-                            provider, provider_podcast_id, title, feed_url,
-                            website_url, image_url, description
-                        )
-                        VALUES (
-                            :provider, :ref, :title, :feed_url,
-                            :website_url, :image_url, :description
-                        )
-                        RETURNING id
-                    """),
-                    params,
-                )
+            podcast_id = db.scalar(
+                text("""
+                    INSERT INTO podcasts (
+                        provider, provider_podcast_id, title, feed_url,
+                        website_url, image_url, description
+                    )
+                    VALUES (
+                        :provider, :ref, :title, :feed_url,
+                        :website_url, :image_url, :description
+                    )
+                    RETURNING id
+                """),
+                params,
+            )
         except IntegrityError as exc:
             if integrity_constraint_name(exc) not in _IDENTITY:
                 raise
-            return upsert_show(db, show)
+            raise TransactionRestart from exc
     else:
         podcast_id = existing.id
         db.execute(
@@ -84,4 +85,7 @@ def upsert_show(db: Session, show: ResolvedPodcast) -> UUID:
         apply_observed_role_slices_in_current_transaction(
             db, target=PodcastTarget(podcast_id), observation=observation, source=PROVIDER
         )
+    db.flush()
+    projection.refresh(db, "podcast", [podcast_id])
+    projection.refresh_subject_dossiers(db, [ResourceRef("podcast", podcast_id)])
     return podcast_id

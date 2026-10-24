@@ -10,10 +10,12 @@ and resource presentations; neither consumes the other's public projection.
 |---|---|
 | `services/search/discovery.py` | browser bands, source grouping, preview, occurrence view and cursors |
 | `query.py` | separate `DiscoveryQuery` and strict `SearchQuery`; parsing and cursor codec |
-| `sources.py` | visible family relations, ranking facts, owner grouping and selected-owner reads |
+| `sources.py` | canonical browser eligibility, semantic-window projection and strict retrieval relations |
+| `indexed.py` | one lexical score traversal, request-local winners, semantic composition and literal evidence |
+| `projection.py` | derived occurrence extraction/replacement and publication ordering |
 | `scope.py` | scope authorization and family membership; frozen-context predicates |
 | `semantic.py` | one query embedding and bounded nearest-neighbour reads |
-| `presentation.py` | bounded literal excerpts and codepoint emphasis; shared resource-item hydration |
+| `admission.py` | database-wide expensive-read admission and physical connection ownership |
 | `service.py`, `project.py` | strict search, multi-scope retrieval and citation reopening |
 | `pickers.py` | resource-target admission, exclusions and durable passage identity |
 | web `lib/search/` | browser criteria, canonical urls and generated-wire loaders |
@@ -29,7 +31,21 @@ schema. wire schemas are generated; see [typed wire](../local-rules/typed-wire.m
 `GET /search/preview` requires `phase=direct|lexical|hybrid`. each returns
 `{phase, resources, saved, passages, semantic_status}`: at most four directly matched
 primary resources, two saved occurrences, and two passages with distinct owners.
-direct excludes generated passages. lexical searches all eligible families without
+direct searches literal canonical titles/names and contributor aliases across media,
+podcasts, contributors, pages, conversations, libraries, readings and dossiers.
+it returns only primary resources: saved/passages are empty and children are null.
+unicode casefold matching orders exact, prefix, then substring; canonical display
+label and ref break ties. choose each ref's best witness before the four-result
+limit; within a ref prefer its canonical name over an equally ranked alias.
+canonical eligibility owns visibility, scope and filters. selected hydration keeps
+canonical bodies and activation; evidence quotes the matched original literal with
+grapheme-aligned codepoint ranges. a reading's full question is its canonical name;
+its bounded display title affects ties only, and undisplayed matches use separate
+literal evidence. direct uses neither native text ranking nor
+annotation, vectors or providers. body/saved-text and query grammar belong to the
+later phases. filter-only browse keeps existing listable families and null match
+fields. this contract applies only to explicit direct preview.
+lexical searches all eligible families without
 provider or vector calls. hybrid is a complete server-ranked replacement containing
 lexical and semantic evidence. displayed primary owners are excluded
 before the inside-source budget. web snapshots are full-search-only.
@@ -53,15 +69,46 @@ semantic-only matches; relevance and canonical ref break ties. no passage-count
 summation or frontend score merging. filter-only listings retain label order.
 generated message/media hits group by their canonical source owner in sql before
 limiting. owner classification is independent of the direct result window.
-selected owners receive one best child in the same snapshot, including children
-outside the global window; enrichment reuses admitted neighbours.
+selected owners receive one best child from the same lexical scoring traversal,
+including children outside the global window. composition carries these proven
+facts; it performs no second ranking query. semantic-only facts use the approved
+neighbour windows and cannot displace lexical occurrences. each response owns its
+facts; phases do not share scores, snapshots, caches or cancellation ownership.
 
 chunk ranking reads scalar candidate facts and requires a nonnull primary-span id;
 its validated foreign key proves span existence. selected hydration and reopening
-still join the complete span and retain source/quote/locator checks. apparatus
-full text uses the immutable english `coalesce`/text-concatenation expression
-indexed by `ix_reader_apparatus_items_body_fts`; its independent label substring
-arm uses `ix_reader_apparatus_items_label_trgm`. prose contributes no name arm.
+still join the complete span and retain source/quote/locator checks. browser
+lexical relevance comes from the pinned native occurrence index. strict citation
+retrieval retains its separate lexical and admission contract, including its
+postgres text indexes. prose contributes no name arm.
+
+for requests containing only primary families, `indexed.py` uses a zero-score
+native family filter. `sources.py` owns canonical eligibility; every native match
+joins that relation before grouping, ranking or truncation. this avoids expanding
+every eligible key into the native filter. requests including generated families
+retain native owner-key admission. narrow scopes can score more primary matches
+before the canonical join; the scoring grammar and selected evidence stay the same.
+
+the occurrence index is derived, never an authority for visibility, identity,
+activation or source text. scalar fields preserve phrase boundaries; contributor
+documents are viewer-specific. canonical writers own transactions, permissions,
+retries and claim/revision fences. projection replacement withdraws old identities
+and inserts current canonical values in that same transaction. dependency discovery
+belongs to a fresh serializable attempt before canonical reads or locks; providers
+stay outside it. source replacement withdraws old identities as well as publishing new
+ones. title, credit and alias writers refresh their dependent works and dossier
+names; filing, membership and grant changes refresh viewer-specific contributor
+text. the existing visibility-loss callback owns both personal dossier cleanup
+and that viewer's contributor refresh. existing source/identity/claim locks remain;
+postgres tracks shared predicate dependencies and conflicting transactions retry
+their entire database operation. the retry owner alone commits; participants flush
+and materialize results. unrelated owners have no global publication mutex.
+visibility changes conservatively rebuild that viewer's contributor documents in
+bounded batches. suggestion invalidation advances only the changed owners' durable
+clocks; their sum preserves committed changes, including late commits. clocks remain
+after source deletion. this trades small retained rows and reader aggregation for
+independent source publication. operational qualification remains
+required by [release-search](../issues/release-search.md).
 
 the browser kinds are documents, notes, highlights, conversations, people, web,
 libraries, readings, dossiers and saved passages. highlights does not implicitly
@@ -75,7 +122,18 @@ and note predicates; saved anchors follow their actual owned source. conversatio
 membership uses explicit context facts. unreadable requested scopes return 404,
 including when no selected family serves them. blank, unfiltered queries read
 nothing; format/author/role-only requests list media, podcasts and contributors.
-passages require text. one codepoint uses direct lexical retrieval only.
+passages require text. one codepoint omits generated families and semantic work;
+full search retains its existing lexical matching, distinct from direct preview.
+
+note membership starts with the note's eligible adjacent edges, then tests their
+source or highlight against scoped reading media. it does not repeat edge lookup
+for each media in a library. the standalone and shared predicates use this same
+rule; conversation and frozen-context membership retain their separate contracts.
+
+contributor admission materializes visible credits once using the request's shared
+media and podcast visibility. the permission owner supplies the unchanged catalogue,
+media or podcast rule; joins avoid per-credit scans of recursive visibility.
+standalone consumers retain their self-contained permission query.
 
 browser admission requires readable content, not a currently usable exact locator.
 stale saved/apparatus locations remain visible and honestly unavailable, with an
@@ -83,6 +141,20 @@ independent source action where possible. raw pdf fragments remain excluded;
 indexed pdf evidence uses its existing page target without requiring geometry.
 
 ## transactions, semantic capability and pages
+
+expensive browser, strict, picker, connection-discovery, dossier, oracle and
+suggestion refresh reads share one database-wide advisory session lock. each read
+owns an external physical connection: admission's transaction rolls back while retaining the lock, then a
+fresh read-only repeatable snapshot materializes authorization, ranking and results.
+the connection is retired after snapshot/session cleanup; there is no explicit
+unlock before backend cleanup. this requires a session-affine database connection.
+
+provider waits, direct lookups, primary-only browse and browser branches with no
+retrieval stay outside admission. async admission and reads consume the caller's
+original absolute deadline, including queue time; expired or cancelled waiters do
+not later dispatch retrieval. sync callers retain their database timeout backstop.
+the synchronous picker still has the existing
+[request-cancellation limitation](../issues/api-sync-work-outlives-request-cancellation.md).
 
 hybrid computes at most one embedding before opening a transaction. `read_snapshot` then
 owns one repeatable-read, read-only snapshot for authorization, ranking, hydration
@@ -95,11 +167,44 @@ compiling the visibility relations is unsuitable for these bounded reads. other
 workloads retain their execution policy. configured api startup loads local
 embedding sdk code before readiness, without creating clients or making calls.
 
+the api container, disposable runtime and local commands select uvicorn's stock
+`asyncio` loop explicitly. optional `uvloop` is not required for search; the http
+parser, route deadlines and cancellation, admission and retrieval stay with their
+existing owners. this loop choice is an operational candidate after an unexplained
+native api crash, not a demonstrated repair. complete browser qualification must
+measure its latency and retain the earlier faster baselines.
+
 browser semantic retrieval has fixed windows of 200 chunks each for media and note
 owners, independent of page size/offset. scope, filters, active model and ready
 index eligibility apply before the budget. enrichment adds no embedding or ann
-read. cosine eligibility is unchanged; approximate recall is bounded, not global
+read. full resource search obtains note neighbours and lexical winners first.
+it omits chunk neighbours only when the known prefix covers the page and its
+continuation, and every selected media already has a lexical child or lacks
+current eligible vectors. vector absence is a conservative witness in the same
+snapshot, never authorization. otherwise it obtains the unchanged full chunk
+window and recomposes the retained facts without repeating lexical scoring.
+preview applies the same selected-media witness after its two globally distinct
+inside slots are filled by lexical winners. its primary and saved slots remain
+independent; note neighbours are obtained first. passage search retains both
+eligible windows. this saves work only
+when semantic chunks cannot change the response; it adds an eligibility read
+when selected media lack lexical evidence. cosine eligibility is unchanged; approximate recall is bounded, not global
 top-k. lexical evidence and semantic-only evidence have separate provenance.
+
+`nearest_chunks` counts at most25,001 current ready chunks in the caller's
+snapshot. publication owns exactly one nonnull vector per current chunk on the
+active provider/model; migration0306 rejects serving legacy rows that violate
+that contract. the capped scalar count therefore chooses exact retrieval through
+25,000 vectors, otherwise ivfflat with40 probes over the original full predicate.
+an empty count returns no neighbours. the exact branch fetches actual eligible
+vector ids before scoring in the same snapshot; at most25,000 uuids transfer.
+authorization, publication and model predicates remain unchanged. broad routing
+avoids per-vector existence lookups; small scopes pay one extra bounded query.
+the count never truncates the searchable domain or caller's window. this cutoff
+extrapolates slightly beyond the measured 20,137-vector exact control; it is not
+a proved crossover. migration 0306 owns the current-publication expression
+statistic used by that predicate. strict search and oracle reads share this
+primitive and retain their own limits and cosine policies.
 
 `semantic_status` is `not_requested` or `used`. an eligible hybrid failure or
 missing credential returns `E_EMBEDDING_PROVIDER_UNAVAILABLE` / 503 after scope
@@ -118,11 +223,23 @@ cursor rejection requires explicit page-one refresh, never an automatic restart.
 browser routes own one native async operation/session, raced against disconnect
 and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-only
 repeatable snapshot; remaining transaction-local statement timeout backs the outer
-deadline. cancellation joins cleanup. api caps are direct400/lexical1000/hybrid1800
-ms; client and bff whole-read caps are1000/1750/2500 ms, including body/decode and
+deadline. cancellation joins cleanup. api caps are direct400/lexical1500/hybrid3000
+ms; client and bff whole-read caps are1000/2250/3750 ms, including body/decode and
 the complete prefix walk. search has no automatic retries. api timeout is
 `E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
 cancellation; cleanup may outlast it, while the browser cap bounds waiting.
+provisional warm release p95 budgets are direct500/keyword2000/related4000 ms from
+the last keystroke through paint, including settling and transport. existing stricter
+failure cutoffs remain distinct. keyword delivery uses the earliest validated
+complete lexical or hybrid response reflected in results; record phase failures
+separately. hybrid success proves neither lexical-request latency nor reliability.
+preserve faster regression baselines and historical
+verdicts; extending a timeout is not a speed improvement. the provisional
+cold-session first-action bounds are keyword3000/related4000ms from the last
+keystroke through paint, after normal startup and with restoration traffic retained,
+without a cold-percentile or per-query empty-cache promise.
+publication overlap needs its own measured finite bound; recurrent pressure is
+ordinary use.
 
 offsets count displayed groups or occurrences, including unavailable ones.
 families contribute at most `offset + limit + 1` logical identities before the
@@ -194,6 +311,14 @@ independent facts. no generated summaries, invented names/locations, duplicate
 title-as-excerpt, or raw chunk labels. lectern actions inspect the item's own
 media ref, not its source ref.
 
+`ResourceBody` decorates a matching literal part inline only when the entire
+match excerpt equals that rendered part. other evidence stays separate from the
+canonical body, including for custom bodies and live note editors. own and nested
+witnesses wrap without clipping; equal inline evidence also releases row clamps,
+including name-only evidence with no emphasis ranges. mobile nexus assigns one
+description id, preferring the matching passage, then separate own evidence,
+then the rendered body. source and activation remain the canonical item's.
+
 ## text publication
 
 `content_index_states.lexical_revision = revision` proves a complete current
@@ -231,4 +356,5 @@ their existing cursor contracts. source display truncation never narrows a targe
 the old openables endpoint, request/response types, loader and launcher paged
 search path are removed. api/web cut over together. verification follows the
 [local contract](../local-rules/testing-standards.md); `./scripts/test` is the sole
-permanent static gate. there is no permanent behavioral suite.
+permanent static gate. exactly three manually invoked search integration checks
+remain under that local contract; other scenario cases are temporary.

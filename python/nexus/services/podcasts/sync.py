@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, JobResult, JobRow, enqueue_job
@@ -29,6 +30,7 @@ from nexus.logging import get_logger
 from nexus.schemas import podcast as wire
 from nexus.services import libraries
 from nexus.services.consumption import lectern
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, merge
@@ -134,7 +136,8 @@ def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
         with transaction(db):
             _fail(db, subscription_id, exc.code.value, exc.message)
         return {"status": "Failed", "error_code": exc.code.value}
-    with transaction(db):
+
+    def publish() -> dict[str, Any]:
         held = db.execute(
             text("""
                 SELECT auto_queue, auto_queue_watermark_at FROM podcast_subscriptions
@@ -167,9 +170,13 @@ def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
             """),
             {"id": subscription_id, "status": status, "delay": timedelta(hours=23, seconds=jitter)},
         )
+        db.flush()
+        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
         if result.changed or queued:
-            record_input_change(db)
+            record_input_change(db, owners=(f"podcast:{sub.podcast_id}",))
         return {"status": status, "inserted": result.inserted, "skipped": result.skipped}
+
+    return retry_serializable(db, "podcast_sync.publish", publish)
 
 
 def _auto_queue(db: Session, subscription_id: UUID, sub: Any, watermark: datetime) -> bool:

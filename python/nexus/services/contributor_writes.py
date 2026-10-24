@@ -21,6 +21,7 @@ from nexus.services.contributor_taxonomy import (
     contributor_match_key,
     new_contributor_handle,
 )
+from nexus.services.search import projection
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +225,8 @@ def create_contributor(
 
 def ensure_alias(db: Session, *, contributor_id: UUID, alias: str, resolves_identity: bool) -> None:
     """Ensure the alias row; the flag only rises, and a resolving ensure refreshes the
-    literal so the search display join (``alias = display_name``) stays exact."""
+    literal so the search display join (``alias = display_name``) stays exact.
+    The caller owns a fresh serializable transaction and whole-attempt retry."""
     normalized = contributor_match_key(alias)
     existing = db.scalar(
         select(ContributorAlias).where(
@@ -232,6 +234,10 @@ def ensure_alias(db: Session, *, contributor_id: UUID, alias: str, resolves_iden
             ContributorAlias.normalized_alias == normalized,
         )
     )
+    if existing is not None and (
+        not resolves_identity or (existing.resolves_identity and existing.alias == alias)
+    ):
+        return
     if existing is None:
         db.add(
             ContributorAlias(
@@ -245,6 +251,9 @@ def ensure_alias(db: Session, *, contributor_id: UUID, alias: str, resolves_iden
     elif resolves_identity:
         existing.resolves_identity = True
         existing.alias = alias
+    db.flush()
+    projection.refresh_contributor_dependents(db, [contributor_id])
+    projection.refresh_contributors(db, [contributor_id])
 
 
 def replace_role_slices(
@@ -318,4 +327,13 @@ def replace_role_slices(
         row.ordinal = ordinal
     db.add_all(planned)
     db.flush()
+    contributor_ids = sorted({row.contributor_id for row in [*current, *planned]})
+    projection.refresh_contributors(db, contributor_ids)
+    match target:
+        case MediaTarget(media_id):
+            projection.refresh(db, "media", [media_id])
+        case PodcastTarget(podcast_id):
+            projection.refresh(db, "podcast", [podcast_id])
+        case GutenbergTarget():
+            pass
     return True

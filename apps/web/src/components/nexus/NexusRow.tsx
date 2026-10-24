@@ -4,7 +4,7 @@
 import type { ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
-import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
+import ResourceBody, { ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import type { NexusRow } from "@/lib/nexus/model";
@@ -21,8 +21,9 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
   const Icon = row.icon;
   const facts = rowFacts(row, desktop);
   const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
-  const namedEvidence = row.item?.preview.body.kind === "named" && row.match
-    && row.match.excerpt.text !== row.item.preview.body.title ? row.match : null;
+  const separateEvidence = row.item ? separateMatchEvidence(row.item.preview.body, row.match ?? null) : null;
+  const passageEvidence = row.matchingPassage
+    ? separateMatchEvidence(row.matchingPassage.item.preview.body, row.matchingPassage.match) : null;
   return (
     <>
       <span className={styles.rowIcon} aria-hidden="true">
@@ -30,17 +31,18 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
       </span>
       <div className={styles.rowBody}>
         {row.item ? (
-          <div className={styles.rowLabel} id={row.item.preview.body.kind === "named" ? undefined : excerptId}>
+          <div className={styles.rowLabel} id={!row.matchingPassage && !separateEvidence ? excerptId : undefined}>
             <ResourceBody body={row.item.preview.body} match={row.match} />
           </div>
         ) : <span className={styles.rowLabel}>{row.label}</span>}
         {row.item ? <span className={styles.rowMeta}><ResourceMetadata parts={resourceMetadata({ item: row.item, matchMethod: row.matchMethod }).parts} linkSource={false} />{row.state ? ` · ${row.state.toLowerCase()}` : null}</span>
           : facts ? <span className={styles.rowMeta}>{facts}</span> : null}
-        {namedEvidence ? (
-          <div className={styles.rowSnippet} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={namedEvidence} /></div>
+        {separateEvidence ? (
+          <div className={styles.rowEvidence} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={separateEvidence} /></div>
         ) : null}
         {row.matchingPassage ? <div className={styles.rowPassage} id={excerptId}>
           <div className={styles.rowSnippet}><ResourceBody body={row.matchingPassage.item.preview.body} match={row.matchingPassage.match} /></div>
+          {passageEvidence ? <div className={styles.rowEvidence}><ResourceMatchEvidence match={passageEvidence} /></div> : null}
           <span className={styles.rowPassageMeta}><ResourceMetadata parts={resourceMetadata({ item: row.matchingPassage.item, matchMethod: row.matchingPassage.match_method }).parts} linkSource={false} /></span>
         </div> : null}
         {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}

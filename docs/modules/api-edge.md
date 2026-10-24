@@ -20,7 +20,11 @@ server components: callFastAPI ────────────────�
 - `client.ts`: `apiFetch(path: "/api/…", init)` answers the parsed json (an
   empty 2xx is `undefined`) or throws `ApiError {status, code, message,
   requestId?, details?}`; status 0 `E_NETWORK` is a transport failure. Every
-  call carries `X-Nexus-Wire`; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
+  call carries `X-Nexus-Wire` and an `X-Request-ID` assigned before dispatch
+  (a caller-supplied id is preserved). structured api calls enforce
+  `cache: "no-store"`; independently owned reads must reach the server without
+  browser cache coordination. `keepalive: true` lets a write outlive the page.
+  `readResponse` is the one envelope reader (the
   request id comes from the body, else the `x-request-id` header). A 426 reloads
   the tab once per (tab, build): a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it

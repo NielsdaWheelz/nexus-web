@@ -71,6 +71,12 @@
   overflow: hidden;
   white-space: pre-wrap;
 }
+.primaryText:has([data-resource-inline-evidence]) {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
 .primaryLink {
   color: inherit;
   text-decoration: none;
@@ -153,6 +159,7 @@
 .matchEvidence {
   margin-top: var(--space-1);
   color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 .actions {
   --overflow-menu-inline-size: var(--outline-control-inline-size);

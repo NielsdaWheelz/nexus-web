@@ -156,9 +156,7 @@ def execute(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
 ) -> OutlineCommandsOut:
     def op() -> OutlineCommandsOut:
-        result = execute_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
-        db.commit()
-        return result
+        return execute_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
 
     return retry_serializable(db, "outline_commands", op)
 
@@ -166,7 +164,7 @@ def execute(
 def execute_in_current_transaction(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
 ) -> OutlineCommandsOut:
-    """Apply one complete insertion/outline batch; the caller owns commit and retry."""
+    """Apply a batch; content writes require the caller's serializable attempt."""
     unlinks: dict[UUID, bool] = {}
     edits: list[
         SetBody
@@ -191,17 +189,19 @@ def execute_in_current_transaction(
             ApiErrorCode.E_INVALID_REQUEST, "Unlink commands cannot be mixed with other commands"
         )
     if unlinks:
-        changed = False
+        changed_owners: set[str] = set()
         for link_id, require_unannotated in unlinks.items():
+            edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
             if links.unlink_in_txn(
                 db,
                 viewer_id=viewer_id,
                 link_id=link_id,
                 require_unannotated=require_unannotated,
             ):
-                changed = True
-        if changed:
-            record_input_change(db)
+                assert edge is not None
+                changed_owners.update((edge.source.uri, edge.target.uri))
+        if changed_owners:
+            record_input_change(db, owners=changed_owners)
         return OutlineCommandsOut(
             outlines=[], nodes=[], deleted=[], insertions=[], link_versions=[]
         )
@@ -479,7 +479,7 @@ def execute_in_current_transaction(
             if ref.uri in visible
         ],
     )
-    record_input_change(db)
+    record_input_change(db, owners=(ref.uri for ref in touched))
     return result
 
 

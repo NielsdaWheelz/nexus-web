@@ -1,8 +1,9 @@
 """Strict evidence entry points: passage pages, multi-scope tools and reopen by identity.
 
-The transaction law lives in ``read_snapshot``: the query embedding is computed first,
-outside any transaction, then one REPEATABLE READ, READ ONLY snapshot is opened, read and
-ended. A caller arriving with an open transaction gets a RuntimeError, never lost writes.
+The query embedding is computed before admission and outside any transaction. One
+owned backend holds database-wide admission through its REPEATABLE READ, READ ONLY
+snapshot, materialized results and backend cleanup. ``read_snapshot`` also serves
+direct reads and refuses an already-open transaction, never discarding caller writes.
 """
 
 from __future__ import annotations
@@ -11,13 +12,18 @@ import asyncio
 from collections.abc import Callable, Sequence
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
+from nexus.services.search.admission import (
+    remaining_milliseconds,
+    search_session,
+    search_session_async,
+)
 from nexus.services.search.candidates import SearchResponse, SearchResultOut
 from nexus.services.search.project import family_of, project
 from nexus.services.search.query import (
@@ -36,10 +42,17 @@ from nexus.services.search.sources import Hit, Retrieval, merge, rank
 _SEMANTIC = frozenset({"content_chunk", "note_block"})
 
 
-def read_snapshot[T](db: Session, read: Callable[[Session], T]) -> T:
+def read_snapshot[T](
+    db: Session, read: Callable[[Session], T], *, deadline: float | None = None
+) -> T:
     """``read`` inside one strict read-only snapshot that is ended before returning."""
     get_repeatable_read_db(db)  # raises on a session that already holds a transaction
     try:
+        if deadline is not None:
+            db.execute(
+                text("SELECT set_config('statement_timeout', :timeout, true)"),
+                {"timeout": str(remaining_milliseconds(deadline))},
+            )
         return read(db)
     finally:
         db.rollback()
@@ -86,11 +99,10 @@ def _page(
     return project(db, viewer_id, page[:limit], r.terms), more
 
 
-def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
+def search(viewer_id: UUID, query: SearchQuery) -> SearchResponse:
     """One ranked page of everything the viewer may read in ``query.scope``.
 
-    Requires a session without an open transaction. 404 for an unreadable scope once the
-    query has text or a filter.
+    Owns an admitted session. 404 for an unreadable scope once the query has text or a filter.
     """
     offset = decode_offset(query.cursor)
     limit = min(query.limit, MAX_LIMIT)
@@ -98,15 +110,23 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
     if families is None:
         return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
     embedding = embed_text(query.terms) if query.terms and _SEMANTIC & set(families) else None
-    results, more = read_snapshot(
-        db, lambda s: _page(s, viewer_id, query, families, (query.scope,), embedding, offset, limit)
-    )
+    with search_session() as db:
+        results, more = read_snapshot(
+            db,
+            lambda s: _page(
+                s, viewer_id, query, families, (query.scope,), embedding, offset, limit
+            ),
+        )
     cursor = encode_cursor({"offset": offset + limit}) if more else None
     return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=cursor))
 
 
 async def search_scopes_async(
-    database: AsyncSession, viewer_id: UUID, base: SearchQuery, scopes: Sequence[SearchScope]
+    viewer_id: UUID,
+    base: SearchQuery,
+    scopes: Sequence[SearchScope],
+    *,
+    deadline: float | None = None,
 ) -> SearchResponse:
     """The first page over the union of ``scopes`` in one pass; ``has_more`` is real."""
     families = _families(base)
@@ -118,11 +138,14 @@ async def search_scopes_async(
         else None
     )
     limit = min(base.limit, MAX_LIMIT)
-    results, more = await database.run_sync(
-        lambda db: read_snapshot(
-            db, lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit)
+    async with search_session_async(deadline=deadline) as database:
+        results, more = await database.run_sync(
+            lambda db: read_snapshot(
+                db,
+                lambda s: _page(s, viewer_id, base, families, scopes, embedding, 0, limit),
+                deadline=deadline,
+            )
         )
-    )
     return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=None))
 
 

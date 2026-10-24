@@ -16,8 +16,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import TransactionRestart, retry_read_committed
-from nexus.db.session import transaction
+from nexus.db.retries import TransactionRestart, retry_serializable
 from nexus.errors import (
     ApiErrorCode,
     ConflictError,
@@ -34,6 +33,8 @@ from nexus.schemas.library import (
     RenameLibraryRequest,
 )
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 
 _COLUMNS = "l.id, l.name, l.owner_user_id, l.is_default, l.system_key, l.order_revision, m.role"
 
@@ -94,7 +95,7 @@ class LibraryAccess:
 
 def access(db: Session, viewer_id: UUID, library_id: UUID, *, lock: bool) -> LibraryAccess:
     """The library and the viewer's role; E_LIBRARY_NOT_FOUND for a non-member.
-    `lock` takes the library row lock (READ COMMITTED writers only)."""
+    `lock` takes the library row lock; snapshot changes require whole-attempt retry."""
     row = (
         db.execute(
             text(f"""
@@ -162,34 +163,33 @@ def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> 
     name = _valid_name(body.name)
 
     def attempt() -> LibraryOut:
-        with transaction(db):
-            inserted = db.scalar(
+        inserted = db.scalar(
+            text("""
+                INSERT INTO libraries (id, name, owner_user_id, is_default)
+                VALUES (:id, :name, :viewer_id, false)
+                ON CONFLICT (id) DO NOTHING RETURNING id
+            """),
+            {"id": body.id, "name": name, "viewer_id": viewer_id},
+        )
+        if inserted is not None:
+            db.execute(
                 text("""
-                    INSERT INTO libraries (id, name, owner_user_id, is_default)
-                    VALUES (:id, :name, :viewer_id, false)
-                    ON CONFLICT (id) DO NOTHING RETURNING id
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:id, :viewer_id, 'admin')
                 """),
-                {"id": body.id, "name": name, "viewer_id": viewer_id},
+                {"id": body.id, "viewer_id": viewer_id},
             )
-            if inserted is not None:
-                db.execute(
-                    text("""
-                        INSERT INTO memberships (library_id, user_id, role)
-                        VALUES (:id, :viewer_id, 'admin')
-                    """),
-                    {"id": body.id, "viewer_id": viewer_id},
-                )
-            held = db.execute(
-                text("SELECT owner_user_id, is_default, system_key FROM libraries WHERE id = :id"),
-                {"id": body.id},
-            ).one()
-            if held.owner_user_id != viewer_id or held.is_default or held.system_key is not None:
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library id is taken")
-            return access(db, viewer_id, body.id, lock=False).out(viewer_id)
+        held = db.execute(
+            text("SELECT owner_user_id, is_default, system_key FROM libraries WHERE id = :id"),
+            {"id": body.id},
+        ).one()
+        if held.owner_user_id != viewer_id or held.is_default or held.system_key is not None:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library id is taken")
+        projection.refresh(db, "library", [body.id])
+        return access(db, viewer_id, body.id, lock=False).out(viewer_id)
 
-    # READ COMMITTED: ON CONFLICT settles a same-id race by waiting for the other
-    # insert, so concurrent creates never fail on a serialization guess.
-    return retry_read_committed(db, "create_library", attempt)
+    # A same-id insert race retries the complete permission and projection decision.
+    return retry_serializable(db, "create_library", attempt)
 
 
 def rename_library(
@@ -198,7 +198,8 @@ def rename_library(
     """Admin rename. Already named so: success; named other than expected: 409 with
     `current_name`."""
     name = _valid_name(body.name)
-    with transaction(db):
+
+    def attempt() -> LibraryOut:
         library = access(db, viewer_id, library_id, lock=True)
         library.require_mutable()
         library.require_admin()
@@ -214,7 +215,11 @@ def rename_library(
             text("UPDATE libraries SET name = :name, updated_at = now() WHERE id = :id"),
             {"name": name, "id": library_id},
         )
-    return replace(library, name=name).out(viewer_id)
+        projection.refresh(db, "library", [library_id])
+        projection.refresh_subject_dossiers(db, [ResourceRef("library", library_id)])
+        return replace(library, name=name).out(viewer_id)
+
+    return retry_serializable(db, "rename_library", attempt)
 
 
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
@@ -229,86 +234,84 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     ref = ResourceRef(scheme="library", id=library_id)
 
     def attempt() -> None:
-        with transaction(db):
-            media_ids = library_entries.media_ids_in_library(db, library_id)
-            if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
-                raise TransactionRestart("library media set changed")
-            default_id = default_library_id(db, viewer_id)
-            lock_library_rows_in_order(db, [library_id, default_id])
-            try:
-                library = access(db, viewer_id, library_id, lock=False)
-            except NotFoundError:
-                return
-            library.require_mutable()
-            library.require_owner(viewer_id)
-            # The library lock stops new filings; one that landed before it holds a
-            # media this attempt did not lock, so the attempt restarts.
-            held = library_entries.media_ids_in_library(db, library_id)
-            if not set(held) <= set(media_ids):
-                raise TransactionRestart("library media set grew")
-            members = list(
-                db.scalars(
-                    text("""
-                        SELECT user_id FROM memberships WHERE library_id = :id
-                        ORDER BY user_id FOR UPDATE
-                    """),
-                    {"id": library_id},
-                )
+        media_ids = library_entries.media_ids_in_library(db, library_id)
+        if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
+            raise TransactionRestart("library media set changed")
+        default_id = default_library_id(db, viewer_id)
+        lock_library_rows_in_order(db, [library_id, default_id])
+        try:
+            library = access(db, viewer_id, library_id, lock=False)
+        except NotFoundError:
+            return
+        library.require_mutable()
+        library.require_owner(viewer_id)
+        # Filing advances the library order revision and the media reference barrier.
+        # A concurrent dependency change therefore restarts this serializable snapshot.
+        held = library_entries.media_ids_in_library(db, library_id)
+        if not set(held) <= set(media_ids):
+            raise TransactionRestart("library media set grew")
+        members = list(
+            db.scalars(
+                text("""
+                    SELECT user_id FROM memberships WHERE library_id = :id
+                    ORDER BY user_id FOR UPDATE
+                """),
+                {"id": library_id},
             )
-            # The whole dossier head union, once, before any cleanup takes a head lock.
-            dossier.lock_heads(
-                db,
-                subjects=[ref, *(ResourceRef(scheme="media", id=m) for m in held)],
-                user_ids=members,
-            )
-            dossier.on_subject_deleted(db, ref)
-            delete_edges_for_deleted_resource(db, ref=ref)
-            media_upload_sessions.delete_library_destination_support_in_current_transaction(
-                db, library_id=library_id
-            )
-            for media_id in held:
-                if library_entries.count_entries_for_media(db, media_id) == 1:
-                    library_entries.ensure_entry(
-                        db, default_id, library_entries.media_target(media_id)
-                    )
-            library_entries.delete_library_entries(db, library_id)
-            delete_suggestion_feeds(db, library_id=library_id)
-            db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
-            for user_id in members:
-                dossier.on_visibility_lost(db, user_id=user_id)
-            record_input_change(db)
+        )
+        # The whole dossier head union, once, before any cleanup takes a head lock.
+        dossier.lock_heads(
+            db,
+            subjects=[ref, *(ResourceRef(scheme="media", id=m) for m in held)],
+            user_ids=members,
+        )
+        dossier.on_subject_deleted(db, ref)
+        delete_edges_for_deleted_resource(db, ref=ref)
+        media_upload_sessions.delete_library_destination_support_in_current_transaction(
+            db, library_id=library_id
+        )
+        for media_id in held:
+            if library_entries.count_entries_for_media(db, media_id) == 1:
+                library_entries.ensure_entry(db, default_id, library_entries.media_target(media_id))
+        library_entries.delete_library_entries(db, library_id)
+        delete_suggestion_feeds(db, library_id=library_id)
+        db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
+        projection.refresh(db, "library", [library_id])
+        for user_id in members:
+            dossier.on_visibility_lost(db, user_id=user_id)
+        record_input_change(db, owners=[ref.uri, *(f"media:{media_id}" for media_id in held)])
 
-    retry_read_committed(db, "delete_library", attempt, retries=5)
+    retry_serializable(db, "delete_library", attempt)
 
 
 def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user_id: UUID) -> UUID:
-    """The system library for `system_key`, created once."""
-    with transaction(db):
-        existing = db.scalar(
-            text("SELECT id FROM libraries WHERE system_key = :key"), {"key": system_key}
-        )
-        if existing is not None:
-            return existing
-        library_id = db.scalar(
-            text("""
-                INSERT INTO libraries (name, owner_user_id, is_default, system_key)
-                VALUES (:name, :owner, false, :key) RETURNING id
-            """),
-            {"name": name, "owner": owner_user_id, "key": system_key},
-        )
-        db.execute(
-            text("""
-                INSERT INTO memberships (library_id, user_id, role)
-                VALUES (:id, :owner, 'admin')
-            """),
-            {"id": library_id, "owner": owner_user_id},
-        )
-        return library_id
+    """Ensure the system library in the caller's serializable transaction; flush only."""
+    existing = db.scalar(
+        text("SELECT id FROM libraries WHERE system_key = :key"), {"key": system_key}
+    )
+    if existing is not None:
+        return existing
+    library_id = db.scalar(
+        text("""
+            INSERT INTO libraries (name, owner_user_id, is_default, system_key)
+            VALUES (:name, :owner, false, :key) RETURNING id
+        """),
+        {"name": name, "owner": owner_user_id, "key": system_key},
+    )
+    db.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:id, :owner, 'admin')
+        """),
+        {"id": library_id, "owner": owner_user_id},
+    )
+    projection.refresh(db, "library", [library_id])
+    return library_id
 
 
 def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
     """Join an existing system library; return whether membership changed. Flush only."""
-    return (
+    changed = (
         db.scalar(
             text("""
             INSERT INTO memberships (library_id, user_id, role)
@@ -319,6 +322,9 @@ def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
         )
         is not None
     )
+    if changed:
+        projection.refresh_viewer_contributors(db, [user_id])
+    return changed
 
 
 # The index orders names as shown (the default library is All); absent sort is

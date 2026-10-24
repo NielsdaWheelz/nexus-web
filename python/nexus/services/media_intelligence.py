@@ -5,6 +5,8 @@ cites an offered evidence span (I12). ``read_single`` and ``ensure_current_many`
 audience-gated and 404-mask or omit unreadable media; ``get_media_unit`` and
 ``read_batch`` serve callers that carry their own visibility. A unit whose build died
 reads ``failed`` everywhere (the job's ``on_dead`` hook fails it, I16).
+``ensure_current_many`` enqueues in its caller's transaction; dossier inputs own its
+fresh serializable retry and commit.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from nexus.logging import get_logger
 from nexus.services.media_intelligence_lifecycle import (
     current_content_fingerprint,
     current_content_fingerprints,
-    ensure_media_unit,
+    ensure_media_unit_in_tx,
 )
 
 logger = get_logger(__name__)
@@ -205,7 +207,7 @@ def _ensure_one(db: Session, media_id: UUID, requester: UUID) -> MediaProjection
         return MediaOmission(media_id, reason)
     if unit is NotReady.Failed:
         return MediaOmission(media_id, MediaOmissionReason.ProjectionFailed)
-    ensure_media_unit(db, media_id=media_id)
+    ensure_media_unit_in_tx(db, media_id=media_id)
     return MediaOmission(media_id, MediaOmissionReason.ProjectionPending)
 
 

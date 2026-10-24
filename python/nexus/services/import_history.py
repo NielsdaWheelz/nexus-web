@@ -197,7 +197,7 @@ def on_source_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
     )
     if attempt is None:
         if job.status == "dead":
-            record_input_change(db)
+            record_input_change(db, owners=(f"media:{media_id}",))
         return
     failure, terminal, retrying = _queue_outcome(job)
     stage = source_history_stage(

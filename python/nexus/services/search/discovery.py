@@ -4,11 +4,20 @@ Each explicit phase returns a complete ranking. Only eligible hybrid phases embe
 before their one snapshot; expected provider failure waits for scope authorization.
 Lexical phases never call the provider or neighbour query. Visible SQL facts determine
 admission and order; canonical items own activation, including unavailable locations.
-Strict evidence retrieval remains in service.py.
+A full resource prefix omits chunk neighbours only when selected media have lexical
+passages or no current eligible vectors; the prefix includes its continuation row.
+Preview omits chunk neighbours only when two lexical inside owners fill its prefix
+and each selected media has a lexical child or no current eligible model vector.
+Full reads share database-wide backend admission; direct preview and one-character
+reads remain independent. Strict evidence retrieval remains in service.py.
+Direct preview matches only literal names and contributor aliases; it has no
+indexed scoring, passage annotation, provider or vector read.
+Request stages pair monotonic boundaries with the logger's UTC timestamps; an end
+marks the owner leaving its scope on return or failure, not a successful response.
 """
 
 import asyncio
-import math
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal, cast
@@ -18,10 +27,11 @@ from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
 from provider_runtime.retry import DEFAULT_RETRY
 from provider_runtime.types import TransientExhausted
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from nexus.db.session import open_async_session
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.logging import get_logger
 from nexus.schemas.search import (
     NameMatch,
     PreviewPhase,
@@ -39,7 +49,10 @@ from nexus.schemas.search_types import SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.embeddings import embed_texts_async, embedding_model
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.search.presentation import present_matches
+from nexus.services.search import navigation
+from nexus.services.search.admission import search_session_async
+from nexus.services.search.indexed import IndexedRead, present
+from nexus.services.search.indexed import read as indexed_read
 from nexus.services.search.query import (
     FORMAT_STORAGE,
     DiscoveryQuery,
@@ -48,7 +61,7 @@ from nexus.services.search.query import (
     is_offset,
 )
 from nexus.services.search.scope import authorize_scope, scope_predicate
-from nexus.services.search.semantic import Embedding
+from nexus.services.search.semantic import Embedding, has_media_vectors
 from nexus.services.search.service import read_snapshot
 from nexus.services.search.sources import (
     GENERATED_FAMILIES,
@@ -56,8 +69,9 @@ from nexus.services.search.sources import (
     DiscoveryHit,
     Retrieval,
     discovery_neighbours,
-    rank_discovery,
 )
+
+logger = get_logger(__name__)
 
 _SAVED = frozenset({"highlight", "passage_anchor"})
 _PASSAGES = GENERATED_FAMILIES | _SAVED | {"note_block"}
@@ -99,12 +113,19 @@ async def _embedding(
 ) -> tuple[Embedding | None, ApiError | None]:
     if phase != "hybrid" or len(query.text) < 2 or not SEMANTIC.keys() & set(families):
         return None, None
+    logger.info("search.provider.begin", mono_ns=time.monotonic_ns())
     try:
         vectors = await embed_texts_async(
             [query.text], retry=replace(DEFAULT_RETRY, max_attempts=1)
         )
         return (embedding_model(), vectors[0]), None
+    except asyncio.CancelledError:
+        logger.info("search.provider.cancelled", mono_ns=time.monotonic_ns())
+        raise
     except (NonGenerationCallFailed, CredentialMissing) as exc:
+        logger.info(
+            "search.provider.failed", error_type=type(exc).__name__, mono_ns=time.monotonic_ns()
+        )
         if isinstance(exc, NonGenerationCallFailed) and not isinstance(
             exc.failure, TransientExhausted
         ):
@@ -115,20 +136,21 @@ async def _embedding(
             ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE,
             "Related matches are unavailable.",
         )
+    finally:
+        logger.info("search.provider.end", mono_ns=time.monotonic_ns())
 
 
 def _snapshot[T](db: Session, deadline: float, read: Callable[[Session], T]) -> T:
     def bounded(db: Session) -> T:
-        remaining_ms = max(1, math.ceil((deadline - asyncio.get_running_loop().time()) * 1000))
         # Browser reads are short; compiling these visibility relations costs seconds.
-        db.execute(
-            text("""SELECT set_config('statement_timeout', :timeout, true),
-                set_config('jit', 'off', true)"""),
-            {"timeout": str(remaining_ms)},
-        )
+        db.execute(text("SET LOCAL jit = 'off'"))
         return read(db)
 
-    return read_snapshot(db, bounded)
+    logger.info("search.snapshot.begin", mono_ns=time.monotonic_ns())
+    try:
+        return read_snapshot(db, bounded, deadline=deadline)
+    finally:
+        logger.info("search.snapshot.end", mono_ns=time.monotonic_ns())
 
 
 def _retrieval(
@@ -139,20 +161,24 @@ def _retrieval(
     embedding: Embedding | None,
     failure: ApiError | None,
 ) -> Retrieval:
-    authorize_scope(db, viewer_id, query.scope)
-    if failure is not None:
-        raise failure
-    authors = resolve_contributor_ids_by_handles(db, query.authors) if query.authors else None
-    return Retrieval(
-        viewer_id=viewer_id,
-        terms=query.text,
-        k=k,
-        scopes=(query.scope,),
-        content_kinds=tuple(FORMAT_STORAGE[f] for f in query.formats),
-        contributor_ids=None if authors is None else list(authors.values()),
-        roles=query.roles,
-        embedding=embedding,
-    )
+    logger.info("search.retrieval_setup.begin", mono_ns=time.monotonic_ns())
+    try:
+        authorize_scope(db, viewer_id, query.scope)
+        if failure is not None:
+            raise failure
+        authors = resolve_contributor_ids_by_handles(db, query.authors) if query.authors else None
+        return Retrieval(
+            viewer_id=viewer_id,
+            terms=query.text,
+            k=k,
+            scopes=(query.scope,),
+            content_kinds=tuple(FORMAT_STORAGE[f] for f in query.formats),
+            contributor_ids=None if authors is None else list(authors.values()),
+            roles=query.roles,
+            embedding=embedding,
+        )
+    finally:
+        logger.info("search.retrieval_setup.end", mono_ns=time.monotonic_ns())
 
 
 def _neighbours(
@@ -160,29 +186,24 @@ def _neighbours(
 ) -> dict[str, list[tuple[UUID, float]]]:
     if r.embedding is None:
         return {}
-    return {
-        family: discovery_neighbours(db, r, family) for family in families if family in SEMANTIC
-    }
+    logger.info("search.initial_neighbours.begin", mono_ns=time.monotonic_ns())
+    try:
+        return {
+            family: discovery_neighbours(db, r, family) for family in families if family in SEMANTIC
+        }
+    finally:
+        logger.info("search.initial_neighbours.end", mono_ns=time.monotonic_ns())
 
 
 def _rank(
-    db: Session,
-    r: Retrieval,
-    families: Sequence[str],
-    neighbours: dict[str, list[tuple[UUID, float]]],
-    *,
-    group: bool,
+    facts: IndexedRead, r: Retrieval, families: Sequence[str], *, group: bool
 ) -> list[DiscoveryHit]:
     return sorted(
         (
             hit
             for family in families
-            for hit in rank_discovery(
-                db,
-                r,
-                family,
-                neighbours=neighbours.get(family, ()),
-                group_owners=group and family in GENERATED_FAMILIES,
+            for hit in facts.rank(
+                (family,), k=r.k, group_owners=group and family in GENERATED_FAMILIES
             )
         ),
         key=lambda hit: hit.order,
@@ -203,7 +224,7 @@ def _resources(hits: Sequence[DiscoveryHit]) -> list[_Resource]:
 
 
 def _classify_owners(
-    db: Session, r: Retrieval, hits: list[DiscoveryHit], families: Sequence[str]
+    facts: IndexedRead, hits: list[DiscoveryHit], families: Sequence[str]
 ) -> list[DiscoveryHit]:
     """A generated candidate's direct admission does not depend on a previous limit."""
     direct = {hit.ref for hit in hits if hit.owner is None}
@@ -211,11 +232,9 @@ def _classify_owners(
     for family in ("media", "conversation"):
         identities = [owner.id for owner in owners if owner.scheme == family]
         if identities and family in families:
-            hits += rank_discovery(
-                db,
-                replace(r, k=len(identities)),
-                family,
-                neighbours=(),
+            hits += facts.rank(
+                (family,),
+                k=len(identities),
                 group_owners=False,
                 identities=identities,
             )
@@ -223,11 +242,9 @@ def _classify_owners(
 
 
 def _enrich(
-    db: Session,
-    r: Retrieval,
+    facts: IndexedRead,
     rows: Sequence[_Resource],
     families: Sequence[str],
-    neighbours: dict[str, list[tuple[UUID, float]]],
 ) -> list[_Resource]:
     children: dict[ResourceRef, DiscoveryHit] = {}
     for family in families:
@@ -237,11 +254,9 @@ def _enrich(
         owners = [row.ref.id for row in rows if row.ref.scheme == scheme]
         if not owners:
             continue
-        for hit in rank_discovery(
-            db,
-            replace(r, k=len(owners)),
-            family,
-            neighbours=neighbours.get(family, ()),
+        for hit in facts.rank(
+            (family,),
+            k=len(owners),
             group_owners=True,
             owners=owners,
         ):
@@ -254,48 +269,55 @@ def _enrich(
 
 def _present(
     db: Session,
+    facts: IndexedRead,
     viewer_id: UUID,
     terms: str,
     resources: Sequence[_Resource],
     occurrences: Sequence[DiscoveryHit],
 ) -> tuple[list[SearchResourceOut], list[SearchOccurrenceOut]]:
-    hits = {hit.ref: hit for row in resources for hit in (row.own, row.passage) if hit is not None}
-    hits.update((hit.ref, hit) for hit in occurrences)
-    shown = present_matches(
-        db,
-        viewer_id=viewer_id,
-        refs=[row.ref for row in resources] + list(hits),
-        hits=list(hits.values()),
-        terms=terms,
-    )
-
-    def occurrence(hit: DiscoveryHit) -> SearchOccurrenceOut:
-        item, match = shown[hit.ref.uri]
-        return SearchOccurrenceOut(
-            item=item, match=match, match_method="lexical" if hit.lexical else "semantic"
+    logger.info("search.presentation.begin", mono_ns=time.monotonic_ns())
+    try:
+        hits = {
+            hit.ref: hit for row in resources for hit in (row.own, row.passage) if hit is not None
+        }
+        hits.update((hit.ref, hit) for hit in occurrences)
+        shown = present(
+            db,
+            facts,
+            viewer_id=viewer_id,
+            refs=[row.ref for row in resources] + list(hits),
+            hits=list(hits.values()),
+            terms=terms,
         )
 
-    return [
-        SearchResourceOut(
-            section=row.section,
-            item=shown[row.ref.uri][0],
-            name_match=cast(
-                NameMatch | None, (None, "substring", "prefix", "exact")[row.own.name_tier]
+        def occurrence(hit: DiscoveryHit) -> SearchOccurrenceOut:
+            item, match = shown[hit.ref.uri]
+            return SearchOccurrenceOut(
+                item=item, match=match, match_method="lexical" if hit.lexical else "semantic"
             )
-            if row.own
-            else None,
-            match=shown[row.ref.uri][1] if row.own and terms else None,
-            match_method=("lexical" if row.own.lexical else "semantic")
-            if row.own and terms
-            else None,
-            matching_passage=occurrence(row.passage) if row.passage else None,
-        )
-        for row in resources
-    ], [occurrence(hit) for hit in occurrences]
+
+        return [
+            SearchResourceOut(
+                section=row.section,
+                item=shown[row.ref.uri][0],
+                name_match=cast(
+                    NameMatch | None, (None, "substring", "prefix", "exact")[row.own.name_tier]
+                )
+                if row.own
+                else None,
+                match=shown[row.ref.uri][1] if row.own and terms else None,
+                match_method=("lexical" if row.own.lexical else "semantic")
+                if row.own and terms
+                else None,
+                matching_passage=occurrence(row.passage) if row.passage else None,
+            )
+            for row in resources
+        ], [occurrence(hit) for hit in occurrences]
+    finally:
+        logger.info("search.presentation.end", mono_ns=time.monotonic_ns())
 
 
 async def search(
-    database: AsyncSession,
     viewer_id: UUID,
     query: DiscoveryQuery,
     *,
@@ -352,28 +374,66 @@ async def search(
                     phase=phase, results=[], page=page(False), semantic_status=status
                 )
             )
-        neighbours = _neighbours(db, r, families)
-        hits = _rank(db, r, families, neighbours, group=view == "resources")
+        defer_chunks = (
+            view == "resources" and r.embedding is not None and "content_chunk" in families
+        )
+        neighbour_families = (
+            tuple(f for f in families if f != "content_chunk") if defer_chunks else families
+        )
+        neighbours = _neighbours(db, r, neighbour_families)
+        logger.info("search.indexed.begin", mono_ns=time.monotonic_ns())
+        try:
+            facts = indexed_read(db, r, families, neighbours, group_owners=view == "resources")
+        finally:
+            logger.info("search.indexed.end", mono_ns=time.monotonic_ns())
+        hits = _rank(facts, r, families, group=view == "resources")
         if view == "resources":
-            rows = _resources(_classify_owners(db, r, hits, families))
+            rows = _resources(_classify_owners(facts, hits, families))
+            selected = _enrich(facts, rows[offset : offset + limit], families)
+            if defer_chunks:
+                assert r.embedding is not None
+                missing = [
+                    row.ref.id
+                    for row in selected
+                    if row.ref.scheme == "media"
+                    and (row.passage is None or not row.passage.lexical)
+                ]
+                # Known rows dominate new semantic-only inside owners. Only a
+                # selected media's missing child can still change this full page.
+                if len(rows) < r.k or (missing and has_media_vectors(db, r.embedding[0], missing)):
+                    logger.info("search.extra_semantic.begin", mono_ns=time.monotonic_ns())
+                    try:
+                        facts = facts.with_semantic(
+                            db, r, {"content_chunk": discovery_neighbours(db, r, "content_chunk")}
+                        )
+                    finally:
+                        logger.info("search.extra_semantic.end", mono_ns=time.monotonic_ns())
+                    hits = _rank(facts, r, families, group=True)
+                    rows = _resources(_classify_owners(facts, hits, families))
+                    selected = _enrich(facts, rows[offset : offset + limit], families)
             more = len(rows) > offset + limit and is_offset(offset + limit)
-            selected = _enrich(db, r, rows[offset : offset + limit], families, neighbours)
-            resources, _ = _present(db, viewer_id, query.text, selected, ())
+            resources, _ = _present(db, facts, viewer_id, query.text, selected, ())
             return SearchResourcesResponse(
                 phase=phase, results=resources, page=page(more), semantic_status=status
             )
         unique = list({hit.ref: hit for hit in hits}.values())
         more = len(unique) > offset + limit and is_offset(offset + limit)
-        _, passages = _present(db, viewer_id, query.text, (), unique[offset : offset + limit])
+        _, passages = _present(
+            db, facts, viewer_id, query.text, (), unique[offset : offset + limit]
+        )
         return SearchPassagesResponse(
             phase=phase, results=passages, page=page(more), semantic_status=status
         )
 
-    return await database.run_sync(lambda db: _snapshot(db, deadline, read))
+    async with (
+        open_async_session()
+        if len(query.text) < 2 or not query.requests_read or not families or failure is not None
+        else search_session_async(deadline=deadline)
+    ) as database:
+        return await database.run_sync(lambda db: _snapshot(db, deadline, read))
 
 
 async def preview(
-    database: AsyncSession,
     viewer_id: UUID,
     query: DiscoveryQuery,
     *,
@@ -391,40 +451,78 @@ async def preview(
             return SearchPreviewResponse(
                 phase=phase, resources=[], saved=[], passages=[], semantic_status=status
             )
-        neighbours = _neighbours(db, r, families)
+        if phase == "direct":
+            return SearchPreviewResponse(
+                phase=phase,
+                resources=navigation.resources(db, r, families),
+                saved=[],
+                passages=[],
+                semantic_status=status,
+            )
+        defer_chunks = r.embedding is not None and "content_chunk" in families
+        neighbour_families = (
+            tuple(f for f in families if f != "content_chunk") if defer_chunks else families
+        )
+        neighbours = _neighbours(db, r, neighbour_families)
+        logger.info("search.indexed.begin", mono_ns=time.monotonic_ns())
+        try:
+            facts = indexed_read(db, r, families, neighbours, group_owners=True)
+        finally:
+            logger.info("search.indexed.end", mono_ns=time.monotonic_ns())
         primary = [f for f in families if f not in GENERATED_FAMILIES | _SAVED]
         saved_families = [f for f in families if f in _SAVED]
-        rows = [
-            _Resource(h.ref, h, None) for h in _rank(db, r, primary, neighbours, group=False)[:4]
-        ]
-        saved = [
-            _Resource(h.ref, h, None)
-            for h in _rank(db, replace(r, k=2), saved_families, neighbours, group=False)[:2]
-        ]
-        rows = _enrich(db, r, rows, families, neighbours)
-        inside = []
-        for family in families:
-            if family not in GENERATED_FAMILIES:
-                continue
-            scheme = "conversation" if family == "message" else "media"
-            inside.extend(
-                rank_discovery(
-                    db,
-                    replace(r, k=2),
-                    family,
-                    neighbours=neighbours.get(family, ()),
-                    group_owners=True,
-                    excluded_owners=[row.ref.id for row in rows if row.ref.scheme == scheme],
+
+        def compose(
+            facts: IndexedRead,
+        ) -> tuple[list[_Resource], list[_Resource], list[DiscoveryHit]]:
+            rows = [_Resource(h.ref, h, None) for h in _rank(facts, r, primary, group=False)[:4]]
+            saved = [
+                _Resource(h.ref, h, None)
+                for h in _rank(facts, replace(r, k=2), saved_families, group=False)[:2]
+            ]
+            rows = _enrich(facts, rows, families)
+            inside: list[DiscoveryHit] = []
+            for family in families:
+                if family not in GENERATED_FAMILIES:
+                    continue
+                scheme = "conversation" if family == "message" else "media"
+                inside.extend(
+                    facts.rank(
+                        (family,),
+                        k=2,
+                        group_owners=True,
+                        excluded_owners=[row.ref.id for row in rows if row.ref.scheme == scheme],
+                    )
                 )
-            )
-        distinct: dict[ResourceRef | None, DiscoveryHit] = {}
-        for hit in sorted(
-            inside, key=lambda h: (*h.order[:-1], h.owner.uri if h.owner else h.ref.uri)
-        ):
-            distinct.setdefault(hit.owner, hit)
-        resources, passages = _present(
-            db, viewer_id, query.text, rows + saved, list(distinct.values())[:2]
-        )
+            distinct: dict[ResourceRef | None, DiscoveryHit] = {}
+            for hit in sorted(
+                inside, key=lambda h: (*h.order[:-1], h.owner.uri if h.owner else h.ref.uri)
+            ):
+                distinct.setdefault(hit.owner, hit)
+            return rows, saved, list(distinct.values())[:2]
+
+        rows, saved, inside = compose(facts)
+        if defer_chunks:
+            assert r.embedding is not None
+            missing = [
+                row.ref.id
+                for row in rows
+                if row.ref.scheme == "media" and (row.passage is None or not row.passage.lexical)
+            ]
+            if (
+                len(inside) < 2
+                or any(not hit.lexical for hit in inside)
+                or (missing and has_media_vectors(db, r.embedding[0], missing))
+            ):
+                logger.info("search.extra_semantic.begin", mono_ns=time.monotonic_ns())
+                try:
+                    facts = facts.with_semantic(
+                        db, r, {"content_chunk": discovery_neighbours(db, r, "content_chunk")}
+                    )
+                finally:
+                    logger.info("search.extra_semantic.end", mono_ns=time.monotonic_ns())
+                rows, saved, inside = compose(facts)
+        resources, passages = _present(db, facts, viewer_id, query.text, rows + saved, inside)
         return SearchPreviewResponse(
             phase=phase,
             resources=resources[: len(rows)],
@@ -433,4 +531,9 @@ async def preview(
             semantic_status=status,
         )
 
-    return await database.run_sync(lambda db: _snapshot(db, deadline, read))
+    async with (
+        open_async_session()
+        if direct or not query.requests_read or not families or failure is not None
+        else search_session_async(deadline=deadline)
+    ) as database:
+        return await database.run_sync(lambda db: _snapshot(db, deadline, read))

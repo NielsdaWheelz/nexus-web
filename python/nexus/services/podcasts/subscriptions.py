@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
@@ -22,6 +22,7 @@ from nexus.services.library_entries import (
     place_podcast_in_named_libraries_in_current_transaction,
     remove_unsubscribed_podcast_placements,
 )
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 from . import backfill, sync
@@ -143,51 +144,55 @@ def subscribe(
         show = resolved
 
     def attempt() -> wire.PodcastSubscribeOut:
-        with transaction(db):
-            if isinstance(show, UUID):  # any persisted show is followable, as its detail is
-                podcast_id = show
-                if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": show}) is None:
-                    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-            else:
-                podcast_id = upsert_show(db, show)
-            created = db.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (id, user_id, podcast_id, next_sync_at)
-                    VALUES (:id, :viewer_id, :podcast_id, now())
-                    ON CONFLICT (user_id, podcast_id) DO NOTHING
-                    RETURNING id, created_at
-                """),
-                {"id": new_uuid7(), "viewer_id": viewer_id, "podcast_id": podcast_id},
-            ).first()
-            if created is not None:  # inserted Pending: its backfill and its one sync job
-                backfill.seed(db, created.id, created.created_at)
-                sync.enqueue(db, created.id, interactive=True)
-            added = place_podcast_in_named_libraries_in_current_transaction(
-                db,
-                viewer_id=viewer_id,
-                podcast_id=podcast_id,
-                library_ids=body.named_library_ids,
-                replace_episodes=body.replace_episodes,
-            )
-            outcome = "DestinationsAdded" if added else "AlreadySubscribed"
-            response = wire.PodcastSubscribeOut(
-                href=f"/podcasts/{podcast_id}",
-                podcast_id=podcast_id,
-                outcome="Subscribed" if created is not None else outcome,
-                destinations=[
-                    wire.PodcastDestinationOutcomeOut(
-                        library_id=library_id,
-                        outcome="Added" if library_id in added else "AlreadyPresent",
-                    )
-                    for library_id in dict.fromkeys(body.named_library_ids)
-                ],
-                backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
-            )
-            if created is not None or added or not isinstance(show, UUID):
-                record_input_change(db)
-            return response
+        if isinstance(show, UUID):  # any persisted show is followable, as its detail is
+            podcast_id = show
+            if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": show}) is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+        else:
+            podcast_id = upsert_show(db, show)
+        created = db.execute(
+            text("""
+                INSERT INTO podcast_subscriptions (id, user_id, podcast_id, next_sync_at)
+                VALUES (:id, :viewer_id, :podcast_id, now())
+                ON CONFLICT (user_id, podcast_id) DO NOTHING
+                RETURNING id, created_at
+            """),
+            {"id": new_uuid7(), "viewer_id": viewer_id, "podcast_id": podcast_id},
+        ).first()
+        if created is not None:  # inserted Pending: its backfill and its one sync job
+            backfill.seed(db, created.id, created.created_at)
+            sync.enqueue(db, created.id, interactive=True)
+        added = place_podcast_in_named_libraries_in_current_transaction(
+            db,
+            viewer_id=viewer_id,
+            podcast_id=podcast_id,
+            library_ids=body.named_library_ids,
+            replace_episodes=body.replace_episodes,
+        )
+        viewers = db.scalars(
+            text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+            {"ids": body.named_library_ids},
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer_id, *viewers])
+        outcome = "DestinationsAdded" if added else "AlreadySubscribed"
+        response = wire.PodcastSubscribeOut(
+            href=f"/podcasts/{podcast_id}",
+            podcast_id=podcast_id,
+            outcome="Subscribed" if created is not None else outcome,
+            destinations=[
+                wire.PodcastDestinationOutcomeOut(
+                    library_id=library_id,
+                    outcome="Added" if library_id in added else "AlreadyPresent",
+                )
+                for library_id in dict.fromkeys(body.named_library_ids)
+            ],
+            backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
+        )
+        if created is not None or added or not isinstance(show, UUID):
+            record_input_change(db, owners=(f"podcast:{podcast_id}",))
+        return response
 
-    return retry_read_committed(db, "subscribe_to_podcast", attempt)
+    return retry_serializable(db, "subscribe_to_podcast", attempt)
 
 
 def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastUnsubscribeOut:
@@ -196,32 +201,29 @@ def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastU
     from nexus.services.dossier.engine import on_visibility_lost
 
     def attempt() -> wire.PodcastUnsubscribeOut:
-        with transaction(db):
-            subscription_id = db.scalar(
-                text("""
-                    DELETE FROM podcast_subscriptions
-                    WHERE user_id = :viewer_id AND podcast_id = :podcast_id
-                    RETURNING id
-                """),
-                {"viewer_id": viewer_id, "podcast_id": podcast_id},
-            )
-            if subscription_id is None:
-                return wire.PodcastUnsubscribeOut(
-                    outcome="AlreadyUnsubscribed", podcast_id=podcast_id
-                )
-            removed, retained = remove_unsubscribed_podcast_placements(
-                db, viewer_id=viewer_id, podcast_id=podcast_id
-            )
-            on_visibility_lost(db, user_id=viewer_id)
-            record_input_change(db)
-            return wire.PodcastUnsubscribeOut(
-                outcome="Unsubscribed",
-                podcast_id=podcast_id,
-                removed_placement_count=removed,
-                retained_shared_count=retained,
-            )
+        subscription_id = db.scalar(
+            text("""
+                DELETE FROM podcast_subscriptions
+                WHERE user_id = :viewer_id AND podcast_id = :podcast_id
+                RETURNING id
+            """),
+            {"viewer_id": viewer_id, "podcast_id": podcast_id},
+        )
+        if subscription_id is None:
+            return wire.PodcastUnsubscribeOut(outcome="AlreadyUnsubscribed", podcast_id=podcast_id)
+        removed, retained = remove_unsubscribed_podcast_placements(
+            db, viewer_id=viewer_id, podcast_id=podcast_id
+        )
+        on_visibility_lost(db, user_id=viewer_id)
+        record_input_change(db, owners=(f"podcast:{podcast_id}",))
+        return wire.PodcastUnsubscribeOut(
+            outcome="Unsubscribed",
+            podcast_id=podcast_id,
+            removed_placement_count=removed,
+            retained_shared_count=retained,
+        )
 
-    return retry_read_committed(db, "unsubscribe_from_podcast", attempt)
+    return retry_serializable(db, "unsubscribe_from_podcast", attempt)
 
 
 def retry_backfill(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastBackfillRetryOut:

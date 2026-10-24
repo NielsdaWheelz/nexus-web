@@ -20,7 +20,6 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.session import open_async_session
 from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, JobRow, update_running_job_payload
 from nexus.services.dossier.inputs import Candidate, Collected, collect, offer
@@ -96,9 +95,7 @@ async def gather(
     nexus: dict[ResourceRef, ResourceRef] = {}
     for query in queries:
         prepared = SearchQuery(text=query, requested_kinds=_NEXUS_KINDS, limit=MAX_NEXUS)
-        # one session per search: search_scopes_async begins its own transactions
-        async with open_async_session() as search_db:
-            found = await search_scopes_async(search_db, user_id, prepared, (SearchScope("all"),))
+        found = await search_scopes_async(user_id, prepared, (SearchScope("all"),))
         for result in found.results:
             if result.citation_target is not None:
                 target = assert_resource_ref(result.citation_target)

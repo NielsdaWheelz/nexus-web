@@ -7,14 +7,18 @@ is a boot failure that names the keys, never a request failure.
 
 import base64
 import binascii
+import json
 import os
+import ssl
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, get_args
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from provider_runtime.agent_runtime import CodexEndpoint, CodexUnixEndpoint, CodexWebSocketEndpoint
+from provider_runtime.endpoints import normalize_endpoint_overrides
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
@@ -38,6 +42,25 @@ _CREDENTIALS = ("openai_api_key", "brave_search_api_key") + tuple(
     f"{provider}_generation_api_key" for provider in _PROVIDERS
 )
 _Secret = Annotated[SecretStr | None, Field(repr=False)]
+
+
+def parse_codex_endpoint(value: str, token: SecretStr | None) -> CodexEndpoint:
+    """Accept the explicit client transport once; never include secret input in errors."""
+
+    try:
+        url = urlsplit(value)
+        if url.scheme == "unix":
+            if url.netloc or url.query or url.fragment or token is not None:
+                raise ValueError
+            return CodexUnixEndpoint(Path(unquote(url.path)))
+        if url.scheme in ("ws", "wss") and token is not None:
+            return CodexWebSocketEndpoint(value, token)
+        raise ValueError
+    except ValueError:
+        raise ValueError(
+            "NEXUS_CODEX_ENDPOINT requires unix:///absolute/path without a token, or "
+            "ws(s)://host:port with NEXUS_CODEX_TRANSPORT_TOKEN"
+        ) from None
 
 
 class Settings(BaseSettings):
@@ -99,6 +122,10 @@ class Settings(BaseSettings):
     # The unqualified key is embeddings only; generation keys are per provider, so no
     # provider secret reaches the codex host.
     openai_api_key: str | None = None
+    provider_endpoint_overrides: Annotated[dict[GenerationApiProvider, str], NoDecode] = Field(
+        default_factory=dict
+    )
+    provider_ca_pem: str | None = None
     transcript_embedding_model_openai: str = "text-embedding-3-small"
     generation_api_providers: Annotated[tuple[GenerationApiProvider, ...], NoDecode] = ()
     openai_generation_api_key: _Secret = None
@@ -106,9 +133,13 @@ class Settings(BaseSettings):
     gemini_generation_api_key: _Secret = None
     deepseek_generation_api_key: _Secret = None
     xai_generation_api_key: _Secret = None
-    codex_native_socket: Path = Field(
-        Path("/tmp/codex-daemon-10001/app-server.sock"), alias="NEXUS_CODEX_NATIVE_SOCKET"
+    codex_transport_token: _Secret = Field(None, alias="NEXUS_CODEX_TRANSPORT_TOKEN")
+    codex_endpoint: Annotated[CodexEndpoint, NoDecode] = Field(
+        default_factory=lambda: CodexUnixEndpoint(Path("/tmp/codex-daemon-10001/app-server.sock")),
+        alias="NEXUS_CODEX_ENDPOINT",
+        repr=False,
     )
+    codex_cwd_root: Path = Field(Path("/tmp/codex-daemon-10001/cwds"), alias="NEXUS_CODEX_CWD_ROOT")
     memory_client_config_path: Path | None = None
     metadata_enrichment_max_content_words: int = Field(1000, ge=1, le=1000)
     connection_discovery_enabled: bool = True
@@ -142,10 +173,44 @@ class Settings(BaseSettings):
             return value
         return tuple(part.strip() for part in value.split(",") if part.strip())
 
-    @field_validator(*_CREDENTIALS, mode="before")
+    @field_validator(*_CREDENTIALS, "provider_ca_pem", mode="before")
     @classmethod
     def _blank_is_absent(cls, value: object) -> object:
         return (value.strip() or None) if isinstance(value, str) else value
+
+    @field_validator("codex_endpoint", mode="before")
+    @classmethod
+    def _codex_endpoint(cls, value: object, info: ValidationInfo) -> object:
+        token = info.data.get("codex_transport_token")
+        if isinstance(value, str):
+            return parse_codex_endpoint(value, token)
+        if isinstance(value, CodexUnixEndpoint) and token is not None:
+            raise ValueError("NEXUS_CODEX_TRANSPORT_TOKEN must be absent for unix")
+        return value
+
+    @field_validator("provider_endpoint_overrides", mode="before")
+    @classmethod
+    def _endpoint_json(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value) if value.strip() else {}
+        return value
+
+    @field_validator("provider_endpoint_overrides")
+    @classmethod
+    def _endpoint_origins(
+        cls, value: dict[GenerationApiProvider, str]
+    ) -> dict[GenerationApiProvider, str]:
+        return dict(normalize_endpoint_overrides(value))
+
+    @field_validator("provider_ca_pem")
+    @classmethod
+    def _provider_ca(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=value)
+            except (OSError, TypeError) as exc:
+                raise ValueError("PROVIDER_CA_PEM must contain valid PEM certificates") from exc
+        return value
 
     @field_validator("supabase_issuer")
     @classmethod
@@ -178,7 +243,7 @@ class Settings(BaseSettings):
             "NODE_INGEST_SCRIPT": self.node_ingest_script,
             "PARSER_TEMP_ROOT": self.parser_temp_root,
             "BACKGROUND_PROCESS_CGROUP_ROOT": self.background_process_cgroup_root,
-            "NEXUS_CODEX_NATIVE_SOCKET": self.codex_native_socket,
+            "NEXUS_CODEX_CWD_ROOT": self.codex_cwd_root,
             "NEXUS_RUNTIME_IDENTITY_FILE": self.nexus_runtime_identity_file,
         }
         for name, path in paths.items():

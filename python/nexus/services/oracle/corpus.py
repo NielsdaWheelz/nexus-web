@@ -23,6 +23,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import Media, OracleCorpusSource, OraclePassageAnchor, ProcessingStatus
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.services import libraries, library_entries
 from nexus.services.content_indexing import request_stale_media_content_reindex
@@ -32,6 +33,7 @@ from nexus.services.media_source_ingest import (
     repair_source_for_system_media,
 )
 from nexus.services.oracle.synthesis import Candidate
+from nexus.services.search import projection
 from nexus.services.search.semantic import Embedding, nearest_chunks
 from nexus.services.suggestion_changes import record_input_change
 
@@ -300,31 +302,53 @@ def seed(session_factory: sessionmaker[Session], *, owner_user_id: UUID) -> dict
     """Converge the database on corpus.json, one transaction per work; idempotent and safe
     while the app is live. Workers ingest and index; the next reading resolves anchors."""
     with session_factory() as db:
-        library_id = libraries.ensure_system_library(
-            db, system_key=SYSTEM_KEY, name="Oracle Corpus", owner_user_id=owner_user_id
+        library_id = retry_serializable(
+            db,
+            "oracle.seed_library",
+            lambda: libraries.ensure_system_library(
+                db, system_key=SYSTEM_KEY, name="Oracle Corpus", owner_user_id=owner_user_id
+            ),
         )
     counts: Counter[str] = Counter()
     for work in works():
         with session_factory() as db:
-            counts.update(_seed_work(db, work=work, library_id=library_id, owner=owner_user_id))
-            record_input_change(db)
-            db.commit()
+
+            def publish_work(work: Work = work) -> Counter[str]:
+                work_counts, media_id = _seed_work(
+                    db, work=work, library_id=library_id, owner=owner_user_id
+                )
+                projection.refresh_viewer_contributors(
+                    db,
+                    db.scalars(
+                        text("SELECT user_id FROM memberships WHERE library_id=:id"),
+                        {"id": library_id},
+                    ).all(),
+                )
+                record_input_change(db, owners=(f"media:{media_id}",))
+                return work_counts
+
+            counts.update(retry_serializable(db, "oracle.seed_work", publish_work))
     with session_factory() as db:
-        kept = [f"{work.key}/{p.key}" for work in works() for p in work.passages]
-        removed = db.execute(
-            text(
-                "DELETE FROM oracle_passage_anchors a USING oracle_corpus_sources s"
-                " WHERE s.id = a.corpus_source_id"
-                " AND s.work_key || '/' || a.passage_key <> ALL(:kept) RETURNING a.id"
-            ),
-            {"kept": kept},
-        ).all()
-        counts["anchors_removed"] = len(removed)
-        db.commit()
+
+        def prune() -> int:
+            kept = [f"{work.key}/{p.key}" for work in works() for p in work.passages]
+            removed = db.execute(
+                text(
+                    "DELETE FROM oracle_passage_anchors a USING oracle_corpus_sources s"
+                    " WHERE s.id = a.corpus_source_id"
+                    " AND s.work_key || '/' || a.passage_key <> ALL(:kept) RETURNING a.id"
+                ),
+                {"kept": kept},
+            ).all()
+            return len(removed)
+
+        counts["anchors_removed"] = retry_serializable(db, "oracle.prune_anchors", prune)
     return {"works": len(works()), **counts}
 
 
-def _seed_work(db: Session, *, work: Work, library_id: UUID, owner: UUID) -> Counter[str]:
+def _seed_work(
+    db: Session, *, work: Work, library_id: UUID, owner: UUID
+) -> tuple[Counter[str], UUID]:
     counts: Counter[str] = Counter()
     source = db.scalar(select(OracleCorpusSource).where(OracleCorpusSource.work_key == work.key))
     accepted = None
@@ -380,7 +404,7 @@ def _seed_work(db: Session, *, work: Work, library_id: UUID, owner: UUID) -> Cou
         anchor.display_label = passage.label
         anchor.tags = list(passage.tags)
     db.flush()
-    return counts
+    return counts, source.media_id
 
 
 def _repair(db: Session, *, work: Work, media_id: UUID, owner: UUID) -> Counter[str]:

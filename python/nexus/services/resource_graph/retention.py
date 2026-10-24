@@ -8,7 +8,7 @@ content, order or retaining facts; hydration never pins or touches. Flush-only.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from uuid import UUID
 
 from sqlalchemy import func, select, text, update
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services.resource_graph.owners import owner_rows_sql
+from nexus.services.resource_graph.owners import DERIVED_SCHEMES, owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 
@@ -33,20 +33,28 @@ def canonical_blank(body: object) -> bool:
 
 def _owner_map(db: Session, refs: Iterable[ResourceRef]) -> dict[ResourceRef, ResourceRef]:
     members = list(set(refs))
-    if not members:
-        return {}
+    owners = {ref: ref for ref in members if ref.scheme not in DERIVED_SCHEMES}
+    derived = [ref for ref in members if ref.scheme in DERIVED_SCHEMES]
+    if not derived:
+        return owners
     rows = db.execute(
         text(
             owner_rows_sql(
-                "SELECT * FROM unnest(CAST(:schemes AS text[]), CAST(:ids AS uuid[])) AS e(scheme, id)"
+                "SELECT * FROM unnest(CAST(:schemes AS text[]), CAST(:ids AS uuid[])) AS e(scheme, id)",
+                derived_schemes={ref.scheme for ref in derived},
             )
         ),
-        {"schemes": [ref.scheme for ref in members], "ids": [ref.id for ref in members]},
+        {"schemes": [ref.scheme for ref in derived], "ids": [ref.id for ref in derived]},
     )
-    return {
-        assert_resource_ref(f"{scheme}:{id_}"): assert_resource_ref(f"{owner_scheme}:{owner_id}")
-        for scheme, id_, owner_scheme, owner_id in rows
-    }
+    owners.update(
+        {
+            assert_resource_ref(f"{scheme}:{id_}"): assert_resource_ref(
+                f"{owner_scheme}:{owner_id}"
+            )
+            for scheme, id_, owner_scheme, owner_id in rows
+        }
+    )
+    return owners
 
 
 def resolve_owners(db: Session, refs: Iterable[ResourceRef]) -> list[ResourceRef]:
@@ -101,9 +109,9 @@ def captured_owner(row: ResourceEdge) -> ResourceRef | None:
     return assert_resource_ref(captured) if captured is not None else None
 
 
-def retaining_owners(db: Session, rows: Sequence[ResourceEdge]) -> list[ResourceRef]:
-    owners = _owner_map(db, edge_endpoints(rows))
-    retained: set[ResourceRef] = set()
+def _retaining_edges(
+    rows: Sequence[ResourceEdge], owners: dict[ResourceRef, ResourceRef]
+) -> Iterator[tuple[UUID, set[ResourceRef]]]:
     for row in rows:
         source = assert_resource_ref(f"{row.source_scheme}:{row.source_id}")
         target = assert_resource_ref(f"{row.target_scheme}:{row.target_id}")
@@ -119,47 +127,59 @@ def retaining_owners(db: Session, rows: Sequence[ResourceEdge]) -> list[Resource
         if captured is not None:
             endpoints.add(captured)
         if len(endpoints) > 1:
-            retained.update(endpoints)
+            yield row.id, endpoints
+
+
+def retaining_owners(db: Session, rows: Sequence[ResourceEdge]) -> list[ResourceRef]:
+    owners = _owner_map(db, edge_endpoints(rows))
+    retained: set[ResourceRef] = set()
+    for _, endpoints in _retaining_edges(rows, owners):
+        retained.update(endpoints)
     return sorted(retained, key=lambda ref: (ref.scheme, ref.id))
-
-
-_EDGE_OWNERS = owner_rows_sql(
-    "SELECT source_scheme AS scheme, source_id AS id FROM resource_edges UNION SELECT target_scheme, target_id FROM resource_edges"
-)
 
 
 def retainer_count(
     db: Session, ref: ResourceRef, *, excluding_edge_ids: Sequence[UUID] = ()
 ) -> int:
-    """Complete retaining facts, including snapshots whose derived target disappeared."""
-    return db.execute(
-        text(f"""
-            WITH owners AS ({_EDGE_OWNERS}), edge_owners AS (
-                SELECT e.id, s.owner_scheme || ':' || s.owner_id AS source_owner,
-                    CASE WHEN e.target_scheme IN ('evidence_span', 'content_chunk')
-                        AND t.owner_scheme = e.target_scheme
-                        THEN COALESCE(e.snapshot #>> '{{evidence,target,owner_ref}}',
-                            t.owner_scheme || ':' || t.owner_id)
-                        ELSE t.owner_scheme || ':' || t.owner_id END AS target_owner,
-                    e.snapshot #>> '{{evidence,target,owner_ref}}' AS captured_owner
-                FROM resource_edges e
-                JOIN owners s ON (s.scheme, s.id) = (e.source_scheme, e.source_id)
-                JOIN owners t ON (t.scheme, t.id) = (e.target_scheme, e.target_id)
-                WHERE NOT (e.id = ANY(CAST(:excluded AS uuid[])))
-            ), endpoints AS (
-                SELECT id, source_owner AS owner_ref FROM edge_owners
-                UNION SELECT id, target_owner FROM edge_owners
-                UNION SELECT id, captured_owner FROM edge_owners WHERE captured_owner IS NOT NULL
-            ), retaining AS (
-                SELECT id FROM endpoints GROUP BY id HAVING count(DISTINCT owner_ref) > 1
-            )
-            SELECT (SELECT count(DISTINCT e.id) FROM endpoints e JOIN retaining r USING (id)
-                    WHERE e.owner_ref = :ref)
-                + (SELECT count(*) FROM artifacts
-                    WHERE subject_scheme = :scheme AND subject_id = :id)
-        """),
-        {"excluded": list(excluding_edge_ids), "ref": ref.uri, "scheme": ref.scheme, "id": ref.id},
+    """Count one owner's retaining edges and saved heads in the writer's snapshot.
+
+    A page owns only itself. A note may also own passage anchors, spans and
+    chunks; an edge's captured owner remains relevant after a derived row goes
+    away. The opposite endpoint is resolved from the same candidate edges.
+    """
+    assert ref.scheme in ("page", "note_block")
+    owned = "SELECT CAST(:scheme AS text) AS scheme, CAST(:id AS uuid) AS id"
+    if ref.scheme == "note_block":
+        owned += """
+            UNION ALL SELECT 'passage_anchor', id FROM passage_anchors
+                WHERE owner_scheme = :scheme AND owner_id = :id
+            UNION ALL SELECT 'evidence_span', id FROM evidence_spans
+                WHERE owner_kind = :scheme AND owner_id = :id
+            UNION ALL SELECT 'content_chunk', id FROM content_chunks
+                WHERE owner_kind = :scheme AND owner_id = :id
+        """
+    rows = db.scalars(
+        select(ResourceEdge)
+        .from_statement(
+            text(f"""
+            WITH owned AS ({owned})
+            SELECT e.* FROM resource_edges e
+            WHERE NOT (e.id = ANY(CAST(:excluded AS uuid[])))
+                AND ((e.source_scheme, e.source_id) IN (SELECT scheme, id FROM owned)
+                    OR (e.target_scheme, e.target_id) IN (SELECT scheme, id FROM owned)
+                    OR e.snapshot #>> '{{evidence,target,owner_ref}}' = :ref)
+        """)
+        )
+        .execution_options(populate_existing=True),
+        {"scheme": ref.scheme, "id": ref.id, "ref": ref.uri, "excluded": list(excluding_edge_ids)},
+    ).all()
+    owners = _owner_map(db, edge_endpoints(rows))
+    retained = sum(ref in endpoints for _, endpoints in _retaining_edges(rows, owners))
+    saved = db.execute(
+        text("SELECT count(*) FROM artifacts WHERE subject_scheme=:scheme AND subject_id=:id"),
+        {"scheme": ref.scheme, "id": ref.id},
     ).scalar_one()
+    return retained + saved
 
 
 def has_retainer(db: Session, ref: ResourceRef, *, excluding_edge_ids: Sequence[UUID] = ()) -> bool:

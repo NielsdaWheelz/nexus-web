@@ -13,6 +13,8 @@ creation reuses the same attached note id;
 otherwise its loaded empty-slot version must match. Edits require the exact current
 attachment and the note body version. Page delete and detach keep the notes;
 ``delete_highlight_note`` deletes the note globally and is idempotent when absent.
+Content write roots enter fresh serializable attempts before reads;
+composed helpers publish inside their caller's transaction.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ from nexus.services.resource_graph.cleanup import (
 from nexus.services.resource_graph.highlight_notes import note_blocks_for_highlight
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items import versions
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -151,7 +154,6 @@ def create_page(
             )
             outline.execute_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
         out = NotePageSummaryOut(id=page.id, title=page.title, updated_at=page.updated_at)
-        db.commit()
         return out
 
     return retry_serializable(db, "create_page", op)
@@ -183,6 +185,9 @@ def write_title(
     page.updated_at = func.now()
     retention.touch_owners(db, [ref])
     versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="title")
+    db.flush()
+    projection.refresh(db, "page", [page_id])
+    projection.refresh_subject_dossiers(db, [ref])
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
@@ -190,7 +195,6 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
 
     def op() -> None:
         delete_page_in_current_transaction(db, viewer_id, page_id)
-        db.commit()
 
     retry_serializable(db, "delete_page", op)
 
@@ -213,8 +217,9 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
     db.execute(delete(DailyPageBinding).where(DailyPageBinding.page_id == page_id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(page)
-    record_input_change(db)
+    record_input_change(db, owners=[ref.uri])
     db.flush()
+    projection.refresh(db, "page", [page_id])
 
 
 def page_facts(db: Session, viewer_id: UUID, page_ids: Sequence[UUID]) -> dict[UUID, PageFacts]:
@@ -276,7 +281,6 @@ def capture(db: Session, viewer_id: UUID, *, local_date: date, note_id: UUID, te
             body_pm_json=body,
             proposed_page_id=proposed_page_id,
         )
-        db.commit()
         return page_id
 
     return retry_serializable(db, "daily_capture", op)
@@ -380,8 +384,7 @@ def set_highlight_note(
             )
         out = note_bodies.read_note(db, viewer_id=viewer_id, note_id=note_id)
         if changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=[f"note_block:{note_id}", f"highlight:{highlight_id}"])
         return out
 
     return retry_serializable(db, "set_highlight_note", op)
@@ -453,8 +456,7 @@ def detach_highlight_note(
         )
         if edge_id is not None:
             edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=[f"note_block:{note_id}", f"highlight:{highlight_id}"])
 
     retry_serializable(db, "detach_highlight_note", op)
 
@@ -472,7 +474,6 @@ def delete_highlight_note(
     def op() -> None:
         block = db.get(NoteBlock, note_id)
         if block is None:
-            db.commit()
             return
         if block.user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
@@ -485,8 +486,7 @@ def delete_highlight_note(
             db, viewer_id=viewer_id, note_id=note_id, version=expected_version
         )
         note_bodies.delete_note(db, viewer_id=viewer_id, note_id=note_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=[f"note_block:{note_id}", f"highlight:{highlight_id}"])
 
     retry_serializable(db, "delete_highlight_note", op)
 
@@ -536,6 +536,7 @@ def _new_page(db: Session, viewer_id: UUID, page_id: UUID, title: str) -> Page:
     for lane in ("title", "links"):
         versions.ensure_version(db, viewer_id=viewer_id, ref=page_ref(page_id), lane=lane)
     db.refresh(page)
+    projection.refresh(db, "page", [page_id])
     return page
 
 

@@ -1,8 +1,10 @@
 """Weekly empty-page/note collection and reviewed, content-free operator inventories.
 
 The graph owns retention; this module owns discovery and transaction boundaries.
-Each job candidate locks the claim, then its root, then rechecks with a fresh
-READ COMMITTED snapshot. Its disposition and cursor commit together. Operator
+Each job candidate starts a serializable attempt, then locks its claim and root. Its
+serializable snapshot includes retention predicates and activity/version tuples;
+concurrent body or retention changes restart the attempt. Disposition and cursor
+commit together. Operator
 apply locks and validates the entire bounded inventory before deleting anything.
 Canonical teardown is flush-only. Absent resources have already landed on retry.
 """
@@ -17,7 +19,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.jobs import queue
 from nexus.runtime_health import get_runtime_identity
@@ -219,7 +221,7 @@ def _delete(db: Session, ref: ResourceRef, owner_id: UUID) -> None:
         notes.delete_page_in_current_transaction(db, owner_id, ref.id)
     else:
         note_bodies.delete_note(db, viewer_id=owner_id, note_id=ref.id)
-        record_input_change(db)
+        record_input_change(db, owners=[ref.uri])
 
 
 def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
@@ -255,14 +257,13 @@ def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
             live.append((ref, resource.user_id))
         for ref, owner_id in live:
             _delete(db, ref, owner_id)
-        db.commit()
         return {
             "deleted": len(live),
             "already_absent": absent,
             "preview_truncated": inventory.truncated,
         }
 
-    return retry_read_committed(db, "apply_empty_resource_inventory", op)
+    return retry_serializable(db, "apply_empty_resource_inventory", op)
 
 
 def _checkpoint(db: Session, context: queue.JobExecutionContext, progress: _Progress) -> None:
@@ -282,7 +283,6 @@ def run_job(
         def initialize() -> _Progress | None:
             claim = queue.lock_running_job_claim(db, context=context)
             if claim is None:
-                db.rollback()
                 return None
             if "cutoff" in claim.payload:
                 progress = _Progress.model_validate(claim.payload)
@@ -290,24 +290,24 @@ def run_job(
                 request = _RunRequest.model_validate(claim.payload)
                 progress = _Progress(request_id=request.request_id, cutoff=_cutoff(db))
             _checkpoint(db, context, progress)
-            db.commit()
             return progress
 
-        progress = retry_read_committed(db, "initialize_empty_resource_cleanup", initialize)
+        progress = retry_serializable(db, "initialize_empty_resource_cleanup", initialize)
         if progress is None:
             return {"status": "claim_lost"}
-        candidates = _candidates(db, progress.cursor, BATCH_SIZE)
-        db.commit()
+        cursor = progress.cursor
+        candidates = retry_serializable(
+            db, "empty_resource_candidates", lambda: _candidates(db, cursor, BATCH_SIZE)
+        )
         for ref in candidates:
 
             def inspect(ref: ResourceRef = ref) -> _Progress | None:
                 claim = queue.lock_running_job_claim(db, context=context)
                 if claim is None:
-                    db.rollback()
                     return None
                 current = _Progress.model_validate(claim.payload)
                 _lock_root(db, ref)
-                # Separate statement: the lock may have waited for a committed writer.
+                # A changed root tuple or retention dependency restarts this snapshot.
                 resource = _resource(db, ref)
                 reason = _reason(db, ref, resource, current.cutoff)
                 if reason == "eligible":
@@ -325,10 +325,9 @@ def run_job(
                 current.inspected += 1
                 current.cursor = ref.uri
                 _checkpoint(db, context, current)
-                db.commit()
                 return current
 
-            progress = retry_read_committed(db, "inspect_empty_resource", inspect)
+            progress = retry_serializable(db, "inspect_empty_resource", inspect)
             if progress is None:
                 return {"status": "claim_lost"}
         if len(candidates) == BATCH_SIZE:

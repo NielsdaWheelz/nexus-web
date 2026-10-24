@@ -3,6 +3,8 @@
 Exact-span ensures converge; updates carry the highlight version. X text selections
 also carry their canonical publication generation, checked under the source lock
 before offsets are used. Creation joins the shared reference/teardown barrier.
+Write roots enter fresh serializable attempts before source reads; composed
+helpers publish quote changes inside that same transaction.
 """
 
 import hashlib
@@ -31,8 +33,9 @@ from nexus.db.models import (
     HighlightPdfQuad,
     Media,
     ResourceVersion,
+    XPostSource,
 )
-from nexus.db.retries import integrity_constraint_name, retry_read_committed
+from nexus.db.retries import integrity_constraint_name, retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -60,6 +63,7 @@ from nexus.services.resource_graph.cleanup import (
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import QuoteStatus
 
@@ -514,6 +518,9 @@ def _build_fragment_highlight(
         ref=ResourceRef(scheme="highlight", id=highlight.id),
         reason="highlight_create",
     )
+    projection.refresh(db, "highlight", [highlight.id])
+    if db.scalar(select(XPostSource.id).where(XPostSource.media_id == highlight.anchor_media_id)):
+        projection.refresh_viewer_contributors(db, [viewer_id])
     return highlight
 
 
@@ -579,11 +586,10 @@ def ensure_highlight(
             highlight=project_highlights_with_links(db, viewer_id, [highlight])[0],
         )
         if response.created:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=[f"media:{media_id}", f"highlight:{highlight.id}"])
         return response
 
-    return retry_read_committed(db, "ensure_highlight", op)
+    return retry_serializable(db, "ensure_highlight", op)
 
 
 def create_fragment_highlight_in_txn(
@@ -751,154 +757,161 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
 def update_highlight(
     db: Session, viewer_id: UUID, highlight_id: UUID, req: UpdateHighlightRequest
 ) -> TypedHighlightOut:
-    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-    media_id = _parent_media_id(highlight)
-    locked_media = db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
-    if locked_media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if highlight.anchor_kind == "pdf_page_geometry":
-        from nexus.services.pdf_highlights import lock_pdf_highlight_write_or_404
-
-        lock_pdf_highlight_write_or_404(db, media_id)
-    # The initial lookup only discovers/authorises the parent. In particular, a
-    # repair may have replaced the locator while this request waited for it.
-    db.expire_all()
-    highlight = db.scalar(
-        select(Highlight)
-        .where(Highlight.id == highlight_id, Highlight.anchor_media_id == media_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if highlight is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-    anchor_update = req.anchor
-    if anchor_update is not None and anchor_update.type != highlight.anchor_kind:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"{anchor_update.type} anchor updates are not valid for this highlight",
-        )
-    if anchor_update is not None and anchor_update.type == "fragment_offsets":
-        _require_text_generation(db, media_id, req.expected_reader_generation)
-
-    if highlight.anchor_kind == "pdf_page_geometry":
-        if anchor_update is not None and anchor_update.type == "pdf_page_geometry":
-            from nexus.services.pdf_highlights import update_pdf_highlight_bounds
-
-            return update_pdf_highlight_bounds(
-                db,
-                viewer_id,
-                highlight,
-                PdfBoundsUpdate(
-                    page_number=anchor_update.page_number,
-                    quads=anchor_update.quads,
-                    exact=req.exact or "",
-                ),
-                req.color,
-                req.expected_version,
-            )
-        if req.color is not None and req.color != highlight.color:
-            _require_media_text_ready(db, _parent_media_id(highlight))
-            require_highlight_version(highlight, req.expected_version)
-            highlight.color = req.color
-            highlight.updated_at = func.now()
-            db.flush()
-            record_input_change(db)
-        response = project_highlight(db, highlight, viewer_id)
-        db.commit()
-        return response
-
-    moved_to = (
-        anchor_update
-        if anchor_update is not None and anchor_update.type == "fragment_offsets"
-        else None
-    )
-    fragment_anchor = highlight.fragment_anchor
-    if fragment_anchor is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    relocating = moved_to is not None and moved_to.unit_id != fragment_anchor.fragment_id
-    if relocating:
-        if req.expected_reader_generation is None:
-            raise InvalidRequestError(message="Relocation requires the current reader generation")
-        sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
-        match = text_quote.match_quote_in_sources(
-            sources,
-            exact=normalize_quote_text(highlight.exact),
-            prefix=normalize_quote_text(highlight.prefix),
-            suffix=normalize_quote_text(highlight.suffix),
-        )
-        if (
-            db.get(Fragment, fragment_anchor.fragment_id) is not None
-            or match.status is QuoteStatus.unique
-        ):
-            raise ApiError(
-                ApiErrorCode.E_HIGHLIGHT_CONFLICT,
-                "Only an unresolved quote can move to another text section.",
-                details={"reason": "unit_mismatch"},
-            )
-    _require_media_text_ready(db, _parent_media_id(highlight))
-
-    start = fragment_anchor.start_offset if moved_to is None else moved_to.start_offset
-    end = fragment_anchor.end_offset if moved_to is None else moved_to.end_offset
-    color = highlight.color if req.color is None else req.color
-    moved = relocating or (start, end) != (fragment_anchor.start_offset, fragment_anchor.end_offset)
-    if not moved and color == highlight.color:
-        response = project_highlight(db, highlight, viewer_id)
-        db.commit()
-        return response
-    require_highlight_version(highlight, req.expected_version)
-
-    values: dict[str, object] = {"updated_at": func.now(), "color": color}
-    if moved:
-        fragment = db.get(
-            Fragment, moved_to.unit_id if moved_to is not None else fragment_anchor.fragment_id
-        )
-        if fragment is None or fragment.media_id != media_id:
+    def attempt() -> TypedHighlightOut:
+        highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+        media_id = _parent_media_id(highlight)
+        locked_media = db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
+        if locked_media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-        lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
-        validate_offsets_or_400(fragment.canonical_text, start, end)
-        exact, prefix, suffix = derive_exact_prefix_suffix(fragment.canonical_text, start, end)
-        if relocating and normalize_quote_text(exact) != normalize_quote_text(highlight.exact):
-            raise ApiError(
-                ApiErrorCode.E_HIGHLIGHT_CONFLICT,
-                "Select text matching the saved quote.",
-                details={"reason": "quote_mismatch"},
-            )
-        values |= {
-            "exact": highlight.exact if relocating else exact,
-            "prefix": prefix,
-            "suffix": suffix,
-        }
-        if (
-            _find_fragment_highlight(
-                db,
-                viewer_id=viewer_id,
-                fragment_id=fragment.id,
-                start_offset=start,
-                end_offset=end,
-                highlight_id=highlight_id,
-            )
-            is not None
-        ):
-            raise ApiError(
-                ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range"
-            )
+        if highlight.anchor_kind == "pdf_page_geometry":
+            from nexus.services.pdf_highlights import lock_pdf_highlight_write_or_404
 
-    try:
-        db.execute(update(Highlight).where(Highlight.id == highlight_id).values(**values))
+            lock_pdf_highlight_write_or_404(db, media_id)
+        # The initial lookup only discovers/authorises the parent. In particular, a
+        # repair may have replaced the locator before this transaction. A concurrent
+        # tuple change instead restarts this serializable attempt.
+        db.expire_all()
+        highlight = db.scalar(
+            select(Highlight)
+            .where(Highlight.id == highlight_id, Highlight.anchor_media_id == media_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if highlight is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+        highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+        anchor_update = req.anchor
+        if anchor_update is not None and anchor_update.type != highlight.anchor_kind:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"{anchor_update.type} anchor updates are not valid for this highlight",
+            )
+        if anchor_update is not None and anchor_update.type == "fragment_offsets":
+            _require_text_generation(db, media_id, req.expected_reader_generation)
+
+        if highlight.anchor_kind == "pdf_page_geometry":
+            if anchor_update is not None and anchor_update.type == "pdf_page_geometry":
+                from nexus.services.pdf_highlights import update_pdf_highlight_bounds
+
+                return update_pdf_highlight_bounds(
+                    db,
+                    viewer_id,
+                    highlight,
+                    PdfBoundsUpdate(
+                        page_number=anchor_update.page_number,
+                        quads=anchor_update.quads,
+                        exact=req.exact or "",
+                    ),
+                    req.color,
+                    req.expected_version,
+                )
+            if req.color is not None and req.color != highlight.color:
+                _require_media_text_ready(db, _parent_media_id(highlight))
+                require_highlight_version(highlight, req.expected_version)
+                highlight.color = req.color
+                highlight.updated_at = func.now()
+                db.flush()
+                record_input_change(db, owners=[f"media:{media_id}", f"highlight:{highlight_id}"])
+            response = project_highlight(db, highlight, viewer_id)
+            return response
+
+        moved_to = (
+            anchor_update
+            if anchor_update is not None and anchor_update.type == "fragment_offsets"
+            else None
+        )
+        fragment_anchor = highlight.fragment_anchor
+        if fragment_anchor is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+        relocating = moved_to is not None and moved_to.unit_id != fragment_anchor.fragment_id
+        if relocating:
+            if req.expected_reader_generation is None:
+                raise InvalidRequestError(
+                    message="Relocation requires the current reader generation"
+                )
+            sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
+            match = text_quote.match_quote_in_sources(
+                sources,
+                exact=normalize_quote_text(highlight.exact),
+                prefix=normalize_quote_text(highlight.prefix),
+                suffix=normalize_quote_text(highlight.suffix),
+            )
+            if (
+                db.get(Fragment, fragment_anchor.fragment_id) is not None
+                or match.status is QuoteStatus.unique
+            ):
+                raise ApiError(
+                    ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+                    "Only an unresolved quote can move to another text section.",
+                    details={"reason": "unit_mismatch"},
+                )
+        _require_media_text_ready(db, _parent_media_id(highlight))
+
+        start = fragment_anchor.start_offset if moved_to is None else moved_to.start_offset
+        end = fragment_anchor.end_offset if moved_to is None else moved_to.end_offset
+        color = highlight.color if req.color is None else req.color
+        moved = relocating or (start, end) != (
+            fragment_anchor.start_offset,
+            fragment_anchor.end_offset,
+        )
+        if not moved and color == highlight.color:
+            response = project_highlight(db, highlight, viewer_id)
+            return response
+        require_highlight_version(highlight, req.expected_version)
+
+        values: dict[str, object] = {"updated_at": func.now(), "color": color}
         if moved:
-            assert moved_to is not None
-            fragment_anchor.fragment_id = moved_to.unit_id
-            fragment_anchor.start_offset = start
-            fragment_anchor.end_offset = end
-        db.flush()
-        record_input_change(db)
-        response = project_highlight(db, highlight, viewer_id)
-        db.commit()
-    except IntegrityError as e:
-        db.rollback()
-        raise map_integrity_error(e) from e
-    return response
+            fragment = db.get(
+                Fragment, moved_to.unit_id if moved_to is not None else fragment_anchor.fragment_id
+            )
+            if fragment is None or fragment.media_id != media_id:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
+            validate_offsets_or_400(fragment.canonical_text, start, end)
+            exact, prefix, suffix = derive_exact_prefix_suffix(fragment.canonical_text, start, end)
+            if relocating and normalize_quote_text(exact) != normalize_quote_text(highlight.exact):
+                raise ApiError(
+                    ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+                    "Select text matching the saved quote.",
+                    details={"reason": "quote_mismatch"},
+                )
+            values |= {
+                "exact": highlight.exact if relocating else exact,
+                "prefix": prefix,
+                "suffix": suffix,
+            }
+            if (
+                _find_fragment_highlight(
+                    db,
+                    viewer_id=viewer_id,
+                    fragment_id=fragment.id,
+                    start_offset=start,
+                    end_offset=end,
+                    highlight_id=highlight_id,
+                )
+                is not None
+            ):
+                raise ApiError(
+                    ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range"
+                )
+
+        try:
+            db.execute(update(Highlight).where(Highlight.id == highlight_id).values(**values))
+            if moved:
+                assert moved_to is not None
+                fragment_anchor.fragment_id = moved_to.unit_id
+                fragment_anchor.start_offset = start
+                fragment_anchor.end_offset = end
+            db.flush()
+            if moved:
+                projection.refresh(db, "highlight", [highlight_id])
+            record_input_change(db, owners=[f"media:{media_id}", f"highlight:{highlight_id}"])
+            response = project_highlight(db, highlight, viewer_id)
+        except IntegrityError as e:
+            raise map_integrity_error(e) from e
+        return response
+
+    return retry_serializable(db, "update_highlight", attempt)
 
 
 def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
@@ -927,15 +940,17 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
     )
     db.execute(delete(Highlight).where(Highlight.id == locked.id))
     claim_document_teardown_if_unreferenced_locked(db, media_id)
+    projection.refresh(db, "highlight", [locked.id])
+    if db.scalar(select(XPostSource.id).where(XPostSource.media_id == media_id)):
+        projection.refresh_viewer_contributors(db, [locked.user_id])
 
 
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     def attempt() -> None:
         delete_highlight_in_current_transaction(db, viewer_id, highlight_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=[f"highlight:{highlight_id}"])
 
-    retry_read_committed(db, "delete_highlight", attempt)
+    retry_serializable(db, "delete_highlight", attempt)
 
 
 def delete_highlight_in_current_transaction(

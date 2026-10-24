@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import ChatRun, Conversation, Message
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
@@ -57,6 +57,7 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.search import projection
 
 DEFAULT_TITLE = "Chat"
 _ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.Int
@@ -68,42 +69,48 @@ def create(
     """An empty chat with its initial context links under the client's id; any failure
     leaves nothing. A resend answers the viewer's chat as it is; another owner's is 409."""
 
-    created = db.scalar(
-        text(
-            """
-            INSERT INTO conversations (id, owner_user_id, title, next_seq)
-            VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
-            """
-        ),
-        {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
-    )
-    conversation = db.get_one(Conversation, conversation_id)
-    if conversation.owner_user_id != viewer_id:
-        raise ConflictError(
-            ApiErrorCode.E_RESOURCE_CONFLICT, "Conversation id belongs to another viewer"
+    def attempt() -> ConversationOut:
+        created = db.scalar(
+            text(
+                """
+                INSERT INTO conversations (id, owner_user_id, title, next_seq)
+                VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
+                """
+            ),
+            {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
         )
-    for uri in initial_context_refs if created else ():
-        ref = parse_resource_ref(uri)
-        if isinstance(ref, ResourceRefParseFailure):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"Invalid resource_uri: {uri!r}. Expected '<scheme>:<uuid>'.",
+        conversation = db.get_one(Conversation, conversation_id)
+        if conversation.owner_user_id != viewer_id:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Conversation id belongs to another viewer"
             )
-        endpoint = (
-            LinkPassageEndpoint(candidate_ref=ref.uri)
-            if capability(ref.scheme).link_mode == "materialize_passage"
-            else LinkResourceEndpoint(ref=ref.uri)
+        for uri in initial_context_refs if created else ():
+            ref = parse_resource_ref(uri)
+            if isinstance(ref, ResourceRefParseFailure):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    f"Invalid resource_uri: {uri!r}. Expected '<scheme>:<uuid>'.",
+                )
+            endpoint = (
+                LinkPassageEndpoint(candidate_ref=ref.uri)
+                if capability(ref.scheme).link_mode == "materialize_passage"
+                else LinkResourceEndpoint(ref=ref.uri)
+            )
+            create_link(
+                db,
+                viewer_id=viewer_id,
+                source=ResourceRef("conversation", conversation.id),
+                target=materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=endpoint),
+            )
+        if created:
+            projection.refresh(db, "conversation", [conversation_id])
+        return ConversationOut(
+            id=conversation.id,
+            title=conversation.title,
+            branch_revision=conversation.branch_revision,
         )
-        create_link(
-            db,
-            viewer_id=viewer_id,
-            source=ResourceRef("conversation", conversation.id),
-            target=materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=endpoint),
-        )
-    db.commit()
-    return ConversationOut(
-        id=conversation.id, title=conversation.title, branch_revision=conversation.branch_revision
-    )
+
+    return retry_serializable(db, "create_conversation", attempt)
 
 
 def index(
@@ -194,29 +201,31 @@ def rename_fork(
     """Name (or unname) the fork a user turn starts. Already so named: success; named other
     than ``expected``: 409 with ``current_title``. The rename moves ``updated_at``."""
 
-    message = db.scalar(
-        select(Message)
-        .join(Conversation, Conversation.id == Message.conversation_id)
-        .where(
-            Message.id == message_id,
-            Message.role == "user",
-            Conversation.owner_user_id == viewer_id,
+    def attempt() -> ForkTitleOut:
+        message = db.scalar(
+            select(Message)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(
+                Message.id == message_id,
+                Message.role == "user",
+                Conversation.owner_user_id == viewer_id,
+            )
+            .with_for_update(of=Message)
         )
-        .with_for_update(of=Message)
-    )
-    if message is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    if message.fork_title not in (title, expected):
-        raise ConflictError(
-            ApiErrorCode.E_RESOURCE_CONFLICT,
-            "The fork was renamed meanwhile",
-            details={"current_title": message.fork_title},
-        )
-    if message.fork_title != title:
-        message.fork_title = title
-        message.updated_at = db.scalar(text("SELECT now()"))
-    db.commit()
-    return ForkTitleOut(fork_title=message.fork_title, updated_at=message.updated_at)
+        if message is None:
+            raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
+        if message.fork_title not in (title, expected):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The fork was renamed meanwhile",
+                details={"current_title": message.fork_title},
+            )
+        if message.fork_title != title:
+            message.fork_title = title
+            message.updated_at = db.scalar(text("SELECT now()"))
+        return ForkTitleOut(fork_title=message.fork_title, updated_at=message.updated_at)
+
+    return retry_serializable(db, "rename_fork", attempt)
 
 
 def delete_conversation(
@@ -227,9 +236,8 @@ def delete_conversation(
         if conversation is not None:
             require_branch_revision(conversation, expected_revision)
             _delete(db, conversation, None)
-        db.commit()
 
-    retry_read_committed(db, "delete_conversation", attempt)
+    retry_serializable(db, "delete_conversation", attempt)
 
 
 def delete_message(
@@ -245,7 +253,6 @@ def delete_message(
     def attempt() -> MessageDeleteOut:
         conversation = _lock_owned(db, viewer_id, conversation_id)
         if conversation is None:
-            db.commit()
             return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=True)
         message = db.scalar(
             select(Message.id).where(
@@ -253,14 +260,12 @@ def delete_message(
             )
         )
         if message is None:
-            db.commit()
             return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=False)
         require_branch_revision(conversation, expected_revision)
         deleted = _delete(db, conversation, message_id)
-        db.commit()
         return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=deleted)
 
-    return retry_read_committed(db, "delete_message", attempt)
+    return retry_serializable(db, "delete_message", attempt)
 
 
 def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bool:
@@ -351,6 +356,9 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
     for media_id in retained_media:
         claim_document_teardown_if_unreferenced_locked(db, media_id)
     cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=snapshots)
+    projection.refresh(db, "message", ids)
+    if retained_media:
+        projection.refresh_viewer_contributors(db, [conversation.owner_user_id])
     leaf = conversation.active_leaf_message_id
     if leaf is None or leaf in ids:
         leaf = db.scalar(
@@ -378,6 +386,7 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
     cleanup.delete_edges_for_deleted_resource(db, ref=chat)
     dossier_engine.on_subject_deleted(db, chat)  # a FK-less subject
     db.execute(text("DELETE FROM conversations WHERE id = :chat"), {"chat": conversation_id})
+    projection.refresh(db, "conversation", [conversation_id])
     return True
 
 

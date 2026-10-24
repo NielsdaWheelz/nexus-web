@@ -104,7 +104,7 @@ def run_note_reindex_job(
             ref=ResourceRef(scheme="note_block", id=note_block_id),
             reason="note_reindex",
         )
-        record_input_change(db)
+        record_input_change(db, owners=(f"note_block:{owner.id}",))
 
     def prepare(db: Session) -> ContentIndexResult | tuple[str, bool] | None:
         snapshot = fence(db)
@@ -153,7 +153,7 @@ def run_note_reindex_job(
                     if published.status != "indexing":
                         completion_effects(db, snapshot[0].user_id)
                     else:
-                        record_input_change(db)
+                        record_input_change(db, owners=(f"note_block:{owner.id}",))
                     return published
 
                 published = index_phase("publish_note_text", publish_text)

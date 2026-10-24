@@ -27,6 +27,7 @@ from provider_runtime.agent_runtime import (
     AgentRuntimeConfig,
     AgentRuntimeDefect,
     AgentRuntimeError,
+    CodexEndpoint,
     CredentialRef,
     qualify_codex_containment_host,
 )
@@ -136,13 +137,13 @@ class SelectionUnavailable(ValueError):
         self.row = row
 
 
-# One entry per socket: the last good catalog, the route's readiness, when observed.
-_CODEX: dict[Path, tuple[AgentModelCatalog | None, Readiness, float]] = {}
+# One entry per endpoint: the last good catalog, the route's readiness, when observed.
+_CODEX: dict[CodexEndpoint, tuple[AgentModelCatalog | None, Readiness, float]] = {}
 
 
 class Catalog:
     def __init__(self, settings: Settings, tools: Toolbox) -> None:
-        self._socket = settings.codex_native_socket
+        self._endpoint = settings.codex_endpoint
         configured = settings.generation_api_providers
         self._providers: tuple[GenerationApiProvider, ...] = tuple(
             provider for provider in _PROVIDERS if provider in configured
@@ -150,12 +151,12 @@ class Catalog:
         self._tools = tools
 
     async def read(self) -> CatalogSnapshot:
-        cached = _CODEX.get(self._socket)
+        cached = _CODEX.get(self._endpoint)
         if cached is None or time.monotonic() - cached[2] >= (
             _TTL_SECONDS if isinstance(cached[1], Ready) else _RETRY_SECONDS
         ):
-            cached = await _refresh(self._socket, None if cached is None else cached[0])
-            _CODEX[self._socket] = cached
+            cached = await _refresh(self._endpoint, None if cached is None else cached[0])
+            _CODEX[self._endpoint] = cached
         codex, readiness, _ = cached
         if codex is None:
             raise CatalogUnavailable("the Codex generation catalog has not loaded")
@@ -163,13 +164,13 @@ class Catalog:
 
 
 async def _refresh(
-    socket: Path, previous: AgentModelCatalog | None
+    endpoint: CodexEndpoint, previous: AgentModelCatalog | None
 ) -> tuple[AgentModelCatalog | None, Readiness, float]:
     """Fetch now; a failed fetch keeps the last catalog and marks the route unavailable."""
 
     checked = datetime.now(UTC)
     try:
-        return await fetch_codex_catalog(socket), Ready(last_checked=checked), time.monotonic()
+        return await fetch_codex_catalog(endpoint), Ready(last_checked=checked), time.monotonic()
     except CodexContractDefect:
         readiness: Readiness = OperatorActionRequired(
             code="codex_host_unavailable",
@@ -212,16 +213,16 @@ def _budgets(context_window: int | None, max_output_tokens: int | None) -> tuple
     return context, output
 
 
-async def fetch_codex_catalog(socket: Path) -> AgentModelCatalog:
+async def fetch_codex_catalog(endpoint: CodexEndpoint) -> AgentModelCatalog:
     """Read the authenticated host's model catalog; also the host's health probe."""
 
     try:
         async with asyncio.timeout(_FETCH_SECONDS):
-            await qualify_codex_containment_host(socket)
+            await qualify_codex_containment_host(endpoint)
             with tempfile.TemporaryDirectory(prefix="nexus-native-catalog-") as state:
                 async with AgentRuntime(
                     AgentRuntimeConfig(
-                        state_root_base=Path(state), codex_endpoints={"codex-personal": socket}
+                        state_root_base=Path(state), codex_endpoints={"codex-personal": endpoint}
                     )
                 ) as runtime:
                     catalog = await runtime.model_catalog(

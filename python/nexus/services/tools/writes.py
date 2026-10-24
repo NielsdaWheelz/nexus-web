@@ -29,6 +29,8 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible
+from nexus.services.search import projection
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools.contract import (
     WRITE_CAP,
     WRITES,
@@ -99,12 +101,20 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
         if live >= WRITE_CAP:
             refuse("WriteCapReached")
         try:
-            return effect(value, call)
+            result = effect(value, call)
         except ApiError as exc:
             declared = _REFUSALS.get(call.tool_id, {}).get(exc.code)
             if declared is None and exc.code not in _UNAVAILABLE:
                 raise
             refuse(declared or "ResourceUnavailable")
+        owners = {
+            uri
+            for item in (value, result)
+            for key in (*_URIS, "note_uri", "highlight_uri", "library_uri")
+            if (uri := getattr(item, key, None)) is not None
+        }
+        record_input_change(call.db, owners=owners)
+        return result
 
     return run
 
@@ -150,6 +160,10 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
         text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
     ).scalar_one()
     if inserted:
+        viewers = db.scalars(
+            text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id}
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer, *viewers])
         entry_id = library_entries.entry_id(db, library_id, target)
         call.created_refs.append(
             {
@@ -310,8 +324,8 @@ def queue_add(value: QueueAddInput, call: Call) -> QueueAddSuccess:
     )
 
 
-def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
-    """Remove one created target if it is still the one the write made; gone is undone."""
+def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> UUID | None:
+    """Remove the exact created target; return a changed library for final undo fanout."""
 
     kind, target = ref["kind"], UUID(ref["id"])
     try:
@@ -324,13 +338,14 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "queue":
             lectern.remove_item_in_txn(db, viewer_id=viewer_id, item_id=target)
         else:
-            _unfile(db, viewer_id, ref)
+            return _unfile(db, viewer_id, ref)
     except ApiError as exc:
         if exc.code not in _GONE:
             raise
+    return None
 
 
-def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
+def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> UUID | None:
     """Remove the exact library entry the write inserted, not a later filing of the same item.
 
     The target's row lock (media, as filing takes it; else the podcast) serializes this
@@ -347,7 +362,7 @@ def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     target = (library_entries.media_target if media else library_entries.podcast_target)(item_id)
     current = library_entries.entry_id(db, library_id, target)
     if current != UUID(ref["id"]):
-        return
+        return None
     if media:
         library_entries.remove_media_from_library_in_current_transaction(
             db, viewer_id, item_id, library_id, allow_default=True
@@ -356,6 +371,7 @@ def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
         library_entries.undo_podcast_filing_for_viewer_in_current_transaction(
             db, viewer_id=viewer_id, library_id=library_id, podcast_id=item_id
         )
+    return library_id
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {

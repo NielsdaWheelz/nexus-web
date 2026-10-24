@@ -15,7 +15,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import enqueue_unique_job, revoke_jobs_by_dedupe_keys
 
 MEDIA_UNIT_JOB_KIND = "media_unit_build"
@@ -133,16 +132,6 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
         },
     )
     db.flush()
-
-
-def ensure_media_unit(db: Session, *, media_id: UUID) -> None:
-    """Standalone find-or-create: its own serializable retry and commit."""
-
-    def op() -> None:
-        ensure_media_unit_in_tx(db, media_id=media_id)
-        db.commit()
-
-    retry_serializable(db, "ensure_media_unit", op)
 
 
 def clear_media_claims_for_reindex(db: Session, *, media_id: UUID) -> None:

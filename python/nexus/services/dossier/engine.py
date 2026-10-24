@@ -54,6 +54,7 @@ from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resou
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import resolve_ref
 from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.search import projection
 
 JOB_KIND = "dossier_build"
 MAX_INSTRUCTION_CHARS = 4_000
@@ -113,7 +114,6 @@ def start_build(
         created = _new_build(
             db, _ensure_head(db, scheme, subject_id, *audience), viewer_id, key, clean
         )
-        db.commit()
         return created
 
     return retry_serializable(db, "dossier_start_build", op)
@@ -129,7 +129,6 @@ def regenerate(
             _require_web_research()
         _sql(db, "SELECT 1 FROM artifacts WHERE id = :id FOR UPDATE", id=artifact_id)
         created = _new_build(db, artifact_id, viewer_id, key, clean)
-        db.commit()
         return created
 
     return retry_serializable(db, "dossier_regenerate", op)
@@ -177,7 +176,6 @@ def learn(
             id=head_id,
         ).scalar_one()
         created = None if busy else _new_build(db, head_id, viewer_id, f"learn:{key}", None)
-        db.commit()
         if created is None:
             return LearnDossierOpenedOut(artifact_ref=f"artifact:{head_id}")
         return LearnDossierBuildAcceptedOut(
@@ -200,7 +198,6 @@ def cancel_build(db: Session, *, build_id: UUID, viewer_id: UUID) -> None:
                     ApiErrorCode.E_DOSSIER_BUILD_NOT_ACTIVE,
                     "This dossier build is no longer active",
                 )
-        db.commit()
 
     retry_serializable(db, "dossier_cancel_build", op)
 
@@ -230,7 +227,6 @@ def publish(db: Session, *, build_id: UUID, ctx: JobExecutionContext, published:
         ).first()
         claimed = head is not None and running_job_claim_is_current(db, context=ctx)
         if head is None or not claimed or not _transition(db, build_id, "succeeded"):
-            db.rollback()
             return
         owner = subjects.input_viewer(db, head.audience_scheme, head.audience_id)
         if head.revision_id is not None:
@@ -268,7 +264,7 @@ def publish(db: Session, *, build_id: UUID, ctx: JobExecutionContext, published:
             id=build_id,
         ).scalars()
         revoke_jobs_by_dedupe_keys(db, kind=JOB_KIND, dedupe_keys=[_job_key(b) for b in others])
-        db.commit()
+        projection.refresh(db, "dossier", [head.id])
 
     retry_serializable(db, "dossier_publish", op)
 
@@ -284,7 +280,6 @@ def fail(
     def op() -> None:
         if running_job_claim_is_current(db, context=ctx):
             _transition(db, build_id, "failed", code=code.value, detail=detail)
-        db.commit()
 
     retry_serializable(db, "dossier_fail", op)
 
@@ -315,7 +310,10 @@ def on_subject_deleted(db: Session, ref: ResourceRef) -> None:
 
 
 def on_visibility_lost(db: Session, *, user_id: UUID) -> None:
-    """Purge the user's own heads whose subject they can no longer see; library heads stay."""
+    """Purge inaccessible personal heads and refresh the viewer's contributor search rows.
+
+    Library heads stay. The caller owns the serializable transaction.
+    """
     heads = _sql(
         db,
         "SELECT a.id FROM artifacts a WHERE a.audience_scheme = 'user' "
@@ -323,6 +321,7 @@ def on_visibility_lost(db: Session, *, user_id: UUID) -> None:
         viewer_id=user_id,
     )
     _purge(db, list(heads.scalars()))
+    projection.refresh_viewer_contributors(db, [user_id])
 
 
 def _purge(db: Session, head_ids: list[UUID]) -> None:
@@ -351,6 +350,7 @@ def _purge(db: Session, head_ids: list[UUID]) -> None:
     refs += [ResourceRef("artifact_revision", r) for r in revisions if r is not None]
     delete_edges_for_deleted_resources(db, refs=refs)
     _sql(db, "DELETE FROM artifacts WHERE id = ANY(:ids)", ids=head_ids)
+    projection.refresh(db, "dossier", head_ids)
     retention.touch_owners(db, subjects_to_touch)
 
 
@@ -526,6 +526,7 @@ def _ensure_head(
     ).scalar_one()
     if subject is not None:
         retention.touch_owners(db, [subject])
+    projection.refresh(db, "dossier", [head_id])
     return head_id
 
 

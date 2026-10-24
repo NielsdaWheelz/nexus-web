@@ -50,8 +50,7 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
 
     def run(db: Session) -> ReaderCursorSnapshot:
         kind = _cursor_kind(db, viewer_id, media_id)
-        # A web save holds the publication lock, so a source replacement's cursor remap cannot
-        # interleave with it.
+        # Serializable source/cursor dependencies coordinate saves with source remaps.
         expected = write.expected_reader_generation
         if isinstance(write.locator, XReaderResumeState) and expected is None:
             raise InvalidRequestError(
@@ -81,8 +80,7 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         if kind != _EPISODE:  # a transcript is not listening
             _resume(db, viewer_id, media_id)
         if gate.moved(db, viewer_id=viewer_id):
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return snapshot
 
     return viewer_txn("reader_cursor_write", viewer_id, run)
@@ -106,8 +104,7 @@ def record_listening(
         _resume(db, viewer_id, media_id)
         result = _position(db, viewer_id, media_id)
         if gate.moved(db, viewer_id=viewer_id):
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return result
 
     return viewer_txn("record_listening", viewer_id, run)
@@ -126,8 +123,7 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
         ):
             _resume(db, viewer_id, media_id)
             if gate.moved(db, viewer_id=viewer_id):
-                record_input_change(db)
-        db.commit()
+                record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
 
     viewer_txn("install_preview_position", viewer_id, run)
 
@@ -142,8 +138,7 @@ def finish(viewer_id: UUID, media_id: UUID, body: wire.FinishIn) -> wire.Finish:
         result = _finish(db, viewer_id, media_id, prior)
         if body.leave_lectern:
             result.removed = lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return result
 
     return viewer_txn("finish", viewer_id, run)
@@ -179,8 +174,7 @@ def undo_finish(viewer_id: UUID, media_id: UUID, body: wire.Finish) -> None:
             )
         if body.removed is not None:
             lectern.restore_in_txn(db, viewer_id=viewer_id, media_id=media_id, removed=body.removed)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
 
     viewer_txn("undo_finish", viewer_id, run)
 
@@ -192,8 +186,7 @@ def mark_unread(viewer_id: UUID, media_id: UUID) -> None:
         kind = _kind(db, viewer_id, media_id)
         _set_override(db, viewer_id, media_id, "unread")
         _fence(db, viewer_id, media_id, kind)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
 
     viewer_txn("mark_unread", viewer_id, run)
 
@@ -212,8 +205,7 @@ def reset_progress(viewer_id: UUID, media_id: UUID) -> None:
         _set_override(db, viewer_id, media_id, None)
         if kind == _EPISODE:
             listening.reset(db, viewer_id=viewer_id, media_id=media_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
 
     viewer_txn("reset_progress", viewer_id, run)
 
@@ -243,8 +235,7 @@ def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn)
         ):
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The natural end was superseded")
         if changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
 
     viewer_txn("settle_natural_end", viewer_id, run)
 

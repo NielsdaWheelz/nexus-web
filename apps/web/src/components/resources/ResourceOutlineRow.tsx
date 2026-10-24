@@ -70,6 +70,7 @@ import { cx } from "@/lib/ui/cx";
 import ContextualActionMenu from "./ContextualActionMenu";
 import ResourceBody, {
   ResourceMatchEvidence,
+  separateMatchEvidence,
   type ResourceMatch,
 } from "./ResourceBody";
 import ResourceMetadata from "./ResourceMetadata";
@@ -357,7 +358,6 @@ export default function ResourceOutlineRow({
   else if (userLink) removalLabel = "remove link from both items; keep their notes";
   if (busy) removalLabel = userLink ? "removing link…" : "removing connection…";
   const activation = item.activation;
-  const bodyKind = item.preview.body;
   const reason =
     connection && !focusedRoot
       ? `${connection.kind === "context" ? "" : `${connection.kind} · `}${connectionReason(connection, historicalBranch || historical)}`
@@ -600,6 +600,10 @@ export default function ResourceOutlineRow({
         }}
       />
     ) : undefined);
+  // custom bodies, including editors, do not promise inline search evidence.
+  const separateEvidence = primaryBody != null
+    ? match?.excerpt.text ? match : null
+    : separateMatchEvidence(item.preview.body, match ?? null);
   const commands: ActionDescriptor[] = effectiveIncoming === null
     ? [...resourceActions] : [...occurrenceActions];
   if (effectiveIncoming === null && !placement && defaultSource && !terminal)
@@ -943,10 +947,8 @@ export default function ResourceOutlineRow({
                 </div>
               )}
               {sourceContent}
-              {bodyKind.kind === "named" &&
-              match?.excerpt.text &&
-              match.excerpt.text !== bodyKind.title ? (
-                <ResourceMatchEvidence match={match} />
+              {separateEvidence ? (
+                <ResourceMatchEvidence match={separateEvidence} />
               ) : null}
               {item.ref.startsWith("highlight:") &&
               (annotation !== null || !historical) ? (

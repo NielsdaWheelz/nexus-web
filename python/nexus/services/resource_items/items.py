@@ -2,13 +2,15 @@
 
 ``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
 actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
-admits; I2). SQL bounds previews before they leave the database. Annotations deliberately
+admits; I2). SQL bounds previews except prefix context, whose tail needs full grapheme context.
+Annotations deliberately
 carry full canonical bodies and their body-lane version from one statement. One query
 per scheme, plus source-credit and annotation batches, avoids recursive reads.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
@@ -45,28 +47,82 @@ _VISIBLE = f"({visible_media_ids_cte_sql()})"
 
 
 def excerpt(value: str, limit: int = 600, *, tail: bool = False) -> ExcerptOut:
-    """Codepoint budget, never bisect a grapheme. Flags describe removed text."""
+    """Codepoint budget, never bisect a grapheme. Flags describe removed text.
+
+    Prefix iteration stops at the budget. Tails retain bounded spans but segment
+    forward through the source: Unicode boundaries can depend on earlier text.
+    """
     if len(value) <= limit:
         return ExcerptOut(text=value, truncated_before=False, truncated_after=False)
-    clusters = regex.findall(r"\X", value)
-    kept: list[str] = []
-    size = 0
-    for cluster in reversed(clusters) if tail else clusters:
-        if size + len(cluster) > limit:
-            break
-        kept.append(cluster)
-        size += len(cluster)
-    clipped = "".join(reversed(kept) if tail else kept)
-    boundary = regex.search(r"\s+\S*$", clipped) if not tail else regex.search(r"^\S*\s+", clipped)
-    if boundary is not None and len(clipped) > 32:
-        candidate = clipped[: boundary.start()] if not tail else clipped[boundary.end() :]
-        if len(candidate) >= len(clipped) // 2:
-            clipped = candidate
+    if tail:
+        # Skip whole grapheme blocks in the regex engine; only retain the final
+        # two block starts. Their suffix covers the budget, even across a block boundary.
+        previous = last = 0
+        for block in regex.finditer(rf"(?:\X){{1,{max(1024, limit)}}}", value):
+            previous, last = last, block.start()
+        spans: deque[tuple[int, int]] = deque()
+        size = 0
+        for match in regex.finditer(r"\X", value, pos=previous):
+            start, end = match.span()
+            spans.append((start, end))
+            size += end - start
+            while size > limit and spans:
+                first, last = spans.popleft()
+                size -= last - first
+        clipped = value[spans[0][0] :] if spans else ""
+    else:
+        return excerpt_window(value, start=0, limit=limit)[1]
     return ExcerptOut(
-        text=clipped,
+        text=_trim_excerpt(clipped, tail=tail),
         truncated_before=tail,
         truncated_after=not tail,
     )
+
+
+def excerpt_window(value: str, *, start: int, limit: int = 600) -> tuple[int, ExcerptOut]:
+    """A literal prefix window, aligned backward to the containing source grapheme.
+
+    Return its actual source start for native match offsets. Forward block scanning
+    preserves contextual boundaries without copying or retaining the source suffix.
+    """
+    assert 0 <= start <= len(value)
+    if 0 < start < len(value):
+        block_start = 0
+        seek_end = start + 1
+        for block in regex.finditer(r"(?:\X){1,1024}", value, endpos=seek_end):
+            block_start = block.start()
+            if block.end() >= start:
+                break
+        for match in regex.finditer(r"\X", value, pos=block_start, endpos=seek_end):
+            if match.end() > start:
+                start = match.start()
+                break
+    end = start
+    # The extra codepoint makes any artificially ended cluster exceed the budget.
+    for match in regex.finditer(r"\X", value, pos=start, endpos=min(len(value), start + limit + 1)):
+        if match.end() - start > limit:
+            break
+        end = match.end()
+    clipped = value[start:end]
+    truncated = end < len(value)
+    return start, ExcerptOut(
+        text=_trim_excerpt(clipped, tail=False) if truncated else clipped,
+        truncated_before=start > 0,
+        truncated_after=truncated,
+    )
+
+
+def _trim_excerpt(clipped: str, *, tail: bool) -> str:
+    # Skip word trimming when whitespace shares a grapheme with adjacent text.
+    boundary = regex.search(r"\s+\S*$", clipped) if not tail else regex.search(r"^\S*\s+", clipped)
+    if boundary is not None and len(clipped) > 32:
+        cut = boundary.start() if not tail else boundary.end()
+        candidate = clipped[:cut] if not tail else clipped[cut:]
+        if len(candidate) >= len(clipped) // 2 and (
+            cut == 0 or any(match.end() == cut for match in regex.finditer(r"\X", clipped))
+        ):
+            return candidate
+    return clipped
 
 
 def passage_body(
@@ -102,14 +158,23 @@ def resource_items_out(
         refs=refs,
         missing_ref_uris=missing,
     )
-    owner_refs = list({row["owner_ref"] for row in rows.values() if row.get("owner_ref")})
-    sources = source_attributions(
-        db, viewer_id=viewer_id, refs=[assert_resource_ref(r) for r in owner_refs]
-    )
+    owner_refs = [
+        assert_resource_ref(uri)
+        for uri in dict.fromkeys(row["owner_ref"] for row in rows.values() if row.get("owner_ref"))
+    ]
+    source_rows = {ref.uri: rows[ref.uri] for ref in owner_refs if ref.uri in rows}
+    source_rows.update(_rows(db, viewer_id, [ref for ref in owner_refs if ref.uri not in rows]))
     named_refs = [
         ref for ref in refs if ref.scheme in ("media", "podcast") and ref.uri not in missing
     ]
-    credits = _credits(db, named_refs)
+    credits = _credits(db, [*named_refs, *(ref for ref in owner_refs if ref.uri in source_rows)])
+    source_activations = resource_activations_for_refs(
+        db,
+        viewer_id=viewer_id,
+        refs=owner_refs,
+        missing_ref_uris={ref.uri for ref in owner_refs if ref.uri not in source_rows},
+    )
+    sources = _source_attributions(owner_refs, source_rows, credits, source_activations)
     annotations = _annotations(
         db,
         viewer_id,
@@ -196,6 +261,15 @@ def source_attributions(
         refs=refs,
         missing_ref_uris={r.uri for r in refs if r.uri not in rows},
     )
+    return _source_attributions(refs, rows, credits, activations)
+
+
+def _source_attributions(
+    refs: Sequence[ResourceRef],
+    rows: dict[str, dict[str, Any]],
+    credits: dict[str, list[ContributorCreditOut]],
+    activations: dict[str, ResourceActivationOut],
+) -> dict[str, SourceAttributionOut]:
     return {
         ref.uri: SourceAttributionOut(
             ref=ref.uri,
@@ -390,9 +464,9 @@ _QUERIES = {
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",
     "external_snapshot": "SELECT id, title FROM resource_external_snapshots WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",
-    "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
+    "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, h.prefix AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
     "fragment": f"SELECT id, 'passage' AS body_kind, left(canonical_text,601) AS exact, 'media:' || media_id AS owner_ref FROM fragments WHERE id = ANY(:ids) AND media_id IN {_VISIBLE}",
-    "passage_anchor": "SELECT id, 'passage' AS body_kind, left(selector #>> '{quote,exact}',601) AS exact, right(selector #>> '{quote,prefix}',49) AS prefix, left(selector #>> '{quote,suffix}',49) AS suffix, owner_scheme || ':' || owner_id AS owner_ref FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id",
+    "passage_anchor": "SELECT id, 'passage' AS body_kind, left(selector #>> '{quote,exact}',601) AS exact, selector #>> '{quote,prefix}' AS prefix, left(selector #>> '{quote,suffix}',49) AS suffix, owner_scheme || ':' || owner_id AS owner_ref FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,t.label,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
     "oracle_passage_anchor": "SELECT a.id, 'passage' AS body_kind, left(a.quote,601) AS exact, a.display_label AS location_label, 'media:' || s.media_id AS owner_ref FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id WHERE a.id = ANY(:ids)",
 }

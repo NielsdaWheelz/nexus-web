@@ -1,0 +1,123 @@
+# Explicit shared-host installation only. Ordinary attachments start the retained
+# containers directly; their image and configuration never follow a checkout.
+name: nexus-lab-codex
+
+x-codex-egress-conf: &codex-egress-conf |
+  pid /tmp/nginx.pid;
+  events {}
+  stream {
+      resolver 127.0.0.11 ipv6=off valid=30s;
+      map $$ssl_preread_server_name $$upstream {
+          chatgpt.com     chatgpt.com:443;
+          auth.openai.com auth.openai.com:443;
+          default         127.0.0.1:1;
+      }
+      server {
+          listen 443;
+          ssl_preread on;
+          proxy_pass $$upstream;
+          proxy_connect_timeout 10s;
+          proxy_timeout 20m;
+      }
+      server {
+          listen 4500;
+          proxy_pass 172.30.252.3:4500;
+          proxy_connect_timeout 10s;
+          proxy_timeout 20m;
+      }
+  }
+
+services:
+  codex-egress-policy:
+    container_name: nexus-lab-codex-egress-policy
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    restart: unless-stopped
+    mem_reservation: 16m
+    mem_limit: 64m
+    memswap_limit: 64m
+    pids_limit: 32
+    user: "101:101"
+    # Docker does not publish ports for all-internal containers. This existing
+    # peer passes raw bytes to the daemon, which still verifies native bearer auth.
+    ports:
+      - "127.0.0.1::4500"
+    environment:
+      NGINX_CONF: *codex-egress-conf
+    entrypoint: [sh, -c, 'printf ''%s'' "$$NGINX_CONF" > /tmp/nginx.conf && exec nginx -e stderr -c /tmp/nginx.conf -g ''daemon off;''']
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    networks:
+      codex_private:
+        ipv4_address: 172.30.252.2
+      codex_proxy_egress: {}
+
+  nexus-codex-agent-host:
+    container_name: nexus-lab-codex-agent-host
+    image: ${NEXUS_LAB_CODEX_IMAGE:?immutable installed worker image required}
+    restart: on-failure:3
+    mem_reservation: 256m
+    mem_limit: 448m
+    memswap_limit: 448m
+    pids_limit: 64
+    cpus: 1.0
+    command: [python, -m, apps.codex_agent.main]
+    user: "10001:10001"
+    environment:
+      NEXUS_CODEX_CREDENTIAL_FILE: /var/lib/nexus-codex/auth.json
+      NEXUS_CODEX_ENDPOINT: ws://0.0.0.0:4500
+      NEXUS_CODEX_TRANSPORT_TOKEN_SHA256: ${NEXUS_LAB_CODEX_TOKEN_SHA256:?private transport verifier required}
+      NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
+    labels:
+      com.nexus.lab.codex.codex_version: ${NEXUS_LAB_CODEX_VERSION:?locked codex version required}
+      com.nexus.lab.codex.catalog_revision: ${NEXUS_LAB_CODEX_CATALOG_REVISION:?locked catalog revision required}
+      com.nexus.lab.codex.backend_contract_revision: ${NEXUS_LAB_CODEX_BACKEND_REVISION:?locked backend contract required}
+      com.nexus.lab.codex.host_policy_revision: "2"
+    working_dir: /tmp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    extra_hosts:
+      - chatgpt.com:172.30.252.2
+      - auth.openai.com:172.30.252.2
+    networks:
+      codex_private:
+        ipv4_address: 172.30.252.3
+      codex_clients:
+        aliases: [nexus-codex-agent-host]
+    init: true
+    stop_grace_period: 45s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    ulimits:
+      core: 0
+      nofile: 1024
+    volumes:
+      - codex_account:/var/lib/nexus-codex
+      - codex_cwds:/tmp/codex-daemon-10001
+
+volumes:
+  codex_account:
+    external: true
+    name: nexus-lab-codex-account
+  codex_cwds:
+    external: true
+    name: nexus-lab-codex-cwds
+
+networks:
+  codex_clients:
+    external: true
+    name: nexus-lab-codex-clients
+  codex_private:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: 172.30.252.0/29
+  codex_proxy_egress:
+    driver: bridge

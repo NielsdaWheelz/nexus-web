@@ -112,6 +112,23 @@
   white-space: nowrap;
 }
 
+.rowEvidence {
+  max-width: 100%;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.rowBody .rowLabel:has([data-resource-inline-evidence]),
+.rowBody .rowSnippet:has([data-resource-inline-evidence]) {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .primaryCell .rowLabel,
 .primaryCell .rowMeta {
   overflow: hidden;
@@ -124,6 +141,7 @@
 .primaryCell .rowMeta,
 .primaryCell .rowPassageMeta,
 .primaryCell .rowSnippet,
+.primaryCell .rowEvidence,
 .primaryCell .rowUnavailable {
   color: var(--ink-faint);
   font-size: var(--text-xs);
@@ -520,6 +538,7 @@
 .mobile .rowMeta,
 .mobile .rowPassageMeta,
 .mobile .rowSnippet,
+.mobile .rowEvidence,
 .mobile .rowUnavailable { font-size: var(--text-sm); line-height: 1.45; }
 .mobile .rowLabel,
 .mobile .rowMeta,

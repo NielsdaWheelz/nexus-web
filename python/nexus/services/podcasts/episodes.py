@@ -80,8 +80,9 @@ def mark_played(
             db, viewer_id=viewer_id, media_ids=media_ids, state="Finished"
         )
         if changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(
+                db, owners=(f"consumption:{viewer_id}:{ident}" for ident in media_ids)
+            )
         return wire.PodcastEpisodeMarkPlayedOut(matched_count=len(media_ids), changed_count=changed)
 
     return viewer_txn("mark_played", viewer_id, run)

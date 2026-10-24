@@ -15,9 +15,11 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory, transaction
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_unique_job
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, is_safe_url
@@ -81,7 +83,8 @@ def run_step(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
     ends = next_url is not None and (
         not is_safe_url(next_url) or next_url in visited or len(visited) >= MAX_PAGES
     )
-    with transaction(db):
+
+    def publish() -> dict[str, Any]:
         row = db.execute(
             text("""
                 SELECT b.cutoff_at, s.user_id, s.podcast_id, p.feed_url
@@ -107,6 +110,8 @@ def run_step(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
                 if episode.published_at is None or episode.published_at <= row.cutoff_at
             ],
         )
+        db.flush()
+        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
         limited = ends or result.skipped > 0
         cursor = None
         if next_url is not None and not limited:
@@ -135,8 +140,10 @@ def run_step(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
         if cursor is not None:
             _enqueue_step(db, backfill_id, step_no + 1)
         if result.changed:
-            record_input_change(db)
+            record_input_change(db, owners=(f"podcast:{row.podcast_id}",))
         return {"status": "Applied", "processed": len(page.episodes), "added": result.added_to_all}
+
+    return retry_serializable(db, "podcast_backfill.publish", publish)
 
 
 def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:

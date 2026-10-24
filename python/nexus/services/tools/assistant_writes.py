@@ -16,6 +16,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.assistant_writes import (
     AssistantWriteOut,
@@ -26,6 +27,7 @@ from nexus.schemas.assistant_writes import (
 )
 from nexus.schemas.resource_graph import ConnectionCreationOut
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools import writes
 from nexus.services.tools.contract import WRITES
@@ -176,24 +178,44 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
     Historical undo belongs to the chat card and account settings.
     """
 
-    row = db.execute(
-        text(
-            "SELECT result, created_refs, reverted_at FROM tool_calls WHERE id = :id"
-            " AND principal_user_id = :viewer AND tool_id = ANY(:writes) FOR UPDATE"
-        ),
-        {"id": tool_call_id, "viewer": viewer_id, "writes": list(WRITES)},
-    ).one_or_none()
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Assistant write not found")
-    if row.reverted_at is not None:
-        return
-    if row.result is None or row.result["type"] != "Success" or not row.created_refs:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This write created nothing to undo")
-    for ref in row.created_refs:
-        writes.revert(db, viewer_id, ref)
-    db.execute(
-        text("UPDATE tool_calls SET reverted_at = clock_timestamp() WHERE id = :id"),
-        {"id": tool_call_id},
-    )
-    record_input_change(db)
-    db.commit()
+    def attempt() -> None:
+        row = db.execute(
+            text(
+                "SELECT result, created_refs, reverted_at FROM tool_calls WHERE id = :id"
+                " AND principal_user_id = :viewer AND tool_id = ANY(:writes) FOR UPDATE"
+            ),
+            {"id": tool_call_id, "viewer": viewer_id, "writes": list(WRITES)},
+        ).one_or_none()
+        if row is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Assistant write not found")
+        if row.reverted_at is not None:
+            return
+        if row.result is None or row.result["type"] != "Success" or not row.created_refs:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "This write created nothing to undo"
+            )
+        changed_libraries: set[UUID] = set()
+        changed_owners: set[str] = set()
+        for ref in row.created_refs:
+            library_id = writes.revert(db, viewer_id, ref)
+            if ref["kind"] == "entry":
+                changed_owners.update(
+                    (f"library:{ref['library_id']}", f"{ref['target_scheme']}:{ref['target_id']}")
+                )
+            else:
+                changed_owners.add(f"{ref['kind']}:{ref['id']}")
+            if library_id is not None:
+                changed_libraries.add(library_id)
+        if changed_libraries:
+            viewers = db.scalars(
+                text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+                {"ids": list(changed_libraries)},
+            ).all()
+            projection.refresh_viewer_contributors(db, [viewer_id, *viewers])
+        db.execute(
+            text("UPDATE tool_calls SET reverted_at = clock_timestamp() WHERE id = :id"),
+            {"id": tool_call_id},
+        )
+        record_input_change(db, owners=changed_owners)
+
+    retry_serializable(db, "undo_assistant_write", attempt)

@@ -21,6 +21,8 @@ from nexus.logging import get_logger
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services.net.http_retry import get_json_with_retry
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.suggestion_changes import record_input_change
@@ -48,7 +50,7 @@ def run_youtube_video_ingest(
         media.external_playback_url = identity.watch_url
         media.updated_at = datetime.now(UTC)
         if snippet is None:
-            record_input_change(db)
+            record_input_change(db, owners=(f"media:{media_id}",))
             return taxonomy.NOT_OBSERVED
         if snippet.get("title") and media.title == placeholder_title(identity.provider_video_id):
             media.title = snippet["title"][:255]
@@ -62,7 +64,10 @@ def run_youtube_video_ingest(
         if edition is not None:
             media.edition_published_date = edition
         if not snippet.get("channel_title"):
-            record_input_change(db)
+            db.flush()
+            projection.refresh(db, "media", [media_id])
+            projection.refresh_subject_dossiers(db, [ResourceRef("media", media_id)])
+            record_input_change(db, owners=(f"media:{media_id}",))
             return taxonomy.NOT_OBSERVED
         channel_id = snippet.get("channel_id")
         batch, _truncated = taxonomy.build_observation(
@@ -79,7 +84,10 @@ def run_youtube_video_ingest(
                 ]
             }
         )
-        record_input_change(db)
+        db.flush()
+        projection.refresh(db, "media", [media_id])
+        projection.refresh_subject_dossiers(db, [ResourceRef("media", media_id)])
+        record_input_change(db, owners=(f"media:{media_id}",))
         return batch
 
     observation = run_source_publication_phase(

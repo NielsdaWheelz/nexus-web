@@ -1,0 +1,17 @@
+# Disposable application data only; auth remains owned by the Supabase CLI.
+services:
+  postgres:
+    volumes: !reset []
+    tmpfs:
+      - /var/lib/postgresql/data
+    shm_size: 128m
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_search
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off

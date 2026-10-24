@@ -4,7 +4,7 @@ Identity is a set of aliases per show: at most one PodcastIndex ref, at most one
 and any number of canonical enclosure urls. Title, date and random values are never
 identity. An item whose identity is ambiguous is skipped and counted, never guessed.
 
-Lock order, shared by every podcast writer: the caller's own row (subscription or
+lock order inside each serializable attempt: the caller's own row (subscription or
 backfill), then the batch's alias advisory locks in canonical order, then the show row,
 then media rows, library rows and the user row (lectern). Two writers of one show (two
 syncs, a sync and a backfill, an add) therefore serialize per alias, and a repeated batch
@@ -20,9 +20,11 @@ from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.retries import TransactionRestart, integrity_constraint_name
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
@@ -32,6 +34,8 @@ from nexus.services.contributor_taxonomy import RawCreditEntry, build_observatio
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.metadata_operations import enqueue_metadata_enrichment
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 from nexus.services.url_normalize import normalize_url_for_display
 
@@ -163,24 +167,29 @@ def ingest_episodes(
             changed = changed or updated
         unbound = [alias for alias in item if alias not in stored]
         if unbound:
-            db.execute(
-                text("""
-                    INSERT INTO podcast_episode_identities (
-                        id, podcast_id, scheme, value, episode_media_id
-                    )
-                    VALUES (:id, :podcast_id, :scheme, :value, :media_id)
-                """),
-                [
-                    {
-                        "id": new_uuid7(),
-                        "podcast_id": podcast_id,
-                        "scheme": alias.scheme,
-                        "value": alias.value,
-                        "media_id": media_id,
-                    }
-                    for alias in unbound
-                ],
-            )
+            try:
+                db.execute(
+                    text("""
+                        INSERT INTO podcast_episode_identities (
+                            id, podcast_id, scheme, value, episode_media_id
+                        )
+                        VALUES (:id, :podcast_id, :scheme, :value, :media_id)
+                    """),
+                    [
+                        {
+                            "id": new_uuid7(),
+                            "podcast_id": podcast_id,
+                            "scheme": alias.scheme,
+                            "value": alias.value,
+                            "media_id": media_id,
+                        }
+                        for alias in unbound
+                    ],
+                )
+            except IntegrityError as exc:
+                if integrity_constraint_name(exc) != "uq_podcast_episode_identities_alias":
+                    raise
+                raise TransactionRestart from exc
         if dirty:
             entries = [RawCreditEntry(credited_name=name) for name in row["author_names"]]
             apply_observed_role_slices_in_current_transaction(
@@ -195,6 +204,12 @@ def ingest_episodes(
         added += library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
         _replace_chapters(db, media_id, episode.chapters)
         media_ids[i] = media_id
+    written = [identity for identity in media_ids if identity is not None]
+    db.flush()
+    projection.refresh(db, "media", written)
+    projection.refresh_subject_dossiers(
+        db, [ResourceRef("media", identity) for identity in written]
+    )
     return IngestResult(
         media_ids=media_ids, inserted=inserted, added_to_all=added, changed=changed or added > 0
     )

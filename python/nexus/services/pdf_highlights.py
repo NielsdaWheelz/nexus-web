@@ -1,4 +1,4 @@
-"""PDF highlight create/update: geometry, duplicates, and quote context."""
+"""PDF geometry, duplicates and quote publication in the caller's serializable transaction."""
 
 from uuid import UUID
 
@@ -33,6 +33,7 @@ from nexus.services.pdf_highlight_geometry import (
 )
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import PREFIX_SUFFIX_WINDOW
 
@@ -124,6 +125,7 @@ def create_pdf_highlight_in_txn(
         ref=ResourceRef(scheme="highlight", id=highlight.id),
         reason="highlight_create",
     )
+    projection.refresh(db, "highlight", [highlight.id])
     return highlight
 
 
@@ -158,7 +160,6 @@ def update_pdf_highlight_bounds(
         and bounds.exact == highlight.exact
     ):
         response = project_highlight(db, highlight, viewer_id)
-        db.commit()
         return response
     require_highlight_version(highlight, expected_version)
 
@@ -183,9 +184,9 @@ def update_pdf_highlight_bounds(
     _write_quads(db, highlight.id, canonical)
     db.flush()
     db.expire(highlight, ["pdf_quads"])
-    record_input_change(db)
+    projection.refresh(db, "highlight", [highlight.id])
+    record_input_change(db, owners=[f"media:{media.id}", f"highlight:{highlight.id}"])
     response = project_highlight(db, highlight, viewer_id)
-    db.commit()
     return response
 
 

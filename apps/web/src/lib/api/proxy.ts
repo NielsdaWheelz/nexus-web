@@ -97,22 +97,41 @@ async function forward(input: {
   cutMs?: number;
 }): Promise<NextResponse> {
   const { request, path, id, headers } = input;
+  const searchPhase = new URL(request.url).searchParams.get("phase");
+  const trace = path === "/search" && searchPhase === "hybrid";
+  const started = performance.now();
+  const mark = (stage: string, facts: Record<string, unknown> = {}) => {
+    if (trace) console.info(JSON.stringify({
+      event: "search_transport", owner: "forward", stage, request_id: id,
+      epoch_ms: Date.now(), elapsed_ms: performance.now() - started, ...facts,
+    }));
+  };
+  mark("entry");
   if (/%2f/i.test(path)) return failure(id, 404, "E_NOT_FOUND", "Not found");
   const { fastApiBaseUrl, internalSecret } = getEnv().internalApi;
   headers.set("x-request-id", id);
   if (internalSecret) headers.set("x-nexus-internal", internalSecret);
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  const searchPhase = new URL(request.url).searchParams.get("phase");
+  let abortCause: "client" | "deadline" | null = null;
+  const abort = () => {
+    if (abortCause === null) abortCause = "client";
+    mark("client_abort");
+    controller.abort();
+  };
   const searchTimeout = (path === "/search" || path === "/search/preview")
     ? searchPhase === "direct" ? SEARCH_READ_TIMEOUT_MS.direct : searchPhase === "hybrid" ? SEARCH_READ_TIMEOUT_MS.hybrid : SEARCH_READ_TIMEOUT_MS.lexical
     : null;
   const boundedJson = isSuggestionJsonPath(path) || searchTimeout !== null;
   let bodyOwnsDeadline = false;
-  const deadline = setTimeout(abort, searchTimeout ?? (boundedJson ? SUGGESTIONS_REQUEST_TIMEOUT_MS : input.deadlineMs));
+  const deadline = setTimeout(() => {
+    if (abortCause === null) abortCause = "deadline";
+    mark("deadline");
+    controller.abort();
+  }, searchTimeout ?? (boundedJson ? SUGGESTIONS_REQUEST_TIMEOUT_MS : input.deadlineMs));
   const release = () => {
     clearTimeout(deadline);
     request.signal.removeEventListener("abort", abort);
+    mark("release", { abort_cause: abortCause });
   };
   // the client may have left already, or leave before next reads the body
   if (request.signal.aborted) abort();
@@ -123,10 +142,14 @@ async function forward(input: {
       method === "GET" || method === "HEAD"
         ? undefined
         : await request.arrayBuffer();
+    mark("fetch_start");
     const upstream = await fetch(
       `${fastApiBaseUrl}${path}${new URL(request.url).search}`,
       { method, headers, body, signal: controller.signal },
     );
+    mark("headers", {
+      status: upstream.status, upstream_request_id: upstream.headers.get("x-request-id"),
+    });
     const upstreamId = upstream.headers.get("x-request-id");
     const answerId =
       upstreamId && REQUEST_ID.test(upstreamId) ? upstreamId : id;
@@ -149,6 +172,7 @@ async function forward(input: {
       // Search's small complete JSON body shares the headers deadline, allowing
       // a timed-out body to return the ordinary typed gateway failure.
       const bytes = await upstream.arrayBuffer();
+      mark("body_complete", { status: upstream.status });
       return new NextResponse(bytes, { status: upstream.status, headers: out });
     }
     if (content !== null && boundedJson) {
@@ -178,6 +202,10 @@ async function forward(input: {
     }
     return new NextResponse(content, { status: upstream.status, headers: out });
   } catch (error) {
+    mark("failed", {
+      abort_cause: abortCause, client_aborted: request.signal.aborted,
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
     if (!isAbortError(error)) {
       console.error("bff_upstream_failed", error);
       return unreachable(id, 502);
@@ -200,6 +228,15 @@ export async function proxySession(
   lane: SessionLane,
 ): Promise<Response> {
   const id = requestId(request);
+  const trace = path === "/search" && new URL(request.url).searchParams.get("phase") === "hybrid";
+  const started = performance.now();
+  const mark = (stage: string, facts: Record<string, unknown> = {}) => {
+    if (trace) console.info(JSON.stringify({
+      event: "search_transport", owner: "session", stage, request_id: id,
+      epoch_ms: Date.now(), elapsed_ms: performance.now() - started, ...facts,
+    }));
+  };
+  mark("entry");
   const mutation = ["POST", "PUT", "PATCH", "DELETE"].includes(request.method);
   if (mutation && !isSameOrigin(request)) {
     return finish(
@@ -210,10 +247,12 @@ export async function proxySession(
   try {
     live = await liveSession();
   } catch (error) {
+    mark("session_failed", { error_type: error instanceof Error ? error.name : typeof error });
     if (!(error instanceof AuthUnavailable)) throw error;
     const message = "Authentication service unavailable";
     return finish(failure(id, 503, "E_AUTH_UNAVAILABLE", message));
   }
+  mark("session_result", { kind: live.kind, cookie_write_count: live.kind === "Live" ? live.writes.length : 0 });
   const unauthenticated = () =>
     failure(id, 401, "E_UNAUTHENTICATED", "Authentication required");
   if (live.kind === "Anonymous") return finish(unauthenticated());
@@ -223,6 +262,7 @@ export async function proxySession(
   const headers = pick(request.headers, SESSION_IN);
   headers.set("authorization", `Bearer ${live.accessToken}`);
   const device = readDeviceId(await cookies());
+  mark("device_ready", { device_present: device !== null });
   if (device) headers.set("x-nexus-device", device);
   if (lane === "Asset" || lane === "Stream") {
     headers.set("accept-encoding", "identity");
@@ -237,6 +277,7 @@ export async function proxySession(
     deadlineMs: lane === "Copy" ? LONG_MS : 30_000,
     cutMs: lane === "Stream" ? LONG_MS : undefined,
   });
+  mark("forward_returned", { status: response.status });
   if (response.status === 401) {
     void response.body?.cancel();
     return finish(unauthenticated(), ended(live.cookieNames));

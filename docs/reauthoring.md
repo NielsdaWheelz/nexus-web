@@ -24,11 +24,13 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
-progressive search recounts its 17 touched areas against `b4721d528`: +787 authored
-runtime lines net (+1,362, -575). independent phase delivery replaces serial
-content search; text publication and semantic completion share existing queue
-and session owners. contracts live in [search](modules/search.md). untouched
-rows and aggregate totals retain their stated bases.
+progressive search recounts its 21 touched areas against `b4721d528`: +968 authored
+runtime lines net (+1,598, -630). independent phases replace serial content search;
+text publication and semantic completion share existing queue owners. database-wide
+retrieval admission bounds expensive api and worker reads through backend cleanup.
+shared resource renderers own literal search evidence; live editors keep their
+canonical text. contracts live in [search](modules/search.md). untouched rows and aggregate totals
+retain their stated bases.
 
 chat citations recounts its 6 touched areas against `f2025d935`: net -187 authored runtime lines. it removes the source tour, workspace tour provider and raw marker parser; publication and rendering share one source-aware markdown grammar. generated parser output and generation scripts are outside this count.
 
@@ -65,7 +67,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | chat | 9,847 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | #700 -50 · #702 +88 · chat citations -91 · selection continuation +144 · unsaved work +64 | re-slice |
 | reader web ui | 10,903 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · #672 +37 · #670 +143 · #679 +1 · shift-open +490 · resource insertion +36 · reader connections +76 · connection actions +3 · #700 +11 · #697 +67 · shared outline +15 · selection continuation +331 · unsaved work +5 · reader python ingest +0 · ingest follow-ups +8 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,556 | reauthored #563; #617 #627 re-sliced by pane chrome | #643 +353 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · #699 +31 · #700 +10 · #697 +1 · chat citations -33 · selection continuation +7 · unsaved work +167 · pane chrome -589 (the pane header relabelled out) | re-slice with chat web (#643 #644) |
-| resource items and actions | 7,332 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | #700 -82 · #702 +15 · shared outline +1,483 · chat citations -28 · unsaved work +12 · pane chrome -2 | re-slice |
+| resource items and actions | 7,362 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | #700 -82 · #702 +15 · shared outline +1,483 · chat citations -28 · unsaved work +12 · pane chrome -2 · progressive search +30 | re-slice |
 | libraries core | 6,016 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | #699 +65 · #702 -3 · unsaved work +78 · db substrate -1 · ingest follow-ups +5 · pane chrome +453 (collection order relabelled in) | re-slice |
 | auth | 4,366 | reauthored: web #558, re-sliced with python (cleanup/python-auth-reslice) | — | keep |
 | podcasts | 5,111 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 | keep |
@@ -73,20 +75,20 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | resource graph, links, citations | 4,444 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 | re-slice |
 | media core | 3,745 | reauthored #621 | #650 +665 · x threads +111 · #670 +29 · shift-open +16 · resource metadata +16 · resource insertion +1 · #700 -2 · #702 -2 · unsaved work -366 · db substrate +4 · ingest follow-ups +8 · progressive search -3 | keep |
 | imports pane and history | 3,871 | reauthored #553 #641 | #650 -38 · x threads +2 · #670 +64 · shift-open +1 · resource insertion +11 · #700 +1 · #702 +2 · progressive search +7 | keep |
-| model tools, assistant writes, memory tool | 3,818 | reauthored #561 | #572 +149 · x threads +223 · resource-first search -3 · connection actions -3 · db substrate -2 | keep (#647 re-sliced by chat web) |
+| model tools, assistant writes, memory tool | 3,831 | reauthored #561 | #572 +149 · x threads +223 · resource-first search -3 · connection actions -3 · db substrate -2 · progressive search +13 | keep (#647 re-sliced by chat web) |
 | authors | 3,631 | reauthored #549 | #670 +8 · resource insertion +11 · #700 -7 · unsaved work -43 | keep |
 | ingest source lifecycle, post room | 4,244 | reauthored #599 | #619 +62 · x threads +63 · #670 +514 · reader python ingest +25 · ingest follow-ups +13 · progressive search +0 | keep |
 | reader python: apparatus | 3,387 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +9 | read-path functions with 13b |
-| nexus launcher | 3,944 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · progressive search +84 | keep (no second pass) |
+| nexus launcher | 3,965 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · progressive search +105 | keep (no second pass) |
 | add content | 3,396 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 · #670 +117 · shift-open +14 · #702 +10 · unsaved work -106 · progressive search +17 | re-slice: single-screen editor |
 | reader python: read model | 3,412 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 · #670 +34 · reader connections +24 · ingest follow-ups -3 | reader python read (13b, deferred) |
 | consumption history and stats | 3,180 | reauthored #417 #595 | x threads +1 · shift-open -11 | keep |
 | browse | 3,169 | reauthored #543 #546 | #578 -100 · shift-open +63 · resource insertion +5 · #702 +1 · unsaved work +27 | keep |
-| dossiers | 3,125 | reauthored #514 | 4 more -61 · shift-open -8 · resource insertion +5 · empty-resource lifecycle +33 · unsaved work +50 | keep |
+| dossiers | 3,122 | reauthored #514 | 4 more -61 · shift-open -8 · resource insertion +5 · empty-resource lifecycle +33 · unsaved work +50 · progressive search -3 | keep |
 | sharing: members, invitations, grants | 3,035 | reauthored #409 #591 | x threads +13 · shift-open +1 · #700 -12 · python auth -12 · db substrate -1 | keep |
 | one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
 | firefox extension | 2,957 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 | keep |
-| oracle | 2,835 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 · progressive search +0 | keep |
+| oracle | 2,848 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 · progressive search +13 | keep |
 | db substrate (models, session) | 1,285 | re-sliced (cleanup/db-substrate-reslice) | — | keep |
 | player | 2,606 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,096 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 · #670 +521 · reader python ingest +3 · ingest follow-ups -12 | re-slice: x titles |
@@ -100,8 +102,8 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | android shell | 2,178 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 | android slice (late) |
 | api substrate, config, storage, wire schemas | 2,127 | reauthored #585 #586 #622 | x threads +3 · #670 +3 · resource-first search +4 · empty-resource lifecycle +19 · python auth -5 · progressive search +4 | keep |
 | reader: document map, evidence | 1,923 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · #670 +5 · #679 +5 · shift-open +65 · resource metadata +1 · resource insertion +4 · reader connections -469 · shared outline +203 | reader python read (13b, deferred) |
-| search retriever | 2,836 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 · progressive search +166 | keep |
-| suggestions | 2,000 | reauthored #596, re-sliced (cleanup/libraries-ordering-reslice) | progressive search +0 | keep |
+| search retriever | 2,941 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 · progressive search +271 | keep |
+| suggestions | 2,003 | reauthored #596, re-sliced (cleanup/libraries-ordering-reslice) | progressive search +3 | keep |
 | consumption core (read state) | 1,845 | reauthored #417 #596 | #650 +170 · x threads +163 | keep; #650 with feedback admission recovery |
 | reader python: highlights | 1,690 | not yet | #645 +78 · #631 +75 · x threads +44 · #670 +28 · python auth -2 · db substrate -1 | reader python read (13b, deferred) |
 | jobs runtime | 1,591 | reauthored #564 | empty-resource lifecycle +6 · selection continuation +1 · progressive search +2 | keep |
@@ -121,7 +123,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | release and backup tooling | 707 | not yet | — | last slice, after the end release |
 | reader: transcripts | 692 | partial: web #535 | shift-open +27 | reader python read (13b, deferred) |
 | android share page | 611 | partial: web #600 | #670 -1 · unsaved work +1 | android slice (late) |
-| connections | 503 | reauthored #525 | #536 +8 · connection actions -47 | keep (earlier rewrite) |
+| connections | 502 | reauthored #525 | #536 +8 · connection actions -47 · progressive search -1 | keep (earlier rewrite) |
 | codex agent host | 413 | reauthored #556 | db substrate -4 | keep |
 
 totals: reauthored 168,458 (66,407 of it due a re-slice) · partial 5,404 · not yet 17,484 · all 191,346 (the purge: -3,728; the chat web re-slice: -974; the resource references re-slice: -749; the python auth re-slice: -847; the db substrate re-slice: -1,432).

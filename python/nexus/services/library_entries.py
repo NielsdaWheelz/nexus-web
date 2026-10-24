@@ -26,12 +26,12 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.retries import retry_read_committed
-from nexus.db.session import transaction
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import LibraryOrderOut, LibraryPlacementOut
 from nexus.services import libraries
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 # Mirrors ix_library_entries_library_order: the one entry order.
@@ -766,20 +766,23 @@ def place_item(
     """File a media (All is Saved in Nexus) or a followed show (named only)."""
 
     def attempt() -> None:
-        with transaction(db):
-            if target.kind == "media":
-                _file_media(db, viewer_id, target.id, [library_id])
-            else:
-                place_subscribed_podcast_in_named_library_in_current_transaction(
-                    db,
-                    viewer_id=viewer_id,
-                    library_id=library_id,
-                    podcast_id=target.id,
-                    replace_episodes=replace_episodes,
-                )
-            record_input_change(db)
+        if target.kind == "media":
+            _file_media(db, viewer_id, target.id, [library_id])
+        else:
+            place_subscribed_podcast_in_named_library_in_current_transaction(
+                db,
+                viewer_id=viewer_id,
+                library_id=library_id,
+                podcast_id=target.id,
+                replace_episodes=replace_episodes,
+            )
+        viewers = db.scalars(
+            text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id}
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer_id, *viewers])
+        record_input_change(db, owners=[f"library:{library_id}", f"{target.kind}:{target.id}"])
 
-    retry_read_committed(db, "place_item", attempt)
+    retry_serializable(db, "place_item", attempt)
 
 
 def unplace_item(db: Session, viewer_id: UUID, library_id: UUID, target: EntryTarget) -> None:
@@ -787,18 +790,21 @@ def unplace_item(db: Session, viewer_id: UUID, library_id: UUID, target: EntryTa
     success."""
 
     def attempt() -> None:
-        with transaction(db):
-            if target.kind == "media":
-                remove_media_from_library_in_current_transaction(
-                    db, viewer_id, target.id, library_id, allow_default=True
-                )
-            else:
-                undo_podcast_filing_for_viewer_in_current_transaction(
-                    db, viewer_id=viewer_id, library_id=library_id, podcast_id=target.id
-                )
-            record_input_change(db)
+        if target.kind == "media":
+            remove_media_from_library_in_current_transaction(
+                db, viewer_id, target.id, library_id, allow_default=True
+            )
+        else:
+            undo_podcast_filing_for_viewer_in_current_transaction(
+                db, viewer_id=viewer_id, library_id=library_id, podcast_id=target.id
+            )
+        viewers = db.scalars(
+            text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id}
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer_id, *viewers])
+        record_input_change(db, owners=[f"library:{library_id}", f"{target.kind}:{target.id}"])
 
-    retry_read_committed(db, "unplace_item", attempt)
+    retry_serializable(db, "unplace_item", attempt)
 
 
 def move_entry(
@@ -812,7 +818,7 @@ def move_entry(
     """Move an existing visible entry at the captured revision; preserve all stored rows."""
     from nexus.services.library_listing import get_library_order
 
-    with transaction(db):
+    def attempt() -> LibraryOrderOut:
         library = libraries.access(db, viewer_id, library_id, lock=True)
         library.require_admin()
         library.require_mutable()
@@ -843,4 +849,6 @@ def move_entry(
         )
         libraries.advance_order_revision(db, library_id)
         result = get_library_order(db, viewer_id, library_id)
-    return result
+        return result
+
+    return retry_read_committed(db, "move_entry", attempt)

@@ -113,6 +113,22 @@ def delete_edges_for_deleted_resources(
             )
         ),
     )
+    affected_viewers = (
+        db.scalars(
+            select(ResourceEdge.user_id)
+            .where(
+                ResourceEdge.id.in_(dying),
+                ResourceEdge.origin == "citation",
+                ResourceEdge.ordinal.is_not(None),
+                ResourceEdge.snapshot[("evidence", "target", "owner_ref")].astext.in_(
+                    ["media:" + str(media_id) for media_id in retained_media]
+                ),
+            )
+            .distinct()
+        ).all()
+        if retained_media
+        else []
+    )
     rows = list(db.scalars(select(ResourceEdge).where(ResourceEdge.id.in_(dying))))
     retention.pin_owners(db, retention.edge_endpoints(rows))
     activity = retention.retaining_owners(db, rows)
@@ -141,6 +157,10 @@ def delete_edges_for_deleted_resources(
 
         for media_id in retained_media:
             claim_document_teardown_if_unreferenced_locked(db, media_id)
+    if affected_viewers:
+        from nexus.services.search import projection
+
+        projection.refresh_viewer_contributors(db, affected_viewers)
     delete_orphaned_external_snapshots(
         db,
         snapshot_ids=[
@@ -169,6 +189,10 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
             ),
         )
     )
+
+    from nexus.services.search import projection
+
+    projection.refresh(db, "web_result", ids)
 
 
 def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:

@@ -96,6 +96,7 @@ async def run_build(
         try:
             collected = binding.inputs(db, facts.subject_id, viewer)
         except InputTooLarge:
+            db.rollback()  # discard only the failed input read before the terminal owner
             fail(DossierFailureCode.ContextTooLarge)
             return None
     db.commit()

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from provider_runtime.agent_runtime import CodexEndpoint
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
@@ -32,7 +33,8 @@ class Runtime:
     catalog: Catalog
     tools: Toolbox
     providers: ProviderRuntime | None
-    codex_socket: Path
+    codex_endpoint: CodexEndpoint
+    codex_cwd_root: Path
 
 
 def run_generation_job[R](
@@ -48,6 +50,7 @@ def run_generation_job[R](
     async def call() -> R:
         import httpx
 
+        from nexus.provider_http import provider_ssl_context
         from nexus.services.generation.catalog import Catalog
         from nexus.services.generation.provider import build_provider_runtime
         from nexus.services.tools.memory import load_memory_client_config
@@ -58,6 +61,7 @@ def run_generation_job[R](
             timeout=httpx.Timeout(60.0, connect=10.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             trust_env=False,
+            verify=provider_ssl_context(settings.provider_ca_pem),
         ) as client:
             tools = compose_tools(
                 configured_web_search(client, settings),
@@ -68,7 +72,8 @@ def run_generation_job[R](
                 catalog=Catalog(settings, tools),
                 tools=tools,
                 providers=build_provider_runtime(settings, client),
-                codex_socket=settings.codex_native_socket,
+                codex_endpoint=settings.codex_endpoint,
+                codex_cwd_root=settings.codex_cwd_root,
             )
             return await work(db, runtime)
 

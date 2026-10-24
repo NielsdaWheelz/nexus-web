@@ -53,8 +53,10 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.contributor_writes import (
     ContributorObservationRejected,
     CreditTarget,
+    GutenbergTarget,
     MediaTarget,
     ObservationIdentityPlan,
+    PodcastTarget,
     create_contributor,
     ensure_alias,
     materialize_observation_credits,
@@ -413,20 +415,24 @@ def replace_observed_role_slices_batch(
 def _publish_chunk(
     db: Session, chunk: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]]
 ) -> None:
-    changed = False
+    changed_owners: set[str] = set()
     for target, observation, source in chunk:
-        changed = (
-            _write(
-                db,
-                prepare_observed_role_slices_in_current_transaction(
-                    db, target=target, observation=observation, source=source
-                ),
-            )
-            or changed
-        )
-    if changed:
-        record_input_change(db)
-    db.commit()
+        if not _write(
+            db,
+            prepare_observed_role_slices_in_current_transaction(
+                db, target=target, observation=observation, source=source
+            ),
+        ):
+            continue
+        match target:
+            case MediaTarget(media_id):
+                changed_owners.add(f"media:{media_id}")
+            case PodcastTarget(podcast_id):
+                changed_owners.add(f"podcast:{podcast_id}")
+            case GutenbergTarget(ebook_id):
+                changed_owners.add(f"gutenberg_catalog:{ebook_id}")
+    if changed_owners:
+        record_input_change(db, owners=changed_owners)
 
 
 def apply_observed_role_slices_in_current_transaction(
@@ -583,8 +589,7 @@ def _put_media_authors(
         )
     # Releasing the pin leaves the rows; the next observed author slice replaces them.
     media.authors_manually_managed = request.mode == "manual"
-    record_input_change(db)
-    db.commit()
+    record_input_change(db, owners=(f"media:{media_id}",))
     return MediaAuthorsOut(author_mode=request.mode)
 
 

@@ -1,13 +1,14 @@
 """Bounded transaction attempts: the one owner of database retry.
 
-An operation passed here opens and commits its own transaction and reloads its state on every
-call. An attempt selects its isolation before its transaction opens; a session that arrives
-with a transaction open keeps that transaction's isolation (an open issue:
-docs/issues/retry-serializable-keeps-open-transaction-isolation.md). Every Exception rolls the
-attempt back; a BaseException (a cancellation) is left to the session's close. A serialization
-failure or deadlock, a TransactionRestart, or a violation of a name in
-RETRYABLE_UNIQUE_CONSTRAINTS runs the operation again; when the last attempt fails that way it
-raises DatabaseRetryExhaustedError (the edge answers 500). Anything else propagates.
+An operation passed here is a pure database participant: it reloads canonical state,
+flushes before projecting its result, and leaves the same transaction active. This
+module owns isolation, commit and bounded retry. Entry with an ambient transaction is
+a defect; it is never discarded or joined. Provider and other external effects stay
+outside the operation. Every Exception rolls the owned attempt back; a BaseException
+(a cancellation) is left to the session's close. Serialization failures, deadlocks,
+TransactionRestart and named first-sight races retry. Lock timeout raises
+DatabaseBusyError without another attempt. The api maps busy attempts and exhausted
+transaction retries to 409; workers keep their existing transient queue retry.
 """
 
 from collections.abc import Callable
@@ -70,7 +71,14 @@ class TransactionRestart(Exception):
     """Raised by an operation: roll back and run it again against fresh state."""
 
 
-class DatabaseRetryExhaustedError(RuntimeError):
+class DatabaseBusyError(RuntimeError):
+    """An owned attempt could not complete because of a resource lock or transaction conflict.
+
+    This is not an ApiError: worker source owners must retain transient retry.
+    """
+
+
+class DatabaseRetryExhaustedError(DatabaseBusyError):
     """Every attempt ended in a retryable conflict."""
 
     def __init__(self, label: str, attempts: int) -> None:
@@ -84,13 +92,12 @@ def integrity_constraint_name(exc: IntegrityError) -> str | None:
 
 
 def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
-    """Run `op` in at most `retries` SERIALIZABLE attempts."""
+    """Commit `op` in at most `retries` fresh SERIALIZABLE attempts."""
     return _attempts(db, label, op, "SERIALIZABLE", retries)
 
 
 def retry_read_committed[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
-    """Run `op` in at most `retries` READ COMMITTED attempts: for an op that takes locks and
-    then must see a newer snapshot to decide whether its locked set is complete."""
+    """Commit `op` in fresh READ COMMITTED attempts with new snapshots after lock waits."""
     return _attempts(db, label, op, "READ COMMITTED", retries)
 
 
@@ -101,14 +108,23 @@ def _attempts[T](
     isolation: Literal["SERIALIZABLE", "READ COMMITTED"],
     retries: int,
 ) -> T:
+    assert not db.in_transaction(), f"{label} requires a fresh transaction"
     attempt = 1
     while True:
-        if not db.in_transaction():
-            db.connection(execution_options={"isolation_level": isolation})
+        db.connection(execution_options={"isolation_level": isolation})
+        transaction = db.get_transaction()
+        assert transaction is not None
         try:
-            return op()
+            result = op()
+            assert db.get_transaction() is transaction and transaction.is_active, (
+                f"{label} ended its owned transaction"
+            )
+            db.commit()
+            return result
         except Exception as exc:
             db.rollback()
+            if isinstance(exc, OperationalError) and getattr(exc.orig, "sqlstate", None) == "55P03":
+                raise DatabaseBusyError(f"{label}: resource lock remained busy") from exc
             if not _retryable(exc):
                 raise
             if attempt >= retries:

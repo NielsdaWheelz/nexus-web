@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.retries import retry_serializable
 from nexus.schemas.dossier import CoverageUnit
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
@@ -286,14 +287,18 @@ def aggregate(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -
 
 def ensure(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -> Readiness:
     """Enqueue the missing projections of the first ``ENSURE_BUDGET`` members."""
-    members = _members(scheme, db, subject_id, viewer_id)[:ENSURE_BUDGET]
-    projections = ensure_current_many(
-        db, media_ids=members, requester_user_id=viewer_id, max_concurrency=ENSURE_BUDGET
-    )
-    reasons = {item.reason for item in projections if isinstance(item, MediaOmission)}
-    if MediaOmissionReason.ProjectionPending in reasons:
-        return "Pending"
-    return "Failed" if MediaOmissionReason.ProjectionFailed in reasons else "Ready"
+
+    def attempt() -> Readiness:
+        members = _members(scheme, db, subject_id, viewer_id)[:ENSURE_BUDGET]
+        projections = ensure_current_many(
+            db, media_ids=members, requester_user_id=viewer_id, max_concurrency=ENSURE_BUDGET
+        )
+        reasons = {item.reason for item in projections if isinstance(item, MediaOmission)}
+        if MediaOmissionReason.ProjectionPending in reasons:
+            return "Pending"
+        return "Failed" if MediaOmissionReason.ProjectionFailed in reasons else "Ready"
+
+    return retry_serializable(db, "dossier.ensure_inputs", attempt)
 
 
 def _members(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -> list[UUID]:

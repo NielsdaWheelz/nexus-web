@@ -2,7 +2,9 @@
 
 An owner is a media (web article, epub, pdf, or a podcast episode or video through its
 transcript) or a note block. Its materialization is its evidence spans, content chunks
-and embeddings. Text publication atomically replaces spans/chunks and stamps
+and embeddings. each index phase starts a fresh serializable attempt before source
+reads and fences; provider work stays outside those transactions. text publication
+atomically replaces spans/chunks and stamps
 ``lexical_revision = revision``. Semantic completion attaches vectors to those exact
 ids, then marks ``ready`` on the active embedding identity. Provider failure retains text.
 Retries resume current text; completed outcomes replay without ids/timestamps/effects changes.
@@ -70,6 +72,7 @@ from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.web_article_structure import (
     add_heading_anchors,
@@ -133,7 +136,7 @@ def _set_state(
 
 
 def _clear(db: Session, owner: IndexOwner) -> None:
-    """Delete the owner's spans, chunks and embeddings, children of foreign keys first."""
+    """Delete index children, then withdraw their known-deleted keyword identities."""
     params = {"kind": owner.kind, "id": owner.id}
     if owner.kind == "note_block":
         # Live derived-reference admission holds KEY SHARE on this owner. Exclude
@@ -168,6 +171,52 @@ def _clear(db: Session, owner: IndexOwner) -> None:
     )
     for table in ("content_chunks", "evidence_spans"):
         db.execute(text(f"DELETE FROM {table} WHERE owner_kind = :kind AND owner_id = :id"), params)
+    if owner.kind == "media":
+        projection.withdraw(
+            db, "content_chunk", [ref.id for ref in refs if ref.scheme == "content_chunk"]
+        )
+
+
+def _insert_chunk_batch(db: Session, owner: IndexOwner, source_kind: str, rows: list[str]) -> None:
+    """Insert paired spans/chunks from one bounded batch, without positional pairing."""
+    inserted = db.scalar(
+        text(
+            """
+            WITH input AS MATERIALIZED (
+                SELECT gen_random_uuid() AS span_id, item.*
+                FROM jsonb_to_recordset(CAST(:chunks AS jsonb)) AS item(
+                    chunk_idx integer, chunk_text text, heading_path jsonb,
+                    locator jsonb, citation_label text
+                )
+            ), spans AS (
+                INSERT INTO evidence_spans (
+                    id, owner_kind, owner_id, span_text, selector, citation_label, resolver_kind
+                )
+                SELECT span_id, :kind, :id, chunk_text, locator, citation_label, :resolver
+                FROM input
+                RETURNING id
+            ), chunks AS (
+                INSERT INTO content_chunks (
+                    owner_kind, owner_id, primary_evidence_span_id, chunk_idx,
+                    source_kind, chunk_text, heading_path, summary_locator
+                )
+                SELECT :kind, :id, input.span_id, input.chunk_idx, :source_kind,
+                    input.chunk_text, input.heading_path, input.locator
+                FROM input JOIN spans ON spans.id = input.span_id
+                RETURNING id
+            )
+            SELECT count(*) FROM chunks
+            """
+        ),
+        {
+            "kind": owner.kind,
+            "id": owner.id,
+            "source_kind": source_kind,
+            "resolver": "web" if source_kind == "web_article" else source_kind,
+            "chunks": "[" + ",".join(rows) + "]",
+        },
+    )
+    assert inserted == len(rows), "content chunk batch was not fully inserted"
 
 
 def publish_text_index(
@@ -182,37 +231,35 @@ def publish_text_index(
     """Replace spans/chunks atomically, without embeddings; publish lexical readiness.
 
     No chunks completes as ``ocr_required`` for pdf, otherwise ``no_text``.
+    Media callers own serializable source reads and worker fences through commit.
+    Paired inserts stream in batches of 128 rows or 512 KiB; a single larger row
+    remains valid. Batching does not split the publication transaction.
     """
     _clear(db, owner)
     params: dict[str, Any] = {"kind": owner.kind, "id": owner.id}
-    resolver = "web" if source_kind == "web_article" else source_kind
+    batch: list[str] = []
+    size = 2  # JSON array brackets.
     count = 0
     for count, chunk in enumerate(chunks, start=1):
         heading = blocks[chunk.block_idx].heading_path
-        row = params | {"text": chunk.text, "locator": json.dumps(chunk.locator)}
-        span_id = db.scalar(
-            text(
-                "INSERT INTO evidence_spans (owner_kind, owner_id, span_text, selector,"
-                " citation_label, resolver_kind) VALUES (:kind, :id, :text,"
-                " CAST(:locator AS jsonb), :label, :resolver) RETURNING id"
-            ),
-            row | {"label": heading[-1] if heading else "Source", "resolver": resolver},
+        encoded = json.dumps(
+            {
+                "chunk_idx": count - 1,
+                "chunk_text": chunk.text,
+                "heading_path": list(heading),
+                "locator": chunk.locator,
+                "citation_label": heading[-1] if heading else "Source",
+            }
         )
-        db.execute(
-            text(
-                "INSERT INTO content_chunks (owner_kind, owner_id, primary_evidence_span_id,"
-                " chunk_idx, source_kind, chunk_text, heading_path, summary_locator)"
-                " VALUES (:kind, :id, :span, :idx, :source_kind, :text,"
-                " CAST(:heading AS jsonb), CAST(:locator AS jsonb))"
-            ),
-            row
-            | {
-                "span": span_id,
-                "idx": count - 1,
-                "source_kind": source_kind,
-                "heading": json.dumps(list(heading)),
-            },
-        )
+        row_bytes = len(encoded.encode("utf-8"))
+        if batch and (len(batch) == 128 or size + 1 + row_bytes > 512 * 1024):
+            _insert_chunk_batch(db, owner, source_kind, batch)
+            batch = []
+            size = 2
+        batch.append(encoded)
+        size += row_bytes + (1 if len(batch) > 1 else 0)
+    if batch:
+        _insert_chunk_batch(db, owner, source_kind, batch)
     status = "indexing" if count else "ocr_required" if source_kind == "pdf" else "no_text"
     _set_state(db, owner, status, reason if count else status)
     db.execute(
@@ -222,6 +269,12 @@ def publish_text_index(
         ),
         params | {"has_text": bool(count)},
     )
+    if owner.kind == "media":
+        new_chunk_ids = db.scalars(
+            text("SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :id"),
+            {"id": owner.id},
+        ).all()
+        projection.refresh(db, "content_chunk", new_chunk_ids)
     if not count:
         _complete_media_effects(db, owner, count)
     return ContentIndexResult(owner, status, count)
@@ -642,7 +695,7 @@ def run_media_reindex_job(
         lexical_ready = state.lexical_revision == revision
         source_kind = "transcript" if kind in _TRANSCRIPT_KINDS else kind
         blocks = [] if lexical_ready else _media_blocks(db, media_id, kind, plain_text or "")
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{owner.id}",))
         return source_kind, blocks, lexical_ready
 
     work = index_phase("prepare_media_content_reindex", prepare)
@@ -671,7 +724,7 @@ def run_media_reindex_job(
                     )
                     if published.status != "indexing":
                         record(db, IndexSucceeded)
-                    record_input_change(db)
+                    record_input_change(db, owners=(f"media:{owner.id}",))
                     return published
 
                 published = index_phase("publish_media_text", publish_text)
@@ -718,7 +771,7 @@ def run_media_reindex_job(
                 db, owner=owner, embeddings=read_embeddings(embedding_spool), reason=reason
             )
             record(db, IndexSucceeded)
-            record_input_change(db)
+            record_input_change(db, owners=(f"media:{owner.id}",))
             return published
 
         published = index_phase("publish_media_embeddings", publish)
@@ -731,13 +784,7 @@ def index_phase[T](label: str, operation: Callable[[Session], T]) -> T:
     """One serializable transaction on a fresh session, retried on conflict."""
     db = get_session_factory()()
     try:
-
-        def attempt() -> T:
-            value = operation(db)
-            db.commit()
-            return value
-
-        return retry_serializable(db, label, attempt)
+        return retry_serializable(db, label, lambda: operation(db))
     finally:
         db.close()
 
@@ -817,7 +864,6 @@ def repair_dead_media_reindex(
         if job.status == "dead":
             queue.requeue_dead_job(db, job_id=job.id)
             _event(db, media_id, IndexRecoveryAccepted(revision=state.revision))
-        db.commit()
         return SearchRepairAdmission(media_id=media_id, revision=state.revision, job_id=job.id)
 
     return retry_serializable(db, "repair_dead_media_reindex", admit)

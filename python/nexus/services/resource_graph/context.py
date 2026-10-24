@@ -218,7 +218,7 @@ def detach_context_target(
         delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
     if not user_link:
         versions.bump_version(db, viewer_id=viewer_id, ref=chat_ref, lane="context")
-    record_input_change(db)
+    record_input_change(db, owners=(chat_ref.uri,))
 
 
 def admits_resource_for_conversation_read(

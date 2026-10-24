@@ -207,12 +207,11 @@ async def _scan(
         return "skipped", None
     dossier = _dossier(db, user_id=user_id, ref=ref)
     excluded = set() if dossier is None else _excluded(db, user_id=user_id, ref=ref)
-    db.commit()  # search() embeds first: it needs a session without a transaction
+    db.commit()  # source reads end before search embeds and opens its own admitted session
     if dossier is None:
         return "skipped", None
     source_text, kin = dossier
     response = search(
-        db,
         user_id,
         SearchQuery(
             text=source_text[:800],
@@ -269,10 +268,8 @@ def _publish(
 
     def attempt() -> tuple[ScanResult, None]:
         if not lock_running_job_claim(db, context=context):
-            db.rollback()
             return "skipped", None
         if resolve_ref(db, viewer_id=user_id, ref=ref).missing:
-            db.commit()
             return "skipped", None
         targets = [assert_resource_ref(target) for target, _ in picks]
         excluded = _excluded(db, user_id=user_id, ref=ref)
@@ -294,8 +291,7 @@ def _publish(
                 if not item.missing and _work(db, target) not in excluded
             ],
         )
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(ref.uri,))
         return "ok", None
 
     return retry_serializable(db, "connection_discovery.publish", attempt)

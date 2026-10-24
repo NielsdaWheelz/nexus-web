@@ -15,6 +15,7 @@ POSTGRES_PORT ?= 54320
 LOCAL_S3_PORT ?= 8333
 LOCAL_COMPOSE_PROJECT ?= nexus-local
 LOCAL_RUNTIME_IDENTITY := $(abspath .nexus-local/runtime-identity.json)
+WORKER_COMPOSE_FILES := docker/docker-compose.yml:docker/docker-compose.worker.yml
 
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT)/postgres
 R2_S3_API_ORIGIN ?= http://127.0.0.1:$(LOCAL_S3_PORT)
@@ -67,7 +68,7 @@ setup:
 
 dev:
 	@echo "starting persistent local stores..."
-	@COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) docker compose -f docker/docker-compose.yml up -d --wait postgres storage
+	@COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) docker compose -f docker/docker-compose.yml up -d --build --wait postgres storage
 	@test "$$(supabase --version)" = "2.117.0" || { echo "supabase cli 2.117.0 is required" >&2; exit 1; }
 	@mkdir -p .nexus-local
 	@chmod 700 .nexus-local
@@ -112,7 +113,7 @@ api: local-runtime-identity
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
 		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
 		SUPABASE_AUTH_ADMIN_KEY= \
-		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
+		uv run --project ../../python uvicorn main:app --loop asyncio --reload --port $(API_PORT)
 
 web: local-storage
 	cd apps/web && \
@@ -125,11 +126,17 @@ web: local-storage
 		bun run dev --port $(WEB_PORT)
 
 worker-interactive worker-background: local-runtime-identity
-	NEXUS_LOCAL_SOURCE_SHA="$$(git rev-parse HEAD)" \
+	NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$(LOCAL_RUNTIME_IDENTITY)" \
+		COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) \
+		COMPOSE_FILE="$(WORKER_COMPOSE_FILES)" \
+		COMPOSE_ENV_FILES="$${COMPOSE_ENV_FILES:-/dev/null}" \
+		python/.venv/bin/python python/scripts/worker_checkout_image.py $@
+	NEXUS_LOCAL_WORKER_IMAGE="$$(python/.venv/bin/python python/scripts/worker_checkout_image.py)" \
 		NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$(LOCAL_RUNTIME_IDENTITY)" \
 		COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) \
-		docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
-		up --build --no-deps $@
+		COMPOSE_FILE="$(WORKER_COMPOSE_FILES)" \
+		COMPOSE_ENV_FILES="$${COMPOSE_ENV_FILES:-/dev/null}" \
+		docker compose up --no-build --no-deps $@
 
 migrate:
 	cd migrations && DATABASE_URL=$(DATABASE_URL) \

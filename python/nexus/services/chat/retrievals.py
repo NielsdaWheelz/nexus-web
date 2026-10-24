@@ -6,7 +6,9 @@ the stored ``result_ref`` shape lives here once. It is also the model-visible
 ``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
 every built key, minus the ones whose value is null, an empty list or ``selected`` false
 (byte for byte what the retired validators stored).
-Numbering and publication belong to ``citations``.
+Numbering and publication belong to ``citations``. The caller starts its serializable
+attempt before source reads and fences, and refreshes retained-X viewer
+contributor text once after its complete insertion batch. This helper never commits.
 """
 
 from __future__ import annotations

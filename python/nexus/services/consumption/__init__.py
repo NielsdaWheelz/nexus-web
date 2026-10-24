@@ -24,7 +24,7 @@ def lock_viewer(db: Session, viewer_id: UUID) -> None:
 
 
 def viewer_txn[T](label: str, viewer_id: UUID, op: Callable[[Session], T]) -> T:
-    """``op`` in a fresh serializable transaction holding the viewer lock; ``op`` commits."""
+    """Run ``op`` under the viewer lock; the serializable retry owner commits."""
     with get_session_factory()() as db:
 
         def run() -> T:

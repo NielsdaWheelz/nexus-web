@@ -1,8 +1,9 @@
 // The browser's one door to the api (docs/modules/api-edge.md): every call goes
-// to a same-origin /api path, carries this build's wire revision, and answers
-// the parsed json or throws ApiError. A 426 means this tab was built for
-// another wire: the tab reloads itself once per build.
+// to a same-origin /api path, carries this build's wire revision, bypasses the
+// browser http cache, and answers the parsed json or throws ApiError. A 426
+// means this tab was built for another wire: the tab reloads once per build.
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { isRecord } from "@/lib/validation";
 import { WIRE_REVISION } from "./wire.gen";
@@ -38,7 +39,7 @@ export async function requestWithDeadline<T>({ request, signal, timeoutMs }: {
   const timer = setTimeout(() => {
     if (controller.signal.aborted) return;
     timedOut = true;
-    controller.abort();
+    controller.abort(new DOMException("request deadline", "AbortError"));
   }, timeoutMs);
   try {
     return await request(controller.signal);
@@ -220,15 +221,42 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
+  if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", createRandomId());
   if (typeof init.body === "string") {
     headers.set("Content-Type", "application/json");
   }
-  let response: Response;
+  const url = new URL(path, "http://localhost");
+  const trace = url.pathname === "/api/search" && url.searchParams.get("phase") === "hybrid";
+  const started = performance.now();
+  const requestId = headers.get("X-Request-ID");
+  const mark = (stage: string, facts: Record<string, unknown> = {}) => {
+    if (trace) console.info(JSON.stringify({
+      event: "search_transport", owner: "browser", stage, request_id: requestId,
+      epoch_ms: Date.now(), elapsed_ms: performance.now() - started, ...facts,
+    }));
+  };
+  mark("dispatch");
+  let response: Response | undefined;
   try {
-    response = await fetch(path, { ...init, headers });
+    response = await fetch(path, { ...init, cache: "no-store", headers });
+    mark("headers", { status: response.status, response_request_id: response.headers.get("x-request-id") });
+    const body = await readResponse<T>(response);
+    mark("body_complete", { status: response.status });
+    return body;
   } catch (error) {
+    const reason = init.signal?.reason;
+    let cause = "error";
+    if (init.signal?.aborted) {
+      cause = reason instanceof DOMException && reason.name === "AbortError" && reason.message === "request deadline"
+        ? "read_deadline" : "caller_abort";
+    } else if (isAbortError(error)) cause = "transport_abort";
+    mark("failed", {
+      at: response === undefined ? "fetch" : "body", cause,
+      error_type: error instanceof Error ? error.name : typeof error,
+      error_code: error instanceof ApiError ? error.code : null,
+    });
+    if (response !== undefined) throw error;
     if (isAbortError(error)) throw error;
     throw new ApiError(0, "E_NETWORK", "Network request failed");
   }
-  return readResponse<T>(response);
 }

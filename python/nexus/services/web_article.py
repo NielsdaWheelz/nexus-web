@@ -2,6 +2,8 @@
 
 ``publish_article`` is the one publisher for fetched pages, browser captures and
 emails; X reuses its primitives ``prepare_article`` and ``replace_article_fragments``.
+fragment replacement retracts old identities and publishes new ones in the caller's
+publication-locked transaction; preparation and fetches hold no such lock.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from nexus.services.media_source_ingest import reusable_embedded_source_media_id
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream, source_fetch_error
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import replace_reader_publication
+from nexus.services.search import projection
 from nexus.services.source_attempts import enqueue_attempt
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
@@ -184,7 +187,7 @@ def publish_article(
             locked_target_ids=frozenset(children),
             remap_cursors=False,
         )
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{ident}" for ident in {media_id, *children}))
         return fragment_id
 
     return run_source_publication_phase(
@@ -278,6 +281,11 @@ def publish_prepared_article(
                 child = db.get(MediaSourceAttempt, child_attempt_id)
                 assert child is not None  # accepted in this transaction
                 enqueue_attempt(db, child, actor_id=owner, request_id=request_id)
+        if old_targets or prepared.document_embeds:
+            db.flush()
+            projection.refresh_viewer_contributors(
+                db, list(db.scalars(text("SELECT id FROM users")))
+            )
         if (metadata := article.metadata) is not None:
             title, excerpt = metadata.title.strip(), metadata.excerpt.strip()
             site_name = metadata.site_name.strip()
@@ -358,6 +366,7 @@ def replace_article_fragments(
     Highlights and credits survive and re-anchor by quote. Embed rows lose only their
     fragment locators: the caller must replace or delete them in the same transaction.
     """
+    old_ids = list(db.scalars(select(Fragment.id).where(Fragment.media_id == media_id)))
     embeds.prepare_document_embed_artifacts_for_fragment_replacement(db, media_id=media_id)
     old = select(Fragment.id).where(Fragment.media_id == media_id).scalar_subquery()
     db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(old)))
@@ -402,7 +411,9 @@ def replace_article_fragments(
     replace_media_apparatus(
         db, media_id=media_id, items=items, edges=edges, note_groups=note_groups
     )
-    return [row.id for row in rows]
+    new_ids = [row.id for row in rows]
+    projection.refresh(db, "fragment", [*old_ids, *new_ids])
+    return new_ids
 
 
 def byline_observation(byline: str) -> taxonomy.ContributorObservationBatch:
