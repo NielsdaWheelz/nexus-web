@@ -8,7 +8,7 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-quiet suggestions against `a2e3d4cba`: -29 authored runtime lines (280 added,
+quiet suggestions against `11c2bffdc`: -29 authored runtime lines (280 added,
 309 deleted). retained visit pools and bounded completed-publication reads replace
 staged publication/adoption controls and force-generation request variants. scoped
 file deltas: suggestion owners -22; lectern pane +8; library pane +5; route handlers
