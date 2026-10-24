@@ -36,8 +36,8 @@ a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
 oracle and atlas routes. rooms redefine colour, shadow, grain, hairline, body
-size and tracking only. text on an 18% tint of its own tone (`Pill`) reads the
-tone's `--*-ink` step, which holds 4.5:1 over that tint.
+size, tracking and the section-title font role only. text on an 18% tint of its
+own tone (`Pill`) reads the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 ## the solar's ornament
 
@@ -132,6 +132,22 @@ scrolling. see [workspace controls](workspace.md) and the toolbar
 specification and browser qualification in #628. the latter
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
+
+## pane sections
+
+`PaneSection` is one open, transparent section: optional interface header and
+body, separated by 12px, with no perimeter, clipping or nested inset. native
+section props and refs pass through; it owns no reads, commands or state.
+callers retain their fields, tables and collection rows without a boxed variant.
+`PaneSurface` supplies 16px outer padding, 12px minor stacks and 24px major
+content gaps; statistics owns the equivalent 24px section margin locally.
+
+`--pane-section-title-font` is a complete font shorthand resolved through the
+nearest theme: garamond 500 at 24px/1.2 in the study, sans 600 at 18px/1.35 in
+the press, cormorant 300 at 24px/1.2 in the solar. headings reset tracking and
+inherit section ink; descriptions use `--ink-muted`. the header owns interface
+typography independently of reader prose. headings and actions wrap at the
+containing width; control targets remain owned by their controls.
 
 ## collections and searchable pickers
 
