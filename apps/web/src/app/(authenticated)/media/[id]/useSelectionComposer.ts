@@ -234,19 +234,22 @@ export function useSelectionComposer(input: {
   }), [store]);
 
   const readNote = async (draftId: string, highlightId: string, replace: boolean) => {
-    if (replace) store.update(draftId, (entry) => ({ ...entry, load: "Loading", issue: entry.load === "Failed" ? entry.issue : null }));
+    const previous = get(draftId);
+    if (!previous) return;
+    const replaceInput = replace && previous.load !== "Ready";
+    if (replaceInput) store.update(draftId, (entry) => ({ ...entry, load: "Loading", issue: entry.load === "Failed" ? entry.issue : null }));
     const requested = store.getSnapshot().find((entry) => entry.id === draftId);
     if (!requested) return;
     const ownsRead = () => {
       const entry = store.getSnapshot().find((entry) => entry.id === draftId);
-      return entry?.highlightId === highlightId && entry.passage === requested.passage && (!replace || entry.revision === requested.revision) &&
+      return entry?.highlightId === highlightId && entry.passage === requested.passage && (!replaceInput || entry.revision === requested.revision) &&
         entry.operation === requested.operation && entry.issue === requested.issue;
     };
     try {
       const data = await liveHighlight(highlightId);
       if (!ownsRead()) return;
       if (!data) {
-        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight is no longer available. your input remains in this tab." } }));
+        store.update(draftId, (entry) => ({ ...entry, load: previous.load === "Ready" ? "Ready" : "Failed", issue: { kind: "Failed", message: "this highlight is no longer available. your input remains in this tab." } }));
         return;
       }
       const saved = data.anchor;
@@ -256,7 +259,7 @@ export function useSelectionComposer(input: {
       const shown = reader.getState().document;
       if (shown.status !== "ready" || shown.doc.identity !== requested.passage.identity ||
         JSON.stringify(anchor) !== JSON.stringify({ ...annotations.source(requested.passage.anchor).anchor, exact: undefined })) {
-        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Source", message: "the source changed. select it again before saving or sending." } }));
+        store.update(draftId, (entry) => ({ ...entry, load: previous.load === "Ready" ? "Ready" : "Failed", issue: { kind: "Source", message: "the source changed. select it again before saving or sending." } }));
         return;
       }
       const base = noteBase(data), body = initialBody(base), doc = docFromBody(body);
@@ -264,9 +267,9 @@ export function useSelectionComposer(input: {
       const sameBase = base.kind === "Absent" ? requested.base.kind === "Absent" &&
         (requested.linksVersion === null || requested.linksVersion === data.links_version) :
         requested.base.kind === "Present" && base.id === requested.base.id && base.version === requested.base.version;
-      const captureSlot = replace || requested.publication === null || requested.publication.kind === "passage";
+      const captureSlot = replaceInput || requested.publication === null || requested.publication.kind === "passage";
       store.update(draftId, entry => ({ ...entry, highlight: data, highlightId: data.id, load: "Ready",
-        ...(captureSlot && (replace || sameBase) ? {
+        ...(captureSlot && (replaceInput || sameBase) ? {
           linksVersion: data.links_version,
           noteId: base.kind === "Present" ? base.id : entry.noteId, linkId: base.kind === "Present" ? base.linkId : entry.linkId,
           publication: { kind: "attach_highlight", highlight_id: data.id, request: {
@@ -277,13 +280,13 @@ export function useSelectionComposer(input: {
         } : {}),
         passage: { ...entry.passage, quote: data.exact }, sourceMediaId: data.anchor.media_id,
         chatIssue: entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" ? null : entry.chatIssue,
-        ...(replace ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null }
+        ...(replaceInput ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null }
           : { issue: sameBase ? null : { kind: "Conflict", message: "this note changed elsewhere. your input remains in this tab.", saved: base, linksVersion: data.links_version } }),
       }));
 
     } catch (error) {
       if (!ownsRead()) return;
-      store.update(draftId, (entry) => ({ ...entry, load: replace ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your input remains in this tab." } }));
+      store.update(draftId, (entry) => ({ ...entry, load: previous.load === "Ready" ? "Ready" : replaceInput ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your input remains in this tab." } }));
       onError(error, "Note couldn’t be loaded");
     }
   };
@@ -344,7 +347,7 @@ export function useSelectionComposer(input: {
         base: { kind: "Absent" }, body: carried?.body ?? emptyBody(), revision: 0,
         selection: carried?.selection ?? null, history: carried?.history ?? emptyNoteBodyHistory(),
         load: highlightId ? "Loading" : "Ready", operation: null,
-        issue: null, status: null, referenceActive: false,
+        issue: null, status: null, referenceActive: false, attachmentActive: false,
         sourceMediaId: boundSource.mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
       });
     }
@@ -388,7 +391,7 @@ export function useSelectionComposer(input: {
     continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>;
   }) => {
     const entry = source && get(source.draftId);
-    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.issue?.kind === "Conflict" || entry.issue?.kind === "Deleted" || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return;
+    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.attachmentActive || entry.issue?.kind === "Conflict" || entry.issue?.kind === "Deleted" || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return;
     const shown = reader.getState().document;
     let sourceMatches = false;
     if (shown.status === "ready" && !shown.refreshing && shown.doc.identity === entry.passage.identity) {
@@ -597,7 +600,7 @@ export function useSelectionComposer(input: {
   const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: Selection | null } | null = null) => {
     const source = current.current;
     const entry = source && get(source.draftId);
-    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
+    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.attachmentActive || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
     const selected = entry.destination;
     const owner = target === "New" ? newOwner : selected.kind === "Selected" ? getConversationCommands(ctx.accountId, selected.id) : null;
     if (!owner) { chooseChat(); return; }
@@ -652,7 +655,7 @@ export function useSelectionComposer(input: {
     const owns = () => {
       const latest = get(entry.id);
       return activeRef.current && current.current?.id === source.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive &&
+        latest !== undefined && !latest.referenceActive && !latest.attachmentActive &&
         (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
     };
     let sendNotice: ReturnType<typeof feedback.offer> | null = null;
@@ -706,7 +709,7 @@ export function useSelectionComposer(input: {
         sendNotice?.withdraw();
         store.update(entry.id, value => {
           if (value.chatAttempt?.runId !== runId) return value;
-          const consume = value.revision === submittedInput.revision && !value.referenceActive;
+          const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.attachmentActive;
           if (consume) submittedInput.consumedRevision = value.revision + 1;
           return { ...value, chatIssue: null,
             ...(consume ? { body: initialBody(value.base), revision: value.revision + 1,
@@ -769,7 +772,7 @@ export function useSelectionComposer(input: {
     const owns = () => {
       const latest = get(entry.id);
       return activeRef.current && current.current?.id === source.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive &&
+        latest !== undefined && !latest.referenceActive && !latest.attachmentActive &&
         (latest.revision === attempt.input.revision || latest.revision === attempt.input.consumedRevision);
     };
     try {
@@ -868,6 +871,9 @@ export function useSelectionComposer(input: {
       if (id) store.remove(id);
       show(null); setPickerDraftId(null); cancelReselection();
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
+    },
+    attachmentActive(active: boolean) {
+      if (draft) store.update(draft.id, entry => entry.attachmentActive === active ? entry : { ...entry, attachmentActive: active });
     },
     compositionStart() { if (draft) store.update(draft.id, entry => ({ ...entry, revision: entry.revision + 1 })); },
     edit(edit: NoteEdit) {

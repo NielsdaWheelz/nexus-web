@@ -52,6 +52,7 @@ export interface ComposerDraft {
   issue: DraftIssue | null;
   status: string | null;
   referenceActive: boolean;
+  attachmentActive: boolean;
   sourceMediaId: string;
   sourceHasChats: boolean | null;
   destination: ChatDestination;

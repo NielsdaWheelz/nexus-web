@@ -139,6 +139,7 @@ export interface NoteEditorProps {
   keys?: StructuralKeys | null;
   onEdit(edit: NoteEdit): void;
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
+  onAttachmentActiveChange?(active: boolean): void;
   onSave?(): void;
   onNewChat?(): void;
   onContinueChat?(): void;
@@ -221,10 +222,13 @@ export default function NoteEditor(props: NoteEditorProps) {
   const setLink = linkDraft.set;
   const readLink = linkDraft.read;
   const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
+  const attachmentActive = attachmentValue !== null;
+  useLayoutEffect(() => { latest.current.onAttachmentActiveChange?.(attachmentActive); }, [attachmentActive]);
   useLayoutEffect(() => () => {
     if (!retainedInput) {
       readAttachment()?.controller.abort();
       setAttachment(null);
+      latest.current.onAttachmentActiveChange?.(false);
     }
   }, [retainedInput, readAttachment, setAttachment]);
   const discardAttachment = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); };

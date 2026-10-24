@@ -26,7 +26,9 @@ release prerequisites and owner steps:
    writing survives; discarded local input does not. deleting an uncertain local
    request cannot undo work already accepted by the server.
 5. qualify exact-build desktop/android writing, passage save/send, exit/signout,
-   share capture and retained offline data. keep static, real-stack, installed,
+   share capture and retained offline data. installed signout failure branches are
+   tracked in [native-writing-signout-failures-unqualified](native-writing-signout-failures-unqualified.md).
+   keep static, real-stack, installed,
    live-provider and deployed results distinct in the release pr.
 
 ## temporary android maintenance

@@ -326,7 +326,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
-  const blocked = composer.paused || !draft || draft.load !== "Ready" || draft.operation !== null || draft.referenceActive;
+  const blocked = composer.paused || !draft || draft.load !== "Ready" || draft.operation !== null || draft.referenceActive || draft.attachmentActive;
   const deleting = draft?.operation?.kind === "Delete";
   const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
   const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
@@ -340,6 +340,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       : draft.chatIssue?.kind === "Passage" || draft.chatIssue?.kind === "Source" ? "select the passage again before saving or sending."
       : draft.issue?.kind === "Conflict" || draft.issue?.kind === "Deleted" ? "review the saved note or choose a new passage before saving."
       : draft.load !== "Ready" ? "load your note before using this action."
+      : draft.attachmentActive ? "finish or discard the attachment before saving or sending."
       : draft.referenceActive ? (isMobile ? "finish linking before using this action." : "finish linking or press escape to keep this as prose.")
       : draft.operation ? "finish or retry the current request first."
       : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
@@ -383,7 +384,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label={isMobile ? opening.mode === "Ask" ? "question about passage" : "note on passage" : "note or question"}
             reference={composer.reference()} placeholder={isMobile && opening.mode === "Ask" ? "ask about this passage" : "write a note, or @ link something"} compact editable={!deleting && !composer.paused}
             focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
-            onEdit={composer.edit} onSelectionChange={composer.selection}
+            onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive}
             history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
             onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
             onContinueChat={canQuote ? () => composer.continueChat() : undefined} onEmptyBackspace={composer.deleteNote}

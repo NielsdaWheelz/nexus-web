@@ -354,7 +354,9 @@ reader replacement or another passage discards unsubmitted input silently. neste
 chooser dismissal preserves it. no per-passage buffer inventory or restart restore. its nested query/link/upload
 cells use the existing surface scope while keeping the real visit identity.
 only its upload owner participates in outer-abandonment confirmation; confirmed
-abandonment aborts that browser pipeline. accepted media remains on the server. canonical
+abandonment aborts that browser pipeline. accepted media remains on the server.
+unresolved attachments block save/send; a same-owner refresh keeps the working
+editor mounted and observes changed saved data without replacing local input. canonical
 rich equality determines changed input; a model or quote choice alone is clean.
 saving a passage and sending its text as chat remain separate explicit operations.
 
