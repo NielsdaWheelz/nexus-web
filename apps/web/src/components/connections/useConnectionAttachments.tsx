@@ -95,6 +95,7 @@ export function useConnectionAttachments(selfRef: string) {
             withdrawLinkNotice();
             const link = task.link!;
             linkNotice = feedback.offer({ key: `attachment-link:${link.id}`, announcement: "Polite", content: task.failure!,
+              needsAttention: true, undo: null, onDismiss: null,
               actions: canRetryWriting(link) ? [{ label: "retry same link", onClick: link.retry }]
                 : [{ label: "reload", onClick: () => window.location.reload() }] });
           }
@@ -125,6 +126,7 @@ export function useConnectionAttachments(selfRef: string) {
       if (account.aborted || owner.read().task !== task) return;
       if (controller.signal.aborted) {
         if (task.link?.read().kind === "refused") feedback.offer({ key: `attachment-link:${task.link.id}`, announcement: "Polite",
+          needsAttention: true, undo: null, onDismiss: null,
           content: { tone: "Warning", title: "file saved; link refused", message: isApiError(error) ? error.message : "review its destination before linking again." },
           actions: task.mediaId === null ? undefined : [{ label: "open saved file", href: `/media/${task.mediaId}` }] });
         return;
