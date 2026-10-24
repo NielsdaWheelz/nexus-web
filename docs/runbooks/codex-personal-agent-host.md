@@ -266,6 +266,22 @@ between encrypted mounts on the same host. prove data/metadata equality before
 switching the canonical backing file and mapper; retain the original ciphertext.
 never export decrypted account state to a workstation or ordinary disk path.
 
+format only a newly allocated, separate backing file, never the canonical or
+retained original container. for a new host or recovery migration, the native
+format command uses the qualified 128-mib argon2id bound, one lane and a
+two-second target, with the recovery key streamed from off-host custody:
+
+```sh
+ssh nexus@nexus-prod 'sudo cryptsetup luksFormat --batch-mode --type luks2 \
+  --pbkdf argon2id --pbkdf-memory 131072 --pbkdf-parallel 1 --iter-time 2000 \
+  --key-file=- /var/lib/nexus/codex-state.new.luks' \
+  < /Users/nnandal/.config/fleet-security/nexus-codex-state-recovery.key
+```
+
+verify the intended keyslot and its memory parameters with `cryptsetup luksDump`
+before opening, then prove a fresh close/open before migrating state. a valid
+luks header without a usable keyslot is a failed format.
+
 the independent hetzner console login uses the existing `nexus` account. its
 off-host credential is
 `/Users/nnandal/.config/fleet-security/nexus-console-recovery.password` (`0600`).
