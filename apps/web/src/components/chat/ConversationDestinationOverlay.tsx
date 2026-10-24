@@ -8,9 +8,11 @@ import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { useSettled } from "@/lib/api/serverState";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
 import { pageQuery, usePaneFreeServerList } from "@/lib/api/useServerList";
 import { fetchConversationIndex, presentConversationListItem, type ConversationListItem } from "@/lib/chat/conversationIndex";
+import { useChatAgeClock } from "@/lib/chat/useChatAgeClock";
+import ConversationMetadata from "./ConversationMetadata";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
@@ -68,6 +70,7 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
     id: (item: ConversationListItem) => item.id,
     fetchPage: (cursor, limit, signal) => fetchConversationIndex(pageQuery(queryKey, cursor, limit), signal),
   });
+  const nowMs = useChatAgeClock({ initialInstant: env.currentInstant, items: page.items, visible: usePaneIsVisible() });
   const selectable = page.current && (!initializing || !search) && settled === query;
   const items = selectable ? page.items : [];
   useEffect(() => {
@@ -115,13 +118,13 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
       : selectable && items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
       {items.map(item => {
-        const presentation = presentConversationListItem(item, env);
+        const presentation = presentConversationListItem(item, env, nowMs);
         const props = bindings.optionProps(item.id);
         return <div key={item.id} {...props} className={collection.row}
           aria-labelledby={`${props.id}-title`} aria-describedby={`${props.id}-detail`}>
           <span className={collection.content}>
             <span id={`${props.id}-title`} dir="auto">{presentation.title}</span>
-            <span id={`${props.id}-detail`} className={collection.detail}>{presentation.metadata}</span>
+            <span id={`${props.id}-detail`} className={collection.detail}><ConversationMetadata metadata={presentation.metadata} /></span>
           </span>
         </div>;
       })}

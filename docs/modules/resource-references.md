@@ -21,6 +21,7 @@ conversation messages retain their message layout.
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
+| `components/media/MediaIdentity.tsx` | shared index bibliography and passive consumption/remaining-time facts; `MediaFacts` also serves inline search and saved detail |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, gold bullets, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
@@ -82,12 +83,18 @@ command primary. only shows have index artwork; episodes never do.
 the shell requires `Index` (title and metadata), `Search` (also one excerpt) or
 `Details` (wrapping operational/instructional content). index/search reserve empty
 lines and ellipsize individual fields; content length and arriving state never
-add lines. typography may enlarge the shared line geometry. the row's `indexRow`
+add text lines. typography may enlarge the shared line geometry. when fixed
+controls and text minima cannot fit side by side, `ResourceRow` places controls
+beside the title and gives metadata/excerpt the full row width, with tighter
+spacing. these rows may grow taller; no bibliography or facts disappear to preserve
+the former geometry. operational `Details` rows keep their wrapping layout.
+the row's `indexRow`
 container owns adaptation at its explicit base text size: above `32em - 1px`,
 show up to three observed author names; at or below that boundary, show the first
-and a passive omitted count. hide routine reading state there and remaining time at
-`24em - 1px`. the default 15px type gives 479/359px boundaries; enlarged text
-compacts earlier. each visible name retains at least an ellipsis-sized slot;
+and a passive omitted count. the default 15px type gives a 479px boundary;
+enlarged text compacts earlier. compact media facts remain visible and do not
+shrink or ellipsize; bibliography yields through its existing truncation. each
+visible name retains at least an ellipsis-sized slot;
 year/count keep their own slots. hidden names leave the tab order; focused hidden
 links/shortcuts return to that row's surviving more/title. no surname inference or
 author-only control.
@@ -115,6 +122,29 @@ formatting without owning family geometry. publication keeps year/month/day
 precision in semantic time markup. omit unknown facts and their separators; use
 readable secondary text, natural wrapping and full authored bodies. title anchors
 contain only phrasing content, never editors, metadata or controls.
+
+`MediaFacts` shows a natural-width remaining estimate of at most three characters
+followed by a 0.875rem theme-accent indicator (14px at the default root size).
+unread is a solid disc; in-progress removes
+the clockwise saved-position sector from twelve o'clock with a continuous outline;
+unknown position has a dashed empty outline; finished is a check and omits time.
+state wins over percentage. position is a bookmark, not consumed coverage, and
+may move backwards. zero/one never imply a different state. details call it
+`saved position`. external media without a summary has no consumption facts.
+
+remaining labels choose the smallest unit whose ceiling fits: minutes, hours,
+days and weeks through 99, then 365-day years through 9; larger values are `>9y`.
+zero is `0m`; absent estimates have no slot. speech retains supplied minutes,
+names the estimate and reading/listening modality, and calls audio normal-speed
+time. glyph/time expose one expanded sentence, with no interaction, focus stop,
+live region, animation or fetch. transparent svg cutouts inherit the accent;
+forced colours use system text. facts anchor to their allocated identity region;
+direct consumers keep their existing inline placement and wrapping.
+
+bounded metadata leaves inherit spacing from `ResourceRow`: `--row-metadata-gap`,
+`--row-media-gap` and `--row-publication-gap`. the shell alone owns their responsive
+cutover. `MediaIdentity` and `IndexBibliography` compose inside that shell;
+standalone detail uses full bibliography with `MediaFacts`.
 
 live media bodies use one existing summary batch. adapters retain supplied live
 summaries through `MediaSummaryProvider`: acknowledged facts survive refresh

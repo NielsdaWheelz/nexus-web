@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import ResourceActions from "@/components/resources/ResourceActions";
+import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
@@ -25,6 +26,7 @@ function renderContext(context: CollectionContext): ReactNode {
   switch (context.kind) {
     case "Snippet": return <EmphasisSegments segments={context.segments} emphasisClassName={styles.mark} />;
     case "Text": return context.text;
+    case "Conversation": return <ConversationMetadata metadata={context.metadata} />;
     default: return assertNever(context, "Unsupported collection context");
   }
 }

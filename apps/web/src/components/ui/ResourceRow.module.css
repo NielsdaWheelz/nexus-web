@@ -1,4 +1,7 @@
 .row {
+  --row-metadata-gap: var(--space-2);
+  --row-media-gap: var(--space-3);
+  --row-publication-gap: var(--space-1);
   position: relative;
   container: indexRow / inline-size;
   font-size: var(--text-base);
@@ -126,6 +129,70 @@ a.primary:hover { text-decoration: underline; }
   .controls :global([data-resource-actions]:not(:has([data-action-control-key="Playback"]))) {
     display: none;
   }
+}
+
+/* Two routine controls share the side column until scaled metadata needs its line. */
+@container indexRow (max-width: calc(96px + 12em)) {
+  .grid:not(.details) {
+    --row-metadata-gap: 0px;
+    --row-media-gap: var(--space-1);
+    --row-publication-gap: 0px;
+    padding-inline: 0;
+    gap: var(--space-1);
+  }
+
+  .grid:not(.details) > .content { display: contents; }
+
+  .grid:not(.details) .titleLine {
+    grid-column: -3 / -2;
+    grid-row: 1;
+  }
+
+  .grid:not(.details) > .controls {
+    grid-column: -2 / -1;
+    grid-row: 1;
+    align-self: start;
+  }
+
+  .grid:not(.details) > .leadingVisual {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .grid:not(.details) .metadata,
+  .grid:not(.details) .excerpt { grid-column: 1 / -1; }
+}
+
+/* Artwork or a persistent occurrence command needs the larger control budget. */
+@container indexRow (max-width: calc(144px + 15em)) {
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) {
+    --row-metadata-gap: 0px;
+    --row-media-gap: var(--space-1);
+    --row-publication-gap: 0px;
+    padding-inline: 0;
+    gap: var(--space-1);
+  }
+
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .content { display: contents; }
+
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .titleLine {
+    grid-column: -3 / -2;
+    grid-row: 1;
+  }
+
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .controls {
+    grid-column: -2 / -1;
+    grid-row: 1;
+    align-self: start;
+  }
+
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) > .leadingVisual {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .metadata,
+  .grid:not(.details):is(.withVisual, :has(> .controls > [data-row-primary-control]:not([data-row-compact-primary-control]))) .excerpt { grid-column: 1 / -1; }
 }
 
 :global([data-theme="elvish"]) .row { isolation: isolate; }
