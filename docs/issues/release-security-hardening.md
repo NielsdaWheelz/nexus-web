@@ -1,60 +1,40 @@
-# nexus security cutover remains pending
+# nexus asset and long-stream edge qualification
 
-problem: production administration and web ingress need a coordinated cutover
-to tailscale and cloudflare tunnel while preserving the public website and all
-existing clients. the agreed ownership is this repository for both nexus
-targets; implementation and live acceptance are NOT_RUN.
+problem: live qualification through the api's cloudflare tunnel remains
+NOT_RUN for disposable file upload, pdf/offline reading copies, anonymous share
+assets and byte ranges, and long stream reconnects. ordinary client success
+does not establish these paths.
 
-evidence: 2026-10-23 inspection found direct-origin public web access and
-source-restricted public ssh, with neither tailscale nor cloudflared installed.
-the existing [release contract](../../deployment.md) owns the vps and vercel
-promotion; `deploy/hetzner/release.py` checks public api health before it returns.
+remaining checks:
 
-required ownership and behavior:
+- upload a disposable pdf/epub through the normal client, confirm publication,
+  render it, and build/download its offline reading copy.
+- create a share only for that fixture; anonymously read its summary, document
+  and assets. a pdf `Range: bytes=0-15` must return `206`, the correct
+  `Content-Range` and 16 bytes. revoke it and prove the masked `404`.
+- read a private fixture's signed r2 download with the same range. keep every
+  signed url and share capability private; delete only the owned fixture/files.
+- keep an event stream alive through the bff's planned 280-second end, prove
+  cursor reconnect/resume and cancellation, and check connector memory against
+  its 128-mib cap (`apps/web/src/lib/api/proxy.ts:30`).
 
-- `deploy/hetzner/` owns host tailscale, key-authenticated private ssh, closed
-  public ingress, private caddy, the pinned connector, resource/health checks
-  and future provisioning. update public-ip ssh coordinates in existing owners.
-- `deploy/vercel/` and existing web configuration owners preserve public browser,
-  android, extension and anonymous-share access through the existing frontend.
-- `deploy/cloudflare/` owns tunnel routing, api certificate, waf/cache settings
-  and records of provider-side changes. keep secrets outside committed inputs;
-  retain the api's authentication, streaming, ranges and uncached responses.
-- `dev-server` owns the shared tailnet grants policy, operator devices and
-  retired-device access. nexus declares its production identity and required
-  incoming administration; production initiates no peer application traffic.
-  do not duplicate the fleet policy here. the agreed boundaries are in the
-  [cross-repository specification](../../../dev-server/docs/fleet-security-spec.md).
+timeout concern: cloudflare's current default
+[proxy read timeout is 125 seconds](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-524/).
+`python/nexus/api/routes/reader.py:200` builds the reading-copy zip and uploads
+it before returning the signed url. its synchronous response can therefore hit
+that limit even though the bff permits 280 seconds. measure a representative
+large copy; this is an unqualified risk, not an observed timeout.
 
-release prerequisites and ordering:
+upload boundary: `apps/web/src/lib/imports/ingest.ts:197` puts bytes directly to
+the presigned r2 url created by `media_upload_sessions.create_session`; only
+creation and confirmation use the api tunnel. the api's waf/body limit does
+not inspect or bound those direct storage bytes. existing storage admission
+and server confirmation remain responsible.
 
-use a security-only source based on deployed `400e7039e07387b08c23d13d113f9c14a1646bcf`
-to retain wire 14. current main uses wire 15 and would force an unrelated native
-client/extension upgrade. the repository permits a true merge commit, allowing
-the reviewed security commit to become an ancestor of main without deploying
-the newer product tree. publish its own first-attempt backend artifact and
-stage a production-target vercel build for that exact source before the normal
-release. retain exact-source, ancestry and artifact checks.
+blocker: the android attempt stopped before file selection when phone chrome
+became foreground instead of an available picker. no resource was uploaded;
+the owned local/phone fixture was removed. repeat with an available client ui.
 
-1. resolve [edge certificate coverage](nexus-cloudflare-certificate-coverage.md),
-   verify [console recovery](../runbooks/codex-personal-agent-host.md#release-and-repair) and
-   backup recovery, and establish restricted tailscale ssh before
-   removing public administration. any certificate purchase or hostname change
-   is explicit.
-2. pull and verify the pinned connector before stopping writers; retain existing
-   resource/disk floors, codex isolation and the normal exact-source release.
-3. during the planned no-use window, switch api dns to the prepared tunnel and
-   confirm the controller resolves it through cloudflare before invoking the
-   release. its public health check must pass before vercel promotion. verify
-   both address families are closed to direct-origin connections.
-4. complete [maintenance and reboot](nexus-security-maintenance-pending.md),
-   including [verified encrypted-state unlock](production-codex-state-unlock-source-unavailable.md)
-   and full application recovery.
-   repair and rerun the same source, or publish a new reviewed repair commit;
-   arbitrary old-source rollback is not guaranteed.
-
-resolved when [direct-origin hardening](nexus-public-origin-hardening.md),
-certificate and maintenance requirements pass; both nexus targets and real
-client journeys work; and repeat deployment preserves the private boundary.
-record actual manual/provider changes with this repository's release work;
-plan/proof details belong in its pr body under repository conventions.
+resolved when these live paths pass with the existing authentication and cache
+contracts, or a concrete failure is repaired and verified. retain no fixture,
+public grant or executable scenario afterward.
