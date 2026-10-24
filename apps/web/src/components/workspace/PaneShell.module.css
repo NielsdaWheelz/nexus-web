@@ -305,5 +305,5 @@
 
 .paneShell[data-mobile="true"][data-reader-composition="true"] {
   padding-top: var(--viewport-safe-top);
-  padding-bottom: var(--mobile-canvas-safe-bottom);
+  padding-bottom: var(--viewport-safe-bottom);
 }

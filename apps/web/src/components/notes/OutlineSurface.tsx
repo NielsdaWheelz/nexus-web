@@ -160,7 +160,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
               .catch((error: unknown) => {
                 if (handleUnauthenticatedApiError(error)) return;
                 if (!isApiError(error) && !(error instanceof TypeError || error instanceof SyntaxError)) throw error;
-                feedback.offer({key: "outline-paste", announcement: "Polite", content: {tone: "Warning", title: "paste not applied", message: error.message}});
+                feedback.offer({ needsAttention: true, undo: null, onDismiss: null,key: "outline-paste", announcement: "Polite", content: {tone: "Warning", title: "paste not applied", message: error.message}});
               });
           }}/>) }
       </ResourceOutlineList>

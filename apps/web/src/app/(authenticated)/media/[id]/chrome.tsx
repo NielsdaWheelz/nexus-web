@@ -121,6 +121,7 @@ export function useReaderChrome(input: {
   const summaries = useMediaSummaries(seed === null ? [] : [seed]);
   const summary = seed === null ? null : summaries.resolve(seed);
   useWorkspaceCondition(`media-summary:${paneId}:${id}`, summaries.error === null ? null : {
+    needsAttention: true,
     priority: "Status",
     announcement: "Polite",
     content: {

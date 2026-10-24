@@ -3,6 +3,7 @@ import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 // Launcher composition: local navigation, resources and evidence have separate budgets.
 // Selection preserves identity; deliberate movement also pins the visible prefix.
 import {
+  Activity,
   FilePlus2,
   FileText,
   Globe,
@@ -52,7 +53,7 @@ const TIERS: readonly NexusRankTier[] = [
   "FuzzyOrSynonym",
   "MetadataOrFullText",
 ];
-const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "ManageTabs", "Continuation"];
+const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "ManageTabs", "Activity", "Continuation"];
 const UNRANKED = { tier: "CurrentContext", score: 0, frecency: 0 } as const;
 const MOBILE_PLACES: readonly DestinationId[] = ["lectern", "libraries", "browse", "podcasts", "chats", "notes"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
@@ -176,6 +177,13 @@ function appendToToday(text: string): NexusAction {
   };
 }
 
+function activityRow(tier: NexusRankTier): NexusRow {
+  return { key: "Activity", existing: true, label: "activity", icon: Activity,
+    action: { kind: "Available", target: { kind: "Activity" } },
+    rank: { tier, score: 0, frecency: 0 },
+  };
+}
+
 function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
   const { intent, text } = query;
   const explicit: NexusRow[] = [];
@@ -241,6 +249,8 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
           const tier = textTier(text, NEXUS_COMMANDS[id].label, { aliases: NEXUS_COMMANDS[id].keywords });
           return tier ? [commandRow(id, tier, "")] : [];
         });
+  const activityTier = intent.kind === "Search" ? textTier(text, "activity", { aliases: ["needs attention", "undo", "current status", "updates"] }) : null;
+  if (activityTier) explicit.push(activityRow(activityTier));
   const unique = new Map<string, NexusRow>();
   for (const row of [...explicit, ...places, ...commands]) if (!unique.has(row.key)) unique.set(row.key, row);
   for (const row of tabs) {
@@ -377,7 +387,7 @@ export function mergeResults(previous: NexusList, identity: string, candidates: 
   if (stable.length === 0) {
     const promoted = rows.find((row) => row.rank.tier === "ExplicitIntent")
       ?? rows.find((row) => row.placement?.home === "Commands" && row.rank.tier === "Exact"
-        && (row.key.startsWith("Destination:") || row.key.startsWith("QuickAction:")))
+        && (row.key === "Activity" || row.key.startsWith("Destination:") || row.key.startsWith("QuickAction:")))
       ?? rows.find((row) => row.placement?.home === "Resources" && row.rank.tier === "Exact");
     if (promoted) {
       rows.splice(rows.indexOf(promoted), 1);
@@ -514,6 +524,7 @@ export function nexusGroups(input: {
     command("Nexus.Quick.Page"),
     command("Nexus.Quick.Library"),
     command("Nexus.Quick.Import"),
+    activityRow("CurrentContext"),
   ];
   const openGroup = group("Open", "Open", open);
   const continueGroup = group("Continue", "Continue", input.playback ? [input.playback] : []);
@@ -546,7 +557,7 @@ function mobileOverview(input: {
   const place = (id: DestinationId) => mobileRow(placeRow(getDestination(id), "CurrentContext", input.frecency));
   return [
     { id: "Open", label: "open tabs", rows: visible.slice(start, start + 3).map((pane) => tabRow(pane, "CurrentContext", input.frecency)) },
-    { id: "Places", label: "places", rows: MOBILE_PLACES.map(place) },
+    { id: "Places", label: "places", rows: [...MOBILE_PLACES.map(place), activityRow("CurrentContext")] },
     { id: "QuickActions", label: "", rows: [
       place("today"),
       { key: "QuickAction:New", existing: false, label: "new…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },

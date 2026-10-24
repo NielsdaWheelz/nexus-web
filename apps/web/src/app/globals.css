@@ -104,7 +104,6 @@
   --mobile-header-height: 0px;
   --mobile-controls-top: 0px;
   --mobile-pane-content-offset: 0px;
-  --mobile-canvas-safe-bottom: var(--viewport-safe-bottom);
   --reader-content-inset-top: 0px;
   --reader-content-inset-bottom: 0px;
   --reader-occlusion-top: 0px;

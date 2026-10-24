@@ -5,13 +5,13 @@
  * uncertainty. Refusal after uncertainty cannot establish the earlier outcome.
  */
 import { useWorkspaceCondition, type FeedbackContent, type FeedbackContextValue, type FeedbackOffer } from "@/components/feedback/Feedback";
-import { ApiError, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { ApiError, apiTransportFeedback, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { ProgressPreparationError } from "./progressFence";
-import type { withProgressFence } from "./state";
+import type { ConsumptionUndo, withProgressFence } from "./state";
 import { applyCollectionConsumption, undoCollectionConsumption, type CollectionTarget } from "./api";
 import type { WorkGuard } from "@/lib/unsavedWork";
 import { remoteReady } from "@/lib/native/admission";
@@ -34,6 +34,7 @@ interface Entry {
   unregister(): void;
   phase: "Sending" | "Unconfirmed";
   uncertain: boolean;
+  needsAttention: boolean;
   failure: FeedbackContent | null;
 }
 interface Inverse {
@@ -43,8 +44,9 @@ interface Inverse {
   readonly target: CollectionTarget;
   readonly receipt: Receipt;
   readonly offer: FeedbackOffer;
+  readonly needsAttention: boolean;
 }
-const EMPTY: readonly Entry[] = [];
+const inverseLabel = (target: CollectionTarget, state: Request["desired_state"], count: number, scope: string) => `undo mark ${verb(target, state)} · ${count} item${count === 1 ? "" : "s"} · ${scope}`;
 const targetKey = (target: CollectionTarget) => JSON.stringify(target);
 const verb = (target: CollectionTarget, state: Request["desired_state"]) => target.kind === "Podcast"
   ? state === "finished" ? "played" : "unplayed"
@@ -58,9 +60,19 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
   const entries = new Map<string, Entry>();
   const inverses = new Map<string, Inverse>();
   const listeners = new Set<() => void>();
-  let snapshot = EMPTY;
+  let snapshot: { entries: readonly Entry[]; undoItems: readonly ConsumptionUndo[] } = { entries: [], undoItems: [] };
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-  const emit = () => { snapshot = [...entries.values()]; for (const listener of listeners) listener(); };
+  const emit = () => {
+    snapshot = { entries: [...entries.values()], undoItems: [
+      ...[...inverses.values()].map(inverse => ({ commandKey: inverse.key, target: inverse.target, title: inverse.title,
+        actionLabel: inverseLabel(inverse.target, inverse.receipt.applied_status, inverse.receipt.items.length, inverse.scopeLabel),
+        scopeLabel: inverse.scopeLabel, changedCount: inverse.receipt.items.length, phase: "Available" as const })),
+      ...[...entries.values()].filter(entry => entry.kind === "Undo").map(entry => ({ commandKey: entry.key, target: entry.target,
+        title: entry.title, actionLabel: inverseLabel(entry.target, entry.desiredState, entry.mediaIds.length, entry.scopeLabel),
+        scopeLabel: entry.scopeLabel, changedCount: entry.mediaIds.length, phase: entry.phase })),
+    ] };
+    for (const listener of listeners) listener();
+  };
   const retire = (entry: Entry) => { entries.delete(entry.key); entry.unregister(); emit(); };
   const current = (entry: Entry, scope: AbortController) => lifetime === scope && !scope.signal.aborted && entries.get(entry.key) === entry;
   const supersede = (changes: readonly StateChange[]) => {
@@ -78,7 +90,7 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
       })) continue;
       inverse.offer.withdraw(); inverses.delete(key);
     }
-    supersedeSingle(revisions);
+    supersedeSingle(revisions); emit();
   };
   const admit = (entry: Entry) => {
     entry.unregister = guard.register({ id: entry.key, scope: { kind: "account" }, subscribe,
@@ -86,20 +98,32 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
     entries.set(entry.key, entry); emit();
     if (lifetime !== null) void send(entry, lifetime);
   };
-  function offerUndo(entry: Entry, receipt: Receipt, content: FeedbackContent) {
-    const inverse: Inverse = { key: entry.key, title: entry.title, scopeLabel: entry.scopeLabel, target: entry.target, receipt,
-      offer: feedback.offer({ key: entry.key, announcement: "Polite", content,
-        actions: [{ label: `undo mark ${verb(entry.target, entry.desiredState)}`, commandKey: entry.key, onClick: () => undo(inverse) }] }),
+  function offerUndo(entry: Entry, receipt: Receipt, content: FeedbackContent, invitation: "Invite" | "Retain") {
+    const key = entry.kind === "Apply" ? `${entry.key}:undo` : entry.key;
+    const inverse: Inverse = { key, title: entry.title, scopeLabel: entry.scopeLabel, target: entry.target, receipt,
+      needsAttention: entry.kind === "Apply" ? false : entry.needsAttention,
+      offer: feedback.offer({ key, announcement: "Polite", content: { ...content, title: entry.kind === "Undo" ? `${content.title} · ${entry.title}` : content.title, message: `selection: ${entry.scopeLabel}.${content.message === undefined ? "" : ` ${content.message}`}` },
+        needsAttention: entry.kind === "Apply" ? false : entry.needsAttention, undo: invitation, onDismiss: () => discardUndo(key),
+        actions: [{ label: inverseLabel(entry.target, entry.desiredState, receipt.items.length, entry.scopeLabel), commandKey: key, onClick: () => undo(inverse) }] }),
     };
-    inverses.set(inverse.key, inverse);
+    inverses.set(key, inverse); emit();
+  }
+  function discardUndo(key: string) {
+    const inverse = inverses.get(key);
+    if (inverse === undefined) return;
+    inverse.offer.withdraw(); inverses.delete(key); emit();
   }
   function undo(inverse: Inverse) {
-    if (lifetime === null || !inverses.has(inverse.key) || !remoteReady()) return;
-    inverse.offer.withdraw(); inverses.delete(inverse.key);
+    if (lifetime === null || inverses.get(inverse.key) !== inverse || !remoteReady()) return;
+    const actionLabel = inverseLabel(inverse.target, inverse.receipt.applied_status, inverse.receipt.items.length, inverse.scopeLabel);
+    inverse.offer.update({ needsAttention: inverse.needsAttention, announcement: "None",
+      content: { tone: "Neutral", title: `undoing mark ${verb(inverse.target, inverse.receipt.applied_status)}… · ${inverse.title}`, message: `selection: ${inverse.scopeLabel}.` },
+      actions: [{ label: actionLabel, commandKey: inverse.key, onClick: () => undo(inverse), busy: true }] });
+    inverses.delete(inverse.key);
     admit({ key: inverse.key, target: inverse.target, title: inverse.title, scopeLabel: inverse.scopeLabel,
       desiredState: inverse.receipt.applied_status, mediaIds: inverse.receipt.items.map(item => item.media_id),
       kind: "Undo", receipt: inverse.receipt, observed: new Map(), body: JSON.stringify(inverse.receipt),
-      unregister: () => {}, phase: "Sending", uncertain: false, failure: null });
+      unregister: () => {}, phase: "Sending", uncertain: false, needsAttention: inverse.needsAttention, failure: null });
   }
   async function send(entry: Entry, scope: AbortController) {
     if (!current(entry, scope)) return;
@@ -144,18 +168,23 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
         return;
       }
       if (superseded) feedback.settleCondition({ key: entry.key, content: { tone: "Success", title: `change acknowledged for ${result.changed_count} items; undo is unavailable after overlapping state changes · ${entry.title}` } });
-      else offerUndo(entry, result.undo, { tone: "Success", title });
+      else offerUndo(entry, result.undo, { tone: "Success", title }, "Invite");
     } catch (error) {
       if (!current(entry, scope)) return;
       if (sent) invalidateReads("Consumption", "Podcasts");
+      entry.needsAttention = true;
       const defect = !(error instanceof ProgressPreparationError) && ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error));
       if (!sent) {
         entry.failure = admissionLost
           ? { tone: "Neutral", title: "requires a connection", message: "this attempt sent no state change. review again after reconnecting." }
           : { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt sent no state change. resolve the player or reader save before reviewing again." };
       } else if (isRefusal(error)) {
-        entry.failure = { tone: "Warning", title: entry.kind === "Undo" ? "these items changed; this attempt changed nothing." : "selected items changed; this attempt changed nothing.",
-          message: entry.uncertain ? entry.kind === "Undo" ? "earlier undo outcome remains unconfirmed." : "the original request may have succeeded." : "review the current items before another change.", requestId: error.requestId };
+        const title = error.code === "E_RESOURCE_CONFLICT"
+          ? entry.kind === "Undo" ? "these items changed; this attempt changed nothing." : "selected items changed; this attempt changed nothing."
+          : error.status === 404 ? "the collection is no longer available; this attempt changed nothing." : "this attempt was refused; it changed nothing.";
+        const transport = apiTransportFeedback(error, title);
+        entry.failure = { ...transport, tone: "Warning", title,
+          message: `${transport?.message ?? ""} ${entry.uncertain ? entry.kind === "Undo" ? "earlier undo outcome remains unconfirmed." : "the original request may have succeeded." : "review the current items before another change."}`.trim(), requestId: error.requestId };
       } else {
         entry.uncertain = true;
         handleUnauthenticatedApiError(error);
@@ -164,8 +193,8 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
       else {
         const content = entry.failure; retire(entry);
         if (content !== null) {
-          if (!sent && entry.kind === "Undo" && entry.receipt !== null && !entry.receipt.items.some(item => (entry.observed.get(item.media_id) ?? 0) > item.applied_override_revision)) offerUndo(entry, entry.receipt, content);
-          else feedback.offer({ key: entry.key, content, announcement: "Polite" });
+          if (!sent && entry.kind === "Undo" && entry.receipt !== null && !entry.receipt.items.some(item => (entry.observed.get(item.media_id) ?? 0) > item.applied_override_revision)) offerUndo(entry, entry.receipt, content, "Retain");
+          else feedback.offer({ key: entry.key, content: { ...content, title: `${content.title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${content.message === undefined ? "" : ` ${content.message}`}` }, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null });
         }
       }
       if (defect) fail({ error });
@@ -180,6 +209,8 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
         for (const inverse of inverses.values()) inverse.offer.withdraw(); inverses.clear(); emit(); };
     },
     commands: {
+      undo(key: string) { const inverse = inverses.get(key); if (inverse !== undefined) undo(inverse); else { const entry = entries.get(key); if (entry?.kind === "Undo" && entry.phase === "Unconfirmed" && lifetime !== null && remoteReady()) void send(entry, lifetime); } },
+      discardUndo,
       submitCollection(input: { title: string; scopeLabel: string; request: Request }): "Started" | "Pending" | "OwnerGone" | "Unavailable" {
         if (lifetime === null || lifetime.signal.aborted) return "OwnerGone";
         if (!remoteReady()) return "Unavailable";
@@ -187,7 +218,7 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
         admit({ key: `collection-state:${accountId}:${crypto.randomUUID()}`, target: input.request.target,
           title: input.title, scopeLabel: input.scopeLabel, desiredState: input.request.desired_state,
           body: JSON.stringify(input.request), mediaIds: input.request.items.map(item => item.media_id), kind: "Apply", receipt: null, observed: new Map(),
-          unregister: () => {}, phase: "Sending", uncertain: false, failure: null });
+          unregister: () => {}, phase: "Sending", uncertain: false, needsAttention: false, failure: null });
         return "Started";
       },
       pendingCollection(target: CollectionTarget) {
@@ -203,14 +234,18 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
 export function CollectionCommandFeedback({ entry, commands }: { entry: Entry; commands: ReturnType<typeof createCollectionCommands>["commands"] }) {
   const sending = entry.phase === "Sending";
   const connected = useRemoteAdmission() === "Ready";
+  const undoAction = { label: inverseLabel(entry.target, entry.desiredState, entry.mediaIds.length, entry.scopeLabel), busy: sending,
+    disabledReason: connected ? undefined : "requires a connection", commandKey: entry.key, onClick: () => commands.undo(entry.key) };
+  const forgetAction = { label: "stop tracking", commandKey: `${entry.key}:forget`, onClick: () => commands.forget(entry.key) };
   useWorkspaceCondition(entry.key, {
-    priority: "Write", announcement: "Polite",
+    priority: "Write", announcement: "Polite", needsAttention: entry.needsAttention,
     content: { tone: sending ? "Neutral" : "Warning",
-      title: `${sending ? entry.kind === "Undo" ? "undoing state change…" : "changing selected items…" : entry.kind === "Undo" ? "undo not confirmed" : "change not confirmed"} · ${entry.title}`,
-      message: `selection: ${entry.scopeLabel}.${sending ? "" : ` the request may have succeeded.${entry.failure === null ? "" : ` ${entry.failure.title} ${entry.failure.message ?? ""}`}`}` },
-    actions: sending ? undefined : [
+      title: `${sending ? entry.kind === "Undo" ? `undoing mark ${verb(entry.target, entry.desiredState)}…` : "changing selected items…" : entry.kind === "Undo" ? "undo not confirmed" : "change not confirmed"} · ${entry.title}`,
+      message: `selection: ${entry.scopeLabel}.${sending ? "" : ` the request may have succeeded.${entry.failure === null ? "" : ` ${entry.failure.title} ${entry.failure.message ?? ""}`}`}`,
+      ...(entry.failure?.reload ? { reload: true as const } : {}), requestId: entry.failure?.requestId },
+    actions: entry.kind === "Undo" ? sending ? [undoAction] : [undoAction, forgetAction] : sending ? undefined : [
       { label: "retry same request", disabledReason: connected ? undefined : "requires a connection", commandKey: entry.key, onClick: () => commands.retry(entry.key) },
-      { label: "stop tracking", commandKey: entry.key, onClick: () => commands.forget(entry.key) },
+      { label: "stop tracking", commandKey: `${entry.key}:forget`, onClick: () => commands.forget(entry.key) },
     ],
   });
   return null;

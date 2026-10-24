@@ -47,7 +47,7 @@ export default function NotePaneBody() {
     if (!claim(delivery)) return;
     if (!deleted && delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
     else
-      feedback.offer({ key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
+      feedback.offer({ needsAttention: false, undo: null, onDismiss: null, key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
   }, [blockId, claim, deleted, delivery, feedback, outline]);
 
   const [inspection, setInspection] = useState<{ view: NoteInspection; bodyText: string; version: number } | null>(null);

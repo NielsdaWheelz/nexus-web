@@ -120,6 +120,7 @@ export function ReaderProvider({
 
   const failure = persistence.state === "SaveFailed" ? persistence.failure : null;
   useWorkspaceCondition(FEEDBACK_KEY, persistence.state === "SaveFailed" ? {
+    needsAttention: true,
     priority: "Write",
     announcement: "Polite",
     content: {

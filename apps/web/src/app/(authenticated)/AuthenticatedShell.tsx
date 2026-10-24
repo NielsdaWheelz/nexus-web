@@ -1,5 +1,6 @@
 "use client";
 
+import { useActivityNavigation } from "@/components/feedback/Activity";
 import { NavigationIdentity, useHostPolicy } from "@/lib/host/policy";
 import {
   useCallback,
@@ -207,7 +208,8 @@ function WorkspacePlayer({ accountId, children }: { accountId: string; children:
 }
 
 function WorkspaceNavigation({ children }: { children: ReactNode }) {
-  const { state } = useWorkspaceStore();
+  const { state, foregroundGeneration, pendingPaneFocus } = useWorkspaceStore();
+  useActivityNavigation(foregroundGeneration, pendingPaneFocus);
   return <NavigationIdentity value={state.panes.find(pane => pane.id === state.active_primary_pane_id)!.current_visit.href}>{children}</NavigationIdentity>;
 }
 
@@ -254,6 +256,7 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
   const [storage, parked, old] = useSyncExternalStore(subscribeWriting, writingAttention, () => "::").split(":");
   const download: FeedbackAction = { label: "download writing", onClick: () => downloadWriting(feedback, accountId) };
   useWorkspaceCondition("writing-storage", storage === "" ? null : {
+    needsAttention: true,
     priority: "Write",
     content: storage === "memory"
       ? { tone: "Danger", title: "recent changes are only in this tab.", message: "keep it open or download your writing." }
@@ -262,6 +265,7 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     actions: [download, { label: "try again", onClick: () => void retryWritingStorage().catch(() => undefined) }],
   });
   useWorkspaceCondition("writing-halted", parked === "" && old === "" ? null : {
+    needsAttention: true,
     priority: "Action",
     content: {
       tone: "Warning",
@@ -282,12 +286,14 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     }],
   });
   useWorkspaceCondition("writing-update", !runtime.reloadHeld ? null : {
+    needsAttention: true,
     priority: "Action",
     content: { tone: "Warning", title: "nexus was updated.", message: "download your writing, then reload." },
     announcement: "Polite",
     actions: [download, { label: "reload app", onClick: () => window.location.reload() }],
   });
   useWorkspaceCondition("writing-receive", connection.failure !== null ? {
+    needsAttention: true,
     priority: "Action",
     content: {
       ...(apiTransportFeedback(connection.failure, "live updates are unavailable.") ?? {
@@ -298,11 +304,13 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     announcement: "Polite",
     actions: [{ label: "retry live updates", onClick: receive.reconnect, busy: connection.phase === "connecting" || connection.phase === "recovering" }],
   } : connection.phase === "recovering" ? {
+    needsAttention: false,
     priority: "Status",
     content: { tone: "Neutral", title: "reconnecting live updates…" },
     announcement: "None",
   } : null);
   useWorkspaceCondition("writing-probe", probe_failure === null ? null : {
+    needsAttention: true,
     priority: "Action",
     content: {
       ...(apiTransportFeedback(probe_failure, "some open content couldn’t refresh.") ?? {
@@ -314,6 +322,7 @@ function WritingRuntime({ accountId, children }: { accountId: string; children: 
     actions: [{ label: "try again", onClick: receive.retryProbe, busy: probing }],
   });
   useWorkspaceCondition("writing-startup", runtime.state === "failed" || runtime.state === "retrying" ? {
+    needsAttention: true,
     priority: "Write", announcement: "Polite",
     content: { tone: "Danger", title: "writing couldn’t start.", message: "your workspace is open. retry to open its writing." },
     actions: [{ label: "try again", onClick: runtime.retry, busy: runtime.state === "retrying" }],
@@ -346,6 +355,7 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
 
   activePaneId.current = state.active_primary_pane_id;
   useWorkspaceCondition(ENTRY_NOTICE, failure === null ? null : {
+    needsAttention: true,
     priority: "Status",
     content: {
       tone: "Warning",

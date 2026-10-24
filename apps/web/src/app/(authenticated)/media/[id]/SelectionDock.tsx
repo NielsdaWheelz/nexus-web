@@ -212,7 +212,7 @@ function MobileSelectionActions({ verbs, reader, store, canQuote }: {
       { kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />,
         onSelect: () => {
           if (!verbs.selectionCurrent(captured)) return;
-          void copyText(captured.capture.quote).catch(() => feedback.offer({ key: "reader-copy-passage", announcement: "Polite",
+          void copyText(captured.capture.quote).catch(() => feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "reader-copy-passage", announcement: "Polite",
             content: { tone: "Danger", title: "passage couldn’t be copied" } }));
         } },
       { kind: "custom", id: "HighlightColours", label: "highlight colour", render: ({ closeMenu }) => (
@@ -366,7 +366,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
             disabledReason={highlightReason} onSelect={verbs.highlight} />
           <SelectionAction blockedReason={blocked ? blockedReason : null} action={{ kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => {
-            void copyText(draft.passage.quote).catch(() => feedback.offer({ key: "reader-copy-passage", announcement: "Polite", content: { tone: "Danger", title: "passage couldn’t be copied" } }));
+            void copyText(draft.passage.quote).catch(() => feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "reader-copy-passage", announcement: "Polite", content: { tone: "Danger", title: "passage couldn’t be copied" } }));
           } }} />
           <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
             icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />

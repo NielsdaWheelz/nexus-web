@@ -54,6 +54,7 @@ interface AdmissionEntry {
   readonly intent: AdmissionIntent;
   kind: "sending" | "unconfirmed";
   error: ApiError | null;
+  needsAttention: boolean;
 }
 interface LiveEntry extends AdmissionEntry {
   readonly body: string;
@@ -139,6 +140,7 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
     } catch (error) {
       if (!current(entry, scope)) return { kind: "OwnerGone" };
       entry.kind = "unconfirmed";
+      entry.needsAttention = true;
       entry.error = isApiError(error) ? error : null;
       publish();
       if (isUnauthenticatedApiError(error)) {
@@ -190,7 +192,7 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
         ? { ...original, request: { expected_attempt_id: original.request.expected_attempt_id } }
         : { ...original, request: { expected_job_id: original.request.expected_job_id } };
       const entry: LiveEntry = {
-        key, intent, body: JSON.stringify(intent.request), kind: "sending", error: null,
+        key, intent, body: JSON.stringify(intent.request), kind: "sending", error: null, needsAttention: false,
         unregister: guard.register({
           id: key,
           scope: { kind: "account" },
@@ -259,6 +261,7 @@ function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
   const subject = entry.intent.kind === "SourceRefresh" ? "source refresh" : "metadata request";
   const title = entry.kind === "sending" ? `sending ${subject}` : `${subject}: request unconfirmed`;
   useWorkspaceCondition(`media-admission:${entry.key}`, {
+    needsAttention: entry.needsAttention,
     priority: "Write",
     content: isStaleBuild(entry.error) ? STALE_BUILD_FEEDBACK : {
       tone: entry.kind === "sending" ? "Neutral" : "Warning",

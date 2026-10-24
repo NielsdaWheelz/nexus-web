@@ -110,7 +110,7 @@ export function useConnectionAttachments(selfRef: string) {
     const accepted: Task["files"][number][] = [];
     for (const file of files) {
       const invalid = getFileUploadError(file);
-      if (invalid) feedback.offer({ key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
+      if (invalid) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
       else accepted.push({ file, upload: createUploadAttempt(), linkId: crypto.randomUUID() });
     }
     if (!accepted.length) return;

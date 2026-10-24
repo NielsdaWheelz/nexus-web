@@ -13,6 +13,7 @@ import {
 import {
   useFeedback,
   type FeedbackContextValue,
+  type FeedbackOffer,
   useWorkspaceCondition,
 } from "@/components/feedback/Feedback";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
@@ -25,6 +26,7 @@ import Dialog from "@/components/ui/Dialog";
 import { useMediaContinuationOwner } from "@/lib/actions/mediaContinuation";
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import {
+  ResourceActionFailure,
   type ActionCommand,
 } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
@@ -115,6 +117,7 @@ export interface ActionContext {
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
+  readonly consumptionUndoItems: ReturnType<typeof useConsumptionCommands>["undoItems"];
   readonly podcastSettings: ReturnType<typeof usePodcastSettingsOwner>["commands"];
   readonly podcasts: ReturnType<typeof usePodcastCommands>["commands"];
   readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
@@ -242,6 +245,11 @@ export default function ResourceActionsProvider({
   const admissions = useMediaAdmissions();
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
+  const [attempts] = useState(() => new Map<string, { failure: FeedbackOffer | null }>());
+  useLayoutEffect(() => () => {
+    for (const attempt of attempts.values()) attempt.failure?.withdraw();
+    attempts.clear();
+  }, [attempts]);
   const [confirmation, setConfirmation] = useState<ActionCommand | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
@@ -254,7 +262,7 @@ export default function ResourceActionsProvider({
     read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
   }), [workGuard, destinationCreation]);
   useWorkspaceCondition("podcast-library-creation", !podcastLibraryCreation.status && podcastLibraryCreation.error === null ? null : {
-    priority: "Write", announcement: "Polite",
+    priority: "Write", announcement: "Polite", needsAttention: podcastLibraryCreation.error !== null,
     content: podcastLibraryCreation.error?.content ?? { tone: "Neutral", title: podcastLibraryCreation.status ?? "creating library…" },
     actions: podcastLibraryCreation.error?.retry ? [{ label: "retry library creation", onClick: podcastLibraryCreation.error.retry,
       busy: podcastLibraryCreation.error.busy, commandKey: podcastLibraryCreation.error.commandKey }] : undefined,
@@ -311,6 +319,7 @@ export default function ResourceActionsProvider({
       openShare,
       openLibraryPlacement,
       consumption: consumption.commands,
+      consumptionUndoItems: consumption.undoItems,
       admissions,
       podcastEpisodes: podcastEpisodes.commands,
       podcasts: podcasts.commands,
@@ -335,6 +344,7 @@ export default function ResourceActionsProvider({
       openShare,
       openLibraryPlacement,
       consumption.commands,
+      consumption.undoItems,
       admissions,
       podcastEpisodes.commands,
       podcasts.commands,
@@ -350,46 +360,59 @@ export default function ResourceActionsProvider({
     (command: ActionCommand) => {
       const signal = session.controller.signal;
       if (signal.aborted) return;
+      const key = `${command.ref}|${command.id}`;
       if (installedApp && !remoteReady() && resourceActionRequiresRemote(command.id, command.tracked)) {
-        feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Neutral", title: "requires a connection" } });
+        const attempt = { failure: feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null, content: { tone: "Neutral", title: "requires a connection" } }) };
+        attempts.set(key, attempt);
         return;
       }
-      const key = `${command.ref}|${command.id}`;
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
         setConfirmation(command);
         return;
       }
       if (command.tracked) busy.set(key, true);
+      // Admission and confirmation acknowledge the old refusal before this attempt.
+      attempts.get(key)?.failure?.withdraw();
+      const attempt: { failure: FeedbackOffer | null } = { failure: null };
+      attempts.set(key, attempt);
+      const offerFailure = (notice: Parameters<FeedbackContextValue["offer"]>[0]) => {
+        if (!signal.aborted && attempts.get(key) === attempt) attempt.failure = feedback.offer(notice);
+      };
       void (async () => {
         try {
           await command.execute();
         } catch (error) {
-          if (signal.aborted) return;
+          if (signal.aborted || attempts.get(key) !== attempt) return;
+          if (error instanceof ResourceActionFailure) {
+            offerFailure({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null, content: error.content });
+            return;
+          }
           if (error instanceof QueueCommandError) {
-            feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite",
+            offerFailure({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
               content: { tone: "Warning", title: error.message } });
             return;
           }
           if (error instanceof ProgressPreparationError) {
-            feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." } });
+            offerFailure({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null, content: { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." } });
             return;
           }
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
-          feedback.offer({
+          offerFailure({
             key: `resource-action:${command.ref}:${command.id}`,
-            announcement: "Polite",
+            announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
             content: actionFailure(command.id, command.label, error),
             actions: command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined,
           });
         } finally {
           if (command.tracked) busy.set(key, false);
+          if (attempts.get(key) === attempt && attempt.failure === null) attempts.delete(key);
         }
       })();
     },
-    [busy, feedback, session],
+    [attempts, busy, feedback, session],
   );
   const runtime = useMemo(() => ({
     ctx, run, busy, defect,

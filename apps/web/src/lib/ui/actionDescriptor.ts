@@ -85,6 +85,8 @@ interface ActionBase {
   readonly icon?: ReactElement;
   readonly indicator?: { readonly kind: "Status" };
   readonly disabled?: boolean;
+  readonly busy?: boolean;
+  readonly hasPopup?: "dialog";
   readonly disabledReason?: string;
   readonly tone?: "default" | "danger";
   readonly separatorBefore?: boolean;

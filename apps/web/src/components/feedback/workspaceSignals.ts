@@ -1,11 +1,14 @@
 import type {
+  FeedbackAction,
   FeedbackContent,
   FeedbackOffer,
-  OfferNotice,
+  OfferInput,
   WorkspaceCondition,
   WorkspaceNotice,
 } from "./Feedback";
-import { hasActiveModal } from "@/lib/ui/overlay";
+import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
+import { isTextEntryTarget } from "@/lib/ui/eventTarget";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 
 export interface WorkspaceSignal {
   readonly id: number;
@@ -14,66 +17,106 @@ export interface WorkspaceSignal {
   readonly kind: "Condition" | "Offer";
   readonly notice: WorkspaceNotice;
   readonly rank: number;
+  readonly undo: boolean;
+  readonly onDismiss: (() => void) | null;
 }
+export type WorkspaceTransient =
+  | { readonly kind: "Receipt"; readonly content: FeedbackContent; readonly occurrence: object }
+  | { readonly kind: "Attention"; readonly key: string; readonly token: object; readonly occurrence: object }
+  | { readonly kind: "Undo"; readonly key: string; readonly commandKey: string; readonly occurrence: object };
 interface Snapshot {
   readonly entries: readonly WorkspaceSignal[];
-  readonly receipt: { readonly id: number; readonly content: FeedbackContent } | null;
+  readonly transient: WorkspaceTransient | null;
+  readonly activity: { readonly trigger: HTMLElement } | null;
 }
-export const EMPTY_SIGNALS: Snapshot = { entries: [], receipt: null };
+export const EMPTY_SIGNALS: Snapshot = { entries: [], transient: null, activity: null };
 const PRIORITY = { Write: 0, Action: 1, Status: 2 };
+const RECEIPT_MS = 5000;
+const ACTION_MS = 8000;
 
-/** Presentation only. Owners keep their commands, validity and settlement. */
+export function transientAction(transient: WorkspaceTransient | null, entries: readonly WorkspaceSignal[]): FeedbackAction | null {
+  if (transient?.kind !== "Undo") return null;
+  const entry = entries.find((item) => item.key === transient.key);
+  return !entry?.notice.content.reload
+    ? entry?.notice.actions?.find((action) => action.commandKey === transient.commandKey) ?? null
+    : null;
+}
+
+/** account-session presentation only; command validity and discard belong to owners.
+ * a transient owns one visible-time clock; same-command promotion preserves it.
+ */
 export function createWorkspaceSignals() {
   let snapshot = EMPTY_SIGNALS;
   let nextId = 1;
   let active = true;
+  let activityNavigated = false;
   const listeners = new Set<() => void>();
-  const holds = new Set<"Pointer" | "Focus" | "Disclosure">();
-  let clock: { remaining: number; started: number | null; timer?: ReturnType<typeof setTimeout> } | null = null;
+  const holds = new Set<"Pointer" | "Focus" | "Press">();
+  let placed = false;
+  let clock: { remaining: number; started: number | null; timer: ReturnType<typeof setTimeout> | null } | null = null;
   const commit = (next: Snapshot) => {
     snapshot = next;
     for (const listener of listeners) listener();
   };
+  const blocked = () => snapshot.activity !== null || hasActiveInteractionOwner()
+    || (getBrowserViewportKind() === "mobile" && isTextEntryTarget(document.activeElement));
+  const engaged = () => holds.size > 0 || transientAction(snapshot.transient, snapshot.entries)?.busy === true;
   const stopClock = () => {
-    if (clock?.started === null || !clock) return;
-    clearTimeout(clock.timer);
-    clock.remaining -= Date.now() - clock.started;
+    if (!clock || clock.started === null) return;
+    if (clock.timer !== null) clearTimeout(clock.timer);
+    clock.remaining = Math.max(0, clock.remaining - (performance.now() - clock.started));
     clock.started = null;
+    clock.timer = null;
   };
-  const clearReceipt = () => {
+  const clearTransient = () => {
     stopClock();
     clock = null;
-    if (snapshot.receipt) commit({ ...snapshot, receipt: null });
+    placed = false;
+    holds.clear();
+    if (snapshot.transient) commit({ ...snapshot, transient: null });
   };
   const runClock = () => {
-    if (!active || !clock || clock.started !== null || holds.has("Pointer") || document.hidden) return;
-    clock.started = Date.now();
-    clock.timer = setTimeout(clearReceipt, Math.max(0, clock.remaining));
+    if (!active || !clock || clock.started !== null || !placed || engaged() || document.hidden) return;
+    clock.started = performance.now();
+    clock.timer = setTimeout(clearTransient, clock.remaining);
   };
-  const ordered = (entries: readonly WorkspaceSignal[]) => holds.size > 0
-    ? entries
-    : entries.toSorted((a, b) => a.rank - b.rank || a.id - b.id);
-  const replace = (signal: WorkspaceSignal) => {
+  const publish = (transient: WorkspaceTransient) => {
+    if (!active || document.hidden || blocked() || engaged()) return;
     stopClock();
-    clock = null;
-    const entries = snapshot.entries.some((entry) => entry.key === signal.key)
+    clock = { remaining: transient.kind === "Receipt" ? RECEIPT_MS : ACTION_MS, started: null, timer: null };
+    placed = false;
+    holds.clear();
+    commit({ ...snapshot, transient });
+  };
+  const reconcile = (entries: readonly WorkspaceSignal[]) => {
+    const transient = snapshot.transient;
+    if (!transient || transient.kind === "Receipt") return transient;
+    const current = entries.find((entry) => entry.key === transient.key);
+    if (transient.kind === "Attention")
+      return current?.token === transient.token && current.notice.needsAttention ? transient : null;
+    return transientAction(transient, entries) ? transient : null;
+  };
+  const replace = (signal: WorkspaceSignal) => {
+    const previous = snapshot.entries.find((entry) => entry.key === signal.key);
+    const wasEngaged = engaged();
+    const entries = (previous
       ? snapshot.entries.map((entry) => entry.key === signal.key ? signal : entry)
-      : [...snapshot.entries, signal];
-    commit({ entries: ordered(entries), receipt: null });
+      : [...snapshot.entries, signal]).toSorted((a, b) => a.rank - b.rank || a.id - b.id);
+    stopClock();
+    const transient = reconcile(entries);
+    if (!transient) { clock = null; placed = false; holds.clear(); }
+    commit({ ...snapshot, entries, transient });
+    runClock();
+    if (!wasEngaged && signal.notice.needsAttention && !previous?.notice.needsAttention)
+      publish({ kind: "Attention", key: signal.key, token: signal.token, occurrence: {} });
   };
   const remove = (key: string, token: object) => {
     const entries = snapshot.entries.filter((entry) => entry.key !== key || entry.token !== token);
-    if (entries.length !== snapshot.entries.length) commit({ ...snapshot, entries: ordered(entries) });
-  };
-  const publishReceipt = (content: Pick<FeedbackContent, "tone" | "title">, entries: readonly WorkspaceSignal[]) => {
-    if (!active) return;
-    if (entries.length > 0 || hasActiveModal()) {
-      if (entries !== snapshot.entries) commit({ ...snapshot, entries: ordered(entries) });
-      return;
-    }
+    if (entries.length === snapshot.entries.length) return;
     stopClock();
-    clock = { remaining: 5000, started: null };
-    commit({ entries: [], receipt: { id: nextId++, content } });
+    const transient = reconcile(entries);
+    if (!transient) { clock = null; placed = false; holds.clear(); }
+    commit({ ...snapshot, entries, transient });
     runClock();
   };
   return {
@@ -83,64 +126,76 @@ export function createWorkspaceSignals() {
     },
     snapshot: () => snapshot,
     receipt(content: Pick<FeedbackContent, "tone" | "title">) {
-      publishReceipt(content, snapshot.entries);
+      publish({ kind: "Receipt", content, occurrence: {} });
     },
     settleCondition({ key, content }: { key: string; content: Pick<FeedbackContent, "tone" | "title"> }) {
-      const entries = snapshot.entries.filter(entry => entry.key !== key || entry.kind !== "Condition");
-      publishReceipt(content, entries.length === snapshot.entries.length ? snapshot.entries : entries);
+      if (!active) return;
+      const current = snapshot.entries.find((entry) => entry.key === key && entry.kind === "Condition");
+      if (current) remove(key, current.token);
+      publish({ kind: "Receipt", content, occurrence: {} });
     },
-    offer(input: OfferNotice & { key: string }): FeedbackOffer {
-      const { key, ...notice } = input;
+    offer(input: OfferInput): FeedbackOffer {
+      const { key, undo, onDismiss, ...notice } = input;
       const token = {};
+      const command = undo === null ? null : notice.actions?.find((action) => action.commandKey !== undefined) ?? null;
+      if (undo !== null && command?.commandKey === undefined) throw new Error("undo offer requires an explicit command key");
       if (active) {
         const old = snapshot.entries.find((entry) => entry.key === key);
-        replace({ id: old?.id ?? nextId++, key, token, kind: "Offer", notice, rank: 3 });
+        replace({ id: old?.id ?? nextId++, key, token, kind: "Offer", notice, rank: 3, undo: undo !== null, onDismiss });
+        if (undo === "Invite" && command?.commandKey !== undefined)
+          publish({ kind: "Undo", key, commandKey: command.commandKey, occurrence: {} });
       }
       return {
         update(next) {
           const old = snapshot.entries.find((entry) => entry.key === key && entry.token === token);
-          if (active && old) replace({ ...old, notice: next });
+          if (active && old && old.notice !== next) replace({ ...old, notice: next });
         },
-        withdraw() {
-          if (active) remove(key, token);
-        },
+        withdraw() { if (active) remove(key, token); },
       };
     },
     condition(key: string, token: object, notice: WorkspaceCondition | null) {
       if (notice === null) return remove(key, token);
       const old = snapshot.entries.find((entry) => entry.key === key);
-      // Hook registrations can replay before the provider's StrictMode setup.
-      // Public callbacks still refuse publication after disposal.
-      replace({ id: old?.id ?? nextId++, key, token, kind: "Condition", notice, rank: PRIORITY[notice.priority] });
+      if (old?.kind === "Condition" && old.token === token && old.notice === notice) return;
+      // hook registrations may replay before the provider's strict-mode setup.
+      replace({ id: old?.id ?? nextId++, key, token, kind: "Condition", notice, rank: PRIORITY[notice.priority], undo: false, onDismiss: null });
     },
     withdrawCondition: remove,
     dismiss(entry: WorkspaceSignal) {
+      if (!active) return;
       const current = snapshot.entries.find((item) => item.key === entry.key && item.token === entry.token);
       if (current?.kind !== "Offer" || current.notice.actions?.some((action) => action.busy)) return;
       remove(entry.key, entry.token);
+      current.onDismiss?.();
     },
-    hold(kind: "Pointer" | "Focus" | "Disclosure", held: boolean) {
-      if (held) holds.add(kind);
-      else holds.delete(kind);
-      if (kind === "Pointer") {
-        if (held) stopClock();
-        else runClock();
-      }
-      if (holds.size === 0) {
-        const entries = ordered(snapshot.entries);
-        if (entries.some((entry, index) => snapshot.entries[index] !== entry)) commit({ ...snapshot, entries });
-      }
+    closeTransient(occurrence: object) {
+      if (snapshot.transient?.occurrence === occurrence) clearTransient();
     },
-    modalOpened() {
-      clearReceipt();
-      holds.clear();
-      const entries = ordered(snapshot.entries);
-      if (entries.some((entry, index) => snapshot.entries[index] !== entry)) commit({ ...snapshot, entries });
+    placement(occurrence: object, visible: boolean) {
+      if (snapshot.transient?.occurrence !== occurrence) return;
+      placed = visible;
+      if (visible) runClock(); else stopClock();
     },
-    visibilityChanged() {
-      if (document.hidden) stopClock();
-      else runClock();
+    hold(occurrence: object, kind: "Pointer" | "Focus" | "Press", held: boolean) {
+      if (snapshot.transient?.occurrence !== occurrence) return;
+      if (held) holds.add(kind); else holds.delete(kind);
+      if (held) stopClock(); else runClock();
     },
+    environmentChanged() { if (blocked()) clearTransient(); },
+    visibilityChanged() { if (document.hidden) stopClock(); else runClock(); },
+    openActivity(trigger: HTMLElement) {
+      if (!active || snapshot.activity) return;
+      clearTransient();
+      activityNavigated = false;
+      commit({ ...snapshot, activity: { trigger } });
+    },
+    closeActivity() { if (snapshot.activity) commit({ ...snapshot, activity: null }); },
+    navigationCommitted() {
+      if (!snapshot.activity) return;
+      activityNavigated = true;
+      commit({ ...snapshot, activity: null });
+    },
+    activityNavigated: () => activityNavigated,
     resume() { active = true; runClock(); },
     dispose() { active = false; stopClock(); },
   };

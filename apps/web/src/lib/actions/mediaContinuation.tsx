@@ -37,6 +37,7 @@ export interface MediaContinuation {
   readonly guard: AcquisitionGuard | null;
   readonly finalMediaId: string | null;
   readonly failure: { readonly content: FeedbackContent; readonly unknown: boolean; readonly review: boolean } | null;
+  readonly needsAttention: boolean;
   readonly retryRevision: number;
   readonly resultLabel: string | null;
 }
@@ -70,7 +71,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     const unavailable = isApiError(error) && ["E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
     const review = isApiError(error) && ["E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
     update(id, value => ({ ...value,
-      phase: unavailable ? "unavailable" : value.phase,
+      phase: unavailable ? "unavailable" : value.phase, needsAttention: true,
       failure: {
         unknown: isAbortError(error) || outcomeUnknown(error), review,
         content: { tone: "Warning", title: unavailable && saved ? "saved item is no longer available"
@@ -94,7 +95,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     try {
       let confirmed: boolean;
       if (!await mediaAcquisitionAvailable(mediaId, signal)) {
-        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
+        update(id, value => ({ ...value, phase: "unavailable", needsAttention: true, failure: { unknown: false, review: true, content: {
           tone: "Warning", title: "this item was saved, then removed", message: "review the source before saving again.",
         } } }));
         return;
@@ -112,13 +113,13 @@ export function useMediaContinuationOwner(ctx: Context) {
       }
       if (signal.aborted) return;
       if (!confirmed) {
-        update(id, value => ({ ...value, failure: { unknown: false, review: operation.destination.kind === "Library", content: {
+        update(id, value => ({ ...value, needsAttention: true, failure: { unknown: false, review: operation.destination.kind === "Library", content: {
           tone: "Warning", title: operation.destination.kind === "Library" ? "library filing changed" : "lectern change not confirmed",
           message: operation.destination.kind === "Library" ? "review the current libraries before choosing again." : "check the current lectern change before trying again.",
         } } }));
         return;
       }
-      update(id, value => ({ ...value, phase: "complete", failure: null }));
+      update(id, value => ({ ...value, phase: "complete", needsAttention: false, failure: null }));
       if (operation.pickerKey !== null)
         placement.retargetLibraryPlacement(operation.pickerKey, { kind: "Media", id: mediaId });
     } catch (error) { fail(id, error); }
@@ -147,7 +148,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       // Record the exact acceptance before beginning any remaining membership.
       update(id, value => ({ ...value, accepted, phase: "resolving", failure: null }));
       if (!accepted.available) {
-        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
+        update(id, value => ({ ...value, phase: "unavailable", needsAttention: true, failure: { unknown: false, review: true, content: {
           tone: "Warning", title: "this item was saved, then removed", message: "review the source before saving again.",
         } } }));
         return;
@@ -160,7 +161,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     if (held || latest.current.placement.hasPendingExternalCreation(subject.target) || !latest.current.ctx.isActive()) return;
     const operation: MediaContinuation = { intentId: crypto.randomUUID(), subject, destination, pickerKey,
       phase: "acquiring", accepted: null, preview: null, guard: null,
-      finalMediaId: null, failure: null, retryRevision: 0, resultLabel: null };
+      finalMediaId: null, failure: null, needsAttention: false, retryRevision: 0, resultLabel: null };
     current.current = [...current.current.filter(item => item.subject.target !== subject.target), operation];
     setOperations(current.current);
     for (const listener of listeners.current) listener();
@@ -267,6 +268,7 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
   const href = operation.finalMediaId === null ? null : `/media/${operation.finalMediaId}`;
   const failure = operation.failure;
   useWorkspaceCondition(`media-continuation:${operation.intentId}`, {
+    needsAttention: operation.needsAttention,
     priority: completed ? "Status" : "Write", announcement: "Polite",
     content: failure?.content ?? { tone: completed ? "Success" : "Neutral",
       title: completed ? `added to ${destinationLabel(operation.destination)}: ${resultLabel}`

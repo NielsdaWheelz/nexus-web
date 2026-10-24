@@ -29,13 +29,15 @@ export function DeviceSessionNotice() {
     : null;
   const [result, setResult] = useState<SignInResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const signIn = () => {
     if (busy) return;
     setBusy(true);
+    setReconnecting(true);
     setResult(null);
     void sessionSignIn().then(setResult, () => setResult("Failed")).finally(() => setBusy(false));
   };
-  useEffect(() => { if (admission === "Ready") setResult(null); }, [admission]);
+  useEffect(() => { if (admission === "Ready") { setResult(null); setReconnecting(false); } }, [admission]);
   const wrong = result === "DifferentAccount";
   const sessionContent = wrong ? { tone: "Warning" as const, title: "use the account already open here", message: "sign out first to switch accounts." }
     : admission === "Checking" ? { tone: "Neutral" as const, title: "connecting…" }
@@ -47,11 +49,12 @@ export function DeviceSessionNotice() {
     ? { ...sessionContent, message: ["message" in sessionContent ? sessionContent.message : null, saved].filter(Boolean).join(" ") }
     : catalogContent ?? sessionContent;
   useWorkspaceCondition("device-session", content ? {
+    needsAttention: needsRecovery || catalogFailure || admission === "Unavailable" || result === "Failed" || reconnecting,
     priority: wrong || admission === "SignInRequired" || admission === "UpdateRequired" ? "Action" : "Status",
     content, announcement: "Polite",
     actions: wrong ? [{ label: "retry", busy, onClick: signIn }, { label: "cancel", onClick: () => setResult(null) }]
       : admission === "SignInRequired" ? [{ label: "sign in", busy, onClick: signIn }]
-      : admission === "Unavailable" || result === "Failed" ? [{ label: "try again", onClick: () => { setResult(null); void sessionCheck().catch(() => setResult("Failed")); } }]
+      : admission === "Unavailable" || result === "Failed" ? [{ label: "try again", onClick: () => { setReconnecting(true); setResult(null); void sessionCheck().catch(() => setResult("Failed")); } }]
       : catalogFailure && admission === "Ready" ? [{ label: "retry", onClick: () => void catalog.refresh(), busy: catalog.accepting || catalog.status?.refreshing }] : undefined,
   } : null);
   return null;

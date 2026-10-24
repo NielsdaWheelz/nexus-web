@@ -133,7 +133,7 @@ function rowState(writing: WritingSnapshot, draft: DraftSnapshot, online: boolea
 /** A decision the journal refused leaves everything as it was. */
 function refused(feedback: ReturnType<typeof useFeedback>, key: string, error: unknown): void {
   if (!(error instanceof WritingDecisionError)) throw error;
-  feedback.offer({ key, announcement: "Polite", content: { tone: "Warning", title: "couldn’t apply this choice.", message: error.message } });
+  feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key, announcement: "Polite", content: { tone: "Warning", title: "couldn’t apply this choice.", message: error.message } });
 }
 
 function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSnapshot }) {
@@ -157,7 +157,7 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
   const href = draftHref(draft);
   const rows = rowsOf(writing, draft);
   const parked = rows.find(row => row.uncertain && row.blocked !== null);
-  const elsewhere = () => feedback.offer({
+  const elsewhere = () => feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
     key: `recovery-owner:${draft.draft_id}`,
     announcement: "Polite",
     content: { tone: "Neutral", title: "this draft is open in another tab.", message: "review it there, or close that tab first." },

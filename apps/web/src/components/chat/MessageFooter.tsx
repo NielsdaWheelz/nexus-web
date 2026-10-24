@@ -44,7 +44,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
       feedback.receipt({ tone: "Success", title: "message copied" });
     } catch (error) {
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
-      feedback.offer({ key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
     }
   };
   const regenerate = (event: TargetActivationEvent) => {

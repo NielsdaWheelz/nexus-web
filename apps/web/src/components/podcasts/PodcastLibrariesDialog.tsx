@@ -82,8 +82,7 @@ export default function PodcastLibrariesDialog({ target, title, returnFocusTo, r
               onCreate: name => ctx.podcastLibraryCreation.admit({ name, scope, onCreated: destination => {
                 if (!ctx.isActive()) return;
                 if (session.current.active && session.current.choosing) { choose(destination.id, destination.name, false, true); return; }
-                ctx.feedback.offer({ key: `podcast-library-created:${destination.id}`, announcement: "Polite",
-                  content: { tone: "Success", title: "library created; subscription not started", message: destination.name } });
+                ctx.feedback.receipt({ tone: "Success", title: `library created · ${destination.name}; subscription not started` });
               } }) }} />}
         <div className={styles.actions}><Button onClick={onClose}>cancel</Button></div>
       </> : step.kind === "SubscribeReview"

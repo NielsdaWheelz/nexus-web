@@ -65,7 +65,8 @@ export type NexusTarget =
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | { readonly kind: "ManageTabs" };
+  | { readonly kind: "ManageTabs" }
+  | { readonly kind: "Activity" };
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
@@ -159,7 +160,8 @@ export type NexusPage =
       readonly submit: ReplayableSubmitState;
     }
   | { readonly kind: "Add"; readonly sessionId: string }
-  | { readonly kind: "ManageTabs" };
+  | { readonly kind: "ManageTabs" }
+  | { readonly kind: "Activity"; readonly origin: NexusRootOrigin };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

@@ -121,6 +121,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       case "ResumeCurrentPlayback":
       case "OpenAdd":
       case "ManageTabs":
+      case "Activity":
         break;
       default: assertNever(target);
     }

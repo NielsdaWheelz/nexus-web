@@ -21,6 +21,7 @@ export function DeviceSettingsProvider({ children }: { children: ReactNode }) {
     finally { setBusy(false); }
   }, []);
   useWorkspaceCondition("device-settings-save", failed ? {
+    needsAttention: true,
     priority: "Write", announcement: "Polite",
     content: { tone: "Warning", title: "settings weren’t saved on this device", message: "reopening offline may use earlier settings." },
     actions: [{ label: "retry", busy, onClick: () => void refresh() }],

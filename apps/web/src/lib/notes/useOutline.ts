@@ -454,7 +454,7 @@ export function useOutline(input: {
         });
         if (added) { setDailyConflict(null); read.refetch(); }
       }).catch((error: unknown) => {
-        if (!handleUnauthenticatedApiError(error)) feedback.offer({ key: "daily-retry", announcement: "Polite", content: { tone: "Warning", title: "this day couldn’t refresh", requestId: isApiError(error) ? error.requestId : undefined } });
+        if (!handleUnauthenticatedApiError(error)) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "daily-retry", announcement: "Polite", content: { tone: "Warning", title: "this day couldn’t refresh", requestId: isApiError(error) ? error.requestId : undefined } });
       });
     },
     canInsert: (at: InsertAt) => insertionDestination(at) !== null,

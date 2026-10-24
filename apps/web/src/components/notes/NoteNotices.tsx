@@ -118,7 +118,7 @@ export function downloadWriting(feedback: FeedbackContextValue, accountId: strin
   if (token.account_id !== accountId) throw new Error("writing runtime belongs to another account");
   saveWritingFile(token).catch((error: unknown) => {
     reportError(error);
-    feedback.offer({ key: "writing-download", announcement: "Polite", content: { tone: "Warning", title: "the file couldn’t be saved.", message: "nothing was removed." } });
+    feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "writing-download", announcement: "Polite", content: { tone: "Warning", title: "the file couldn’t be saved.", message: "nothing was removed." } });
   });
 }
 
@@ -126,7 +126,7 @@ export function downloadWriting(feedback: FeedbackContextValue, accountId: strin
 export function copyWriting(feedback: FeedbackContextValue, text: string): void {
   void copyText(text).catch((error: unknown) => {
     if (!(error instanceof ClipboardWriteUnavailableError)) throw error;
-    feedback.offer({ key: "writing-copy", announcement: "Polite", content: { tone: "Warning", title: "copy unavailable", message: "select the text and copy it before leaving." } });
+    feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "writing-copy", announcement: "Polite", content: { tone: "Warning", title: "copy unavailable", message: "select the text and copy it before leaving." } });
   });
 }
 
@@ -276,7 +276,7 @@ export function DraftDecision({ draft, outlived = false, resolve, retire }: {
       (error: unknown) => {
         setBusy(null);
         if (!(error instanceof WritingDecisionError)) reportError(error);
-        feedback.offer({
+        feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
           key: `draft-decision:${draft.draft_id}`,
           announcement: "Polite",
           content: { tone: "Warning", title: "couldn’t apply this choice.", message: error instanceof WritingDecisionError ? error.message : "your draft is unchanged." },
@@ -296,18 +296,10 @@ export function DraftDecision({ draft, outlived = false, resolve, retire }: {
         await retire(shown);
       } catch (error) {
         if (!(error instanceof WritingDecisionError)) reportError(error);
-        feedback.offer({
-          key: `draft-copy:${draft.draft_id}`,
-          announcement: "Polite",
-          content: { tone: "Success", title: "saved as a new note.", message: "the original draft still needs a decision." },
-        });
+        feedback.receipt({ tone: "Success", title: "saved as a new note; the original draft still needs a decision" });
         return;
       }
-      feedback.offer({
-        key: `draft-copy:${draft.draft_id}`,
-        announcement: "Polite",
-        content: { tone: "Success", title: "saved as a new note." },
-      });
+      feedback.receipt({ tone: "Success", title: "saved as a new note" });
     }))
     : null;
   // Outside the authenticated shell no reviewed account names the file.

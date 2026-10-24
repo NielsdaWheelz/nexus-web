@@ -109,7 +109,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
     const failed = (error: unknown) => {
       if (!mounted.current || latest.current.noteId !== noteId || handleUnauthenticatedApiError(error)) return;
       const title = "annotation wasn’t removed";
-      feedback.offer({ key: "annotation-note", announcement: "Polite", content: isApiError(error) && apiTransportFeedback(error, title) || {
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "annotation-note", announcement: "Polite", content: isApiError(error) && apiTransportFeedback(error, title) || {
         tone: "Danger", title, message: "your writing is kept. review the attachment before trying again.",
       } });
     };

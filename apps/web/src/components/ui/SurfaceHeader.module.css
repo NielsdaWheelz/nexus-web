@@ -201,6 +201,13 @@
   --control-min-size: 48px;
 }
 
+.workspaceAction {
+  display: flex;
+  flex: 0 0 48px;
+  inline-size: 48px;
+  justify-content: center;
+}
+
 .mobile .statusMarker {
   inset-block-start: calc(var(--space-3) - var(--stroke-hairline));
   inset-inline-end: calc(var(--space-3) - var(--stroke-hairline));

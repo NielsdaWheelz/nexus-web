@@ -1150,7 +1150,7 @@ export function useOutlineSession({
     };
   }, [history]);
   function reportRefusal(error: unknown) {
-    feedback.offer({
+    feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
       key: `notes-outline-refused:${owner}`,
       announcement: "Assertive",
       content: {
@@ -1187,7 +1187,7 @@ export function useOutlineSession({
     const occurrences = options.occurrences ?? [];
     const refs = editReferences(edits);
     if ([...refs].some(isDeletedResource)) {
-      feedback.offer({
+      feedback.offer({ needsAttention: false, undo: null, onDismiss: null,
         key: "outline-write",
         announcement: "Polite",
         content: {

@@ -578,7 +578,7 @@ export default function ActionMenu({
         invalidate();
         return;
       }
-      if (action.disabled) { if (!("key" in event) || ["Enter", " "].includes(event.key)) event.preventDefault(); return; }
+      if (action.disabled || action.busy) { if (!("key" in event) || ["Enter", " "].includes(event.key)) event.preventDefault(); return; }
       if (action.kind === "link") {
         const result = action.onActivate?.(event) ?? "unhandled";
         if (result === "consumed" || (result === "unhandled" && "key" in event)) return;
@@ -598,6 +598,8 @@ export default function ActionMenu({
       "data-selected": control.menuChecked === true || undefined,
       "aria-label": sheet ? option.label : control.menuLabel,
       "aria-disabled": option.disabled || undefined,
+      "aria-busy": option.busy || undefined,
+      "aria-haspopup": option.hasPopup,
       "aria-describedby": reason,
       onKeyDown: activate, onClick: activate,
     };

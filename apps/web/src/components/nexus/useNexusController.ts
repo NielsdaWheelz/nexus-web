@@ -256,7 +256,7 @@ export function useNexusController() {
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
     if (current.kind === "Add") return addSession.workOwnerIds;
-    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManageTabs") return [];
+    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManageTabs" || current.kind === "Activity") return [];
     if (current.kind === "ChooseCreate" && target !== null) {
       const transferred = target.kind === "CreatePage" ? target.titleDraft
         : target.kind === "CreateLibrary" ? target.nameDraft
@@ -353,6 +353,10 @@ export function useNexusController() {
         setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin(row), activation });
         setOpen(true);
         return null;
+      case "Activity":
+        setPage({ kind: "Activity", origin: rootOrigin(row) });
+        setOpen(true);
+        return null;
       case "ManageTabs":
         setPage({ kind: "ManageTabs" });
         setOpen(true);
@@ -428,9 +432,9 @@ export function useNexusController() {
       if (failure === null) return;
       const offer = ctx.feedback.offer({
         key: `open-source:${target.sourceAttemptId}`, content: savedSourceReadFailure(failure), announcement: "Polite",
+        needsAttention: true, undo: null, onDismiss: null,
         actions: [{ label: "retry", onClick: intent => {
-          offer.withdraw();
-          if (!signal.aborted) latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation });
+          if (!signal.aborted && latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation })) offer.withdraw();
         } }],
       });
     }).catch(error => ctx.reportDefect({ error })).finally(() => setOpeningSources(current => {
@@ -577,7 +581,7 @@ export function useNexusController() {
       rootFocus.current = "Choice:library";
       return setPage(page.returnTo);
     }
-    const origin = page.kind === "ChooseCreate" || page.kind === "ChooseBrowse" ? page.origin
+    const origin = page.kind === "ChooseCreate" || page.kind === "ChooseBrowse" || page.kind === "Activity" ? page.origin
       : page.kind === "CreateLibrary" && page.returnTo.kind === "Root" ? page.returnTo.origin
         : page.kind === "ManageTabs" ? { mode: "Overview", control: "AllTabs" } as const : null;
     if (origin) {
@@ -675,7 +679,7 @@ export function useNexusController() {
     busy: find.busy,
     pending: find.pending,
     announcement,
-    dialogLabel: page.kind === "Add" ? "Add content" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
+    dialogLabel: page.kind === "Activity" ? "activity" : page.kind === "Add" ? "Add content" : viewport.isMobile ? page.kind === "Root" ? rootMode === "Overview" ? "workspace" : "search" : "workspace task" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${rootMode}:${focusRevision}`,
     addSession,
     openingSources,
@@ -778,6 +782,7 @@ export function useNexusController() {
       setAddDefect({ sessionId: addSession.state.sessionId, error });
     },
     clearAddDefect: () => setAddDefect(null),
+    completeActivityNavigation: () => finishNavigation(null),
     manageTabs: () => { if (guardExit({ kind: "Root" }) === "accepted") setPage({ kind: "ManageTabs" }); },
     openPane(paneId: string, intent: OpenIntent) {
       run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });

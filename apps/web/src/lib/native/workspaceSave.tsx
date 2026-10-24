@@ -12,6 +12,7 @@ export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: 
   const initial = local?.initial;
   const revision = local?.revision;
   useWorkspaceCondition("device-workspace-save", failure ? {
+    needsAttention: true,
     priority: "Write", announcement: "Polite",
     content: { tone: "Warning", title: "workspace changes weren’t saved on this device", message: "keep the app open and retry. reopening may restore an earlier workspace." },
     actions: [{ label: "retry", onClick: failure.retry, busy: failure.busy }],

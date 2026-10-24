@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { ACTION_CATALOG } from "./catalog";
 import type { ActionButtonSpec, PodcastActionFocus, PodcastActionSubject } from "./inlineActions";
 import { useActionRuntime, type ActionContext } from "./ResourceActionsProvider";
-import { projectPodcastLibrariesAction, projectPodcastSubscriptionAction, type ActionCommand } from "./project";
+import { projectConsumptionUndoActions, projectPodcastLibrariesAction, projectPodcastSubscriptionAction, type ActionCommand } from "./project";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PodcastTarget } from "@/lib/podcasts/api";
 
@@ -69,5 +69,6 @@ export function usePodcastMenuActions(subject: PodcastActionSubject, focus: Podc
   });
   const facts = subject.facts;
   if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "retry checking subscription", disabled: facts.retrying, onSelect: facts.retry });
+  if (facts.kind === "Ready" && facts.resolution.kind === "Canonical") actions.push(...projectConsumptionUndoActions({ kind: "Podcast", podcast_id: facts.resolution.podcast_id }, ctx));
   return actions;
 }

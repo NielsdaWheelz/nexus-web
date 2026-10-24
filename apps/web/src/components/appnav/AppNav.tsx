@@ -4,6 +4,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, CircleUser, Headphones, Plus, Search } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
+import { ActivityControl } from "@/components/feedback/Activity";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Tooltip from "@/components/ui/Tooltip";
@@ -183,6 +184,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 
       <div className={styles.footer}>
         <PlayerDisclosure collapsed={collapsed} />
+        <ActivityControl className={styles.item} iconOnly={collapsed} />
         <Tooltip
           text={NAV_IMPORTS.label}
           placement="right"
