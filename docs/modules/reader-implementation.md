@@ -389,11 +389,11 @@ hide the actions; input end restarts quiet, and an observed blocker prevents
 reveal. quiet recaptures and measures the current valid passage. collapse,
 outside selection, dismissal, source replacement, inactive/hidden pane, body
 disposal, document hiding, blur and viewport-policy changes retire the candidate.
-no provisional selection enters the journal, browser storage or `ReaderState`.
+no provisional selection is submitted as a write or stored in browser storage or `ReaderState`.
 
 mobile actions explicitly open the shared composer in `MobileSheet`; a saved mark
 is another explicit entry. commands prepare one frozen capture and await its
-existing slot/journal through the existing writes. copy and opening more do not
+existing annotation slot through online writes. copy and opening more do not
 author. presentation and save/send semantics belong to
 [highlight](highlight.md#reader-presentation).
 
@@ -648,7 +648,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `AnnotationStore`: one document-map read → marks of every visible highlight (topmost first), note refs, rail markers, evidence; writes paint at once from their acknowledgement through a pending ledger that a map read issued after the write settles; a failed read keeps the last map painted; `twin` finds the viewer's own highlight of an exact extent (a library-mate's never blocks theirs) |
 | `useAnnotationVerbs.ts` | desktop admission; mobile provisional candidate, quiet timer and activation ownership; canonical mark verbs, confirmed bounds sessions and highlight pane entries scoped to this reader visit |
-| `useSelectionComposer.ts`, `selectionDrafts.ts` | one source-bound preparation path, explicit capture commands, authored visit branches, journal/retry ownership and draft reselection sessions |
+| `useSelectionComposer.ts`, `selectionDrafts.ts` | one source-bound preparation path, explicit capture commands, ephemeral input, online write/retry ownership and reselection sessions |
 | `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |

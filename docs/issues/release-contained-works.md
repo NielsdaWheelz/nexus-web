@@ -23,10 +23,10 @@ identity. the migration refuses live old jobs and converts terminal payloads to
 explicit null fields; no old payload passes through a compatibility reader.
 bibliography jobs receive null piece-definition versions, and persisted retrieval
 contexts receive null passage targets. malformed stored shapes refuse conversion.
-no pieces exist before this migration. preserve account writing journals and
-settle pending writes and authored drafts before the paired client change to
-highlight and captured-passage commands; never clear the journal to
-make the cutover pass.
+no pieces exist before this migration. settle pending writes and authored input
+before the paired client change to highlight and captured-passage commands.
+follow the [online writing cutover](release-online-first-writing.md); unfinished
+writing now belongs to account-scoped memory, without a durable recovery path.
 
 qualify automatic new-import discovery, explicit old-source discovery, source pin
 races, independent reading state, annotation survival, scoped search and live public
