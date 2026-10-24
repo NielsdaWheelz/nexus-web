@@ -580,17 +580,16 @@ export function projectResourceActions(
     });
   };
 
-  const queueDisabled = ctx.player.queue.phase === "Ready" ? undefined
+  const queueDisabled = !ctx.player.queue.known
+    ? ctx.player.queue.error === null ? "loading queue…" : "check the queue before trying again"
+    : ctx.player.queue.phase === "Ready" ? undefined
     : ctx.player.queue.phase === "Uncertain" ? "check the unconfirmed queue change first"
     : ctx.player.queue.phase === "Preparing" ? "finish preparing this queue first"
     : ctx.player.queue.phase === "Saving" ? "saving queue…" : "player unavailable";
   const append = (next: boolean) => {
     const entry = { id: crypto.randomUUID(), media_id: id };
     const header = ctx.player.queue.header;
-    if (header === null) return ctx.player.commands.replaceQueue({
-      state: { queue_id: crypto.randomUUID(), entries: [entry], current_entry_id: entry.id, source: null },
-      knownDescriptor: null, play: false, positionMs: null,
-    });
+    if (header === null) return ctx.player.commands.createQueue({ entry });
     return ctx.player.commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
       command: { kind: next ? "insert-next" : "append", entry } });
   };

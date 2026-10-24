@@ -37,8 +37,10 @@ export interface QueueRequest {
   readonly command: QueueCommand;
 }
 
-/** The native service alone owns its cursor, including while the webview is absent. */
+/** The native service alone owns its cursor, including while the webview is absent.
+ * `known` distinguishes its initial placeholder from an accepted null snapshot. */
 export interface NativeQueueOwner {
+  known(): boolean;
   uncertain(): boolean;
   read(): Promise<QueueHeader | null>;
   page(input: { readonly expected_revision: string; readonly offset: number; readonly limit: number }): Promise<QueueEntry[]>;

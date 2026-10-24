@@ -2,7 +2,8 @@
  * This device's durable browser queue. Every write replaces absolute state at an
  * exact revision. A lost answer retains the identical request and blocks later
  * edits; check resends it, including terminal consumption, without rebasing.
- * Only the account's Web Lock holder may call this owner.
+ * Knowledge begins with a successful read or acknowledged save; failed reads
+ * retain the last confirmed state. Only the account's Web Lock holder may call this owner.
  */
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, requestWithDeadline } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
@@ -18,6 +19,7 @@ export type QueueSavePhase = "Ready" | "Preparing" | "Saving" | "Uncertain" | "U
 
 export function createBrowserSession(accountId: string, changed: () => void) {
   let saved: Session | null = null;
+  let known = false;
   let pending: Put | null = null;
   let frozenBody: string | null = null;
   let pendingPrevious: QueueState | null = null;
@@ -32,6 +34,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
         request: signal => readSharedValue({ accountId, key: "playback-session", signal, revalidate: true,
           load: requestSignal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal: requestSignal, cache: "no-store" }) }) });
       saved = response.data;
+      known = true;
       previous = null;
       error = null;
       phase = "Ready";
@@ -54,6 +57,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
           method: "PUT", signal, body: frozenBody,
         }) });
       saved = response.data;
+      known = true;
       previous = pendingPrevious;
       pendingPrevious = null;
       pending = null;
@@ -87,7 +91,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
     }
   };
   return {
-    snapshot: () => ({ saved, phase, error, canRestore: previous !== null }),
+    snapshot: () => ({ saved, known, phase, error, canRestore: previous !== null }),
     read,
     async save(state: QueueState, terminal: QueueTerminal | null = null, replacement = false) {
       if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
@@ -110,7 +114,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       frozenBody = JSON.stringify(pending);
       return send();
     },
-    preparing(on: boolean) { phase = on ? "Preparing" : pending === null ? "Ready" : "Saving"; error = null; publish(); },
+    preparing(on: boolean) { phase = on ? "Preparing" : pending === null ? "Ready" : "Saving"; if (known) error = null; publish(); },
     uncertain: () => pending !== null,
   };
 }
