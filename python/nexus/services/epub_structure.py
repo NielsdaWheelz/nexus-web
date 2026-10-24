@@ -2,8 +2,8 @@
 
 Contents destinations remain distinct from section ownership. Authored roles,
 complete containers and corroborated divisions prove parents; ranks organize
-only a local source container or publisher-correlated part. Unproved parents
-or ranges stay absent.
+only a local source container, publisher-backed file root or corroborated part.
+unproved parents or ranges stay absent.
 An anchored `[n] <em>incipit` sequence remains a supported source division.
 """
 
@@ -1221,6 +1221,33 @@ def _assign_parents(
 ) -> None:
     """Use source containment and independently proved division relationships."""
     by_id = {section.location_id: section for section in sections}
+    publisher_roots: dict[int, _Section] = {}
+    for fragment_idx in {section.fragment.fragment_idx for section in sections}:
+        published = {
+            section.location_id: section
+            for section in sections
+            if section.fragment.fragment_idx == fragment_idx
+            and section.source in {"Publisher", "Both"}
+        }
+        roots = [
+            section for section in published.values() if section.publisher_parent not in published
+        ]
+        if len(roots) != 1:
+            continue
+        owner = roots[0]
+        if owner.target.offset != 0 or owner.start_cut not in {
+            DomCut((), "before"),
+            DomCut((0,), "before"),
+        }:
+            continue
+        if owner.element_index is not None:
+            element = owner.fragment.canonical.elements[owner.element_index]
+            if element.in_navigation or element.roles & {"titlepage", "doc-titlepage", "cover"}:
+                continue
+        # The publisher's sole local root starts at the actual rich edge. Its
+        # declared descendants share that source file; this proves local
+        # membership, never a container end or a cross-file reading division.
+        publisher_roots[fragment_idx] = owner
     for section in sections:
         if section.publisher_parent is None:
             continue
@@ -1257,6 +1284,12 @@ def _assign_parents(
             )
         ):
             # Declared membership and the local source hierarchy corroborate.
+            section.parent = parent.location_id
+        elif (
+            section.fragment is parent.fragment
+            and section.fragment.fragment_idx in publisher_roots
+            and parent.target < section.target
+        ):
             section.parent = parent.location_id
         elif (
             section.fragment is parent.fragment
@@ -1329,13 +1362,17 @@ def _assign_parents(
         scope = element.parent_container
         while stack and (stack[-1][1] != scope or stack[-1][2] >= section.heading_rank):
             stack.pop()
-        # An uncontained sequence needs declared part membership, not a label alone.
+        # An uncontained sequence needs publisher-backed source membership,
+        # not a heading label or rank alone.
         if (
             scope is None
             and not stack
             and not (
-                section.location_id in declared_parents
-                and _division_kind(section) in {"part", "book", "volume"}
+                (
+                    section.location_id in declared_parents
+                    and _division_kind(section) in {"part", "book", "volume"}
+                )
+                or section.fragment.fragment_idx in publisher_roots
             )
         ):
             continue
@@ -1355,6 +1392,9 @@ def _assign_parents(
             )
         ):
             section.parent = stack[-1][0].location_id
+        owner = publisher_roots.get(section.fragment.fragment_idx)
+        if section.parent is None and owner is not None and owner.target < section.target:
+            section.parent = owner.location_id
         stack.append((section, scope, section.heading_rank))
 
 

@@ -33,6 +33,7 @@ from defusedxml.common import DefusedXmlException, DTDForbidden
 from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
 from lxml.html import Element, HtmlElement
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from nexus import web_paths
@@ -101,7 +102,6 @@ from nexus.services.parser_temp import (
     utf8_byte_length,
 )
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
-from nexus.services.reader_structure import DocumentPoint, DomCut, SectionProof
 from nexus.services.sanitize_html import (
     element_id,
     local_name,
@@ -295,19 +295,26 @@ class RetainedEpubFragment:
     canonical_text: str
 
 
-def derive_epub_section_witnesses(
+@dataclass(frozen=True)
+class EpubNavigationPlan:
+    """a complete projection over the same verified retained body, without body writes."""
+
+    sections: tuple[EpubStructureSection, ...]
+    toc_nodes: tuple[EpubStructureTocNode, ...]
+
+
+def derive_epub_navigation(
     *,
     epub_path: Path,
     media_id: UUID,
     fragments: Sequence[RetainedEpubFragment],
-    sections: Sequence[SectionProof],
     note_regions: Sequence[NoteRegion],
-) -> dict[str, tuple[DomCut | None, DomCut | None]]:
-    """Reprove retained sections from verified package bytes, without reimporting.
+) -> EpubNavigationPlan:
+    """rebuild navigation from verified package bytes and unchanged retained text.
 
-    The caller verifies stored size/hash before opening this path. Existing
-    archive/parser limits apply. Only exact identity, ancestry and coordinate
-    matches receive witnesses; detector differences remain unavailable.
+    source/hash verification and parser limits are the same as source publication.
+    authored source facts must bind to exact retained coordinates. navigation may
+    change; canonical bodies, publication generations and accepted cuts do not.
     """
     started = time.monotonic()
     with zipfile.ZipFile(epub_path) as zf:
@@ -352,25 +359,52 @@ def derive_epub_section_witnesses(
         detected = build_epub_structure(
             media_id=media_id, fragments=retained, toc_nodes=toc, note_regions=note_regions
         )
-    existing = {section.section_id: section for section in sections}
-    detected_by_id = {section.location_id: section for section in detected.sections}
-    result: dict[str, tuple[DomCut | None, DomCut | None]] = {}
-    for section in detected.sections:
-        current: EpubStructureSection | None = section
-        while current is not None:
-            previous = existing.get(current.location_id)
-            if previous is None or (
-                previous.parent_section_id != current.parent_section_id
-                or previous.start != DocumentPoint(current.fragment_idx, current.start_offset)
-                or previous.end != current.end
-            ):
-                break
-            current = (
-                detected_by_id[current.parent_section_id] if current.parent_section_id else None
+    return EpubNavigationPlan(
+        tuple(detected.sections), tuple(toc + detected.supplemental_toc_nodes)
+    )
+
+
+def _insert_epub_navigation(
+    db: Session, *, media_id: UUID, plan: EpubNavigationPlan, created_at: datetime
+) -> None:
+    for node in plan.toc_nodes:
+        db.add(EpubTocNode(media_id=media_id, created_at=created_at, **vars(node)))
+    for ordinal, nav in enumerate(plan.sections):
+        db.add(
+            EpubNavLocation(
+                media_id=media_id,
+                location_id=nav.location_id,
+                ordinal=ordinal,
+                label=nav.label,
+                fragment_idx=nav.fragment_idx,
+                href_path=nav.href_path,
+                href_fragment=nav.href_fragment,
+                start_offset=nav.start_offset,
+                parent_section_id=nav.parent_section_id,
+                end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
+                end_offset=nav.end.offset if nav.end is not None else None,
+                source=nav.source,
+                start_dom_path=list(nav.start_cut.path) if nav.start_cut is not None else None,
+                start_dom_edge=nav.start_cut.edge if nav.start_cut is not None else None,
+                end_dom_path=list(nav.end_cut.path) if nav.end_cut is not None else None,
+                end_dom_edge=nav.end_cut.edge if nav.end_cut is not None else None,
+                created_at=created_at,
             )
-        else:
-            result[section.location_id] = section.start_cut, section.end_cut
-    return result
+        )
+    db.flush()
+
+
+def replace_epub_navigation_projection(
+    db: Session, *, media_id: UUID, plan: EpubNavigationPlan
+) -> None:
+    """replace only navigation under the caller's family/publication and exact claim fence.
+
+    retries rederive the same projection; accepted definitions and canonical bodies
+    are independent records. callers invalidate preparation/partition targets atomically.
+    """
+    db.execute(delete(EpubTocNode).where(EpubTocNode.media_id == media_id))
+    db.execute(delete(EpubNavLocation).where(EpubNavLocation.media_id == media_id))
+    _insert_epub_navigation(db, media_id=media_id, plan=plan, created_at=datetime.now(UTC))
 
 
 def prepare_epub_source(
@@ -710,8 +744,6 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
                 created_at=plan.created_at,
             )
         )
-    for node in plan.toc_nodes:  # the structure's toc node is the row's column set
-        db.add(EpubTocNode(media_id=media.id, created_at=plan.created_at, **vars(node)))
     for asset in plan.assets:
         db.add(
             EpubResource(
@@ -725,29 +757,12 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
             )
         )
     db.flush()
-    for ordinal, nav in enumerate(plan.sections):
-        db.add(
-            EpubNavLocation(
-                media_id=media.id,
-                location_id=nav.location_id,
-                ordinal=ordinal,
-                label=nav.label,
-                fragment_idx=nav.fragment_idx,
-                href_path=nav.href_path,
-                href_fragment=nav.href_fragment,
-                start_offset=nav.start_offset,
-                parent_section_id=nav.parent_section_id,
-                end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
-                end_offset=nav.end.offset if nav.end is not None else None,
-                source=nav.source,
-                start_dom_path=list(nav.start_cut.path) if nav.start_cut is not None else None,
-                start_dom_edge=nav.start_cut.edge if nav.start_cut is not None else None,
-                end_dom_path=list(nav.end_cut.path) if nav.end_cut is not None else None,
-                end_dom_edge=nav.end_cut.edge if nav.end_cut is not None else None,
-                created_at=plan.created_at,
-            )
-        )
-    db.flush()
+    _insert_epub_navigation(
+        db,
+        media_id=media.id,
+        plan=EpubNavigationPlan(plan.sections, plan.toc_nodes),
+        created_at=plan.created_at,
+    )
     replace_media_apparatus(
         db,
         media_id=media.id,

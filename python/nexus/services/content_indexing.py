@@ -24,9 +24,10 @@ contract version) for the partition its published index used, and
 ``section_witness_key`` (generation, section geometry, detector version) once
 structural preparation completed for that geometry, proved or not, independent of
 embedding status. A job's payload freezes both target keys. A job lacking current
-preparation derives EPUB witnesses from the verified stored package outside any
-transaction and commits them before embedding, so a provider outage blocks neither
-creation nor discovery; html proves its cuts from retained dom at read time. Every
+preparation rederives EPUB navigation from the verified stored package outside any
+transaction and commits it before embedding. changed geometry supersedes the old
+index revision through normal admission, preserving canonical text, generation and
+accepted piece cuts. a provider outage blocks neither creation nor discovery; html proves its cuts from retained dom at read time. Every
 transaction that changes accepted bounds calls ``reconcile_media_section_bounds``,
 which raises the revision unless the partition is already published or requested, and
 publication asserts its captured partition under the revision fence: a ``ready`` index
@@ -67,7 +68,7 @@ from nexus.schemas.import_history import (
 from nexus.schemas.media_parts import PartPrepare
 from nexus.schemas.media_sources import SearchRepairAdmission
 from nexus.schemas.reader_apparatus import NoteRegion
-from nexus.services import media_intelligence_lifecycle
+from nexus.services import library_entries, media_intelligence_lifecycle
 from nexus.services.content_chunking import (
     CHUNKER_CONTRACT_VERSION,
     Chunk,
@@ -82,7 +83,12 @@ from nexus.services.embeddings import (
     embedding_model,
     pgvector_literal,
 )
-from nexus.services.epub_ingest import RetainedEpubFragment, derive_epub_section_witnesses
+from nexus.services.epub_ingest import (
+    EpubNavigationPlan,
+    RetainedEpubFragment,
+    derive_epub_navigation,
+    replace_epub_navigation_projection,
+)
 from nexus.services.import_history import append_processing_event
 from nexus.services.media_parts import part_source_block_reason, require_part_source_creator
 from nexus.services.media_text_scope import text_scope_rows_sql
@@ -90,7 +96,7 @@ from nexus.services.parser_temp import parser_attempt_directory, stream_storage_
 from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.reader_publication import read_publication_generation
-from nexus.services.reader_structure import DomCut, NavigationProof
+from nexus.services.reader_structure import NavigationProof
 from nexus.services.reader_text_slice import section_witness_key
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -836,12 +842,10 @@ def _capture_epub_package(db: Session, media_id: UUID) -> _EpubPackage:
     )
 
 
-def _derive_epub_witnesses(
-    directory: Path, media_id: UUID, package: _EpubPackage, sections: _Sections
-) -> dict[str, tuple[DomCut | None, DomCut | None]]:
-    """Exact witnesses from the verified stored package, outside any transaction; an
-    unproved section carries null cuts. A package that fails verification, limits or the
-    detector's invariants fails the job, never completing preparation."""
+def _derive_epub_navigation(
+    directory: Path, media_id: UUID, package: _EpubPackage
+) -> EpubNavigationPlan:
+    """rebuild the projection outside a transaction from the verified retained package."""
     path = directory / "source.epub"
     stream_storage_object_to_file(
         get_storage_client(),
@@ -850,43 +854,16 @@ def _derive_epub_witnesses(
         expected_size_bytes=package.size_bytes,
         expected_source_sha256=package.source_sha256,
     )
-    return derive_epub_section_witnesses(
+    return derive_epub_navigation(
         epub_path=path,
         media_id=media_id,
         fragments=package.fragments,
-        sections=sections.proof.sections,
         note_regions=package.note_regions,
     )
 
 
-def _record_witnesses(
-    db: Session,
-    media_id: UUID,
-    sections: _Sections,
-    witnesses: Mapping[str, tuple[DomCut | None, DomCut | None]] | None,
-) -> None:
-    """Complete structural preparation: EPUB nav rows take exactly the proved cuts (an
-    unproved section is cleared); html (``witnesses`` None) proves cuts from retained dom."""
-    if witnesses is not None:
-        for section in sections.proof.sections:
-            start, end = witnesses.get(section.section_id, (None, None))
-            db.execute(
-                text(
-                    "UPDATE epub_nav_locations SET start_dom_path = :start_path,"
-                    " start_dom_edge = :start_edge, end_dom_path = :end_path,"
-                    " end_dom_edge = :end_edge"
-                    " WHERE media_id = :media_id AND location_id = :location_id"
-                    " RETURNING location_id"
-                ),
-                {
-                    "media_id": media_id,
-                    "location_id": section.section_id,
-                    "start_path": None if start is None else list(start.path),
-                    "start_edge": None if start is None else start.edge,
-                    "end_path": None if end is None else list(end.path),
-                    "end_edge": None if end is None else end.edge,
-                },
-            ).one()
+def _record_prepared_sections(db: Session, media_id: UUID, sections: _Sections) -> None:
+    """publish the exact current catalogue's witness before embedding work."""
     db.execute(
         text(
             "UPDATE content_index_states SET section_witness_key = :key, updated_at = now()"
@@ -958,7 +935,7 @@ def run_media_reindex_job(
             if kind == "epub":
                 package = _capture_epub_package(db, media_id)
             else:
-                _record_witnesses(db, media_id, sections, None)
+                _record_prepared_sections(db, media_id, sections)
         blocks = _media_blocks(
             db, media_id, kind, plain_text or "", [] if sections is None else sections.points
         )
@@ -972,15 +949,32 @@ def run_media_reindex_job(
     with parser_attempt_directory(context.job_id) as directory:
         if work.package is not None:
             assert work.sections is not None
-            sections, package = work.sections, work.package
-            witnesses = _derive_epub_witnesses(directory, media_id, package, sections)
+            package = work.package
+            navigation = _derive_epub_navigation(directory, media_id, package)
 
             def attach(db: Session) -> bool:
+                # Family writers serialize before the index/job fence; key-share
+                # remains available to queue history's media foreign key.
+                if not library_entries.lock_media_rows_in_order(
+                    db, [media_id], lock_mode="no_key_update"
+                ):
+                    return False
                 if fence(db) is None:
                     return False
                 check_sections(db)
-                _record_witnesses(db, media_id, sections, witnesses)
-                return True
+                replace_epub_navigation_projection(db, media_id=media_id, plan=navigation)
+                current = _read_sections(db, media_id)
+                assert current is not None
+                _record_prepared_sections(db, media_id, current)
+                changed = keys(current) != frozen
+                if changed:
+                    # This revision captured the old catalogue and old blocks. Normal
+                    # admission freezes a new partition; no old blocks are embedded.
+                    record(db, IndexSuperseded)
+                    _request(db, media_id, reason, None)
+                record_input_change(db)
+                db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
+                return not changed
 
             if not _phase("attach_media_section_witnesses", attach):
                 return result

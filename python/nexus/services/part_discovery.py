@@ -569,6 +569,9 @@ def _snapshot(
         if queue.lock_running_job_claim(db, context=context) is None:
             db.rollback()
             return {"disposition": "claim_lost"}
+        # Preparation may have reprojected historical navigation without changing
+        # the source body. Compare its new witness to the new catalogue.
+        proof = _navigation(db, source)
         prepared_key = db.scalar(
             select(ContentIndexState.section_witness_key).where(
                 ContentIndexState.owner_kind == "media",

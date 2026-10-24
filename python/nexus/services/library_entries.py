@@ -269,11 +269,17 @@ def media_family_ids(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
     )
 
 
-def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
+def lock_media_rows_in_order(
+    db: Session,
+    media_ids: Sequence[UUID],
+    *,
+    lock_mode: Literal["update", "no_key_update"] = "update",
+) -> list[UUID]:
     """lock complete source families in uuid order; return requested existing identities.
 
     re-enumeration after locking prevents a new lower-id child from escaping a
     read-committed barrier. the transaction owner restarts when the family changed.
+    no_key_update serializes writers while admitting foreign-key key-share locks.
     """
     from nexus.db.retries import TransactionRestart
 
@@ -283,7 +289,10 @@ def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUI
         return []
     locked = list(
         db.scalars(
-            text("SELECT id FROM media WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"),
+            text(
+                "SELECT id FROM media WHERE id = ANY(:ids) ORDER BY id "
+                + ("FOR UPDATE" if lock_mode == "update" else "FOR NO KEY UPDATE")
+            ),
             {"ids": ordered},
         )
     )

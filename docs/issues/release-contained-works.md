@@ -34,7 +34,11 @@ links with stale image/note ordinals. source-index rebuilding/witness preparatio
 uses the existing queue; migration adds nullable witness columns without scanning
 the corpus. publish structural preparation before embeddings; embedding failure
 must not block manual pieces. preparation launches no discovery generation, but
-the index rebuild may incur existing embedding cost. public svg text and coordinates
+the index rebuild may incur existing embedding cost. explicit preparation of old
+epubs reprojects navigation from their verified retained packages without changing
+canonical bodies, publication generations, accepted piece cuts, highlights or
+reading positions. a changed partition uses the normal new reindex revision.
+public svg text and coordinates
 now share the retained content policy. source svg package-relative image loss remains
 a separate import issue.
 

@@ -2,7 +2,7 @@
 
 // Compose ordinary resource rows and the existing contents tree. Catalogue
 // pagination, transient previews and authored commands have separate owners.
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
@@ -35,6 +35,13 @@ export function SourcePieces({ source, reader }: { readonly source: string; read
     () => ({ request: null, busy: false, error: null }), value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   const pages = prefix.status === "ready" ? prefix.data.pages : null;
   const page = pages?.[0] ?? null;
+  const navigationKey = page?.navigation_key ?? null;
+  const previousNavigation = useRef<string | null>(null);
+  useEffect(() => {
+    if (navigationKey === null || previousNavigation.current === navigationKey) return;
+    previousNavigation.current = navigationKey;
+    reader.reload();
+  }, [navigationKey, reader]);
   const navigation = usePaneFreeServerValue({ key: page?.capabilities.create.allowed ? `/media/${source}/navigation` : null, stale, load: signal => partNavigation(source, signal) });
   const rows = pages?.flatMap(page => page.rows) ?? [];
   const active = page?.operation?.status === "pending" || page?.operation?.status === "running" || page?.preparation?.status === "Queued" || page?.preparation?.status === "Processing";
