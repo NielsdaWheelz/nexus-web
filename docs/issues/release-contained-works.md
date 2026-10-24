@@ -42,15 +42,18 @@ public svg text and coordinates
 now share the retained content policy. source svg package-relative image loss remains
 a separate import issue.
 
-discovery uses the existing pinned authenticated codex personal host; provision
-it through [the existing runbook](../runbooks/codex-personal-agent-host.md). a newer
-shared daemon does not satisfy a different pinned host contract.
+discovery uses `gpt-6.1-sol` with `xhigh` through the existing pinned authenticated
+codex personal host. provision production through
+[the existing runbook](../runbooks/codex-personal-agent-host.md); disposable
+qualification uses the enrolled shared host through `./scripts/lab --live-codex`.
+ordinary attachment never replaces that installation. a newer daemon does not
+satisfy a different pinned host contract.
 merge [provider-runtime #48](https://github.com/NielsdaWheelz/llm-calling/pull/48)
 and its matching [kernel pin #20](https://github.com/NielsdaWheelz/llm-agent-kernel/pull/20)
 before this release. these client dependencies remove the redundant native event-count
 limit while retaining the pending-payload bound; the host daemon does not change.
-their required audits are blocked by [filelock](upstream-filelock-audit.md) and
-[opentelemetry](upstream-opentelemetry-audit.md) dependencies; resolve those before merging.
+their refreshed required checks and audits pass. retain the exact matching pins;
+the current dependency graph includes the fixed opentelemetry resolution.
 
 live repair uses the normal creator commands or exact, backed-up owner repair;
 never rewrite shared source offsets or introduce production test seams. rollback
