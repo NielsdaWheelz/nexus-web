@@ -203,19 +203,31 @@ deletion on refresh, and that call is removed. An unresolved Highlight after
 content changes stays visible in Evidence or Connections rather than
 disappearing or silently repointing to the wrong location.
 
-the reader composer uses the existing online `notes/writes` queue for highlight
-and note commands; chat admission uses the shared chat command owner. each
-mutation retains its request while the tab lives; there is no
-reload journal. ensure and note save are separate commits, so a failed note save
-can leave a valid highlight. normal note surfaces keep their autosave owner;
-the reader's unsaved draft is not registered with it. its retained visit owner
-instead participates in the common work guard. saving a note and sending a chat
-remain distinct commands; passage text is never autosaved as a chat side effect.
-chat preparation belongs to that visit until dispatch; dispatch transfers the
-immutable request to the shared chat command owner. a new-chat request belongs
-to its pane even when no chat composer is mounted, while an existing-chat request
-belongs to the account and conversation. hiding the reader keeps both its draft
-and any command. a retired visit cannot restore its draft through a late callback.
+the reader composer uses the account-scoped writing journal and existing
+`notes/writes` owner for highlight and note commands; chat admission uses the
+shared chat command owner. create identities, captured sources and absolute
+versioned updates remain fixed for retry. acknowledgement adopts saved identity
+and base facts without replacing authored prose or reopening an editor.
+
+mobile observations allocate no composer branch, journal or source-chat lookup.
+explicit compose, highlight and ensure entries share one preparation path with
+desktop selection and saved marks. preparation fixes canonical media, generation
+and request identities before awaiting the existing highlight slot and journal.
+retained passages contain only visual anchor fields and their separate quote;
+capture-only command metadata never enters the journal's passage schema.
+a command submits its frozen target, never a later render's selection. copy and
+opening more require no authoring. a failed command retains its target and the
+existing writing recovery; a late result cannot focus or dismiss a newer
+interaction.
+
+saving a note and sending a chat remain distinct commands. authored changes
+checkpoint through the writing journal; passage text is never submitted as a chat
+side effect. chat preparation belongs to that visit until dispatch; dispatch
+transfers the immutable request to the shared chat command owner. a new-chat
+request belongs to its pane even when no chat composer is mounted, while an
+existing-chat request belongs to the account and conversation. hiding the reader
+keeps authored drafts and pending commands. a retired visit cannot restore its
+presentation through a late callback.
 
 ## Learn
 
@@ -255,17 +267,39 @@ in the visible band are marked), and the document-map rail shows marker
 locations across the document. Evidence owns neither highlight persistence nor
 mutation behavior.
 
-completed desktop selection opens one anchored group with a focused rich editor
-below visible actions. touch preserves native selection handles until the editor
-is tapped. applicable commands are icons with accessible names and hover/focus
-help. the highlighter applies the displayed colour; its disclosure opens the
-five-colour picker without moving or remounting the editor. fresh selections
-start yellow; an already-saved colour is inactive. unavailable commands remain
-focusable and explain their reason. controls wrap in stable order at narrow widths.
-saved-highlight actions reuse the canonical action descriptors and permissions;
-there is no selection overflow menu. one clicked mark opens the same composer;
-overlapping marks first offer `choose highlight`. Evidence retains its resource
-menu.
+desktop admitted selection keeps its anchored composer and focused rich editor
+below the icon actions; touch input in that viewport preserves native handles
+until the editor is tapped. the highlighter applies the displayed colour and its
+disclosure opens the shared five-colour picker without remounting the editor.
+saved-highlight actions retain their canonical descriptors and permissions.
+
+mobile uses the existing viewport classification for every input device. after
+250 ms without observed source activity, one provisional passage offers
+`highlight`, `note`, `ask` and `more`; ask is absent when quoting is unavailable.
+there is no passive editor, quote preview or keyboard focus. highlight saves
+yellow directly; an equivalent saved highlight shows inactive `highlighted`.
+more owns copy, colour, learn, share and applicable saved-highlight actions without
+claiming a note draft merely by opening.
+
+note and ask freeze the passage and open the shared composer body in `MobileSheet`,
+titled `note on passage` or `ask about passage`. the sheet shows a short source
+quote and keeps the same note history, destinations and recovery controls;
+choosing ask sends nothing. the sheet grants focus to a ready editor for an
+explicit note/ask entry; its own loading focus preserves the pending request,
+while user focus changes cancel it. tapping a saved mark explicitly opens this same
+composer; overlapping marks first offer `choose highlight`. closing preserves
+authored work without reconstructing the native range or reopening its actions.
+evidence retains its resource menu.
+
+mobile bounds and draft reselection require `apply selection`. invalid or
+collapsed proposals keep the instruction's cancel action; no old valid range is
+substituted. apply freezes the confirmed capture before button focus, validates
+the owned session and invokes the existing command once. bounds submission shows
+`applying…` without cancellation; relocation retains its exact-quote rule.
+reselection names the draft and source publication, and only apply carries its
+body and history. cancel, dismissal, navigation, source replacement, deactivation,
+disposal, hiding, blur or viewport-policy change retires it without changing the
+authored draft. desktop bounds admission remains immediate.
 
 opening an existing mark loads its viewer note before editing. enter saves the
 current rich body; a canonical empty paragraph on a fresh passage creates only
@@ -283,11 +317,13 @@ persisted note globally. composition, selected content, last-character deletion,
 whitespace, breaks, code and embeds do not trigger that command. a visible
 `delete empty note` button invokes the same operation.
 
-selection, opening, typing, blur and dismissal do not save. escape or an outside
-press hides the surface and retains the draft/caret in the reader visit; mobile
-body unmounts retain it, reload does not. late completions cannot focus or close a
-newer interaction. live passage measurement follows scroll, reflow and pdf zoom;
-an offscreen composer pins inside its source pane, without scrolling the reader.
+observation, opening, typing, blur and dismissal never submit a note or chat.
+authored edits retain their journal, caret and history under the writing owner's
+recovery contract; the native range is never journaled. desktop composition uses
+live source geometry and pins an unavailable draft inside its pane. mobile's
+compact actions use the separate endpoint-aware placement contract in
+[overlays](overlays.md#reader-action-placement), without resizing or scrolling the
+source. passive dismissal retires its candidate, not authored work.
 
 The canonical passage/document scope and typed highlight association contract
 is
