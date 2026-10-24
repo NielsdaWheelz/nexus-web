@@ -7,8 +7,9 @@ opposite endpoint on regrab. this can make the browser's visible selected quote
 jump. nexus captures the resulting range, not an older requested range.
 
 evidence: samsung sm_s906w/android 16, webview 155.0.8059.43, isolated disposable
-app. repeatable native adb handle gestures; temporary screenshot
-`/tmp/nexus-native-before-big.png` and probe output were retained locally. the
+app. repeatable native adb handle gestures; screenshot
+`nexus-native-before-big.png` and probe output are retained under
+`~/.local/state/nexus-verification/mobile-selection-20261023/local/`. the
 reader has no native range mutation or source-dom rewrite in this flow.
 
 chromium reconstructs both endpoints from handle positions on drag begin
@@ -28,4 +29,4 @@ than text nodes. chrome's incognito screenshot excludes native handles, so the
 probe cannot settle whether this is input targeting or browser behavior. keep
 chrome pdf reversal/regrab unqualified until physically observed; do not infer a
 product fix from these coordinates. private final probe log:
-`/tmp/nexus-native-large-chrome-pdf-final.log`.
+`nexus-native-large-chrome-pdf-final.log` in that same private directory.

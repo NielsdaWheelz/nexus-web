@@ -13,6 +13,10 @@ expand it into custom gesture handling or reader-layout redesign.
   physical-gesture/control-page diagnosis. no evidence justifies reconstructing
   the browser range in product code.
 
+- [pdf twin matching](pdf-selection-twin-quad-order.md): an existing order-sensitive
+  comparison can miss the same saved pdf extent after server canonicalization.
+  saved-mark entry retains the note; fresh equivalent selection still needs repair.
+
 qualify the final web source and its paired apk together; retain their identities
 and actual observations in the pr. keep this record until the native gap is
 resolved. desktop behavior, api contracts and persisted schemas do not change.

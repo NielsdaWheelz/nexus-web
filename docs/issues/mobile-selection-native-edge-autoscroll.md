@@ -11,8 +11,9 @@ evidence: frozen `887099923`, samsung sm_s906w/android 16, webview
 155.0.8059.43, disposable app `app.nexus.android.selection20261023`.
 `TextSurface.tsx` owns the nested reader scrollport; chrome supplies top/bottom
 occlusion separately. actual region y25..732; visible bounds y85..608; source
-char zero y103.33 remains unchanged after the native edge drag. private probe
-output: `/tmp/nexus-mobile-selection-native-full.log`. no product workaround.
+char zero y103.33 remains unchanged after the native edge drag. private probe output: `nexus-mobile-selection-native-full.log` under
+`~/.local/state/nexus-verification/mobile-selection-20261023/local/`. no product
+workaround.
 
 resolve by establishing a real native edge-autoscroll journey in app and chrome
 for text and pdf, or repairing the responsible reader layout/input owner and
