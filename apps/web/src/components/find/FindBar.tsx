@@ -1,14 +1,19 @@
 "use client";
 
-import { forwardRef, useId, useImperativeHandle, useRef, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, List, RotateCcw, X } from "lucide-react";
+import { forwardRef, useId, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronUp, RotateCcw, TextSearch, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
+import ActionMenu from "@/components/ui/ActionMenu";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { FIND_LIMIT } from "@/lib/find/find";
+import { FIND_LIMIT, type FindRow } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink, type TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./Find.module.css";
 
 function findFeedback(result: FindResult | null): {
@@ -108,7 +113,8 @@ const FindBar = forwardRef<
           },
         }}
         options={find ? {
-          label: "Options",
+          label: "Find options",
+          iconOnly: true,
           activeCount: chips.length,
           content: (
             <fieldset className={styles.options}>
@@ -142,32 +148,25 @@ const FindBar = forwardRef<
         } : undefined}
         actions={<>
           <div className={styles.group} role="group" aria-label="Match navigation">
-            <Button variant="ghost" size="sm" iconOnly aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={count === 0} onClick={() => find?.step(-1)}>
-              <ChevronUp size={15} aria-hidden="true" />
-            </Button>
-            <Button variant="ghost" size="sm" iconOnly aria-label="Next match" title="Next match (Enter)" disabled={count === 0} onClick={() => find?.step(1)}>
-              <ChevronDown size={15} aria-hidden="true" />
-            </Button>
+            <Button iconOnly aria-label="Previous match" tooltip={{ text: "Previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<ChevronUp size={15} aria-hidden="true" />} />
+            <Button iconOnly aria-label="Next match" tooltip={{ text: "Next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<ChevronDown size={15} aria-hidden="true" />} />
           </div>
-          <Button variant="ghost" size="sm" disabled={count === 0} leadingIcon={<List size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>
-            Results
-          </Button>
-          {find?.result.kind === "Failed" ? <Button variant="ghost" size="sm" onClick={() => {
+          {find?.result.kind === "Failed" ? <Button onClick={() => {
             inputRef.current?.focus({ preventScroll: true });
             find.retry();
           }}>Retry</Button> : null}
+        </>}
+        trailingActions={<>
+          <Button iconOnly aria-label="Show search results" disabled={count === 0} icon={<TextSearch size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)} />
           {find?.returnable ? (
-            <Button variant="ghost" size="sm" iconOnly aria-label="Return to reading position" title="Return to reading position" onClick={() => {
+            <Button iconOnly aria-label="Return to reading position" onClick={() => {
               inputRef.current?.focus({ preventScroll: true });
               find.goBack();
-            }}>
-              <RotateCcw size={15} aria-hidden="true" />
-            </Button>
+            }}
+              icon={<RotateCcw size={15} aria-hidden="true" />} />
           ) : null}
           {onClose ? (
-            <Button variant="ghost" size="sm" iconOnly aria-label="Close find" title="Close find" onClick={onClose}>
-              <X size={15} aria-hidden="true" />
-            </Button>
+            <Button iconOnly aria-label="Close find" onClick={onClose} icon={<X size={15} aria-hidden="true" />} />
           ) : null}
         </>}
       />
@@ -189,7 +188,36 @@ export function FindResults({
   readonly onPreviewed: () => void;
 }) {
   const resultsRef = useRef<HTMLDivElement>(null);
+  const runtime = usePaneRuntime();
+  const [refusal, setRefusal] = useState<string | null>(null);
   const { result } = find;
+  const matched = result.kind === "Rows" ? result.rows : null;
+  const publication = useMemo(() => matched === null ? "" : crypto.randomUUID(), [matched]);
+  const open = (row: FindRow<unknown>, href: string | null, event: TargetActivationEvent, fork: boolean): TargetLinkActivationResult => {
+    const activation = workspaceTargetActivationIntent(event, href === null ? "activate" : "native");
+    if (activation.kind === "Unowned") return "unhandled";
+    if (activation.kind === "Consume") { event.preventDefault(); return "consumed"; }
+    const currentHref = find.targetHref(row);
+    const local = () => {
+      void find.activate(row).then((shown) => {
+        if (shown) { setRefusal(null); onPreviewed(); }
+        else setRefusal("this match is no longer available");
+      });
+    };
+    if (currentHref === null) {
+      event.preventDefault();
+      if (!fork && activation.intent === "default") { local(); return "handled-default"; }
+      setRefusal("this match is no longer available");
+      return "consumed";
+    }
+    if (currentHref !== href) { event.preventDefault(); setRefusal("this match is no longer available"); return "consumed"; }
+    const handled = activateTargetLink({ event, runtime: fork && runtime ? {
+      activateTarget: (request) => runtime.activateTarget({ ...request, disposition: { kind: "Fork" } }),
+    } : runtime, target: { href: currentHref }, onDefault: fork ? undefined : local });
+    if (handled === "handled-new-pane" || fork && handled === "handled-default") { setRefusal(null); onPreviewed(); }
+    return handled;
+  };
+  const controls: Record<string, ReactNode> = {};
   const rows = result.kind === "Rows" ? result.rows.map((row, index): CollectionRowView => {
     const text = row.snippet.map((segment) => segment.text).join("");
     const current = index === result.active;
@@ -199,15 +227,24 @@ export function FindResults({
       row.context.join(", "),
       text,
     ];
+    const href = find.targetHref(row);
+    controls[String(index)] = <ActionMenu label={`more actions for match ${index + 1}`} source={{
+      kind: "Immediate", subjectKey: `find:${publication}:${index}`, title: `match ${index + 1}`,
+      content: { sections: [{ id: "Open", label: null, options: [{ kind: "link", id: "OpenInPane", label: "open in new pane",
+        ...(href === null ? { href: null, disabled: true as const } : { href }),
+        disabledReason: href === null ? "opening this match in a new pane is unavailable" : undefined,
+        onActivate: (event) => open(row, href, event, true) }] }] },
+    }} />;
     return {
       id: String(index),
       kind: "search_result",
+      presentation: "Index",
       // Desktop keeps the list open; mobile hides the sheet once the surface shows the match.
       primary: {
-        kind: "button",
+        kind: "link",
+        href,
         label: label.filter(Boolean).join(": "),
-        onActivate: () =>
-          void find.activate(index).then((shown) => shown && onPreviewed()),
+        onActivate: (event) => open(row, href, event, false),
       },
       title: { text, segments: row.snippet },
       context:
@@ -222,12 +259,12 @@ export function FindResults({
       activity: null,
       exceptionalStatus: null,
       resourceRef: null,
-      insertionSource:null,
       selected: current,
     };
   }) : [];
   return (
     <div ref={resultsRef} className={styles.results} role="group" aria-label="Search results" tabIndex={-1}>
+      {refusal ? <FeedbackNotice content={{ tone: "Warning", title: refusal }} announcement="Polite" onDismiss={() => setRefusal(null)} /> : null}
       {result.kind === "Rows" && rows.length > 0 ? (
         <>
           {result.partial !== null ? (
@@ -241,6 +278,7 @@ export function FindResults({
             status="ready"
             ariaLabel="Search results"
             rowActionsAvailable={false}
+            rowControls={controls}
             surface={false}
           />
         </>
@@ -248,7 +286,7 @@ export function FindResults({
         <div className={styles.message}>
           <span>{findFeedback(result)?.description}</span>
           {result.kind === "Failed" ? (
-            <Button variant="secondary" size="sm" onClick={() => {
+            <Button onClick={() => {
               resultsRef.current?.focus({ preventScroll: true });
               find.retry();
             }}>

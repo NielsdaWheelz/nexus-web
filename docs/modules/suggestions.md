@@ -21,17 +21,39 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 - a feed exists only while its user administers its library: losing admin
   (demotion, removal, leaving) or deleting the library deletes the feed and its
   publication in the same transaction.
-- the web shows ten from the hydrated pool (at most 80); survivors keep their
-  place, an accepted row leaves and the pool refills locally. a ref accepted
-  after a read began is dropped from that read. a newer publication is staged
-  ("new suggestions are ready" · "show new suggestions") and adopted on a later
-  visit. adding one row locks only that row. a full lectern keeps suggestions
-  browsable and disables adding.
-- states: "finding suggestions…", "updating…", "no suggestions right now.",
-  "suggestions need repair." (dead work), read failures with retry.
-- refresh answers requested (work admitted or running), repair (the feed's work
-  is dead and waits for an operator; nothing was requested), or failed. a
-  library's Refresh also syncs its shows.
+- one retained logical pane visit owns a hydrated pool (at most 80), including
+  a successful empty publication. ten refs are displayed; survivors retain order,
+  acknowledged additions leave, and vacancies refill only from that same pool.
+  new publications do not replace it, fetch another pool, or announce freshness.
+- current eligibility and metadata are reconciled independently through `/view`.
+  ranking age never grants access or settles a pending command. a ref acknowledged
+  after a read began is filtered from that read; adding locks only that command.
+  a full lectern leaves suggestions browsable and disables additions.
+- mobile switching, back/forward, minimize/restore and layout changes restore the
+  existing account-scoped visit snapshot through `usePaneVisitData`. restore
+  revalidates eligibility, never ranking. close/reopen follows its existing
+  forgetting rules. no browser storage or extra retention owner.
+- a new visit, reload or ordinary explicit refresh reads the latest completed
+  snapshot. initial absence automatically accepts its first publication; empty
+  is complete. an adopted empty or exhausted pool can stay empty until refresh.
+- explicit refresh awaits its own bounded GET and installation, never queue work
+  or another newer publication. a concurrent first automatic completion cannot
+  regress to pending if this GET captured an older null snapshot. observed state
+  can advance separately; the GET's coherent ranking remains adoptable.
+- refresh outcomes: `Refreshed` (readable completed pool, empty included), `Finding`
+  (no publication), `Repair` (no publication and suspended work), `Failed` (modeled
+  read failure), `NotApplicable` (neutral library branch). lectern inapplicability
+  is a defect. library refresh also syncs shows and retains that result, downgraded
+  from complete to partial if the suggestions read fails or needs repair.
+- the shell owns pane-refresh outcome speech. inline retry repeats only the
+  failed suggestions intention and owns its own outcome. restored pools and
+  background publications are silent. one initial collection loader, completed
+  empty, actual read/admission failures, capacity and repair remain visible.
+- cancellation retires request ownership; withdrawal clears retained selection.
+  old `/view` reads are fenced to the exact adopted selection, even when explicit
+  refresh reads the same publication id. later observer state never authorizes a
+  retired response. only matching read success clears its failure intention;
+  observation recovery cannot erase a failed explicit read.
 - quick reads: at most five visible unfinished media with under ten minutes
   left, in progress first; a direct read, not published.
 
@@ -81,9 +103,11 @@ both `/lectern/suggestions` and `/libraries/{library_id}/suggestions` expose:
   `Podcast{ref, title, subtitle, href}`.
 - `POST /view`: reconcile up to 80 distinct supplied refs in their original
   order, independently of the latest publication. no ranking or admission.
-- `POST /refresh`: `EnsureFresh` or conditional `Explicit` admission; return
-  202 after commit. repeating an explicit request for an old publication cannot
-  start new work after its replacement appears.
+- `POST /refresh`: no body; ensure-fresh admission only, 202 after commit.
+  each request rechecks current need: retain existing work (including suspended),
+  no-op for a fresh publication, otherwise enqueue one build. repeats can admit
+  later work only when the then-current publication is due. ordinary ui refresh
+  calls GET; only the observer requests background freshness.
 
 `/stream/lectern/suggestions` and
 `/stream/libraries/{library_id}/suggestions` expose `Current {state}` or terminal

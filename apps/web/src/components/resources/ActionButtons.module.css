@@ -1,0 +1,20 @@
+.actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.control {
+  display: inline-flex;
+}
+
+.button {
+  flex: none;
+}
+
+:global([data-mobile="true"]) .actions[data-density="Header"] .button {
+  --control-min-size: 48px;
+}

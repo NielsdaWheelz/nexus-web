@@ -2,7 +2,7 @@
 
 The static `/libraries/destinations` and `/libraries/placements/{ref}` register before
 `/libraries/{library_id}…`, whose uuid parameter would refuse them. `{ref}` is a
-canonical resource ref, `media:<uuid>` or `podcast:<uuid>`.
+canonical media resource ref, `media:<uuid>`.
 """
 
 from typing import Annotated
@@ -14,39 +14,40 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
+from nexus.schemas import podcast as podcast_wire
 from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.consumption import ConsumptionData
 from nexus.schemas.library import (
     CreateLibraryRequest,
-    LibraryDestinationOut,
+    LibraryDestinationsOut,
     LibraryEntriesPageOut,
+    LibraryMetadataOut,
     LibraryOrderOut,
     LibraryOut,
     LibraryPlacementOut,
+    LibraryPlacementsOut,
     MoveEntryRequest,
     PlaceItemRequest,
     RenameLibraryRequest,
 )
 from nexus.schemas.suggestions import (
-    SuggestionRefreshIn,
     SuggestionsOut,
     SuggestionStateOut,
     SuggestionViewIn,
     SuggestionViewOut,
 )
 from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
-from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
+from nexus.services.consumption import observation
+from nexus.services.podcasts import (
+    imports as podcast_imports,
+)
+from nexus.services.podcasts import (
+    subscriptions as podcast_subscriptions,
+)
+from nexus.services.podcasts import subscriptions_query as podcast_queries
 
 router = APIRouter(tags=["libraries"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-
-
-def _target(ref: str) -> library_entries.EntryTarget:
-    parsed = parse_resource_ref(ref)
-    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme not in ("media", "podcast"):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Expected media:<id> or podcast:<id>"
-        )
-    return library_entries.EntryTarget(parsed.scheme, parsed.id)
 
 
 @router.get("/libraries")
@@ -61,8 +62,8 @@ def list_libraries(
 
 @router.get("/libraries/destinations")
 def list_destinations(
-    request: Request, viewer: ViewerDep, db: DbSession
-) -> Data[list[LibraryDestinationOut]]:
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryDestinationsOut]:
     """The complete named libraries the viewer may file into."""
     if request.query_params:
         raise InvalidRequestError(
@@ -72,10 +73,14 @@ def list_destinations(
 
 
 @router.get("/libraries/placements/{ref}")
-def list_placements(ref: str, viewer: ViewerDep, db: DbSession) -> Data[list[LibraryPlacementOut]]:
-    """Where one media or show sits among the viewer's libraries."""
+def list_placements(
+    ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryPlacementsOut]:
+    """Where one media sits among the viewer's libraries."""
     return Data(
-        data=library_entries.list_item_libraries(db, viewer_id=viewer.user_id, target=_target(ref))
+        data=library_entries.list_item_libraries(
+            db, viewer_id=viewer.user_id, target=library_entries.parse_entry_target(ref)
+        )
     )
 
 
@@ -87,10 +92,23 @@ def create_library(
 
 
 @router.get("/libraries/{library_id}")
-def get_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[LibraryOut]:
+def get_library(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[LibraryOut]:
     """Members only; anyone else gets 404."""
+    response.headers["Cache-Control"] = "private, no-store"
     library = libraries.access(db, viewer.user_id, library_id, lock=False)
-    return Data(data=library.out(viewer.user_id))
+    return observation.stamp(db, viewer.user_id, library.out(viewer.user_id), [])
+
+
+@router.get("/libraries/{library_id}/metadata")
+def get_library_metadata(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[LibraryMetadataOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db, viewer.user_id, library_listing.metadata(db, viewer.user_id, library_id), []
+    )
 
 
 @router.patch("/libraries/{library_id}")
@@ -108,14 +126,20 @@ def delete_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Respon
 
 @router.get("/libraries/{library_id}/entries")
 def list_entries(
-    request: Request, library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[LibraryEntriesPageOut]:
+    request: Request,
+    library_id: UUID,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> ConsumptionData[LibraryEntriesPageOut]:
     """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
+    response.headers["Cache-Control"] = "private, no-store"
     view, query = library_listing.parse_entries_query(request.query_params.multi_items())
-    return Data(
-        data=library_listing.list_library_entries(
-            db, viewer.user_id, library_id, view=view, cursor=query.cursor, limit=query.limit
-        )
+    data = library_listing.list_library_entries(
+        db, viewer.user_id, library_id, view=view, cursor=query.cursor, limit=query.limit
+    )
+    return observation.stamp(
+        db, viewer.user_id, data, [row.media_summary.media_id for row in data.items]
     )
 
 
@@ -175,28 +199,111 @@ def reconcile_library_suggestions(
 @router.post("/libraries/{library_id}/suggestions/refresh", status_code=202)
 def refresh_library_suggestions(
     library_id: UUID,
-    request: SuggestionRefreshIn,
     viewer: ViewerDep,
     db: DbSession,
 ) -> Data[SuggestionStateOut]:
     return Data(
         data=suggestion_shortlists.request_suggestions_refresh(
-            db, viewer_id=viewer.user_id, library_id=library_id, request=request
+            db, viewer_id=viewer.user_id, library_id=library_id
         )
     )
 
 
-@router.put("/libraries/{library_id}/items/{ref}", status_code=204)
+@router.put("/libraries/{library_id}/items/{ref}")
 def place_item(
     library_id: UUID, ref: str, body: PlaceItemRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.place_item(
-        db, viewer.user_id, library_id, _target(ref), replace_episodes=body.replace_episodes
+) -> Data[LibraryPlacementOut]:
+    return Data(
+        data=library_entries.set_item(
+            db,
+            viewer.user_id,
+            library_id,
+            library_entries.parse_entry_target(ref),
+            included=body.included,
+            expected_order_revision=int(body.expected_order_revision),
+            expected_removal_revision=(
+                int(body.expected_removal_revision)
+                if body.expected_removal_revision is not None
+                else None
+            ),
+        )
     )
-    return Response(status_code=204)
 
 
-@router.delete("/libraries/{library_id}/items/{ref}", status_code=204)
-def unplace_item(library_id: UUID, ref: str, viewer: ViewerDep, db: DbSession) -> Response:
-    library_entries.unplace_item(db, viewer.user_id, library_id, _target(ref))
-    return Response(status_code=204)
+@router.get("/libraries/{library_id}/podcasts")
+def library_podcasts(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[podcast_wire.LibraryPodcastsOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db,
+        viewer.user_id,
+        podcast_queries.read_library_podcasts(db, viewer.user_id, library_id),
+        [],
+    )
+
+
+@router.get("/libraries/{library_id}/podcasts/{podcast_id}")
+def library_podcast(
+    library_id: UUID,
+    podcast_id: UUID,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> ConsumptionData[podcast_wire.LibraryPodcastOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db,
+        viewer.user_id,
+        podcast_queries.read_library_podcast(db, viewer.user_id, library_id, podcast_id),
+        [],
+    )
+
+
+@router.post("/libraries/{library_id}/podcast-subscriptions", status_code=202)
+def create_podcast_subscription(
+    library_id: UUID,
+    body: podcast_wire.PodcastSubscriptionCreateRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastAdmissionOut]:
+    return Data(data=podcast_subscriptions.admit(db, viewer.user_id, library_id, body))
+
+
+@router.post("/libraries/{library_id}/podcast-imports", status_code=202)
+def create_podcast_import(
+    library_id: UUID,
+    body: podcast_wire.PodcastImportCreateRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastAdmissionOut]:
+    return Data(data=podcast_subscriptions.admit(db, viewer.user_id, library_id, body))
+
+
+@router.get("/libraries/{library_id}/podcast-imports/{import_id}")
+def get_podcast_import(
+    library_id: UUID, import_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[podcast_wire.PodcastImportOut]:
+    return Data(data=podcast_imports.get_import(db, viewer.user_id, library_id, import_id))
+
+
+@router.post("/libraries/{library_id}/podcast-imports/{import_id}/cancel")
+def cancel_podcast_import(
+    library_id: UUID,
+    import_id: UUID,
+    body: podcast_wire.PodcastImportCancelRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastImportOut]:
+    return Data(data=podcast_imports.cancel(db, viewer.user_id, library_id, import_id, body))
+
+
+@router.post("/libraries/{library_id}/podcast-imports/{import_id}/retry", status_code=202)
+def retry_podcast_import(
+    library_id: UUID,
+    import_id: UUID,
+    body: podcast_wire.PodcastImportRetryRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastImportOut]:
+    return Data(data=podcast_imports.retry(db, viewer.user_id, library_id, import_id, body))

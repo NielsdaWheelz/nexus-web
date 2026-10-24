@@ -2,7 +2,7 @@
 // and the one name rule. The server validates every value and every combination
 // composes; these are only the options offered.
 
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import type { FeedbackProps } from "@/components/feedback/Feedback";
 import type { ViewChanges } from "@/lib/collections/view";
 
 type Options = readonly { readonly value: string; readonly label: string }[];
@@ -29,8 +29,8 @@ export const entrySorts = (isAll: boolean): Options => [
   { value: "title_desc", label: "Title Z–A" },
   { value: "creator_asc", label: "Creator A–Z" },
   { value: "creator_desc", label: "Creator Z–A" },
-  { value: "published_desc", label: "Newest published" },
-  { value: "published_asc", label: "Oldest published" },
+  { value: "published_desc", label: "First published: newest" },
+  { value: "published_asc", label: "First published: oldest" },
   { value: "remaining_asc", label: "Least time left" },
   { value: "remaining_desc", label: "Most time left" },
   ...(isAll ? [] : [{ value: "added_desc", label: "Newest added" }]),
@@ -44,7 +44,6 @@ export const ENTRY_TYPES: Options = [
   { value: "pdf", label: "PDFs" },
   { value: "video", label: "Videos" },
   { value: "podcast_episode", label: "Podcast episodes" },
-  { value: "podcast", label: "Podcast shows" },
 ];
 
 /** Unfiled is a view of All only. */
@@ -65,7 +64,7 @@ export function offered(options: Options, value: string): Options {
 }
 
 /** A complete view's empty state: what it lacks, and the way back. */
-export function EmptyEntries({
+export function emptyEntriesFeedback({
   params,
   isAll,
   change,
@@ -73,7 +72,7 @@ export function EmptyEntries({
   readonly params: URLSearchParams;
   readonly isAll: boolean;
   readonly change: (changes: ViewChanges) => void;
-}) {
+}): Pick<FeedbackProps, "content" | "actions"> {
   const type = params.get("entry_type");
   const projection = params.get("projection");
   const unfinished = params.get("completion") === "unfinished";
@@ -92,18 +91,12 @@ export function EmptyEntries({
             { label: "Show all items", onClick: () => change({ projection: null }) },
           ]
         : projection === "unfiled"
-          ? [unfinished ? "No unfinished unfiled items." : "Everything is filed.", clear]
+          ? [unfinished ? "No unfinished unfiled items." : "no unfiled items", clear]
           : unfinished
             ? [
                 "No unfinished items.",
                 { label: "Show finished", onClick: () => change({ completion: null }) },
               ]
-            : [isAll ? "No media yet." : "No podcasts or media in this library yet.", null];
-  return (
-    <FeedbackNotice
-      content={{ tone: "Neutral", title }}
-      announcement="Polite"
-      actions={action ? [action] : undefined}
-    />
-  );
+            : [isAll ? "No media yet." : "No media in this library yet.", null];
+  return { content: { tone: "Neutral", title }, actions: action ? [action] : undefined };
 }

@@ -13,7 +13,7 @@ import styles from "./PaneQueryToolbar.module.css";
 
 /** Presentation only: domains own the query, constraints, timing and results. */
 export default function PaneQueryToolbar({
-  inputRef, input, submit, options, sort, chips, status, actions, onReset,
+  inputRef, input, submit, options, sort, chips, status, actions, onReset, trailingActions,
 }: {
   readonly inputRef: RefObject<HTMLInputElement | null>;
   readonly input: {
@@ -33,9 +33,11 @@ export default function PaneQueryToolbar({
   readonly submit?: { readonly onSubmit: () => void; readonly disabled?: boolean };
   readonly options?: {
     readonly label: string;
+    readonly iconOnly?: boolean;
     readonly activeCount: number;
     readonly content: ReactNode;
     readonly onClear?: () => void;
+    readonly onExpandedChange?: (expanded: boolean) => void;
   };
   readonly sort?: {
     readonly label: string;
@@ -55,12 +57,16 @@ export default function PaneQueryToolbar({
   };
   readonly actions?: ReactNode;
   readonly onReset?: () => void;
+  readonly trailingActions?: ReactNode;
 }) {
   const { paneId } = requirePaneRuntime(usePaneRuntime(), "PaneQueryToolbar");
   const id = useId();
   const optionsId = `${id}-options`;
   const errorId = `${id}-error`;
   const [expanded, setExpanded] = useState(false);
+  const onExpandedChange = options?.onExpandedChange;
+  useLayoutEffect(() => { onExpandedChange?.(expanded); }, [expanded, onExpandedChange]);
+  useLayoutEffect(() => () => onExpandedChange?.(false), [onExpandedChange]);
   const refinementsRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -68,7 +74,7 @@ export default function PaneQueryToolbar({
   const appliedTextVisible = input.appliedValue.length > 0 && input.appliedValue !== input.value;
   const inlineStatusVisible = status?.placement === "Inline" && status.visible;
   const actionsVisible = inlineStatusVisible || Boolean(actions);
-  const controlsVisible = actionsVisible || options !== undefined || sort !== undefined || onReset !== undefined;
+  const controlsVisible = actionsVisible || options !== undefined || sort !== undefined || onReset !== undefined || Boolean(trailingActions);
   const summaryVisible = (status?.placement === "Details" && status.visible) || (chips?.items.length ?? 0) > 0 || appliedTextVisible;
   const detailsVisible = summaryVisible || input.error !== undefined || (options !== undefined && expanded);
   useLayoutEffect(() => {
@@ -126,14 +132,12 @@ export default function PaneQueryToolbar({
             }}
           />
           {input.value || input.appliedValue ? (
-            <Button className={styles.clear} variant="ghost" size="sm" iconOnly aria-label="Clear text" title="Clear text" disabled={input.disabled} onClick={clear}>
-              <X size={16} aria-hidden="true" />
-            </Button>
+            <Button className={styles.clear} iconOnly aria-label="Clear text" disabled={input.disabled} onClick={clear} icon={<X size={16} aria-hidden="true" />} />
           ) : null}
         </div>
-        {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
+        {submit ? <Button emphasis="strong" type="submit" disabled={submit.disabled || input.disabled}>Search</Button> : null}
       </div>
-      {status?.placement === "Inline" || actions || options || sort || onReset ? <div className={styles.controls} data-visible={controlsVisible}>
+      {status?.placement === "Inline" || actions || options || sort || onReset || trailingActions ? <div className={styles.controls} data-visible={controlsVisible}>
         {status?.placement === "Inline" || actions ? (
           <div className={styles.actions} data-visible={actionsVisible}>
             {status?.placement === "Inline" ? <div className={inlineStatusVisible ? styles.inlineStatus : "sr-only"}>{status.content}</div> : null}
@@ -143,25 +147,28 @@ export default function PaneQueryToolbar({
         {options ? (
           <Button
             ref={triggerRef}
-            variant="ghost"
-            size="sm"
             aria-expanded={expanded}
             aria-controls={optionsId}
-            leadingIcon={<SlidersHorizontal size={16} aria-hidden="true" />}
+            icon={<SlidersHorizontal size={16} aria-hidden="true" />}
             onClick={() => expanded ? collapse() : setExpanded(true)}
-          >
-            {options.label}{options.activeCount > 0 ? ` (${options.activeCount})` : ""}
-          </Button>
+            {...(options.iconOnly ? {
+              iconOnly: true,
+              "aria-label": `${options.label}${options.activeCount > 0 ? `; ${options.activeCount} active option${options.activeCount === 1 ? "" : "s"}` : ""}`,
+            } : {
+              children: <>{options.label}{options.activeCount > 0 ? ` (${options.activeCount})` : ""}</>,
+            })}
+          />
         ) : null}
         {sort ? (
           <SelectField layout="Inline" label={sort.label} size="sm" value={sort.value} onChange={(event) => sort.onChange(event.currentTarget.value)}>
             {sort.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
           </SelectField>
         ) : null}
-        {onReset ? <Button type="button" variant="ghost" size="sm" onClick={() => {
+        {onReset ? <Button type="button" onClick={() => {
           inputRef.current?.focus({ preventScroll: true });
           onReset();
         }}>Reset view</Button> : null}
+        {trailingActions}
       </div> : null}
     </>
   );
@@ -212,7 +219,7 @@ export default function PaneQueryToolbar({
           >
             {options.content}
             {options.onClear && options.activeCount > 0 ? (
-              <Button variant="ghost" size="sm" onClick={() => {
+              <Button onClick={() => {
                 triggerRef.current?.focus({ preventScroll: true });
                 options.onClear?.();
               }}>Clear filters</Button>

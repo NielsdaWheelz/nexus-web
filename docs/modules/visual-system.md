@@ -36,8 +36,8 @@ a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
 oracle and atlas routes. rooms redefine colour, shadow, grain, hairline, body
-size and tracking only. text on an 18% tint of its own tone (`Pill`) reads the
-tone's `--*-ink` step, which holds 4.5:1 over that tint.
+size, tracking and the section-title font role only. text on an 18% tint of its
+own tone (`Pill`) reads the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 ## the solar's ornament
 
@@ -63,32 +63,63 @@ uses the same restrained anatomy in every room.
 plain-text content and tone tokens. no severity label, coloured card or custom
 feature renderer. the complete fact and first action are visible; detail,
 diagnostics and a second action expand on demand. navigation remains a link.
-inline disclosure pushes layout; the reader and workspace opt into the existing
-anchored surface. native menu and player controls retain their widget semantics.
+inline disclosure pushes layout; the reader opts into the existing anchored
+surface. native menu and player controls retain their widget semantics.
 
-one account-scoped in-flow workspace slot shows the highest-priority current
-condition, then optional offers. conditions rank write, action, status; offers
-follow. `+n` opens all current items. hover, focus and disclosure freeze order.
-owners project conditions through `useWorkspaceCondition`; they alone decide
-settlement and retry, except that content needing a page reload (a stale
-build) offers only reload. optional `offer` handles update/withdraw one exact
-publication, and cannot resurrect a dismissed/replaced occurrence. busy offers
-cannot be dismissed. required recovery has no dismiss control.
+workspace feedback has two presentations. one passive floating receipt acknowledges
+an action without allocating layout space. activity lists current conditions and
+optional offers; it is not notification history. `FeedbackProvider` owns both
+above the document's writing owner and workspace failure containment. `workspaceSignals.ts`
+retains token-fenced publications; domain owners retain commands, exact receipts,
+validity, settlement and recovery.
 
-an actionless `receipt` gets five visible seconds only when the slot is empty.
-there is no queue or history. consequential work and a modal suppress receipts;
-they never replay. account departure retires presentation. an active modal
-suppresses unrelated workspace controls and live announcements; its own failures
-stay inside the modal.
+an actionless receipt lasts five visible seconds. an initial exact-undo shortcut
+or new intervention heads-up lasts eight. clocks start after eligible placement,
+use monotonic time and pause while hovered, focused, pressed, busy or hidden.
+there is one slot and no queue. engagement protects the exact command from later
+events. popup close/expiry never discard undo. menus, pickers, modals, phone text
+entry and insufficient geometry retire peripheral presentation without replay;
+retained activity survives. hidden documents pause an existing receipt and admit
+no new one. other retained offers do not suppress routine acknowledgments.
 
-only changed short facts enter separate live regions. inactive panes stay
-silent. actions stay mounted and focusable while busy, with guarded activation;
-successful removal returns to an explicit owner destination, then the shell.
-`FeedbackScope` supplies a pane's focus destination and announcement permission
-without a new state owner. disabled reasons remain visible. compact targets are
-32px, 44px with a coarse pointer; required text wraps. all rooms, forced colours
-and reduced motion share the same contract. the cutover plan in #650
-owns the complete api and behavior requirements.
+owners explicitly project `needsAttention`; tone and priority cannot infer it.
+independent recovery tasks use separate condition keys; one task's admission
+change disables another task's retained action without replacing its node.
+a new key or false-to-true transition requests one heads-up; retry retains the
+same episode. `offer` requires an explicit undo invitation/retention classification
+and nullable discard callback. exact command keys preserve the action and remaining
+clock across offer/condition promotion. updates and owner withdrawal do not invoke
+discard. activity dismissal checks the current token and busy state before removing
+an optional offer and calling its discard callback. an inverse's visible control
+says `remove undo`; popup close never invokes it. required conditions have no
+generic dismissal. react owners use `useWorkspaceCondition`; live command owners
+use `retainCondition` and update/withdraw its exact handle. in activity, an
+unconfirmed write retains attention and its focused, busy retry through sending.
+only owner settlement removes required recovery.
+
+`ActivityControl` reserves rail/header space even when empty. its fixed badge
+shows attention count, otherwise an available-undo dot; the accessible name gives
+all current counts. `ActivityList` groups attention, other conditions, available
+undo and other offers under one flat keyed parent. engagement freezes order;
+command nodes survive classification changes. desktop activity uses `Dialog`,
+phone activity uses `MobileSheet`, and nexus renders the same list inside its
+existing host. opening activity clears the popup. navigation closes its host;
+row removal keeps focus within the list. close returns to a visible opener,
+visible activity control or the workspace destination, never hidden reader chrome.
+
+`WorkspaceFeedback.tsx` owns passive placement: desktop upper-right inside the
+active pane content/workspace/visual-viewport intersection; phone below the
+stationary header/control endpoints at `--mobile-feedback-top`. it never registers
+as chrome or an interaction-owning overlay. the complete wrapping card must fit;
+otherwise presentation retires. it uses shared surface, edge, shadow, radius and
+control tokens, with no severity ornament or countdown. it sits above chrome and
+below popovers. escape closes only from within the card.
+
+short facts use separate live regions with semantic occurrence identity; identical
+deliberate events announce once each. controls never enter live regions. unrelated
+interaction owners suppress peripheral speech. local `FeedbackScope` continues to
+supply pane focus destinations and inactive-pane silence. all rooms, forced colours,
+reduced motion and coarse targets retain the same contracts.
 
 ## ownership
 
@@ -122,6 +153,53 @@ specification and browser qualification in #628. the latter
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
 
+## pane sections
+
+`PaneSection` is one open, transparent section: optional interface header and
+body, separated by 12px, with no perimeter, clipping or nested inset. native
+section props and refs pass through; it owns no reads, commands or state.
+callers retain their fields, tables and collection rows without a boxed variant.
+`PaneSurface` supplies 16px outer padding, 12px minor stacks and 24px major
+content gaps; statistics owns the equivalent 24px section margin locally.
+
+`--pane-section-title-font` is a complete font shorthand resolved through the
+nearest theme: garamond 500 at 24px/1.2 in the study, sans 600 at 18px/1.35 in
+the press, cormorant 300 at 24px/1.2 in the solar. headings reset tracking and
+inherit section ink; descriptions use `--ink-muted`. the header owns interface
+typography independently of reader prose. headings and actions wrap at the
+containing width; control targets remain owned by their controls.
+
+## collections and searchable pickers
+
+`components/ui/Collection.module.css` owns shared surface, row, search, detail,
+adornment and viewport recipes. semantic components retain their actual roots:
+native commands/links, exclusive choices, search listboxes and launcher grids.
+feature css arranges content; it does not duplicate interaction paint.
+
+search/catalog results use `compactViewport`'s six-row preferred budget (32px
+fine, 44px coarse), not a result-count limit. actions and standalone chapters use
+`contentViewport`: intrinsic height, capped by anchored bounds and the parent's
+flex allocation, without a measured collection ceiling or minimum viewport row.
+short lists do not stretch. full workspaces retain `fillViewport`'s larger area.
+essential names wrap. `lib/ui/collection.ts` owns constrained-body measurement
+and reveals retained focus after resize within the owned list/body, without
+moving focus or scrolling the host;
+[overlays](overlays.md#surfaces) owns available geometry and dismissal.
+
+`lib/ui/searchOptions.ts` supplies controlled bindings and keyed reconciliation.
+the feature owns one active record for raw query, scope and subject/session.
+only admitted current results can activate. first enabled existing results
+highlight automatically, including people and library actions; creation requires
+deliberate navigation or a completed press. refresh/append preserves identity;
+removal retires it without choosing a neighbour. disabled rows explain their
+reason without activating. composition, repeats and modified editing do not act.
+
+highlight is the current suggestion, separate from membership/current-value
+marks. adapters own labels/descriptions and acknowledgement semantics. feedback
+and retry controls remain outside listboxes. editor suggestions stay inline;
+the editor retains focus and its insertion transaction. native selects and the
+launcher's specialized grid keyboard controller retain their own semantics.
+
 ## choice controls
 
 `ChoicePicker` renders one controlled exclusive choice: the current value and a
@@ -138,17 +216,54 @@ uses existing colour and motion tokens; reduced motion removes transitions.
 chat's three-control composition, native effort gauge/range and whole-control
 wrapping belong to [chat](chat.md#generation-selection), not this primitive.
 
+## action controls
+
+`Button.tsx` executes commands with a native button; `ButtonLink.tsx` navigates
+with a native anchor. `control.tsx` and `Control.module.css` own their appearance,
+content and help composition. `buttonClassName` is the pure recipe for existing
+framework, reader and navbar roots; it owns no routing, operations or focus.
+ordinary prose links and specialized widgets retain their own semantics.
+
+quiet is the default. `emphasis="strong"` marks a principal commitment;
+`tone="danger"` marks destruction independently. `size="comfortable"` has a 44px
+minimum; compact controls use their host minimum or 32px. any coarse pointer
+enforces at least 44px in both axes. the existing dense outline exception is
+24px with fine input; mobile headers remain 48px. geometry hooks are
+`--control-min-size`, `--control-icon-size`, `--control-font-size` and
+`--control-radius`. callers own layout and adornments, never internal selectors
+or competing interaction paint. fields retain their separate density tokens.
+
+icon-only controls require an icon and accessible name; decorative glyphs are
+hidden and help defaults to that name. labeled controls retain visible text;
+explicit help requires text. `aria-busy` changes the existing icon slot without
+changing activation policy. the operation owner chooses native `disabled` or
+guarded, focusable `aria-disabled`. blocked control links retain their anchor,
+name and explicit tab policy, omit href and suppress activation before callbacks.
+enabled links retain native navigation. no action is inferred from styling.
+
+help, busy and selection changes preserve the native root. tooltip composition
+retains actual refs, react callback cleanup, caller handlers and description ids.
+disabled paint overrides every tone/selection state; focus stays visible.
+forced colors use system colors; reduced motion stops color transitions and busy
+rotation. colors, type and spacing use existing tokens; no geometry animation.
+
 ## overflow buttons
 
-`OverflowMenuButton` owns ellipsis trigger appearance: one native button,
-centered 16px horizontal ellipsis with 1.5px stroke, 6px corners, quiet unboxed
-paint and visible hover/press/open/disabled/focus states. preparation replaces
-the same glyph slot with a busy indicator. it forwards native attributes, handlers
-and refs without owning interaction state. `ActionMenu` supplies behavior and
+`OverflowMenuButton` is the named 16px/1.5-stroke ellipsis adapter over `Button`;
+shared controls own its paint and busy glyph. it forwards native attributes,
+handlers and refs without owning interaction state. `ActionMenu` supplies behavior and
 aria bindings, not a visual class. semantic custom triggers own their appearance.
 resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
 inside a reserved action column that never shifts content.
+
+media index rows use their named `mediaRow` content width: at up to 479px,
+episode playback and one more trigger remain beside identity; other media keep
+only more. expanded rows retain their shortcuts. hosts hide whole
+`data-media-action-id` wrappers within `data-media-actions`; the action component
+does not infer placement from density. standalone preview controls retain their
+own layout. content and feedback may wrap; compact controls create no extra row.
+external media rows expose the same more trigger at every width.
 
 `ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
 44×44px with any coarse pointer, and 2px gaps. outline indentation and creation
@@ -159,23 +274,36 @@ also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
-default targets are 32px, at least 44px with any coarse pointer. consumer classes
-adjust geometry and noninteractive adornments only: mobile chrome/switchboard
-retain 48px and desktop nexus retains its wider shortcut-bearing button.
-disabled paint overrides engagement; focus remains visible. forced colors use
-system colors, including a contrasting focus ring for disabled expanded controls.
-theme colors and motion come from existing tokens; reduced motion removes the
-color transitions. no geometry motion or state-dependent sizing.
+ordinary `ResourceRow` leading controls consume that same geometry. its optional
+passive `leadingVisual` slot occupies a separate column across both text rows,
+aligned at the top; expanded content starts at the text column. omitted visuals
+reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
+`--space-2` gap, `--radius-sm` corners and `--surface-2` background. containment
+preserves the complete publisher image and can letterbox it. existing compact
+title clamping, metadata ellipsis and status placement remain in force.
+
+ordinary rows below `18rem` give the title full width, retain metadata below it,
+and move controls to their own trailing line. the font-relative threshold preserves
+legible names under text enlargement; normal-width rows keep inline controls.
+row defaults yield to each control's owned minimum target size.
+
+mobile chrome/switchboard retain 48px and desktop nexus retains its wider
+shortcut-bearing control through the same geometry contract.
 
 ## workspace strip
 
-the desktop workspace strip keeps readable 12–15rem chips in its own horizontal
-scrollport. each chip has a title, overflow and stable close target: 32px within
-the 40px strip, or 44px within 52px when any pointer is coarse. active fill,
+the desktop workspace strip keeps readable chips in its own horizontal
+scrollport: the previous 12–15rem chip bounds grow by one 32px control width, or
+44px when any pointer is coarse, preserving title space. each chip has three fixed, quiet slots:
+visibility, layout, close. targets remain 32px within the 40px strip, or 44px
+within 52px when any pointer is coarse. active fill,
 in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
-retain selection and focus. tab actions share content with manage tabs through
-`lib/workspace/paneActions.ts`; completion uses one polite position announcement.
+retain selection and focus. controls use shared `Button` paint, tooltips and
+decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
+`lib/workspace/paneControls.ts` owns content shared with manage-tabs. mobile keeps
+48px controls and wrapping titles. reorder completion uses one polite position
+announcement; layout management emits no success toast.
 
 ## the lint
 

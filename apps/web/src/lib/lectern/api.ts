@@ -2,13 +2,15 @@
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Move, OrderRevision, Snapshot } from "@/lib/collections/order";
+import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
 export type Lectern = Schema<"LecternOut">;
 export type LecternItem = Lectern["items"][number];
 export type Placement = NonNullable<Schema<"PlaceIn">["placement"]>;
 
-export async function readLectern(signal: AbortSignal): Promise<Lectern> {
-  return (await apiFetch<ApiJson<"/lectern", "get">>("/api/lectern", { signal })).data;
+/** Stamped with its read snapshot's consumption revision; observations reach native. */
+export async function readLectern(signal: AbortSignal): Promise<StampedRead<Lectern>> {
+  return stampedRead(await apiFetch<ApiJson<"/lectern", "get">>("/api/lectern", { signal }));
 }
 
 export async function moveLecternItem(move: Move, signal: AbortSignal): Promise<Snapshot> {
@@ -40,4 +42,18 @@ export async function writeLecternItem(input: {
         expected_order_revision: input.expectedRevision }),
     },
   )).data.order_revision;
+}
+
+/** A whole-resource snapshot is reviewed once. Sending never reselects or rebases it. */
+export async function prepareCollectionLectern(target: Schema<"CollectionLecternPrepareRequest">["target"], signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/lectern/collections/prepare", "post">>("/api/lectern/collections/prepare", {
+    method: "POST", body: JSON.stringify({ target }), signal,
+  })).data;
+}
+
+/** Transport only; the existing lectern lane admits and retains this exact batch. */
+export async function writeCollectionLectern(body: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/lectern/collections", "put">>("/api/lectern/collections", {
+    method: "PUT", body, signal,
+  })).data;
 }

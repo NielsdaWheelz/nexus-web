@@ -4,7 +4,8 @@
 // without a fetch (lib/api/serverState.tsx). A seeded key is the api path the
 // hook reads, a list's with its view query (canonical: empty), route params
 // unencoded; a seed no hook takes then is dropped unread. Panes keyed by
-// mutable ui state or streamed are absent.
+// mutable ui state or streamed are absent. Each key keeps its client read's
+// complete representation, including consumption stamps and list metadata.
 import type { ApiJson } from "@/lib/api/wire";
 import { mediaDetailFromResponse } from "@/lib/media/mediaDetail";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
@@ -24,8 +25,14 @@ export const paneSeeds: Partial<
   library: ({ id }) => {
     const path = `/libraries/${encodeURIComponent(id)}` as const;
     return {
-      [`/libraries/${id}`]: data(path),
-      [`/libraries/${id}/entries?`]: firstPage(`${path}/entries`),
+      [`/libraries/${id}`]: async (get) => {
+        const { data, consumption_revision } = await get<ApiJson<"/libraries/{library_id}", "get">>(path);
+        return { data, consumption_revision };
+      },
+      [`/libraries/${id}/entries?`]: async (get) => {
+        const { data, consumption_revision } = await get<ApiJson<"/libraries/{library_id}/entries", "get">>(`${path}/entries?limit=100`);
+        return { ...data, metadata: { consumption_revision } };
+      },
       [`/libraries/${id}/suggestions`]: data(`${path}/suggestions`),
     };
   },

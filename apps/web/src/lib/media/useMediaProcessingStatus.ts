@@ -10,7 +10,8 @@ export type MediaProcessingSnapshot = Schema<"MediaProcessingSnapshotOut">;
 /** One stream for the mounted media. Every idle snapshot reconnects metadata, including on entry. */
 export function useMediaProcessingStatus(
   mediaId: string | null,
-): { snapshot: MediaProcessingSnapshot | null } {
+): { snapshot: MediaProcessingSnapshot | null; error: Error | null } {
+  const [failure, setFailure] = useState<{ mediaId: string; error: Error } | null>(null);
   const [latest, setLatest] = useState<{
     mediaId: string;
     snapshot: MediaProcessingSnapshot;
@@ -26,12 +27,13 @@ export function useMediaProcessingStatus(
       isTerminal: () => false,
       onEvent(event) {
         setLatest({ mediaId, snapshot: event.data });
+        setFailure(null);
         if (!event.data.work_in_flight) reconnectMetadataOperations(mediaId);
       },
-      onError: (error) =>
-        console.error("Media processing stream failed:", error),
+      onSuspended: error => setFailure({ mediaId, error }),
+      onError: error => setFailure({ mediaId, error }),
     });
   }, [mediaId]);
 
-  return { snapshot: latest?.mediaId === mediaId ? latest.snapshot : null };
+  return { snapshot: latest?.mediaId === mediaId ? latest.snapshot : null, error: failure?.mediaId === mediaId ? failure.error : null };
 }

@@ -83,7 +83,7 @@ def validate_body(body: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
-def _node(node: object, path: str, allowed: frozenset[str]) -> None:
+def _node(node: object, path: str, allowed: frozenset[str], code_marks: bool = True) -> None:
     if not isinstance(node, dict) or node.get("type") not in allowed:
         raise ValueError(f"{path} is not one of {sorted(allowed)}")
     if set(node) - {"type", "attrs", "content", "marks", "text"}:
@@ -104,6 +104,8 @@ def _node(node: object, path: str, allowed: frozenset[str]) -> None:
     if kind == "text":
         if not isinstance(node.get("text"), str) or not node["text"] or "content" in node:
             raise ValueError(f"{path} must be non-empty text")
+        if marks and not code_marks:
+            raise ValueError(f"{path} is code and takes no marks")
         return
     if "text" in node:
         raise ValueError(f"{path}.text is only valid on text")
@@ -114,7 +116,7 @@ def _node(node: object, path: str, allowed: frozenset[str]) -> None:
     if children is None or not isinstance(content, list):
         raise ValueError(f"{path}.content is not allowed here")
     for index, child in enumerate(content):
-        _node(child, f"{path}.content[{index}]", children)
+        _node(child, f"{path}.content[{index}]", children, kind != "code_block")
 
 
 def _attrs(kind: str, attrs: object, path: str) -> None:

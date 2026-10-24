@@ -7,6 +7,14 @@ import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { isAbortError } from "@/lib/errors";
+import {
+  expectArray,
+  expectBoolean,
+  expectCanonicalRfcUuid,
+  expectExactRecord,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 import { CaptureFailureError, failure } from "@/extension/capture";
 
 declare const __NEXUS_ORIGIN__: string; // pinned by the build
@@ -14,10 +22,61 @@ declare const __NEXUS_ORIGIN__: string; // pinned by the build
 export type UploadAnswer = ApiJson<"/extension/captures", "post">["data"];
 export type ExtensionSession = Schema<"ExtensionSessionOut">;
 export type CaptureTarget = Schema<"CaptureTargetOut">;
-type Destinations = ApiJson<
-  "/extension/library-destinations",
-  "get"
->["data"];
+
+function revision(raw: unknown): string {
+  const value = expectString(raw, "revision");
+  if (!/^[1-9][0-9]{0,18}$/.test(value) || BigInt(value) > BigInt("9223372036854775807")) {
+    throw new TypeError("revision must be an exact positive bigint decimal string");
+  }
+  return value;
+}
+
+/** This independently installed client accepts only the current guarded wire. */
+function destinations(raw: unknown): Schema<"LibraryDestinationsOut"> {
+  const value = expectExactRecord(raw, ["removal_revision", "destinations"], "destinations");
+  return {
+    removal_revision: revision(value.removal_revision),
+    destinations: expectArray(value.destinations, raw => {
+      const item = expectExactRecord(raw, ["id", "name", "order_revision"], "destination");
+      return {
+        id: expectCanonicalRfcUuid(item.id, "destination.id"),
+        name: expectString(item.name, "destination.name"),
+        order_revision: revision(item.order_revision),
+      };
+    }, "destinations"),
+  };
+}
+
+function published(raw: unknown): Schema<"Published"> {
+  const value = expectExactRecord(raw, ["kind", "import_ref", "session_id", "media_id", "created", "current_placements"], "published capture");
+  let current: Schema<"LibraryPlacementsOut"> | null = null;
+  if (value.current_placements !== null) {
+    const snapshot = expectExactRecord(value.current_placements, ["removal_revision", "placements"], "current placements");
+    current = {
+      removal_revision: revision(snapshot.removal_revision),
+      placements: expectArray(snapshot.placements, raw => {
+        const item = expectExactRecord(raw, ["library_id", "name", "order_revision", "relation", "blocked"], "placement");
+        return {
+          library_id: expectCanonicalRfcUuid(item.library_id, "placement.library_id"),
+          name: expectString(item.name, "placement.name"),
+          order_revision: revision(item.order_revision),
+          relation: expectOneOf(item.relation, ["Absent", "Direct"], "placement.relation"),
+          blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "SystemManaged"], "placement.blocked"),
+        };
+      }, "placements"),
+    };
+  }
+  const sessionId = expectCanonicalRfcUuid(value.session_id, "published.session_id");
+  if (value.import_ref !== `upload:${sessionId}`) throw new TypeError("published import must name its session");
+  return {
+    kind: expectOneOf(value.kind, ["Published"], "published.kind"),
+    import_ref: `upload:${sessionId}`,
+    session_id: sessionId,
+    media_id: expectCanonicalRfcUuid(value.media_id, "published.media_id"),
+    created: expectBoolean(value.created, "published.created"),
+    current_placements: current,
+  };
+}
 
 async function call<T>(
   token: string,
@@ -85,19 +144,22 @@ export function nexus(token: string) {
           throw error;
       }
     },
-    destinations: () => call<Destinations>(token, "GET", "/library-destinations"),
+    destinations: async (signal?: AbortSignal) =>
+      destinations(await call<unknown>(token, "GET", "/library-destinations", undefined, signal)),
     captureTarget: (sourceUrl: string, signal: AbortSignal) =>
       call<CaptureTarget>(token, "GET", `/capture-target?source_url=${encodeURIComponent(sourceUrl)}`, undefined, signal),
-    create: (request: Schema<"CreateCaptureRequest">, signal: AbortSignal) =>
-      call<UploadAnswer>(token, "POST", "/captures", request, signal),
-    confirm: (id: string, generation: number, signal: AbortSignal) =>
-      call<Schema<"Published">>(
+    create: async (request: Schema<"CreateCaptureRequest">, signal: AbortSignal) => {
+      const answer = await call<UploadAnswer>(token, "POST", "/captures", request, signal);
+      return answer.kind === "Published" ? published(answer) : answer;
+    },
+    confirm: async (id: string, request: Schema<"ConfirmUploadRequest">, signal: AbortSignal) =>
+      published(await call<unknown>(
         token,
         "POST",
         `/captures/${id}/confirm`,
-        { generation },
+        request,
         signal,
-      ),
+      )),
     remove: (id: string) => call<void>(token, "DELETE", `/captures/${id}`),
   };
 }

@@ -44,8 +44,12 @@ to show them. scrolling belongs to the browser and never changes that choice.
 new reader entry starts shown. selection, links, marks and dismissal each keep
 their own gesture; one action must not also toggle the shell.
 
-stable layout matters more than reclaiming a few pixels. controls fade with a
-small transform while reading geometry and bottom clearance remain fixed.
+reading uses a stable canvas inside platform protection; controls overlay it.
+controls fade with a small transform, releasing paint and input while document
+extent and passage position stay fixed. shown controls temporarily obscure text;
+scrollable endpoint space makes first and last passages reachable. conservative
+rectangular bounds trade some visible area around floating controls for one
+understandable geometry owner. downloaded reading keeps its existing controls.
 hiding disables controls immediately; showing makes them usable during the
 short entrance. css reverses interrupted transitions without an animation state
 machine. explicit command focus reveals instantly, and a stable native button
@@ -120,9 +124,8 @@ one scroll, positions `(unit, codepoint offset)`. fragment switching, the epub
 restore-phase machine, fragment loading states and the transcript's segment list
 go. the cost is dom size and initial parse on large books;
 `content-visibility: auto` per unit at an estimated height bounds the layout
-cost, and the gate on the largest corpus book on the phone is still open
-([issue](../issues/reader-whole-mount-large-book-unmeasured.md)). windowing can slot in
-behind the same geometry interface if it fails.
+cost; the largest corpus book has not been measured on the phone. windowing can
+slot in behind the same geometry interface if that cost proves too high.
 
 ### paint with css custom highlights
 
@@ -222,8 +225,9 @@ override real saved progress.
   segment; choosing a time reads from there. a click on the text does not seek:
   in a reading surface the first click of a word selection, a tap or a click
   that dismisses a menu would start audio and move the cursor. a deep link that
-  moves a transcript seeks without resuming. the player does not move the text;
-  the active chapter follows the player.
+  moves a transcript inspects without playback. the reader's chapter follows reading;
+  a quiet segment marker follows audio without moving text. an explicit position
+  action returns to the current audio passage once, retaining a way back.
 - **evidence has an explicit view choice**: following aligns items beside their
   passages; all items uses normal-flow grouping. both choices remain visible on
   desktop. sidebar scrolling inspects overflow without changing the choice;

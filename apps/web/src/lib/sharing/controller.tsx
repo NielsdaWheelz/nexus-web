@@ -6,6 +6,7 @@ import type { ShareOpenOptions, ShareTarget } from "@/lib/sharing/types";
 
 export interface ShareSession {
   key: number;
+  origin: string;
   target: ShareTarget;
   options: ShareOpenOptions;
 }
@@ -20,8 +21,10 @@ const ShareControllerContext = createContext<ShareController | null>(null);
 export function ShareControllerProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<ShareSession | null>(null);
   const openShare = useCallback((target: ShareTarget, options: ShareOpenOptions) => {
+    const origin = document.location.origin;
     setSession((current) => ({
       key: (current?.key ?? 0) + 1,
+      origin,
       target,
       options,
     }));

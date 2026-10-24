@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
@@ -11,17 +10,13 @@ import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { lecternFull, useLectern } from "@/lib/lectern/lectern";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { getQuickReads, presentSuggestionItem, type QuickReads } from "@/lib/suggestions";
-import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import { definePaneVisitDataKey, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
-import styles from "./LecternAddControl.module.css";
 
 const VISIT = definePaneVisitDataKey<Visit<QuickReads>>("Suggestions.QuickReads");
 
 /** The direct quick-read query keeps the normal read and inspected-add owners. */
 export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
-  const paneId = usePaneRuntime()?.paneId;
   const full = lecternFull(useLectern());
   const [seen, setSeen] = useState(isActive);
   if (isActive && !seen) setSeen(true);
@@ -50,14 +45,10 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
     }}
     announcement="Polite" actions={[{ label: "retry", onClick: read.refetch }]} />;
   return (
-    <PaneSection ref={rootRef} className={styles.collection} title="Quick reads" aria-label="Quick reads" tabIndex={-1}>
+    <PaneSection ref={rootRef} title="Quick reads" aria-label="Quick reads" tabIndex={-1}>
       <CollectionView
         returnScope="Lectern.QuickReads" ariaLabel="Quick reads" rows={rows}
         status={read.status === "failed" ? "error" : read.status}
-        rowControls={Object.fromEntries(rows.map((row) => [row.id,
-          <LecternAddControl key={row.id} mediaId={row.id.slice("media:".length)}
-            title={row.title.text} returnFocus={() => findPaneCollectionRowFocusTarget(paneId, row.id)} />,
-        ]))}
         notice={<>
           {full ? <FeedbackNotice content={{ tone: "Neutral", title: "lectern is full", message: "remove an item to add another." }} announcement="None" /> : null}
           {loaded !== null ? failureNotice : null}

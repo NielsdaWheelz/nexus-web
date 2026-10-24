@@ -21,7 +21,6 @@ from nexus.logging import get_logger
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services.net.http_retry import get_json_with_retry
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
@@ -66,7 +65,6 @@ def run_youtube_video_ingest(
         if not snippet.get("channel_title"):
             db.flush()
             projection.refresh(db, "media", [media_id])
-            projection.refresh_subject_dossiers(db, [ResourceRef("media", media_id)])
             record_input_change(db, owners=(f"media:{media_id}",))
             return taxonomy.NOT_OBSERVED
         channel_id = snippet.get("channel_id")
@@ -86,7 +84,6 @@ def run_youtube_video_ingest(
         )
         db.flush()
         projection.refresh(db, "media", [media_id])
-        projection.refresh_subject_dossiers(db, [ResourceRef("media", media_id)])
         record_input_change(db, owners=(f"media:{media_id}",))
         return batch
 

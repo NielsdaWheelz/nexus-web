@@ -27,7 +27,6 @@ def _workspace_ref(value: str) -> str:
         "podcast",
         "page",
         "note_block",
-        "artifact",
         "oracle_reading",
     ):
         raise ValueError("expected a canonical workspace resource ref")

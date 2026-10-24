@@ -50,14 +50,14 @@ from nexus.services.capabilities import (
     reading_capabilities,
 )
 from nexus.services.consumption import projection
-from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.metadata_operations import metadata_enrichment_views
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
-from nexus.services.playback_source import derive_playback_source
+from nexus.services.playback_source import derive_playback_source, episode_playback_source
 from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.resource_grants import media_grant_path_exists_sql
+from nexus.services.search_recovery import SearchRecoveryFacts, search_recovery
 from nexus.services.source_attempts import (
     SourceRecoveryFacts,
     source_recovery,
@@ -65,6 +65,7 @@ from nexus.services.source_attempts import (
     source_repairable_sql,
 )
 from nexus.services.source_types import LATEST_ORDER_SQL
+from nexus.services.transcript_navigation import read_transcript_navigation_source
 from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import x_article_content_facts, x_source_contexts
 
@@ -77,7 +78,7 @@ _ROWS_SQL = f"""
     SELECT m.id, m.kind, m.title, m.original_published_date,
         m.processing_status::text AS persisted_status, m.last_error_code,
         m.canonical_source_url, m.external_playback_url, m.provider, m.provider_id,
-        m.created_by_user_id = :viewer_id AS is_creator, rp.generation AS reader_generation,
+        COALESCE(m.created_by_user_id = :viewer_id, false) AS is_creator, rp.generation AS reader_generation,
         {media_file_exists_sql("m.id")} AS has_file,
         EXISTS (SELECT 1 FROM ({ready_publication_rows_sql()}) publication
                 WHERE publication.media_id = m.id) AS publication_ready,
@@ -95,7 +96,8 @@ _ROWS_SQL = f"""
            AND dead.payload @> jsonb_build_object('media_id', m.id::text, 'revision', mcis.revision)
          ORDER BY dead.id LIMIT 1) AS dead_index_job_id,
         mts.transcript_state, mts.transcript_coverage, mts.transcript_origin,
-        pls.position_ms, pls.duration_ms AS listened_ms, pe.duration_seconds AS feed_seconds
+        pls.position_ms, pls.duration_ms AS listened_ms, pe.duration_seconds AS feed_seconds,
+        pe.media_id AS episode_media_id
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
     LEFT JOIN LATERAL (
@@ -173,6 +175,15 @@ def _summaries(
             consumption=ConsumptionOut(state=state.state, progress=state.progress),
             duration=duration,
             x_article_content=articles.get(media_id),
+            can_play=episode_playback_source(
+                kind=row.kind,
+                has_episode=row.episode_media_id is not None,
+                external_playback_url=row.external_playback_url,
+                canonical_source_url=row.canonical_source_url,
+                provider=row.provider,
+                provider_id=row.provider_id,
+            )
+            is not None,
         )
     return summaries
 
@@ -365,7 +376,7 @@ def media_facts(
 
 _DETAIL_SQL = """
     SELECT m.requested_url, m.canonical_url, m.edition_published_date, m.edition_isbn,
-        m.publisher, m.language, m.description, m.authors_manually_managed,
+        m.publisher, m.language, m.description,
         m.metadata_enriched_at, m.created_at, m.updated_at,
         pe.description_html, pe.description_text
     FROM media m LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
@@ -419,7 +430,6 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         chapters=[PodcastEpisodeChapterOut.model_validate(dict(chapter)) for chapter in chapters],
         capabilities=_capabilities(row, _pdf_readiness(db, rows), summary.x_article_content),
         contributors=summary.contributors,
-        author_mode="manual" if detail.authors_manually_managed else "automatic",
         original_published_date=row.original_published_date,
         edition_published_date=detail.edition_published_date,
         edition_isbn=detail.edition_isbn,
@@ -489,5 +499,10 @@ def read_processing_snapshot(
         transcript_state=row.transcript_state,
         transcript_coverage=row.transcript_coverage,
         reader_generation=row.reader_generation,
+        transcript_reader_key=read_transcript_navigation_source(db, media_id=media_id).key
+        if row.kind in _TRANSCRIPT_KINDS
+        and row.transcript_state in ("ready", "partial")
+        and row.transcript_coverage in ("full", "partial")
+        else None,
         work_in_flight=_in_flight(row, status, retrieval),
     )

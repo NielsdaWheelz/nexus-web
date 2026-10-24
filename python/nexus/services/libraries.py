@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media, can_restore_media
 from nexus.db.retries import TransactionRestart, retry_serializable
 from nexus.errors import (
     ApiErrorCode,
@@ -28,12 +29,12 @@ from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationOut,
+    LibraryDestinationsOut,
     LibraryOut,
     LibraryRole,
     RenameLibraryRequest,
 )
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 
 _COLUMNS = "l.id, l.name, l.owner_user_id, l.is_default, l.system_key, l.order_revision, m.role"
@@ -77,6 +78,14 @@ class LibraryAccess:
         if self.owner_user_id != viewer_id:
             raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Only the owner can do this")
 
+    def require_add_content(self, viewer_id: UUID) -> None:
+        """Own default and administered mutable named libraries admit podcasts."""
+        self.require_not_system()
+        if self.is_default:
+            self.require_owner(viewer_id)
+        else:
+            self.require_admin()
+
     def out(self, viewer_id: UUID) -> LibraryOut:
         """The one capability rule: admins manage a mutable library, its owner deletes
         or hands it on, and everyone else may leave it."""
@@ -86,6 +95,9 @@ class LibraryAccess:
             name=self.name,
             is_default=self.is_default,
             role=self.role,
+            order_revision=str(self.order_revision),
+            can_add_content=self.system_key is None
+            and ((self.is_default and owner) or (self.mutable and self.role == "admin")),
             can_manage=self.mutable and self.role == "admin",
             can_delete=self.mutable and owner,
             can_transfer_ownership=self.mutable and owner,
@@ -95,7 +107,7 @@ class LibraryAccess:
 
 def access(db: Session, viewer_id: UUID, library_id: UUID, *, lock: bool) -> LibraryAccess:
     """The library and the viewer's role; E_LIBRARY_NOT_FOUND for a non-member.
-    `lock` takes the library row lock; snapshot changes require whole-attempt retry."""
+    `lock` takes the library row lock (READ COMMITTED writers only)."""
     row = (
         db.execute(
             text(f"""
@@ -159,36 +171,91 @@ def _valid_name(name: str) -> str:
 
 
 def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> LibraryOut:
-    """A named library owned (and administered) by the viewer."""
-    name = _valid_name(body.name)
+    """Create and file one frozen selection atomically; an existing id never reapplies it."""
+    from nexus.services import library_entries, users
+    from nexus.services.suggestion_changes import record_input_change
 
     def attempt() -> LibraryOut:
-        inserted = db.scalar(
-            text("""
-                INSERT INTO libraries (id, name, owner_user_id, is_default)
-                VALUES (:id, :name, :viewer_id, false)
-                ON CONFLICT (id) DO NOTHING RETURNING id
-            """),
-            {"id": body.id, "name": name, "viewer_id": viewer_id},
-        )
-        if inserted is not None:
-            db.execute(
-                text("""
-                    INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:id, :viewer_id, 'admin')
-                """),
-                {"id": body.id, "viewer_id": viewer_id},
-            )
-        held = db.execute(
+        users.lock_viewer(db, viewer_id)
+        existing = db.execute(
             text("SELECT owner_user_id, is_default, system_key FROM libraries WHERE id = :id"),
             {"id": body.id},
-        ).one()
-        if held.owner_user_id != viewer_id or held.is_default or held.system_key is not None:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library id is taken")
-        projection.refresh(db, "library", [body.id])
+        ).first()
+        if existing is not None:
+            if (
+                existing.owner_user_id != viewer_id
+                or existing.is_default
+                or existing.system_key is not None
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library id is taken")
+            return access(db, viewer_id, body.id, lock=False).out(viewer_id)
+        name = _valid_name(body.name)
+        targets = [library_entries.parse_entry_target(ref) for ref in body.initial_items]
+        if len({target.id for target in targets}) != len(targets):
+            raise InvalidRequestError(message="Duplicate initial items")
+        media_ids = sorted(target.id for target in targets)
+        parents = list(
+            db.scalars(
+                text("SELECT podcast_id FROM podcast_episodes WHERE media_id = ANY(:ids)"),
+                {"ids": media_ids},
+            )
+        )
+        podcast_ids = sorted(set(parents))
+        if podcast_ids:
+            held = list(
+                db.scalars(
+                    text("SELECT id FROM podcasts WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"),
+                    {"ids": podcast_ids},
+                )
+            )
+            if held != podcast_ids:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+        library_entries.lock_media_rows_in_order(db, media_ids)
+        for media_id in media_ids:
+            if not (
+                can_restore_media(db, viewer_id, media_id)
+                or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
+            ):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            library_entries.lock_media_for_reference(db, media_id)
+        default_id = default_library_id(db, viewer_id)
+        lock_library_rows_in_order(db, [default_id])
+        if body.expected_removal_revision is not None:
+            users.require_removal_revision(db, viewer_id, int(body.expected_removal_revision))
+        inserted = db.scalar(
+            text("""
+            INSERT INTO libraries (id, name, owner_user_id, is_default)
+            VALUES (:id, :name, :viewer_id, false)
+            ON CONFLICT (id) DO NOTHING RETURNING id
+        """),
+            {"id": body.id, "name": name, "viewer_id": viewer_id},
+        )
+        if inserted is None:
+            raise TransactionRestart("library id concurrently created")
+        db.execute(
+            text(
+                "INSERT INTO memberships (library_id, user_id, role) "
+                "VALUES (:id, :viewer_id, 'admin')"
+            ),
+            {"id": body.id, "viewer_id": viewer_id},
+        )
+        # Retain every selected media before organization.
+        for media_id in media_ids:
+            library_entries.assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, media_id, []
+            )
+        for media_id in media_ids:
+            library_entries.assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, media_id, [body.id]
+            )
+        if targets:
+            record_input_change(
+                db, owners=(f"library:{body.id}", *(f"media:{media_id}" for media_id in media_ids))
+            )
+            projection.refresh(db, "library", [body.id])
+            projection.refresh_viewer_contributors(db, [viewer_id])
         return access(db, viewer_id, body.id, lock=False).out(viewer_id)
 
-    # A same-id insert race retries the complete permission and projection decision.
     return retry_serializable(db, "create_library", attempt)
 
 
@@ -216,17 +283,18 @@ def rename_library(
             {"name": name, "id": library_id},
         )
         projection.refresh(db, "library", [library_id])
-        projection.refresh_subject_dossiers(db, [ResourceRef("library", library_id)])
         return replace(library, name=name).out(viewer_id)
 
     return retry_serializable(db, "rename_library", attempt)
 
 
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
-    """Owner delete. A media filed nowhere else moves into the owner's All, so
-    deleting a library never deletes media. Absent or invisible: success."""
-    from nexus.services import library_entries, media_upload_sessions
-    from nexus.services.dossier import engine as dossier
+    """Owner delete preserves every eligible direct media in the owner's default.
+
+    suppression survives; accepted absence also advances the acquisition fence,
+    preventing an old create-and-file command from recreating the deleted id.
+    """
+    from nexus.services import library_entries, media_upload_sessions, users
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
@@ -234,6 +302,31 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     ref = ResourceRef(scheme="library", id=library_id)
 
     def attempt() -> None:
+        users.lock_viewer(db, viewer_id)
+        users.advance_removal_revision(db, viewer_id)
+        from nexus.services.podcasts import imports, sync
+
+        show_ids = list(
+            db.scalars(
+                text("""
+            SELECT podcast_id FROM library_podcast_subscriptions WHERE library_id=:id
+            UNION SELECT r.podcast_id FROM podcast_library_imports i
+            JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
+            ORDER BY podcast_id
+        """),
+                {"id": library_id},
+            )
+        )
+        if show_ids:
+            db.execute(
+                text("SELECT id FROM podcasts WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
+                {"ids": show_ids},
+            )
+            db.execute(
+                text("""SELECT r.id FROM podcast_feed_runs r
+                WHERE r.podcast_id=ANY(:ids) ORDER BY r.id FOR UPDATE"""),
+                {"ids": show_ids},
+            )
         media_ids = library_entries.media_ids_in_library(db, library_id)
         if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
             raise TransactionRestart("library media set changed")
@@ -245,47 +338,57 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             return
         library.require_mutable()
         library.require_owner(viewer_id)
-        # Filing advances the library order revision and the media reference barrier.
-        # A concurrent dependency change therefore restarts this serializable snapshot.
-        held = library_entries.media_ids_in_library(db, library_id)
-        if not set(held) <= set(media_ids):
-            raise TransactionRestart("library media set grew")
         members = list(
             db.scalars(
-                text("""
-                    SELECT user_id FROM memberships WHERE library_id = :id
-                    ORDER BY user_id FOR UPDATE
-                """),
+                text("SELECT user_id FROM memberships WHERE library_id=:id ORDER BY user_id"),
                 {"id": library_id},
             )
         )
-        # The whole dossier head union, once, before any cleanup takes a head lock.
-        dossier.lock_heads(
-            db,
-            subjects=[ref, *(ResourceRef(scheme="media", id=m) for m in held)],
-            user_ids=members,
-        )
-        dossier.on_subject_deleted(db, ref)
+        # The library lock stops new filings; one that landed before it holds a
+        # media this attempt did not lock, so the attempt restarts.
+        held = library_entries.media_ids_in_library(db, library_id)
+        if not set(held) <= set(media_ids):
+            raise TransactionRestart("library media set grew")
         delete_edges_for_deleted_resource(db, ref=ref)
         media_upload_sessions.delete_library_destination_support_in_current_transaction(
             db, library_id=library_id
         )
         for media_id in held:
-            if library_entries.count_entries_for_media(db, media_id) == 1:
-                library_entries.ensure_entry(db, default_id, library_entries.media_target(media_id))
+            library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
+        current_shows = set(
+            db.scalars(
+                text("""
+            SELECT podcast_id FROM library_podcast_subscriptions WHERE library_id=:id
+            UNION SELECT r.podcast_id FROM podcast_library_imports i
+            JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
+        """),
+                {"id": library_id},
+            )
+        )
+        if not current_shows <= set(show_ids):
+            raise TransactionRestart("library podcast set grew")
+        imports.delete_for_libraries(db, library_ids=[library_id])
+        for podcast_id in show_ids:
+            sync.stop_if_unused(db, podcast_id=podcast_id)
         library_entries.delete_library_entries(db, library_id)
         delete_suggestion_feeds(db, library_id=library_id)
         db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
         projection.refresh(db, "library", [library_id])
-        for user_id in members:
-            dossier.on_visibility_lost(db, user_id=user_id)
-        record_input_change(db, owners=[ref.uri, *(f"media:{media_id}" for media_id in held)])
+        projection.refresh_viewer_contributors(db, members)
+        record_input_change(
+            db,
+            owners=(
+                f"library:{library_id}",
+                *(f"media:{media_id}" for media_id in held),
+                *(f"podcast:{podcast_id}" for podcast_id in show_ids),
+            ),
+        )
 
     retry_serializable(db, "delete_library", attempt)
 
 
 def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user_id: UUID) -> UUID:
-    """Ensure the system library in the caller's serializable transaction; flush only."""
+    """The system library for `system_key`, created once."""
     existing = db.scalar(
         text("SELECT id FROM libraries WHERE system_key = :key"), {"key": system_key}
     )
@@ -331,7 +434,7 @@ def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
 # oldest created, so All comes first. Every plan ends in the unique id.
 _PRESENTED = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
 _ID = SortKey("id", "asc", KeysetValueKind.Uuid)
-_INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
+INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
     None: (SortKey("created_at", "asc", KeysetValueKind.DateTime), _ID),
     "created_desc": (
         SortKey("created_at", "desc", KeysetValueKind.DateTime),
@@ -350,28 +453,33 @@ _INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
 }
 
 
+def library_index_rows_sql() -> str:
+    """Every member library with its presented name and canonical index order facts."""
+    return f"""
+                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
+                       lower(btrim({_PRESENTED})) AS name_key
+                FROM libraries l
+                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+    """
+
+
 def list_libraries(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[LibraryOut]:
     """One keyset page of the viewer's libraries in the `sort` view."""
     query = parse_collection_query(items, domain_keys={"sort"})
     sort = query.parameters.get("sort")
-    if sort not in _INDEX_PLANS:
+    if sort not in INDEX_PLANS:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported libraries view")
     rows, next_cursor = keyset_page(
         db,
         binding={"list": "Libraries", "viewer": viewer_id, "sort": sort},
-        plan=_INDEX_PLANS[sort],
+        plan=INDEX_PLANS[sort],
         cursor=query.cursor,
         limit=query.limit,
         params={"viewer_id": viewer_id},
         sql=lambda keyset, order: f"""
-            WITH facts AS (
-                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
-                       lower(btrim({_PRESENTED})) AS name_key
-                FROM libraries l
-                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            )
+            WITH facts AS ({library_index_rows_sql()})
             SELECT * FROM facts WHERE true {keyset} ORDER BY {order} LIMIT :limit
         """,
     )
@@ -384,19 +492,29 @@ def list_libraries(
     )
 
 
-def list_writable_library_destinations(db: Session, viewer_id: UUID) -> list[LibraryDestinationOut]:
-    """The complete named-library catalog the viewer may file into."""
+def list_writable_library_destinations(db: Session, viewer_id: UUID) -> LibraryDestinationsOut:
+    """Complete named destination catalog and acquisition fence from one snapshot."""
     rows = db.execute(
         text("""
-            SELECT l.id, l.name FROM libraries l
-            JOIN memberships m
-              ON m.library_id = l.id AND m.user_id = :viewer_id AND m.role = 'admin'
+        SELECT u.removal_revision, destination.* FROM users u
+        LEFT JOIN LATERAL (
+            SELECT l.id, l.name, l.order_revision FROM libraries l
+            JOIN memberships m ON m.library_id = l.id AND m.user_id = u.id AND m.role = 'admin'
             WHERE NOT l.is_default AND l.system_key IS NULL
-            ORDER BY lower(l.name), l.name, l.id
-        """),
+        ) destination ON true
+        WHERE u.id = :viewer_id
+        ORDER BY lower(destination.name), destination.name, destination.id
+    """),
         {"viewer_id": viewer_id},
+    ).all()
+    return LibraryDestinationsOut(
+        removal_revision=str(rows[0].removal_revision),
+        destinations=[
+            LibraryDestinationOut(id=row.id, name=row.name, order_revision=str(row.order_revision))
+            for row in rows
+            if row.id is not None
+        ],
     )
-    return [LibraryDestinationOut(id=row.id, name=row.name) for row in rows]
 
 
 def resolve_writable_destinations(

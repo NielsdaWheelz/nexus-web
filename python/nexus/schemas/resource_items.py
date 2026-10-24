@@ -14,6 +14,7 @@ from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.note_bodies import Body
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
@@ -77,8 +78,16 @@ class ExcerptOut(_Out):
 class NamedResourceBodyOut(_Out):
     kind: Literal["named"] = "named"
     title: str
+    image_url: str | None
     media_kind: str | None
     contributors: list[ContributorCreditOut] | None
+
+
+class MediaResourceBodyOut(_Out):
+    """A live stored identity; captured evidence retains its frozen named/passage body."""
+
+    kind: Literal["media"] = "media"
+    media_summary: MediaSummaryOut
 
 
 class PassageResourceBodyOut(_Out):
@@ -111,6 +120,7 @@ class ReferenceResourceBodyOut(_Out):
 
 ResourceBodyOut = Annotated[
     NamedResourceBodyOut
+    | MediaResourceBodyOut
     | PassageResourceBodyOut
     | ProseResourceBodyOut
     | ImagesResourceBodyOut
@@ -190,33 +200,40 @@ DownloadKind = Literal["podcast_episode", "pdf", "epub", "web_article"]
 SimpleActionKind = Literal[
     "Open",
     "OpenInNewPane",
-    "MediaMetadata",
+    "Metadata",
+    "MarkCollectionFinished",
+    "MarkCollectionUnread",
+    "AddUnfinishedToLectern",
+    "LeaveLibrary",
+    "TranscribePodcastEpisodes",
     "Share",
     "Chat",
     "PlayNext",
+    "AddToQueue",
     "DownloadOriginal",
-    "EditAuthors",
     "ResetProgress",
     "RemoveMedia",
     "LibraryPlacement",
     "LibrarySettings",
     "DeleteLibrary",
     "PodcastSettings",
+    "SubscribePodcast",
+    "PodcastLibraries",
+    "ImportPodcastEpisodes",
+    "UnsubscribePodcast",
+    "RemovePodcastEpisodes",
     "RefreshPodcast",
-    "RetryPodcastBackfill",
     "DeleteConversation",
     "ForkMessage",
     "RerunMessage",
     "RegenerateMessage",
     "DeleteMessage",
     "EditHighlight",
-    "LearnHighlight",
     "EditHighlightBounds",
     "DeleteHighlight",
     "EditPageTitle",
     "DeletePage",
     "EditNoteBody",
-    "RegenerateArtifact",
 ]
 
 
@@ -254,16 +271,20 @@ class RecoveryAction(_Action):
 
 
 class DownloadAction(_Action):
-    """What android needs to keep this media offline: an episode's audio or a reading copy."""
+    """An admitted acquisition subject; native resolves its source and playback authority."""
 
     kind: Literal["Download"] = "Download"
     media_kind: DownloadKind
     title: str
-    audio_url: str | None
 
 
 class OpenSourceAction(_Action):
     kind: Literal["OpenSource"] = "OpenSource"
+    href: str
+
+
+class OpenPodcastFeedAction(_Action):
+    kind: Literal["OpenPodcastFeed"] = "OpenPodcastFeed"
     href: str
 
 
@@ -276,11 +297,6 @@ class ConsumptionAction(_Action):
     kind: Literal["Consumption"] = "Consumption"
     finished: bool
     episode: bool
-
-
-class PodcastSubscriptionAction(_Action):
-    kind: Literal["PodcastSubscription"] = "PodcastSubscription"
-    subscribed: bool
 
 
 class TranscriptAction(_Action):
@@ -306,9 +322,9 @@ ResourceActionOut = Annotated[
     | RecoveryAction
     | DownloadAction
     | OpenSourceAction
+    | OpenPodcastFeedAction
     | PlaybackAction
     | ConsumptionAction
-    | PodcastSubscriptionAction
     | TranscriptAction
     | LecternMembershipAction
     | HighlightNoteAction,

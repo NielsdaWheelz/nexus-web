@@ -9,10 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { clamp } from "@/lib/clamp";
-import {
-  readMobileCssLength,
-  useMobileViewport,
-} from "@/lib/mobileShell/viewport";
+import { readMobileCssLength } from "@/lib/mobileShell/viewport";
 import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 
 export type Side = "above" | "below" | "left" | "right" | "edge";
@@ -20,6 +17,7 @@ export type AnchorState = "visible" | "offscreen" | "unavailable";
 export interface AnchorMeasurement {
   /** null keeps an unavailable passage's draft pinned inside its live pane. */
   readonly rect: DOMRect | null;
+  /** Source order before clipping/sorting; offscreen endpoints remain endpoints. */
   readonly lines: readonly DOMRect[];
   readonly bounds: DOMRect;
 }
@@ -27,6 +25,10 @@ export type MeasuredAnchor = () => AnchorMeasurement | null;
 
 export interface AnchorOptions {
   readonly enabled: boolean;
+  /** Compact reader commands may overlap selected text, while avoiding endpoints. */
+  readonly strategy?: "mobile-selection-actions";
+  /** Stable through range changes and temporary hiding within a source session. */
+  readonly selectionSession?: string | null;
   /** Default "below"; with `flip`, the other side when this one does not fit. */
   readonly placement?: "above" | "below" | "right";
   readonly align?: "start" | "center" | "end";
@@ -35,7 +37,7 @@ export interface AnchorOptions {
   /** A text selection's line boxes: place against its first or last visible line. */
   readonly lines?: readonly DOMRect[];
   /** Keep clear of the mobile Nexus band and keyboard, not only the safe area. */
-  readonly clearContent?: boolean;
+  readonly subscribeContentClearance?: (listener: () => void) => () => void;
   /** Clamp details beside their trigger, without covering its direct action. */
   readonly keepAnchorVisible?: boolean;
   /** Source-owned layout changes, such as reader reflow or pdf zoom. */
@@ -57,6 +59,8 @@ interface Placed {
 }
 
 const PADDING_PX = 8;
+/** Native handle hit regions are unavailable; keep this conservative source-box margin. */
+const ENDPOINT_CLEARANCE_PX = 24;
 
 /** The visible viewport less padding, the safe-area insets and the bottom clearance. */
 function viewportBounds(clearContent: boolean): Bounds {
@@ -211,14 +215,76 @@ function againstSelection(
   return atEdge(area, box, bounds);
 }
 
-const HIDDEN: CSSProperties = { position: "fixed", visibility: "hidden" };
+/** Compact commands always have a placement, even when selected text fills the pane. */
+function mobileSelectionActions(
+  anchor: DOMRect,
+  sourceLines: readonly DOMRect[],
+  box: DOMRect,
+  bounds: Bounds,
+  previous: number | null,
+): Placed & { readonly candidate: number } {
+  const lines = sourceLines.filter((line) => line.width > 0 && line.height > 0);
+  // Derive neighborhoods before clipping: visible lines are not substitute handles.
+  const endpoints = [lines[0], lines.at(-1)].filter((line): line is DOMRect => line !== undefined)
+    .map((line) => new DOMRect(
+      line.left - ENDPOINT_CLEARANCE_PX, line.top - ENDPOINT_CLEARANCE_PX,
+      line.width + ENDPOINT_CLEARANCE_PX * 2, line.height + ENDPOINT_CLEARANCE_PX * 2,
+    ));
+  const visible = lines.map((line) => clip(line, bounds)).filter((line): line is DOMRect => line !== null);
+  const body = visible.length ? new DOMRect(
+    Math.min(...visible.map((line) => line.left)),
+    Math.min(...visible.map((line) => line.top)),
+    Math.max(...visible.map((line) => line.right)) - Math.min(...visible.map((line) => line.left)),
+    Math.max(...visible.map((line) => line.bottom)) - Math.min(...visible.map((line) => line.top)),
+  ) : clip(anchor, bounds);
+  const middle = bounds.left + (bounds.right - bounds.left - box.width) / 2;
+  const centered = bounds.top + (bounds.bottom - bounds.top - box.height) / 2;
+  const selectionMiddle = anchor.left + (anchor.width - box.width) / 2;
+  const candidates = ([
+    { top: anchor.bottom + 8, left: selectionMiddle, side: "below" },
+    { top: anchor.top - box.height - 8, left: selectionMiddle, side: "above" },
+    { top: body ? body.top + (body.height - box.height) / 2 : centered, left: body ? body.left + (body.width - box.width) / 2 : middle, side: "edge" },
+    { top: bounds.bottom - box.height, left: middle, side: "edge" },
+    { top: bounds.top, left: middle, side: "edge" },
+    { top: centered, left: middle, side: "edge" },
+  ] satisfies readonly Placed[]).map((at, candidate) => {
+    const left = clamp(at.left, bounds.left, Math.max(bounds.left, bounds.right - box.width));
+    const top = clamp(at.top, bounds.top, Math.max(bounds.top, bounds.bottom - box.height));
+    const right = left + box.width;
+    const bottom = top + box.height;
+    const overlap = endpoints.reduce((total, endpoint) => total +
+      Math.max(0, Math.min(right, endpoint.right) - Math.max(left, endpoint.left)) *
+      Math.max(0, Math.min(bottom, endpoint.bottom) - Math.max(top, endpoint.top)), 0);
+    // Center distance still distinguishes placements when every one overlaps.
+    const distance = endpoints.length ? Math.min(...endpoints.map((endpoint) => Math.hypot(
+      left + box.width / 2 - (endpoint.left + endpoint.width / 2),
+      top + box.height / 2 - (endpoint.top + endpoint.height / 2),
+    ))) : Infinity;
+    return { top, left, side: at.side, candidate, overlap, distance,
+      inside: left >= bounds.left && top >= bounds.top && right <= bounds.right && bottom <= bounds.bottom };
+  });
+  const held = previous === null ? null : candidates[previous];
+  if (held?.inside && held.overlap === 0) return held;
+  return candidates.find((candidate) => candidate.overlap === 0) ?? candidates.reduce((best, candidate) =>
+    candidate.overlap < best.overlap || candidate.overlap === best.overlap && candidate.distance > best.distance
+      ? candidate : best);
+}
+
+interface AnchoredStyle extends CSSProperties {
+  readonly "--anchored-max-width"?: string;
+  readonly "--anchored-max-height"?: string;
+}
+
+const HIDDEN: AnchoredStyle = { position: "fixed", visibility: "hidden" };
 
 /**
  * Places a fixed floating element against a live element, a captured rect or
  * a text selection, clamped into the visible viewport, and keeps it there
- * through scroll, resize, its own resize and (with `clearContent`) mobile
- * clearance changes. Hidden until the first measure. Publishes the pixel cap
- * `--anchored-max-width` before measuring and in styles so minimums can yield.
+ * through scroll, resize, its own resize and supplied content-clearance changes.
+ * Without that capability it uses viewport/safe-area bounds. Hidden until the
+ * first measure. Publishes the pixel cap
+ * `--anchored-max-width` and `--anchored-max-height` before measuring and in
+ * styles. Each measured root composes these caps with its preferred size.
  * Each enabled commit measures the current host and applies its owned position
  * synchronously, before consumers snapshot layout; content replacement cannot
  * publish against the previous host size while waiting for ResizeObserver.
@@ -230,7 +296,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
   options: AnchorOptions,
 ): {
   readonly ref: RefObject<T | null>;
-  readonly style: CSSProperties;
+  readonly style: AnchoredStyle;
   readonly side: Side;
   /** The selection caret's offset inside the box. */
   readonly caretX: number | null;
@@ -238,13 +304,13 @@ export function useAnchoredPosition<T extends HTMLElement>(
   readonly anchorState: AnchorState;
 } {
   const ref = useRef<T | null>(null);
+  const mobilePlacement = useRef<{ session: string; candidate: number } | null>(null);
   const [placed, setPlaced] = useState<{
-    style: CSSProperties;
+    style: AnchoredStyle;
     side: Side;
     caretX: number | null;
     anchorState: AnchorState;
   }>({ style: HIDDEN, side: "below", caretX: null, anchorState: "unavailable" });
-  const mobileViewport = useMobileViewport();
   // Lines and alignment are read at measure time: a new array per render is
   // no reason to resubscribe.
   const current = useRef(options);
@@ -252,6 +318,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
 
   const measure = useCallback(() => {
     const opts = current.current;
+    const session = opts.selectionSession ?? null;
     const element = anchor && "current" in anchor ? anchor.current : anchor;
     const floating = ref.current;
     const hide = () => setPlaced((previous) => previous.style === HIDDEN ? previous : {
@@ -267,7 +334,8 @@ export function useAnchoredPosition<T extends HTMLElement>(
     } else {
       rect = element instanceof DOMRect ? element : element.getBoundingClientRect();
     }
-    const viewport = viewportBounds(opts.clearContent === true);
+    if (opts.strategy === "mobile-selection-actions" && (rect === null || session === null)) return hide();
+    const viewport = viewportBounds(opts.subscribeContentClearance !== undefined);
     const bounds = measurement ? {
       left: Math.max(viewport.left, measurement.bounds.left + PADDING_PX),
       top: Math.max(viewport.top, measurement.bounds.top + PADDING_PX),
@@ -282,10 +350,10 @@ export function useAnchoredPosition<T extends HTMLElement>(
     const maxWidthPx = `${maxWidth}px`;
     floating.style.maxWidth = maxWidthPx;
     floating.style.setProperty("--anchored-max-width", maxWidthPx);
-    floating.style.maxHeight = `${maxHeight}px`;
+    floating.style.setProperty("--anchored-max-height", `${maxHeight}px`);
     let box = floating.getBoundingClientRect();
     let placement = opts.placement;
-    if (rect !== null && opts.keepAnchorVisible && !opts.lines && placement !== "right") {
+    if (rect !== null && opts.strategy !== "mobile-selection-actions" && opts.keepAnchorVisible && !opts.lines && placement !== "right") {
       const gap = opts.gap ?? 4;
       const above = Math.max(0, Math.min(rect.top - gap, bounds.bottom) - bounds.top);
       const below = Math.max(0, bounds.bottom - Math.max(rect.bottom + gap, bounds.top));
@@ -294,7 +362,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
         placement = above > below ? "above" : "below";
       }
       maxHeight = Math.min(maxHeight, placement === "above" ? above : below);
-      floating.style.maxHeight = `${maxHeight}px`;
+      floating.style.setProperty("--anchored-max-height", `${maxHeight}px`);
       box = floating.getBoundingClientRect();
     }
     const lines = measurement?.lines ?? opts.lines;
@@ -302,7 +370,13 @@ export function useAnchoredPosition<T extends HTMLElement>(
       ? lines.some((line) => clip(line, bounds))
       : rect && clip(rect, bounds);
     const anchorState = rect === null ? "unavailable" : visible ? "visible" : "offscreen";
-    const at: Placed = rect === null ? {
+    let at: Placed;
+    if (opts.strategy === "mobile-selection-actions" && rect !== null && session !== null) {
+      const compact = mobileSelectionActions(rect, lines ?? [], box, bounds,
+        mobilePlacement.current?.session === session ? mobilePlacement.current.candidate : null);
+      mobilePlacement.current = { session, candidate: compact.candidate };
+      at = compact;
+    } else at = rect === null ? {
       top: bounds.bottom - box.height,
       left: bounds.left + (maxWidth - box.width) / 2,
       side: "edge",
@@ -336,12 +410,13 @@ export function useAnchoredPosition<T extends HTMLElement>(
       prev.style.top === top &&
       prev.style.left === left &&
       prev.style.maxWidth === maxWidth &&
-      prev.style.maxHeight === maxHeight
+      prev.style["--anchored-max-height"] === `${maxHeight}px`
         ? prev
         : {
             style: {
-              position: "fixed", top, left, maxWidth, maxHeight,
+              position: "fixed", top, left, maxWidth,
               "--anchored-max-width": maxWidthPx,
+              "--anchored-max-height": `${maxHeight}px`,
             },
             side: at.side,
             caretX,
@@ -350,7 +425,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     );
   }, [anchor]);
 
-  const { enabled, clearContent, subscribeAnchor } = options;
+  const { enabled, subscribeContentClearance, subscribeAnchor } = options;
   useLayoutEffect(() => {
     if (enabled) measure();
   });
@@ -371,9 +446,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     if (ref.current) observer.observe(ref.current);
     const element = anchor && "current" in anchor ? anchor.current : anchor;
     if (element instanceof HTMLElement) observer.observe(element);
-    const unsubscribe = clearContent
-      ? mobileViewport.subscribeContentBottomClearance(later)
-      : null;
+    const unsubscribe = subscribeContentClearance?.(later);
     const unsubscribeAnchor = subscribeAnchor?.(later);
     const viewport = window.visualViewport;
     const scroll = (event: Event) => {
@@ -394,7 +467,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
       viewport?.removeEventListener("scroll", measure);
       viewport?.removeEventListener("resize", measure);
     };
-  }, [anchor, enabled, clearContent, subscribeAnchor, measure, mobileViewport]);
+  }, [anchor, enabled, subscribeContentClearance, subscribeAnchor, measure]);
 
   return { ref, ...placed, placed: placed.style !== HIDDEN };
 }

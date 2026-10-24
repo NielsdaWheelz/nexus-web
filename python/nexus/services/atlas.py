@@ -22,7 +22,7 @@ from nexus.schemas.atlas import AtlasEdgeOut, AtlasOut, ConstellationOut, StarOu
 from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.library_entries import library_media_ids_cte_sql
 
-_PERSONAL = library_media_ids_cte_sql()  # :library_id = the viewer's Default: every membership
+_PERSONAL = library_media_ids_cte_sql()  # :library_id is own all: physical non-system memberships
 
 
 def read_atlas(db: Session, *, viewer_id: UUID, default_library_id: UUID) -> AtlasOut:

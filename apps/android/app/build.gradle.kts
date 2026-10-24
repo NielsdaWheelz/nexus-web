@@ -1,6 +1,14 @@
 import java.net.URI
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -9,9 +17,10 @@ plugins {
 }
 
 val debugBaseUrl = (providers.gradleProperty("nexusAndroidDebugBaseUrl").orNull
-    ?: "http://10.0.2.2:3000").trim()
+    ?: "https://127.0.0.1:3000").trim()
 val debugOwnedHost = (providers.gradleProperty("nexusAndroidDebugOwnedHost").orNull
-    ?: "10.0.2.2").trim()
+    ?: "127.0.0.1").trim()
+val debugCaFileProperty = providers.gradleProperty("nexusAndroidDebugCaFile").orNull
 val requestedReleaseBuild = gradle.startParameter.taskNames.any {
     it.contains("Release", ignoreCase = true)
 }
@@ -51,8 +60,8 @@ val nexusWire = Regex("""export const WIRE_REVISION = (\d+);""")
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
 }
-require(debugUri.scheme == "http" || debugUri.scheme == "https") {
-    "nexusAndroidDebugBaseUrl must use http or https."
+require(debugUri.scheme == "https") {
+    "nexusAndroidDebugBaseUrl must use https."
 }
 require(
     debugUri.rawUserInfo == null &&
@@ -142,7 +151,7 @@ android {
         buildConfig = true
     }
 
-    // This root contains only the generated shelf. Register its producer
+    // This root contains only generated interfaces. Register their producer
     // below so every asset consumer, including lint, depends on it.
     sourceSets.named("main") {
         assets.setSrcDirs(emptyList<String>())
@@ -188,32 +197,89 @@ android {
 
 }
 
-// The shelf (the Downloads screen and offline reader) is a build output, not
-// source: gradle regenerates it from apps/web into src/main/assets/shelf before
+// The installed interface and isolated reader are build outputs, not source:
+// gradle regenerates both from apps/web into src/main/assets before
 // any asset consumer runs, so a clean checkout builds. The pdf.js copy is pinned
 // by `apps/web/package.json` + `bun.lock` (asserted at run time by
 // copy-pdfjs.mjs), so node_modules is not declared as an input.
 val webDir = rootProject.projectDir.resolve("../web")
-abstract class BuildShelf : Exec() {
+abstract class BuildPackagedUi : Exec() {
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 }
 
-val buildShelf = tasks.register<BuildShelf>("buildShelf") {
+val buildPackagedUi = tasks.register<BuildPackagedUi>("buildPackagedUi") {
     group = "build"
-    description = "Builds the zero-network shelf from apps/web."
+    description = "Builds the installed application and isolated downloads reader."
     workingDir = webDir
-    commandLine("bun", "run", "build:shelf")
+    commandLine("bun", "run", "build:packaged")
     inputs.dir(webDir.resolve("src"))
     inputs.dir(webDir.resolve("scripts"))
     inputs.file(webDir.resolve("vite.shelf.config.ts"))
+    inputs.file(webDir.resolve("vite.android.config.ts"))
+    inputs.files(fileTree(webDir.resolve("public")) { exclude("pdfjs/**") })
+    inputs.property("storageOrigin", providers.environmentVariable("R2_S3_API_ORIGIN").orElse(""))
     inputs.file(webDir.resolve("package.json"))
     inputs.file(webDir.resolve("bun.lock"))
     outputDirectory.set(layout.projectDirectory.dir("src/main/assets"))
 }
 
+// Debug trust is a build input scoped to the exact owned host. The generated
+// resources never enter release, and absent local CA means system trust only.
+abstract class GenerateDebugNetworkSecurity : DefaultTask() {
+    @get:Input
+    abstract val ownedHost: Property<String>
+
+    @get:Optional
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val caFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val output = outputDirectory.get().asFile
+        output.deleteRecursively()
+        val localTrust = caFile.orNull?.asFile?.let { ca ->
+            val raw = output.resolve("raw")
+            raw.mkdirs()
+            ca.copyTo(raw.resolve("nexus_debug_ca.pem"))
+            """
+                <domain-config>
+                    <domain includeSubdomains="false">${ownedHost.get()}</domain>
+                    <trust-anchors>
+                        <certificates src="system" />
+                        <certificates src="@raw/nexus_debug_ca" />
+                    </trust-anchors>
+                </domain-config>
+            """.trimIndent()
+        } ?: ""
+        val xml = output.resolve("xml")
+        xml.mkdirs()
+        xml.resolve("nexus_debug_network_security.xml").writeText("""
+            |<?xml version="1.0" encoding="utf-8"?>
+            |<network-security-config>
+            |    <base-config cleartextTrafficPermitted="true">
+            |        <trust-anchors><certificates src="system" /></trust-anchors>
+            |    </base-config>
+            |$localTrust
+            |</network-security-config>
+        """.trimMargin())
+    }
+}
+
+val generateDebugNetworkSecurity = tasks.register<GenerateDebugNetworkSecurity>("generateDebugNetworkSecurity") {
+    ownedHost.set(debugOwnedHost)
+    if (debugCaFileProperty != null) caFile.set(file(debugCaFileProperty))
+    outputDirectory.set(layout.buildDirectory.dir("generated/debug-network-security"))
+}
+
 androidComponents.onVariants { variant ->
-    variant.sources.assets?.addGeneratedSourceDirectory(buildShelf, BuildShelf::outputDirectory)
+    variant.sources.assets?.addGeneratedSourceDirectory(buildPackagedUi, BuildPackagedUi::outputDirectory)
+    if (variant.buildType == "debug")
+        variant.sources.res?.addGeneratedSourceDirectory(generateDebugNetworkSecurity, GenerateDebugNetworkSecurity::outputDirectory)
 }
 
 kotlin {
@@ -229,11 +295,12 @@ dependencies {
     implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
-    implementation("androidx.media3:media3-common:1.10.1")
-    implementation("androidx.media3:media3-datasource:1.10.1")
-    implementation("androidx.media3:media3-datasource-okhttp:1.10.1")
-    implementation("androidx.media3:media3-exoplayer:1.10.1")
-    implementation("androidx.media3:media3-session:1.10.1")
+    implementation("androidx.media3:media3-common:1.11.1")
+    implementation("androidx.media3:media3-datasource:1.11.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
+    implementation("androidx.media3:media3-inspector:1.11.1")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

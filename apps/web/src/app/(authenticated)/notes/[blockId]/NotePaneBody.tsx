@@ -9,9 +9,10 @@ import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { remoteReady } from "@/lib/native/admission";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { hasUnsavedText, useText } from "@/lib/notes/texts";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
+import { hasUnsavedText, readText, useText, useTextVersion } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
@@ -33,11 +34,11 @@ export default function NotePaneBody() {
   const ref = `note_block:${blockId}`;
   const deleted = isDeletedResource(ref);
   const outline = useOutline({ root: ref, dailyDate: null });
-  const text = useText(ref);
-  const titleRef = useRef<HTMLInputElement | null>(null);
+  const bodyVersion = useTextVersion(ref);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
-  usePaneReturnReady(deleted || outline.status !== "loading");
+  usePaneReturnReady(deleted || outline.status !== "loading" || !remoteReady() && outline.root === null);
 
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
@@ -46,29 +47,30 @@ export default function NotePaneBody() {
     if (!claim(delivery)) return;
     if (!deleted && delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
     else
-      feedback.offer({ key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
+      feedback.offer({ needsAttention: false, undo: null, onDismiss: null, key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
   }, [blockId, claim, deleted, delivery, feedback, outline]);
 
   const [inspection, setInspection] = useState<{ view: NoteInspection; bodyText: string; version: number } | null>(null);
   const arrival = useSourceArrival({
-    ready: !deleted && outline.status === "ready" && Boolean(text?.acked),
-    sourceIdentity: text?.acked ? `${ref}:${text.acked.version}` : null,
+    ready: !deleted && outline.status === "ready" && bodyVersion !== null,
+    sourceIdentity: bodyVersion === null ? null : `${ref}:${bodyVersion}`,
     apply: async (arrival, context) => {
-      if (arrival.kind !== "source") return false;
+      if (arrival.kind !== "source") return "Unavailable";
       const result = arrival.source;
+      const text = readText(ref);
       if (result.location.kind === "resource") {
         if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
-        return true;
+        return "Applied";
       }
-      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return false;
+      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return "Unavailable";
       const locator = result.location.locator;
       const saved = text?.acked;
       const shown = text?.value;
       if (!saved || typeof saved.value === "string" || typeof shown !== "object" ||
           locator.block_id !== blockId || locator.body_version !== saved.version ||
-          shown.body_text !== saved.value.body_text) return false;
+          shown.body_text !== saved.value.body_text) return "Unavailable";
       const exact = Array.from(shown.body_text).slice(locator.start_offset, locator.end_offset).join("");
-      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return false;
+      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return "Unavailable";
       setInspection({ bodyText: shown.body_text, version: saved.version, view: {
         startOffset: locator.start_offset, endOffset: locator.end_offset,
         activationId: context.activationId, signal: context.signal,
@@ -77,18 +79,19 @@ export default function NotePaneBody() {
       context.signal.addEventListener("abort", () => {
         setInspection((current) => current?.view.activationId === context.activationId ? null : current);
       }, { once: true });
-      return true;
+      return "Applied";
     },
   });
 
+  const text = readText(ref);
   const currentInspection = inspection && typeof text?.value === "object" && text.value.body_text === inspection.bodyText && text.acked?.version === inspection.version ? inspection.view : null;
-  const changedDraft = (inspection !== null || arrival.failure !== null) && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
+
 
   const connections = useMemo(
     () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
     [blockId],
   );
-  useResourceInspector({ scheme: "note_block", handle: deleted ? null : blockId, bodies: { linkedItems: connections } });
+  useResourceInspector({ scheme: "note_block", handle: !deleted && outline.root !== null && outline.failure?.status !== 404 && outline.failure?.status !== 403 ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = deleted ? undefined : canonicalResourceRef({ scheme: "note_block", id: blockId });
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
 
@@ -108,13 +111,14 @@ export default function NotePaneBody() {
   const actions: FeedbackActions | undefined = stale || unavailable
     ? undefined
     : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  if (!remoteReady() && outline.root === null && !unavailable && !stale) return <FeedbackState content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />;
   if (failure !== null && (outline.root === null || unavailable || stale))
     return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
   return (
     <div ref={sourceView} tabIndex={-1}>
       {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
-      {changedDraft || arrival.failure ? <FeedbackStatus content={{ tone: "Neutral", title: changedDraft ? "location unavailable in current draft" : arrival.failure! }} announcement="Polite" /> : null}
+      <SourceArrivalNotice textRef={ref} inspected={inspection !== null} failure={arrival.failure?.title ?? null} />
       <OutlineEditor
         outline={outline}
         filter={query}
@@ -124,4 +128,11 @@ export default function NotePaneBody() {
       />
     </div>
   );
+}
+
+/** Location feedback observes writing without rerendering the whole note outline. */
+function SourceArrivalNotice({ textRef, inspected, failure }: { textRef: string; inspected: boolean; failure: string | null }) {
+  const text = useText(textRef);
+  const changed = inspected && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
+  return changed || failure ? <FeedbackStatus content={{ tone: "Neutral", title: changed ? "location unavailable in current draft" : failure! }} announcement="Polite" /> : null;
 }

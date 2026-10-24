@@ -6,11 +6,11 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { ApiError, apiTransportFeedback } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback } from "@/lib/api/client";
 import {
   modeledApiError,
   useServerValue,
@@ -21,13 +21,14 @@ import { OAUTH_PROVIDERS, oauthPath, PROVIDER_NAMES } from "@/lib/auth/urls";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import type { LinkedIdentity } from "@/lib/supabase/auth";
+import type { SettingsIdentity as LinkedIdentity, IdentityDeleteResult } from "@/lib/account/settingsWire";
+import { installedApp } from "@/lib/native/admission";
+import { accountIdentitiesGet, accountIdentityDelete } from "@/lib/native/client";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
-import { runSettingsAction } from "../settingsAction";
-import { loadLinkedIdentities, unlinkLinkedIdentity } from "./actions";
 import styles from "./page.module.css";
 
 const VISIT = definePaneVisitDataKey<Visit<LinkedIdentity[]>>(
@@ -37,10 +38,9 @@ const LOAD_FAILED = "Linked identities couldn’t be loaded";
 const UNLINK_FAILED = "We couldn't unlink this identity. Please try again.";
 
 async function readIdentities(): Promise<LinkedIdentity[]> {
-  const identities = await runSettingsAction(loadLinkedIdentities);
-  if (identities === "Failed")
-    throw new ApiError(503, "E_AUTH_UNAVAILABLE", "Identities are unavailable");
-  return identities;
+  return (installedApp
+    ? await accountIdentitiesGet()
+    : await apiFetch<{ data: LinkedIdentity[] }>("/api/me/identities")).data;
 }
 
 /**
@@ -51,6 +51,7 @@ async function readIdentities(): Promise<LinkedIdentity[]> {
  */
 export default function SettingsIdentitiesPaneBody() {
   const display = useRenderEnvironment();
+  const { accountId } = useAuthenticatedAccount();
   const fail = useThrowLater();
   const identities = useServerValue({
     key: "identities",
@@ -66,9 +67,9 @@ export default function SettingsIdentitiesPaneBody() {
     setUnlinking(identity.id);
     setFailure(null);
     try {
-      const outcome = await runSettingsAction(() =>
-        unlinkLinkedIdentity(identity.id, identity.provider),
-      );
+      const { data: { outcome } } = installedApp
+        ? await accountIdentityDelete(identity.id)
+        : await apiFetch<{ data: IdentityDeleteResult }>(`/api/me/identities/${encodeURIComponent(identity.id)}`, { method: "DELETE" });
       if (outcome === "Unlinked") identities.refetch();
       else setFailure({ tone: "Danger", title: UNLINK_FAILED });
     } catch (error) {
@@ -134,10 +135,11 @@ export default function SettingsIdentitiesPaneBody() {
                   status="ready"
                   surface={false}
                   rows={ready.data.map((identity) => {
-                    const linkedOn = identity.createdAt
-                      ? formatDisplayDate(identity.createdAt, display)
+                    const linkedOn = identity.created_at
+                      ? formatDisplayDate(identity.created_at, display)
                       : null;
                     return presentSettingsRow({
+                      presentation: "Details",
                       id: identity.id,
                       title: PROVIDER_NAMES[identity.provider],
                       description:
@@ -178,11 +180,9 @@ export default function SettingsIdentitiesPaneBody() {
               ) : (
                 <div className={styles.linkButtons}>
                   {missing.map((provider) => (
-                    <Button key={provider} asChild variant="pill">
-                      <a href={oauthPath(provider, "link")} role="button">
-                        {`Connect ${PROVIDER_NAMES[provider]}`}
-                      </a>
-                    </Button>
+                    <ButtonLink key={provider} href={installedApp ? `/account/identities?expected_account_id=${encodeURIComponent(accountId)}` : oauthPath(provider, "link")}>
+                      {`Connect ${PROVIDER_NAMES[provider]}`}
+                    </ButtonLink>
                   ))}
                 </div>
               )}

@@ -7,8 +7,9 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
-import { ended, finish, isSameOrigin, liveSession } from "@/lib/auth/session";
+import { ended, finish, isSameOrigin, liveSession, presentedSession } from "@/lib/auth/session";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import { isAbortError } from "@/lib/errors";
@@ -18,8 +19,8 @@ import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
 
 /**
- * Json: structured calls (30 s to response headers; suggestions 10 s through
- * their bounded JSON body). Asset: bytes an element
+ * Json: structured calls (30 s to response headers; suggestions 10 s and
+ * search phase limits through their bounded JSON bodies). Asset: bytes an element
  * loads (it cannot name a wire, so the bff names its own; FastAPI's cache
  * policy kept). Stream: event streams, ended cleanly at 280 s, before the
  * route's maxDuration. Copy: the offline reading copy's slow build.
@@ -31,7 +32,7 @@ const LONG_MS = 280_000;
 const SESSION_IN =
   "content-type accept range if-none-match if-modified-since idempotency-key x-nexus-wire";
 const SESSION_OUT =
-  "content-type cache-control etag vary content-disposition x-content-type-options content-security-policy accept-ranges content-range location";
+  "content-type cache-control etag vary content-disposition x-content-type-options content-security-policy accept-ranges content-range location retry-after";
 const SHARE_OUT =
   "content-type content-length content-disposition accept-ranges content-range";
 
@@ -243,9 +244,10 @@ export async function proxySession(
       failure(id, 403, "E_FORBIDDEN", "Cross-origin request rejected"),
     );
   }
+  const passive = isAndroidShellUserAgent(request.headers.get("user-agent") ?? "");
   let live;
   try {
-    live = await liveSession();
+    live = await (passive ? presentedSession((await cookies()).getAll()) : liveSession());
   } catch (error) {
     mark("session_failed", { error_type: error instanceof Error ? error.name : typeof error });
     if (!(error instanceof AuthUnavailable)) throw error;
@@ -257,7 +259,7 @@ export async function proxySession(
     failure(id, 401, "E_UNAUTHENTICATED", "Authentication required");
   if (live.kind === "Anonymous") return finish(unauthenticated());
   if (live.kind === "Ended") {
-    return finish(unauthenticated(), ended(live.cookieNames));
+    return finish(unauthenticated(), passive ? { kind: "Preserve" } : ended(live.cookieNames));
   }
   const headers = pick(request.headers, SESSION_IN);
   headers.set("authorization", `Bearer ${live.accessToken}`);
@@ -280,7 +282,7 @@ export async function proxySession(
   mark("forward_returned", { status: response.status });
   if (response.status === 401) {
     void response.body?.cancel();
-    return finish(unauthenticated(), ended(live.cookieNames));
+    return finish(unauthenticated(), passive ? { kind: "Preserve" } : ended(live.cookieNames));
   }
   const cache = response.headers.get("cache-control");
   finish(response, { kind: "Write", writes: live.writes });

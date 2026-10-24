@@ -21,15 +21,28 @@ technology-ownership, import, and module-boundary model.
 - `scripts/lab`, `python/scripts/disposable_runtime.py` — disposable runtime owner;
   provisioning, private driver context, readiness, diagnostics and scoped teardown.
 - `python/scripts/local_storage.py` — shared local bucket/cors provisioning.
+- `python/scripts/lab_auth_cleanup.py` — exact-project Supabase teardown for the
+  lab and its recorded recovery command, without daemon-wide prune operations.
+- `python/scripts/worker_checkout_image.py` — dependency-hash worker images,
+  host cache locking, real container creation and reference-aware tag retention.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
 ## web production build
 
 `apps/web/package.json` owns `bun run build`: `build:next` removes generated
 `.next`, copies pdf.js assets and builds next; `scripts/package-standalone.mjs`
-packages public and static assets for `.next/standalone/server.js`. production
+packages public and static assets with `.next/standalone/serve.mjs`, replacing
+Next's generated HTTP/1 entrypoint. the canonical server requires a certificate
+and key and serves TLS with HTTP/2 only on `PORT`/`HOSTNAME`; Next binds a private
+kernel-assigned loopback port. `probe-web.mjs` verifies `/version` over HTTP/2
+with an explicit CA. streams retain their existing application API and lifetime.
+`make web` builds and starts this package; development uses build/restart.
+Vercel owns its managed frontend TLS edge and uses `build:next`. production
 builds start without the previous `.next` cache so installed dependency patches
 reach the generated bundles. each build pays the full compilation cost.
+the lab reuses a completed package under its documented source/slot/public-key
+contract and copies a private writable runtime; it uses this same production
+build and packaging command.
 
 ## Imports
 
@@ -43,11 +56,11 @@ reach the generated bundles. each build pays the full compilation cost.
 - External functionality may be consumed by any module.
 - Internal functionality is only for a module and its submodules.
 - Default to internal unless functionality is clearly external.
-- `apps/android/app/src/main/java/.../GoogleSignInController.kt` owns native
-  Google sign-in via the Android Credential Manager: generates the OIDC nonce
-  and the handoff verifier, calls `getCredential`, posts the Google ID token
-  to `/auth/native/google`, and loads the WebView at `/auth/handoff` with the
-  verifier.
+- `apps/android/app/src/main/java/.../GoogleSignInController.kt` obtains a
+  google credential and joins the current native handoff attempt. `DeviceSession`
+  owns its verifier, account binding, credential effects and private startup
+  record. `AppRouter` owns installed interface delivery; `AppBridge` exposes its
+  fixed operations ([module](../modules/device-startup.md)).
 - `apps/android/app/src/main/java/.../MainActivity.kt` owns Android shell
   mechanics: owned-origin routing, external routing, file chooser handoff,
   popup handoff, app-link intent handling, and OAuth Custom Tab orchestration
@@ -58,18 +71,25 @@ reach the generated bundles. each build pays the full compilation cost.
   Android Media3 player, Media Session, native Consumption recording, and
   player notification lifecycle.
 - `apps/android/app/src/main/java/.../playback/PlayerBridge.kt` owns the
-  main-frame, owned-origin `nexusPlayback` WebKit bridge and adapts it to the
+  main-frame, owned-origin `nexusPlayer` WebKit bridge and adapts it to the
   service-owned MediaController.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
-  may call only its fixed listening-state, consumption-command,
-  Consumption-activity, `me`, reading-copy and reader-state BFF paths with
+  may call only its fixed player-descriptor, listening-state, consumption-command,
+  Consumption-activity, `me`, reading-copy, reader-state, episode-download,
+  pinned episode transcript, offline-catalog, bootstrap, handoff and
+  account-setting BFF paths with
   WebView cookies, the exact owned Origin and `X-Nexus-Wire`; it accepts no
   arbitrary URL, path, headers, or credentials.
+- `apps/android/app/src/main/java/.../CatalogStore.kt` owns the complete saved
+  browsing catalog, atomic publication and account retirement. its fixed local
+  route and bridge operations are documented in
+  [offline-catalog.md](../modules/offline-catalog.md); media downloads remain with
+  the offline owner below.
 - `apps/android/app/src/main/java/.../offline/` owns offline
   ([module](../modules/offline.md)): the store, the transfer and sync jobs, the
-  `nexusDownloads` bridge and the shelf router. Its only direct calls are the
-  episode's https enclosure and the signed storage url a reading copy names;
+  `nexusLocalContent` bridge and the shelf router. Its only direct calls are the
+  captured episode's https enclosure/artwork and the signed storage url a reading copy names;
   it accepts no renderer-supplied URL,
   path, headers, credentials, or filesystem location.
 - `apps/android/app/src/main/java/.../ShareActivity.kt` owns the
@@ -78,12 +98,11 @@ reach the generated bundles. each build pays the full compilation cost.
 - Android manifests own Android framework entrypoints and deep-link filters.
 - Android Gradle files own Android build, signing, app-link, and release
   configuration.
-- Android has exactly five authorized native boundaries:
-  `GoogleSignInController` may make the auth-bootstrap
-  `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
-  paths above; offline may make only the two direct calls above; and AndroidX
-  WebKit may expose the main-frame `nexusPlayback` listener on the owned origin
-  and the main-frame `nexusDownloads` listener on the owned and shelf origins.
+- Android product api/auth calls belong to `NexusOriginClient`'s fixed paths,
+  including bootstrap, handoff, google minting and account settings. offline may
+  make only its direct download calls above. AndroidX WebKit exposes the
+  main-frame `nexusApp` and `nexusPlayer` listeners on the owned origin and
+  `nexusLocalContent` on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
   OAuth/PKCE exchange remains server-side.

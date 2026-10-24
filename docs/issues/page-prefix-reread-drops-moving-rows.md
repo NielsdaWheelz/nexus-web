@@ -1,19 +1,25 @@
-# a page-prefix reread can miss a row whose sort key moved between its pages
+# paged rereads can miss rows whose sort keys move between requests
 
-**problem**: `usePagePrefix` (`apps/web/src/lib/api/pagePrefix.ts`) rereads a loaded prefix
-one keyset page per request. a key that moves between two of those requests (a History row's
-`matched_at` when a newer matching event lands, `services/imports.py`; a metadata history
-entry's time, creation then completion, `services/metadata_operations.py`) can put the row
-behind a cursor already passed. the duplicate half is fixed in the readers (Imports dedupes
-rows by ref and history entries by id); the missing half remains.
+problem: `apps/web/src/lib/api/useServerList.ts` reads one page per request,
+including atomic prefix refreshes. a live sort key can move behind a consumed
+cursor between requests: an import's `matched_at` after a matching event, or a
+metadata history entry's time after completion. first-occurrence deduplication
+removes repeated rows but cannot recover omitted ones. the collection cutover
+removed imports/history/assistant writes from `usePagePrefix`; it did not add
+cross-request snapshot isolation.
 
-**impact**: a row or history entry is absent from the loaded prefix until the next
-observation (at most one poll, 5 s, while work runs; the next wake otherwise). nothing is
-lost; the count line can read one short meanwhile.
+impact: a row can remain absent until a later refresh reconciles a quiescent
+view. automatic reconciliation waits behind admitted work, eligibility and
+failure recovery; there is no five-second publication bound. durable data is
+unaffected.
 
-**evidence**: design Q14 (2026-10-15/imports/design.md); `pagePrefix.ts:24-29` (one request
-per page); shared with the assistant writes log (`AssistantWrites`).
+evidence: `useServerList.ts`'s `walk` and continuation each invoke `fetchPage`
+per page; `python/nexus/services/imports.py` derives live ordering. the original
+imports design identified this schedule; no live omission reproduced here.
 
-**resolved when**: a prefix of at most 200 rows rereads in one request (raise the list and
-history `limit` cap and ask for `pages × page size` at once), and a harness journey moving a
-row's key between two page reads (route-level delay) shows it present in the reread.
+current decision: live views with refresh as reconciliation, documented in
+architecture section 8.12. stronger consistency is outside this cutover; raising
+endpoint limits does not solve arbitrary collection completeness.
+
+resolved when: an actual requirement justifies stronger consistency and its
+chosen owner guarantees membership while a row moves across a held page boundary.

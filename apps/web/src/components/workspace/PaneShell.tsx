@@ -1,8 +1,10 @@
 "use client";
 
-import { RotateCcw, Search, Share2 } from "lucide-react";
+import { RotateCcw, Search, Share2, Download } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -14,9 +16,10 @@ import {
   type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
+import { ActivityControl } from "@/components/feedback/Activity";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -26,6 +29,9 @@ import Companion, {
   type CompanionPresentation,
 } from "@/components/workspace/Companion";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { installedApp } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
 import {
   useMobileChrome,
@@ -64,17 +70,19 @@ import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { prepareActionSelect, projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { cx } from "@/lib/ui/cx";
+import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
-import { useWorkspaceStore } from "@/lib/workspace/store";
+import { useLatestWorkspace, useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
+
+/** One route-owned composition, derived by the workspace before its body mounts. */
+export const MobileReaderCompositionContext = createContext(false);
 
 interface PaneShellProps {
   readonly pane: WorkspacePane;
@@ -179,10 +187,23 @@ function PaneView({
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
+  const latestWorkspace = useLatestWorkspace();
+  const activateHistory = (back: boolean, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume") return;
+    const options: PaneHistoryOptions = { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } };
+    if (back) router.back(options);
+    else router.forward(options);
+  };
   const body = state.chrome;
-  const principal = body?.primaryAction;
+  const primary = body?.primaryAction;
+  const principal = primary?.kind === "link" && !primary.onActivate
+    ? { ...primary, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: primary.href === null ? null : { href: primary.href } }) }
+    : primary;
   const menuActions = body?.menuActions?.map((action) => action.kind === "link" && !action.onActivate
-    ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: { href: action.href } }) }
+    ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: action.href === null ? null : { href: action.href } }) }
     : action);
   const activatePrincipal = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | ReactKeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     if (!principal) return;
@@ -203,18 +224,30 @@ function PaneView({
     const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
     if (anchor instanceof HTMLAnchorElement) activateTargetAnchor({ event, runtime, anchor });
   };
-  const principalState = principal?.kind === "command"
-    ? projectActionControlState(principal.label, principal.state)
-    : null;
   const mobileChrome = useMobileChrome();
   const mobileViewport = useMobileViewport();
+  const readerComposition = useContext(MobileReaderCompositionContext);
+  useLayoutEffect(() => mobileViewport.refreshGeometry(), [mobileViewport, readerComposition, isMobile, isActive]);
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
+  const [commandsBottom, setCommandsBottom] = useState(0);
+  const outlineCommands = isActive && !hasActiveInteractionOwner() ? state.outlineCommands : null;
+  useLayoutEffect(() => {
+    if (!outlineCommands || !isMobile) {setCommandsBottom(0); return;}
+    const measure = () => {
+      const consumed = Math.max(0, window.innerHeight - (paneRef.current?.getBoundingClientRect().bottom ?? window.innerHeight));
+      setCommandsBottom(Math.max(0, Math.max(keyboardBottomInsetPx,
+        readMobileCssLength("var(--mobile-content-bottom-clearance)")) - consumed));
+    };
+    measure();
+    return mobileViewport.subscribeContentBottomClearance(measure);
+  }, [outlineCommands, isMobile, keyboardBottomInsetPx, mobileViewport]);
   const identityId = useId();
-  const principalReasonId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
+  const primaryPaneRef = useRef<HTMLDivElement>(null);
+  const controlsFrameRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const scrollportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -284,6 +317,8 @@ function PaneView({
   }, [isActive, platform]);
 
   // ---- refresh, header, actions ------------------------------------------
+  const catalog = useCatalogState();
+  const admission = useRemoteAdmission();
   const pull =
     isActive &&
     isMobile &&
@@ -297,7 +332,8 @@ function PaneView({
   });
   const header = resolvePaneHeaderModel({
     route: route.header,
-    title: label,
+    title: body?.displayTitle ?? (body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
+      : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label),
     publication: body?.header,
   });
   const inspector = state.companion
@@ -307,7 +343,28 @@ function PaneView({
         companionExpanded(state, pane.secondary),
       )
     : undefined;
-  const paneActions: ActionDescriptor[] = [];
+  const paneActions = [true, false].map<ActionDescriptor>(back => {
+    const visit = back ? pane.history.back.at(-1) : pane.history.forward[0];
+    return {
+      id: `${back ? "Pane.HistoryPrevious" : "Pane.HistoryNext"}:${pane.current_visit.id}:${visit?.id ?? "none"}`,
+      kind: "link",
+      label: back ? "open previous page in new pane" : "open next page in new pane",
+      ...(visit ? { href: visit.href } : { href: null, disabled: true as const }),
+      disabledReason: visit ? undefined : back ? "no earlier visit" : "no later visit",
+      onActivate: event => {
+        const activation = workspaceTargetActivationIntent(event);
+        if (activation.kind === "Unowned") return "unhandled";
+        event.preventDefault();
+        if (activation.kind === "Consume") return "consumed";
+        const current = latestWorkspace().state.panes.find(current => current.id === paneId);
+        const adjacent = back ? current?.history.back.at(-1) : current?.history.forward[0];
+        if (!visit || current?.current_visit.id !== pane.current_visit.id || adjacent?.id !== visit.id) return "consumed";
+        const options: PaneHistoryOptions = { disposition: { kind: "Fork" } };
+        const result = back ? router.back(options) : router.forward(options);
+        return result === "committed" ? "handled-new-pane" : "consumed";
+      },
+    };
+  });
   if (query) {
     const isFind = query.kind === "Find";
     const verb = isFind ? "Find" : query.label;
@@ -346,7 +403,14 @@ function PaneView({
     });
   }
   if (refresh.command) paneActions.push(refresh.command);
-  const share = resolvePaneRouteShareIdentity(route, label);
+  if (installedApp) paneActions.push({
+    kind: "command", id: "Catalog.Save", label: "save catalog for offline",
+    icon: <Download size={16} aria-hidden="true" />,
+    disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
+    disabledReason: admission !== "Ready" ? "requires a connection" : catalog.accepting || catalog.status?.refreshing ? "updating catalog…" : undefined,
+    onSelect: () => { void catalog.refresh(); },
+  });
+  const share = resolvePaneRouteShareIdentity(route, header.title);
   if (share && !body?.resourceRef) {
     paneActions.push({
       kind: "command",
@@ -366,15 +430,19 @@ function PaneView({
       projection={isMobile ? "Mobile" : "Desktop"}
       header={header}
       identityId={identityId}
+      resourceActions={body?.resourceActions}
+      podcastMetadata={body?.podcastMetadata}
+      primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
       paneActions={paneActions}
       menuActions={menuActions}
       resourceRef={body?.resourceRef}
+      workspaceAction={isMobile ? <ActivityControl /> : null}
       navigation={{
         canGoBack: router.canGoBack,
         canGoForward: router.canGoForward,
-        onBack: router.back,
-        onForward: router.forward,
+        onBack: event => activateHistory(true, event),
+        onForward: event => activateHistory(false, event),
       }}
       onMouseDown={isMobile ? undefined : onChromeMouseDown}
     />
@@ -382,10 +450,16 @@ function PaneView({
 
   // The whole control stack retreats with the mobile bar; visible Find holds it.
   const hasVisibleControls = Boolean(
-    body?.navigation || principal || query?.kind === "Controls" || findVisible,
+    body?.navigation || query?.kind === "Controls" || findVisible,
   );
   useMobileChromeSurface(chromeRef, isActive && isMobile && hasVisibleControls);
   useMobileChromeHold(isActive && isMobile && findVisible);
+  useLayoutEffect(() => {
+    const frame = controlsFrameRef.current;
+    const surface = chromeRef.current;
+    if (!isActive || !isMobile || !frame || !surface) return;
+    return mobileViewport.registerTopSurface("Controls", frame, surface);
+  }, [isActive, isMobile, mobileViewport]);
   // the active mobile body is the surface readers and lists take clearance from.
   useLayoutEffect(() => {
     const element = scrollportRef.current;
@@ -399,14 +473,17 @@ function PaneView({
     const pane = paneRef.current;
     const controls = chromeRef.current;
     if (!pane || !controls) return;
-    const paneBox = pane.getBoundingClientRect();
+    const paneBox = primaryPaneRef.current?.getBoundingClientRect();
+    if (!paneBox) return;
     const controlsHeight = controls.getBoundingClientRect().height;
     const refinements = controls.querySelector<HTMLElement>(
       "[data-pane-query-refinements]",
     );
-    const baseHeight =
-      controlsHeight - (refinements?.getBoundingClientRect().height ?? 0);
-    const topClearance = isMobile ? readMobileCssLength("var(--space-2)") : 0;
+    const refinementsHeight = refinements?.getBoundingClientRect().height ?? 0;
+    const baseHeight = controlsHeight - refinementsHeight;
+    const topEnvelope = isMobile && scrollportRef.current
+      ? Number.parseFloat(getComputedStyle(scrollportRef.current).getPropertyValue("--mobile-pane-content-offset")) || 0
+      : baseHeight;
     const bottomClearance = isMobile
       ? Math.max(
           0,
@@ -418,24 +495,21 @@ function PaneView({
       : 0;
     const room = Math.max(
       0,
-      paneBox.height - topClearance - bottomClearance - baseHeight,
+      paneBox.height - topEnvelope - bottomClearance
+        + (isMobile ? refinementsHeight : 0),
     );
     pane.style.setProperty(
       "--pane-query-refinements-max-height",
       `min(16rem, ${room / 2}px)`,
     );
-    pane.style.setProperty(
-      "--mobile-pane-chrome-height",
-      `${isMobile ? controlsHeight : 0}px`,
-    );
   }, [isMobile, keyboardBottomInsetPx]);
-  useLayoutEffect(measureControls);
+  useLayoutEffect(measureControls, [measureControls]);
   useLayoutEffect(() => {
     const pane = paneRef.current;
     const controls = chromeRef.current;
     if (!pane || !controls) return;
     const observer = new ResizeObserver(measureControls);
-    observer.observe(pane);
+    if (primaryPaneRef.current) observer.observe(primaryPaneRef.current);
     observer.observe(controls);
     const unsubscribe =
       mobileViewport.subscribeContentBottomClearance(measureControls);
@@ -473,6 +547,7 @@ function PaneView({
       data-pane-focus-landmark="true"
       data-active={isActive}
       data-mobile={isMobile}
+      data-reader-composition={readerComposition || undefined}
       data-maximized={isMaximized || undefined}
       tabIndex={-1}
       onClickCapture={activateAnchor}
@@ -484,68 +559,32 @@ function PaneView({
       {/* fixed: outside the primary pane's container (it would contain it) */}
       {isMobile ? surfaceHeader : null}
       <div
+        ref={primaryPaneRef}
         className={styles.primaryPane}
         style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >
-        <div
-          ref={chromeRef}
-          className={styles.chrome}
-          data-pane-chrome-focus={isMobile ? undefined : "true"}
-          tabIndex={-1}
-        >
-          {isMobile ? null : surfaceHeader}
-          {body?.navigation ? (
-            <div
-              className={styles.controlRow}
-              role="group"
-              aria-label={body.navigation.label}
-            >
-              {body.navigation.content}
-            </div>
-          ) : null}
-          {principal || query ? (
-            <div
-              className={cx(styles.controlRow, styles.taskRow)}
-              hidden={!principal && query?.kind === "Find" && !findVisible}
-            >
-              {principal ? (
-                <div className={styles.primaryTask}>
-                  {principal.kind === "link" ? (
-                    <Button asChild variant="secondary" size="sm">
-                      <a
-                        href={principal.href}
-                        data-workspace-rich-target="true"
-                        data-action-id={principal.id}
-                        aria-disabled={principal.disabled || undefined}
-                        aria-describedby={principal.disabledReason ? principalReasonId : undefined}
-                        onClick={activatePrincipal}
-                        onKeyDown={activatePrincipal}
-                        onAuxClick={(event) => { if (principal.disabled) event.preventDefault(); }}
-                      >
-                        {principal.icon}{principal.label}
-                      </a>
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      leadingIcon={principal.icon}
-                      data-action-id={principal.id}
-                      aria-disabled={principal.disabled || undefined}
-                      aria-describedby={principal.disabledReason ? principalReasonId : undefined}
-                      aria-pressed={principalState?.barPressed}
-                      aria-expanded={principalState?.barExpanded}
-                      aria-controls={principalState?.barControls}
-                      onClick={activatePrincipal}
-                      onKeyDown={activatePrincipal}
-                    >
-                      {principal.label}
-                    </Button>
-                  )}
-                  {principal.disabledReason ? <span id={principalReasonId} className={styles.actionReason}>{principal.disabledReason}</span> : null}
-                </div>
-              ) : null}
-              {query ? (
+        <div ref={controlsFrameRef} className={styles.chromeFrame}>
+          <div
+            ref={chromeRef}
+            className={styles.chrome}
+            data-pane-chrome-focus={isMobile ? undefined : "true"}
+            tabIndex={-1}
+          >
+            {isMobile ? null : surfaceHeader}
+            {body?.navigation ? (
+              <div
+                className={styles.controlRow}
+                role="group"
+                aria-label={body.navigation.label}
+              >
+                {body.navigation.content}
+              </div>
+            ) : null}
+            {query ? (
+              <div
+                className={styles.controlRow}
+                hidden={query.kind === "Find" && !findVisible}
+              >
                 <div
                   key={source}
                   id={rowId}
@@ -565,9 +604,9 @@ function PaneView({
                     />
                   ) : query.content}
                 </div>
-              ) : null}
-            </div>
-          ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div
           className={styles.primaryContentRow}
@@ -593,6 +632,9 @@ function PaneView({
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
+        {outlineCommands ? <div className={styles.outlineAccessory} style={{marginBottom: commandsBottom}}>
+          <OutlineCommands publication={outlineCommands} current={() => isActive && !hasActiveInteractionOwner() ? chrome.get().outlineCommands : null}/>
+        </div> : null}
         {isMobile || isMaximized ? null : (
           <ResizeHandle
             label={`Resize pane ${label}`}
@@ -630,10 +672,10 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
     ready: resourceRef !== null,
     sourceIdentity: resourceRef,
     apply: async (target, context) => {
-      if (target.kind !== "source" || target.source.location.kind !== "resource") return false;
+      if (target.kind !== "source" || target.source.location.kind !== "resource") return "Unavailable";
       if (context.mayFocus()) paneRef.current?.focus({ preventScroll: true });
-      return true;
+      return "Applied";
     },
   });
-  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement="Polite" /> : null;
+  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-// mobile reader taps toggle the active pane's top bar and controls and the nexus button.
+// mobile reader taps toggle the active pane's top bar, controls, player and nexus.
 // this module owns their visibility target, inertness and motion attributes;
 // css interpolates them without changing reading geometry. scrolling never
 // changes the target. command holds show immediately and leave controls shown.
@@ -19,6 +19,7 @@ import {
   findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { listenForReaderTap } from "./readerTap";
+import { useMobileViewport } from "./viewport";
 import "./chrome.css";
 
 export interface MobileChrome {
@@ -34,7 +35,7 @@ export interface MobileChrome {
 
 type MobileChromeState = "Shown" | "Hidden" | "Held" | null;
 
-function createMobileChrome() {
+function createMobileChrome(refreshGeometry: () => void) {
   let mobile = false;
   let shown = true;
   let holds = 0;
@@ -58,6 +59,7 @@ function createMobileChrome() {
 
   function paint(motion: "Animated" | "Instant") {
     for (const surface of surfaces) paintSurface(surface, motion);
+    refreshGeometry();
     notifyState();
   }
 
@@ -120,11 +122,13 @@ function createMobileChrome() {
     registerSurface(surface: HTMLElement) {
       surfaces.add(surface);
       paintSurface(surface, "Instant");
+      refreshGeometry();
       return () => {
         surfaces.delete(surface);
         delete surface.dataset.mobileChromeVisibility;
         delete surface.dataset.mobileChromeMotion;
         surface.inert = false;
+        refreshGeometry();
       };
     },
     setMobile(next: boolean) {
@@ -145,7 +149,8 @@ function createMobileChrome() {
 const MobileChromeContext = createContext<ReturnType<typeof createMobileChrome> | null>(null);
 
 export function MobileChromeProvider({ children }: { children: ReactNode }) {
-  const [chrome] = useState(createMobileChrome);
+  const viewport = useMobileViewport();
+  const [chrome] = useState(() => createMobileChrome(viewport.refreshGeometry));
   const isMobile = useIsMobileViewport();
   useLayoutEffect(() => chrome.setMobile(isMobile), [chrome, isMobile]);
   return <MobileChromeContext value={chrome}>{children}</MobileChromeContext>;

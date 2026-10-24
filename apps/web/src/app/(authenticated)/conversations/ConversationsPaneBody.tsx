@@ -3,9 +3,12 @@
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { Plus } from "lucide-react";
 import { useCallback, useId, useMemo } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogChats } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
@@ -19,6 +22,7 @@ import {
   type ConversationListItem,
 } from "@/lib/chat/conversationIndex";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
+import { useChatAgeClock } from "@/lib/chat/useChatAgeClock";
 import {
   CANONICAL_UPDATED_TITLE_INDEX_VIEW as CANONICAL,
   decodeUpdatedTitleIndexView,
@@ -40,12 +44,12 @@ import { usePaneChrome, type PanePrimaryAction, type PaneRefreshExecute } from "
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
   requirePaneRuntime,
   usePaneIsActive,
+  usePaneIsVisible,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -63,7 +67,7 @@ const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
   label: "new chat",
-  icon: <Plus size={16} aria-hidden="true" />,
+  icon: <Plus size={20} aria-hidden="true" />,
   href: "/conversations/new",
 };
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
@@ -85,17 +89,19 @@ export default function ConversationsPaneBody() {
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
   const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
+  const catalog = useCatalogRead(value => catalogChats(value, new URLSearchParams(viewQuery)));
   const list = useServerList<ConversationListItem>({
     key: invalid ? null : `/conversations?${viewQuery}`,
     stale: useChangeStamp("Chats"),
+    catalog,
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (item) => item.id,
     fetchPage: (cursor, limit, signal) =>
       fetchConversationIndex(pageQuery(viewQuery, cursor, limit), signal),
   });
+  const nowMs = useChatAgeClock({ initialInstant: environment.currentInstant, items: list.items, visible: usePaneIsVisible() });
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(list.items);
   const setView = useCallback(
@@ -107,8 +113,8 @@ export default function ConversationsPaneBody() {
   );
 
   const rows = useMemo(
-    () => list.items.map((item) => presentConversation(item, environment)),
-    [list.items, environment],
+    () => list.items.map((item) => presentConversation(item, environment, nowMs)),
+    [list.items, environment, nowMs],
   );
   const filterRows = usePaneFilterRows({
     sourceKey: "Conversations:mine",
@@ -124,6 +130,16 @@ export default function ConversationsPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const filtering = query.trim() !== "";
+  const visible = rows.filter((row) => matchesPaneFilterQuery(query, [row.title.text]));
+  const emptyTitle = filtering
+    ? list.complete ? "no chats match this filter." : "no matching chat found so far."
+    : list.complete ? "no chats yet." : "no chats loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT, waiting: list.status === "loading" && !invalid,
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
@@ -171,11 +187,8 @@ export default function ConversationsPaneBody() {
           status={{
             placement: "Inline",
             id: queryStatusId,
-            visible: paneFilterRowsStatusVisible({
-              status: filterRows.rowStatus,
-              filtering: query.trim() !== "",
-            }),
-            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+            visible: false,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
           }}
           onReset={canReset ? reset : undefined}
         />
@@ -189,17 +202,20 @@ export default function ConversationsPaneBody() {
 
   if (invalid) {
     return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid chats view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: reset }]}
-      />
+      <div>
+        {readFeedback.announcement}
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Invalid chats view" }}
+          announcement="Assertive"
+          actions={[{ label: "Reset view", onClick: reset }]}
+        />
+      </div>
     );
   }
   const failed = list.failure?.op === "More" ? null : list.failure?.error;
   const failure = failed ? (
     <FeedbackNotice
-      content={{
+      content={catalogErrorFeedback(failed) ?? {
         tone: "Danger",
         title: "Chats couldn’t be loaded.",
         requestId: failed.requestId,
@@ -208,14 +224,12 @@ export default function ConversationsPaneBody() {
       actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
-  const filtering = query.trim() !== "";
   return (
     <div>
+      {readFeedback.announcement}
       <CollectionView
         returnScope="Conversations.Items"
-        rows={rows.filter((row) =>
-          matchesPaneFilterQuery(query, [row.title.text]),
-        )}
+        rows={visible}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Conversations"
         rowChangePresentation={{
@@ -223,17 +237,17 @@ export default function ConversationsPaneBody() {
           key: query.trim(),
         }}
         collectionBusy={list.running !== null || !list.current}
-        notice={list.status === "ready" ? failure : undefined}
+        notice={<>
+          {list.status === "ready" ? failure : null}
+          {filtering && list.current && !list.complete && list.failure === null && visible.length > 0
+            ? <p>filter applies to loaded items.</p> : null}
+        </>}
         error={list.status === "ready" ? undefined : failure}
         empty={
           <FeedbackNotice
             content={{
               tone: "Neutral",
-              title: !filtering
-                ? "No chats yet."
-                : list.complete
-                  ? "No chats match this filter."
-                  : "No matching chat found so far.",
+              title: emptyTitle,
             }}
             announcement="None"
             actions={
@@ -249,7 +263,7 @@ export default function ConversationsPaneBody() {
             }
           />
         }
-        footer={<CollectionExhaustionNotice list={list} />}
+        footer={readFeedback.notice}
       />
     </div>
   );

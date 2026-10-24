@@ -15,7 +15,7 @@ import type { Reader } from "@/lib/documentReader/runtime";
 import { readerLinkTarget } from "@/lib/documentReader/text/linkTarget";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { activateReaderDestination } from "@/lib/documentReader/navigation";
-import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -43,7 +43,7 @@ export default function SourceNote({ occurrenceKey, reference, mediaId, identity
   useLayoutEffect(() => { if (openRequest?.isCurrent()) setOpen(true); }, [openRequest]);
   const label = reference.location_label;
   return <>
-    <Button ref={button} variant="ghost" size="sm" aria-expanded={expanded} aria-controls={expanded ? id : undefined}
+    <Button ref={button} aria-expanded={expanded} aria-controls={expanded ? id : undefined}
       data-resource-primary onClick={() => {
         if (expanded && details.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
         setOpen(!expanded);
@@ -118,7 +118,8 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
 function SourceContent({ reader, mediaId, identity, unit, children }: { reader: Reader; mediaId: string; identity: string; unit: string | null; children: ReactNode }) {
   const runtime = usePaneRuntime();
   const root = useRef<HTMLDivElement>(null);
-  const destinations = useRef(new WeakMap<HTMLAnchorElement, ReaderDestination>());
+  const destinations = useRef(new WeakMap<HTMLAnchorElement, { readonly destination: ReaderDestination | null; readonly href: string | null }>());
+  const [failure, setFailure] = useState(false);
   useLayoutEffect(() => {
     const bound = destinations.current;
     const changed: { anchor: HTMLAnchorElement; href: string; rich: string | null; role: string | null; tabIndex: string | null }[] = [];
@@ -135,9 +136,9 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
         target: target.kind === "point" ? { ...target, point: { ...target.point, unit: mounted.id } } : { ...target, unit: mounted.id },
       } : null;
       changed.push({ anchor, href: anchor.getAttribute("href")!, rich: anchor.getAttribute("data-workspace-rich-target"), role: anchor.getAttribute("role"), tabIndex: anchor.getAttribute("tabindex") });
-      if (destination) bound.set(anchor, destination);
       anchor.setAttribute("data-workspace-rich-target", "true");
       const href = destination ? reader.navigation?.href(destination) : readerDestinationHref(mediaId, { source_identity: identity, target });
+      bound.set(anchor, { destination, href: href ?? null });
       if (href) anchor.setAttribute("href", href);
       else if (reader.navigation) {
         anchor.removeAttribute("href");
@@ -156,9 +157,16 @@ function SourceContent({ reader, mediaId, identity, unit, children }: { reader: 
   const activate = (event: TargetActivationEvent & { target: EventTarget | null }) => {
     const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
     if (!anchor) return;
-    const destination = destinations.current.get(anchor);
-    if (destination) activateReaderDestination(reader, destination, event, undefined, anchor.hasAttribute("href") ? "native" : "activate");
-    else activateTargetAnchor({ event, runtime, anchor });
+    const binding = destinations.current.get(anchor);
+    if (binding?.destination) activateReaderDestination(reader, binding.destination, event, undefined, anchor.hasAttribute("href") ? "native" : "activate");
+    else if (binding?.href) activateTargetLink({ event, runtime, target: { href: binding.href } });
+    else if (binding) {
+      const activation = workspaceTargetActivationIntent(event, "activate");
+      if (activation.kind !== "Unowned") { event.preventDefault(); if (activation.kind === "Open") setFailure(true); }
+    } else activateTargetAnchor({ event, runtime, anchor });
   };
-  return <div ref={root} data-reader-unit={unit ?? undefined} onClick={activate} onKeyDown={activate}>{children}</div>;
+  return <div ref={root} data-reader-unit={unit ?? undefined} onClick={activate} onKeyDown={activate}>
+    {failure ? <FeedbackNotice content={{ tone: "Warning", title: "this location link is too long" }} announcement="Polite" onDismiss={() => setFailure(false)} /> : null}
+    {children}
+  </div>;
 }

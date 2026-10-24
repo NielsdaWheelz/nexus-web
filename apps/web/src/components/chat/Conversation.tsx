@@ -5,6 +5,10 @@ import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { catalogChat } from "@/lib/catalog/selectors";
+import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
@@ -13,7 +17,7 @@ import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
 import type { Catalog } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { openAsyncResult } from "@/lib/panes/openResult";
@@ -34,11 +38,11 @@ import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace } from "@/lib/workspace/store";
-import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import ChatComposer from "./ChatComposer";
 import ChatSurface from "./ChatSurface";
 import ChatContext from "./ChatContext";
-import { useConversationFindSource } from "./conversationFind";
+import { inspectConversationFindMatch, useConversationFindSource } from "./conversationFind";
 import { useChatStore, type ChatStore } from "./conversationStore";
 import { ForksPanel } from "./Forks";
 import { useQuotePreview } from "./QuotedPassage";
@@ -66,6 +70,8 @@ function persistEndpoint(runtime: Pick<PaneRuntimeContextValue, "href" | "visitI
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
   const [state, store] = useChatStore(conversationId, runtime.paneId);
+  const savedCatalog = useCatalogState();
+  const saved = conversationId === null || savedCatalog.data === null ? null : catalogChat(savedCatalog.data, conversationId);
   // A menu's chat deletion speaks as a workspace condition (commandFeedback.tsx).
   const recovery = recoveryOf(state.command, (command) => command.kind !== "DeleteChat");
   const catalogRead = useServerValue({
@@ -108,6 +114,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     [messages, leafId, history, unavailableBranch, conversationId, branch],
   );
   const previousMessages = useRef(messages);
+  const clearFind = useRef<(() => void) | null>(null);
 
   const fork = useCallback((draft: BranchDraft) => {
     const command = store.getState().command;
@@ -119,8 +126,41 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const arrival = useSourceArrival({
     ready,
     sourceIdentity: conversationId,
+    onAttempt: (_signal, target) => { if (target.kind === "chat_destination") clearFind.current?.(); },
     apply: async (arrivalTarget, context) => {
-      if (arrivalTarget.kind !== "source") return false;
+      if (arrivalTarget.kind === "chat_destination") {
+        setInvalidatedInspection(false);
+        const { destination, leaf_id } = arrivalTarget;
+        const message = store.getState().messages.get(destination.message_id);
+        if (!message || message.status === "pending" || context.signal.aborted) return "Unavailable";
+        const stillCurrent = () => {
+          const current = store.getState().messages.get(message.id);
+          const endpoint = conversationEndpoint(new URL(latestRuntime.current.href, "https://nexus.invalid").searchParams);
+          return current?.content === message.content && current.status === message.status &&
+            endpoint.kind === "Endpoint" && endpoint.messageId === leaf_id && latestLeaf.current === leaf_id &&
+            pathTo(store.getState().messages, leaf_id).some((item) => item.id === message.id);
+        };
+        if (!stillCurrent()) return "Unavailable";
+        const inspection = new AbortController();
+        const retire = () => inspection.abort();
+        const unsubscribe = store.subscribe(() => {
+          if (!stillCurrent()) { setInvalidatedInspection(true); retire(); }
+        });
+        context.signal.addEventListener("abort", retire, { once: true });
+        inspection.signal.addEventListener("abort", () => {
+          unsubscribe();
+          context.signal.removeEventListener("abort", retire);
+        }, { once: true });
+        try {
+          const outcome = await inspectConversationFindMatch({ handle: scroll.current, destination, context: { ...context, signal: inspection.signal }, isCurrent: stillCurrent });
+          if (outcome !== "Applied") retire();
+          return outcome;
+        } catch (error) {
+          retire();
+          throw error;
+        }
+      }
+      if (arrivalTarget.kind !== "source") return "Unavailable";
       const result = arrivalTarget.source;
       setInvalidatedInspection(false);
       if (result.location.kind === "resource") {
@@ -128,15 +168,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           const transcript = scroll.current?.getTranscriptElement();
           if (transcript) { transcript.tabIndex = -1; transcript.focus({ preventScroll: true }); }
         }
-        return true;
+        return "Applied";
       }
-      if (result.location.kind !== "located" || result.location.locator.type !== "message_offsets") return false;
+      if (result.location.kind !== "located" || result.location.locator.type !== "message_offsets") return "Unavailable";
       const locator = result.location.locator;
       const message = store.getState().messages.get(locator.message_id);
-      if (!message || locator.conversation_id !== conversationId || context.signal.aborted) return false;
-      if (locator.start_offset !== 0 || locator.end_offset !== Array.from(message.content).length) return false;
+      if (!message || locator.conversation_id !== conversationId || context.signal.aborted) return "Unavailable";
+      if (locator.start_offset !== 0 || locator.end_offset !== Array.from(message.content).length) return "Unavailable";
       const exact = message.content;
-      if (locator.text_quote_selector?.exact !== exact) return false;
+      if (locator.text_quote_selector?.exact !== exact) return "Unavailable";
       const inspection = new AbortController();
       const retire = () => inspection.abort();
       const stillCurrent = () => store.getState().messages.get(message.id)?.content === exact;
@@ -156,15 +196,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         const current = latestRuntime.current;
         let destination = latestLeaf.current;
         if (!pathTo(store.getState().messages, destination).some((item) => item.id === message.id)) {
-          if (conversationEndpoint(new URL(current.href, "https://nexus.invalid").searchParams).kind !== "Unspecified") return false;
+          if (conversationEndpoint(new URL(current.href, "https://nexus.invalid").searchParams).kind !== "Unspecified") return "Unavailable";
           destination = leafUnder(indexChildren(store.getState().messages.values()), message.id);
         }
-        if (context.signal.aborted || !persistEndpoint(current, destination)) return false;
+        if (context.signal.aborted || !persistEndpoint(current, destination)) return "Unavailable";
         setEndpoint({ visitId: current.visitId, value: { kind: "Endpoint", messageId: destination } });
         if (!stillCurrent() || context.signal.aborted) retire();
         const applied = !inspection.signal.aborted && await inspectChatMessage(scroll.current, message.id, { ...context, signal: inspection.signal });
         if (!applied) retire();
-        return applied;
+        return applied ? "Applied" : "Unavailable";
       } catch (error) {
         retire();
         throw error;
@@ -172,7 +212,11 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     },
   });
 
-  const clearArrival = arrival.clear;
+  const clearSourceArrival = arrival.clear;
+  const clearArrival = useCallback(() => {
+    clearSourceArrival();
+    setInvalidatedInspection(false);
+  }, [clearSourceArrival]);
   /** Show `messageId`'s path in this pane: no write, only the pane's visit href. */
   const selectEndpoint = useCallback((messageId: string | null) => {
     if (!conversationId) return "unchanged" as const;
@@ -233,7 +277,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
 
   // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
-  const { seed } = useChatDraft(conversationId ?? "new", runtime.paneId);
+  const { seed, draft } = useChatDraft(conversationId ?? "new", runtime.paneId);
   useLayoutEffect(() => {
     if (delivery?.entry.kind !== "ComposeChat") return;
     seed(delivery.entry.text);
@@ -253,7 +297,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     }
     if (!claim(delivery)) return;
     if (!message)
-      return void feedback.offer({ key: "conversation-action", announcement: "Polite", content: { tone: "Neutral", title: "This message is no longer available." } });
+      return void feedback.offer({ needsAttention: false, undo: null, onDismiss: null, key: "conversation-action", announcement: "Polite", content: { tone: "Neutral", title: "This message is no longer available." } });
     if (entry.kind === "DeleteMessage") {
       void store.deleteMessage(message.id);
     } else if (message.role !== "assistant") {
@@ -281,8 +325,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     activeLeafMessageId: leafId,
     messages: view.path,
     scroll,
+    isCurrent: (message) => {
+      const current = store.getState().messages.get(message.id);
+      return latestLeaf.current === leafId && current?.content === message.content && current.status === message.status &&
+        pathTo(store.getState().messages, leafId).some((item) => item.id === message.id);
+    },
+    onInspect: clearArrival,
   });
-  const find = useFind({ ownerKey, source: findSource });
+  const find = useFind({ ownerKey, source: findSource, onSearchIntent: clearArrival });
+  clearFind.current = find?.clear ?? null;
 
   const bodies = useMemo(
     () => ({
@@ -307,14 +358,16 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   );
   useResourceInspector({
     scheme: "conversation",
-    handle: conversationId,
+    handle: state.conversation !== null && !state.gone ? conversationId : null,
     bodies,
   });
   // streaming re-renders this body often; publish only what changed.
+  const savedOnly = conversationId !== null && !state.gone && history !== "Ready" && messages.size === 0 && draft.text === "" && branch === null && state.command.kind === "Idle" && !remoteReady() && !savedCatalog.loading;
   const loading = history === "Loading";
   usePaneChrome(
     useMemo(
       () => ({
+        displayTitle: savedOnly && saved !== null ? saved.title || "untitled chat" : undefined,
         query: !conversationId
           ? undefined
           : loading
@@ -330,7 +383,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
               })
             : undefined,
       }),
-      [conversationId, find, loading, ready],
+      [savedOnly, saved, conversationId, find, loading, ready],
     ),
   );
 
@@ -346,7 +399,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     if (!ready) return;
     const previous = previousMessages.current;
     previousMessages.current = messages;
-    if (!conversationId || leafId === null || messages.has(leafId) || !previous.has(leafId)) return;
+    if (!conversationId || leafId === null || messages.has(leafId) || !previous.has(leafId) || params.has("loc")) return;
     // the shown branch was deleted: fall back to its nearest surviving ancestor, never another branch
     let ancestor = previous.get(leafId)?.parent_message_id ?? null;
     while (ancestor !== null && !messages.has(ancestor)) ancestor = previous.get(ancestor)?.parent_message_id ?? null;
@@ -362,7 +415,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     busy: recovery?.kind === "Busy",
   };
 
+  usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
+  if (savedOnly) return <div className={styles.pane}>
+    {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
+    <FeedbackNotice content={saved === null ? catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" } : { tone: "Neutral", title: "this chat is not available offline" }} announcement="Polite" />
+  </div>;
+
   return (
     <div className={styles.pane}>
       {unavailableBranch ? (
@@ -383,7 +442,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           announcement="Assertive"
         />
       ) : null}
-      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure ?? "quoted location unavailable" }} announcement="Polite" /> : null}
+      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure?.title ?? "this match is no longer available" }} announcement="Polite" /> : null}
       {state.error || history === "Unavailable" ? (
         <FeedbackNotice
           content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}

@@ -65,7 +65,7 @@ export async function openAsyncResult({
   ctx: Pick<ActionContext, "workspace" | "sessionSignal" | "feedback">;
   originPaneId?: string;
   intent: OpenIntent;
-  /** Reader handoffs keep their origin and fork even when an offer is opened later. */
+  /** Automatic create/send handoff only; a later offer owns its own opening intent. */
   disposition?: "Follow" | "Fork";
   originHistory?: "replace";
   subject?: string;
@@ -105,7 +105,7 @@ export async function openAsyncResult({
   }
   const label = subject ?? result.target.labelHint;
   const shownLabel = label === undefined ? undefined : truncateText(label, 120);
-  const offer = ctx.feedback.offer({
+  const offer = ctx.feedback.offer({ needsAttention: false, undo: null, onDismiss: null,
     key: `open-result:${result.target.href}`,
     content: {
       tone: "Success", title: shownLabel ? `${result.title} · ${shownLabel}` : result.title,
@@ -121,13 +121,9 @@ export async function openAsyncResult({
         const originPaneId = current.state.active_primary_pane_id;
         const handled = activateTargetLink({
           event,
-          runtime: { activateTarget: request => current.activateWorkspaceTarget({
-            ...request, originPaneId,
-            disposition: { kind: request.disposition.kind === "Fork" ? "Fork" : disposition },
-          }) },
+          runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId }) },
           target: result.target,
           entry: result.entry,
-          discardOwnerIds,
         });
         if (handled === "handled-default" || handled === "handled-new-pane") offer.withdraw();
         return handled;

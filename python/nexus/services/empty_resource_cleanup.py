@@ -1,10 +1,8 @@
 """Weekly empty-page/note collection and reviewed, content-free operator inventories.
 
 The graph owns retention; this module owns discovery and transaction boundaries.
-Each job candidate starts a serializable attempt, then locks its claim and root. Its
-serializable snapshot includes retention predicates and activity/version tuples;
-concurrent body or retention changes restart the attempt. Disposition and cursor
-commit together. Operator
+Each job candidate locks the claim, then its root, in a fresh serializable
+attempt. Its disposition and cursor commit together through the retry owner. Operator
 apply locks and validates the entire bounded inventory before deleting anything.
 Canonical teardown is flush-only. Absent resources have already landed on retry.
 """
@@ -19,7 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.jobs import queue
 from nexus.runtime_health import get_runtime_identity
@@ -125,7 +123,7 @@ def _reason(
         return "recent"
     if isinstance(resource, NoteBlock) and not retention.canonical_blank(resource.body_pm_json):
         return "nonempty"
-    if retention.has_retainer(db, ref):
+    if retention.has_retainer(db, resource.user_id, ref):
         return "retained"
     return "eligible"
 
@@ -168,8 +166,6 @@ def _evidence(db: Session, ref: ResourceRef, resource: Page | NoteBlock) -> Cand
                     (surface_scheme, surface_id) IN (SELECT * FROM owned) OR
                     (target_scheme, target_id) IN (SELECT * FROM owned) OR
                     edge_id IN (SELECT id FROM own_edges)) AS resource_view_states,
-                (SELECT count(*) FROM artifacts
-                    WHERE subject_scheme = :scheme AND subject_id = :id) AS dossiers,
                 (SELECT count(*) FROM background_jobs WHERE
                     (kind = 'note_reindex_job' AND :scheme = 'note_block'
                         AND payload ->> 'note_block_id' = CAST(:id AS text)) OR
@@ -221,7 +217,6 @@ def _delete(db: Session, ref: ResourceRef, owner_id: UUID) -> None:
         notes.delete_page_in_current_transaction(db, owner_id, ref.id)
     else:
         note_bodies.delete_note(db, viewer_id=owner_id, note_id=ref.id)
-        record_input_change(db, owners=[ref.uri])
 
 
 def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
@@ -257,6 +252,8 @@ def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
             live.append((ref, resource.user_id))
         for ref, owner_id in live:
             _delete(db, ref, owner_id)
+        if live:
+            record_input_change(db, owners=[ref.uri for ref, _ in live])
         return {
             "deleted": len(live),
             "already_absent": absent,
@@ -292,13 +289,11 @@ def run_job(
             _checkpoint(db, context, progress)
             return progress
 
-        progress = retry_serializable(db, "initialize_empty_resource_cleanup", initialize)
+        progress = retry_read_committed(db, "initialize_empty_resource_cleanup", initialize)
         if progress is None:
             return {"status": "claim_lost"}
-        cursor = progress.cursor
-        candidates = retry_serializable(
-            db, "empty_resource_candidates", lambda: _candidates(db, cursor, BATCH_SIZE)
-        )
+        candidates = _candidates(db, progress.cursor, BATCH_SIZE)
+        db.rollback()  # close the materialized candidate read before write attempts
         for ref in candidates:
 
             def inspect(ref: ResourceRef = ref) -> _Progress | None:
@@ -307,7 +302,7 @@ def run_job(
                     return None
                 current = _Progress.model_validate(claim.payload)
                 _lock_root(db, ref)
-                # A changed root tuple or retention dependency restarts this snapshot.
+                # A conflicting locked row restarts the whole serializable attempt.
                 resource = _resource(db, ref)
                 reason = _reason(db, ref, resource, current.cutoff)
                 if reason == "eligible":
@@ -325,6 +320,8 @@ def run_job(
                 current.inspected += 1
                 current.cursor = ref.uri
                 _checkpoint(db, context, current)
+                if reason == "eligible":
+                    record_input_change(db, owners=[ref.uri])
                 return current
 
             progress = retry_serializable(db, "inspect_empty_resource", inspect)

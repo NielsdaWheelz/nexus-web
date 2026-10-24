@@ -3,7 +3,10 @@
 // port keeps the position on the device through the bridge, which syncs it.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
+import { WIRE_HEADER } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import {
   Contents,
   SourceIssuesNotice,
@@ -23,10 +26,10 @@ import type {
   ReaderSource,
 } from "@/lib/documentReader/ports";
 import {
-  currentOfflineSnapshot,
-  offlineCall,
-  type OfflineItem,
-} from "@/lib/offline/bridge";
+  currentLocalContent,
+  localMutation,
+  type LocalItem,
+} from "@/lib/offline/localContent";
 import styles from "./shelf.module.css";
 
 const copyUrl = (mediaId: string, path: string) =>
@@ -36,7 +39,7 @@ function shelfSource(mediaId: string): ReaderSource {
   const pdf = { url: copyUrl(mediaId, "document.pdf"), expiresAtMs: null };
   return {
     async load(signal) {
-      const response = await fetch(copyUrl(mediaId, "reader.json"), { signal });
+      const response = await fetch(copyUrl(mediaId, "reader.json"), { signal, headers: { [WIRE_HEADER]: String(WIRE_REVISION) } });
       if (!response.ok)
         throw new Error(`reader.json answered ${response.status}`);
       const copy = (await response.json()) as {
@@ -59,24 +62,23 @@ function shelfSource(mediaId: string): ReaderSource {
 }
 
 /**
- * The device position; the snapshot the bridge pushes before each reply is the
- * new view. A save never touches canonical: in a conflict it moves the device side.
+ * The device position; mutations await a readable index covering the receipt. A save never touches canonical: in a conflict it moves the device side.
  */
 function shelfProgress(mediaId: string): ReaderProgressPort {
   const view = (): ProgressView => {
-    const item = currentOfflineSnapshot()?.items.find(
-      (entry) => entry.mediaId === mediaId,
+    const item = currentLocalContent().index?.items.find(
+      (entry) => entry.media_id === mediaId,
     );
     if (!item?.progress)
       throw new Error("This downloaded copy is no longer on this device");
-    return item.progress;
+    return item.progress.kind === "Canonical" ? item.progress : { ...item.progress, adoptUnresolved: item.progress.adopt_unresolved };
   };
   return {
     load: async () => view(),
     async save(locator, base) {
       try {
-        await offlineCall("save", { mediaId, locator, baseRevision: base.revision,
-          expectedReaderGeneration: base.expectedReaderGeneration, adoptUnresolved: base.adoptUnresolved });
+        await localMutation("save", { media_id: mediaId, locator, base_revision: base.revision,
+          expected_reader_generation: base.expectedReaderGeneration, adopt_unresolved: base.adoptUnresolved });
       } catch (error) {
         if (error instanceof Error && error.message === "ContentChanged") return { kind: "ContentChanged" };
         if (error instanceof Error && error.message === "Conflict") {
@@ -89,7 +91,7 @@ function shelfProgress(mediaId: string): ReaderProgressPort {
       return { kind: "Device", view: view() };
     },
     async resolve(choice) {
-      await offlineCall("resolve", { mediaId, choice });
+      await localMutation("resolve", { media_id: mediaId, choice });
       return view();
     },
   };
@@ -117,19 +119,19 @@ export default function ShelfReader({
   item,
   onRemove,
 }: {
-  readonly item: OfflineItem;
+  readonly item: LocalItem;
   readonly onRemove: () => void;
 }) {
   const options = useMemo(
     () => ({
-      source: shelfSource(item.mediaId),
-      progress: shelfProgress(item.mediaId),
+      source: shelfSource(item.media_id),
+      progress: shelfProgress(item.media_id),
       entry: { fresh: null, cold: null },
     }),
-    [item.mediaId],
+    [item.media_id],
   );
   // No redownload in place: a copy's identity is its media and when it was saved.
-  const reader = useDocumentReader(`${item.mediaId}:${item.savedAt}`, options);
+  const reader = useDocumentReader(`${item.media_id}:${item.saved_at}`, options);
   const document = useReaderState(reader, (state) => state.document);
   const progress = useReaderState(reader, (state) =>
     state.progress?.kind === "Ready" ? state.progress.view.kind : null,
@@ -172,32 +174,28 @@ export default function ShelfReader({
       ) : null}
       {progress === "ContentChanged" && !continued ? (
         <div className={styles.actions} aria-label="Changed source">
-          <button
-            type="button"
-            className={styles.action}
+          <Button
+            emphasis="strong"
             onClick={() => setContinued(true)}
           >
             Continue reading
-          </button>
-          <button
-            type="button"
-            className={styles.quietAction}
+          </Button>
+          <Button
+            tone="danger"
             onClick={onRemove}
           >
             Remove downloaded copy
-          </button>
+          </Button>
         </div>
       ) : null}
       {text && text.toc.length > 0 ? (
         <div className={`${styles.actions} ${styles.readerActions}`}>
-          <button
-            type="button"
-            className={styles.action}
+          <Button
             aria-expanded={contents}
             onClick={() => setContents(!contents)}
           >
             Contents
-          </button>
+          </Button>
         </div>
       ) : null}
       {contents ? (
@@ -206,7 +204,7 @@ export default function ShelfReader({
         </div>
       ) : null}
       <div className={styles.textWithMap}>
-        <DocumentReaderView reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
+        <DocumentReaderView playback={null} reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
         <MapRail reader={reader} evidence={null} />
       </div>
     </div>

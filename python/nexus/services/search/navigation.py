@@ -31,7 +31,6 @@ _FAMILIES = frozenset(
         "conversation",
         "library",
         "oracle_reading",
-        "dossier",
     }
 )
 _TIERS = {"exact": 0, "prefix": 1, "substring": 2}
@@ -108,7 +107,6 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
             + """,
         navigation_names AS MATERIALIZED (
             SELECT ref,family,CASE
-                WHEN family='dossier' THEN COALESCE(discovery_name,'Dossier — Note')
                 WHEN family='conversation' THEN COALESCE(NULLIF(name,''),'Untitled conversation')
                 ELSE COALESCE(NULLIF(name,''),'Untitled') END AS literal
             FROM eligible),

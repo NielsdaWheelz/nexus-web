@@ -32,9 +32,5 @@ only, disposable, deleted after), count only:
   a web article over the apparatus budget publishes with its notes inline (8a67: 2
   `E_SANITIZATION_FAILED` attempts, cause unproven).
 
-after deploy, the owner's smoke: refresh a readable article (it stays readable while
-the refresh runs); add a wikipedia article by url (its notes open from their markers); capture a page with a hidden accordion (its text is not shown);
-import an epub whose cover is an svg-wrapped image the manifest omits (it imports
-with an unavailable-image notice).
-
-delete this file once that release is smoked.
+delete this file once those counts are taken and the owner has decided the
+repairs.

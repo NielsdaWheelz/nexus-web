@@ -20,7 +20,8 @@ internal val SPAN_INSTANT: DateTimeFormatter = DateTimeFormatterBuilder().append
 /**
  * Listening spans not yet uploaded, durable across process death: one json array
  * of `{accountId, mediaId, span}` in one file, rewritten whole on each change.
- * The service's main thread is its only caller.
+ * The live mutable instance belongs to the service's main thread. First
+ * provisioning reads existing row owners before any service account can bind.
  */
 internal class ActivityOutbox(file: File) {
     class Batch(val mediaId: UUID, val spans: List<JSONObject>)
@@ -36,6 +37,11 @@ internal class ActivityOutbox(file: File) {
             // justify-ignore-error: no file yet means nothing is pending.
         }
     }
+
+    fun clear() { entries.clear() }
+
+    /** Preservation tags only: pending spans cannot establish a server session. */
+    fun cachedAccounts(): Set<UUID> = entries.map { UUID.fromString(it.getString("accountId")) }.toSet()
 
     fun add(accountId: UUID, mediaId: UUID, span: JSONObject) {
         entries += JSONObject()

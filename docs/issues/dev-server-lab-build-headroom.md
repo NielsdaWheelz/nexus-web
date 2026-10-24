@@ -21,5 +21,19 @@ images, build caches, volumes or projects. the host owner must provide adequate
 free space or explicitly identify disposable cache ownership before another
 cold/source-invalidating build.
 
+the lab now shares a dependency-hash checkout worker image; source-only commits
+reuse it without building. [checkout worker images](../local-rules/testing-standards.md#checkout-worker-images)
+owns its inputs and retention contract. dependency changes still need a cold
+build, and native x64 cold-build headroom remains unqualified.
+
 resolved when the native host can complete the intended image build and runtime
 qualification with adequate free-space headroom, preserving unrelated resources.
+
+on 2026-10-22 scoped removal of eleven proven unreferenced image copies recovered
+1,661,022,208 bytes, leaving 7,296,786,432 bytes free. all 111 containers, 21 volumes
+and both running builders were preserved. six retained search qualification
+volumes consume approximately 31.8 gb; their receipts do not prove disposal is
+safe. shared build cache also remains. the host still falls below the backend
+publisher's 8 gib floor. PR #739 moved that publisher to an isolated hosted vm;
+this lab capacity issue remains pending an explicit retention decision or more
+capacity.

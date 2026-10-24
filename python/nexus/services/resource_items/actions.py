@@ -23,9 +23,9 @@ from nexus.schemas.resource_items import (
     DownloadKind,
     HighlightNoteAction,
     LecternMembershipAction,
+    OpenPodcastFeedAction,
     OpenSourceAction,
     PlaybackAction,
-    PodcastSubscriptionAction,
     RecoveryAction,
     RefreshSourceAction,
     ResourceActionOut,
@@ -40,7 +40,6 @@ from nexus.schemas.resource_items import (
 from nexus.services import highlights, libraries
 from nexus.services.chat import conversations
 from nexus.services.consumption import lectern, projection
-from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media import media_facts
 from nexus.services.podcasts.subscriptions_query import podcast_states
 from nexus.services.resource_graph.refs import ResourceRef
@@ -92,9 +91,6 @@ def _scheme_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> list[R
             return _highlight(db, viewer_id, ref.id)
         case "message":
             return _message(db, viewer_id, ref.id)
-        case "artifact":
-            active = dossier_engine.has_active_build(db, artifact_id=ref.id)
-            return [_simple("RegenerateArtifact", "Processing" if active else None)]
         case "page":
             return [_simple("EditPageTitle"), _simple("DeletePage")]
         case "note_block":
@@ -107,7 +103,6 @@ def _scheme_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> list[R
             | "fragment"
             | "oracle_reading"
             | "oracle_passage_anchor"
-            | "artifact_revision"
             | "external_snapshot"
             | "contributor"
             | "reader_apparatus_item"
@@ -123,13 +118,14 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
     if media is None:
         return []
     kind = media.summary.media_kind.value
-    actions: list[ResourceActionOut] = [_simple("MediaMetadata")]
+    actions: list[ResourceActionOut] = [_simple("Metadata")]
     if media.canonical_source_url:
         actions.append(OpenSourceAction(blocked=None, href=media.canonical_source_url))
     descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=[media_id])
     if media_id in descriptors:
         actions.append(PlaybackAction(blocked=None, player_descriptor=descriptors[media_id]))
         actions.append(_simple("PlayNext"))
+        actions.append(_simple("AddToQueue"))
     if media.has_file:
         actions.append(_simple("DownloadOriginal"))
     # Each obligation's own offer is actionable; a creator's stays discoverable but blocked.
@@ -164,8 +160,6 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
         and operation.reviewed_at is None
     ):
         actions.append(ReviewMetadataResultAction(blocked=None, job_id=operation.job_id))
-    # Authors are the creator's to edit, whatever the processing (I4).
-    actions.append(_simple("EditAuthors", _owner(media.is_creator)))
     actions.append(_simple("RemoveMedia", _owner(media.can_delete)))
     if media.progress_resettable:
         actions.append(_simple("ResetProgress"))
@@ -190,7 +184,6 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
                 blocked=None,
                 media_kind=cast(DownloadKind, kind),
                 title=media.summary.title,
-                audio_url=media.audio_url,
             )
         )
     return actions
@@ -201,26 +194,47 @@ def _library(db: Session, viewer_id: UUID, library_id: UUID) -> list[ResourceAct
         library = libraries.access(db, viewer_id, library_id, lock=False)
     except NotFoundError:
         return []
-    if not library.mutable:
-        return []
-    out = library.out(viewer_id)
-    return [
-        _simple("LibrarySettings", _owner(out.can_manage)),
-        _simple("DeleteLibrary", _owner(out.can_delete)),
+    actions: list[ResourceActionOut] = [
+        _simple("Metadata"),
+        _simple("MarkCollectionFinished"),
+        _simple("MarkCollectionUnread"),
+        _simple("AddUnfinishedToLectern"),
     ]
+    out = library.out(viewer_id)
+    if out.can_leave:
+        actions.append(_simple("LeaveLibrary"))
+    if library.mutable:
+        actions.extend(
+            [
+                _simple("LibrarySettings", _owner(out.can_manage)),
+                _simple("DeleteLibrary", _owner(out.can_delete)),
+            ]
+        )
+    return actions
 
 
 def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceActionOut]:
     state = podcast_states(db, viewer_id=viewer_id, podcast_ids=[podcast_id]).get(podcast_id)
     if state is None:
         return []
-    actions: list[ResourceActionOut] = []
+    actions: list[ResourceActionOut] = [
+        _simple("Metadata"),
+        OpenPodcastFeedAction(blocked=None, href=state.feed_url),
+        _simple("MarkCollectionFinished"),
+        _simple("MarkCollectionUnread"),
+        _simple("AddUnfinishedToLectern"),
+        _simple("TranscribePodcastEpisodes"),
+    ]
+    if state.website_url is not None:
+        actions.append(OpenSourceAction(blocked=None, href=state.website_url))
+    actions.append(_simple("UnsubscribePodcast" if state.subscribed else "SubscribePodcast"))
+    actions.append(_simple("PodcastLibraries"))
+    actions.append(_simple("ImportPodcastEpisodes"))
+    actions.append(_simple("PodcastSettings"))
     if state.subscribed:
-        actions += [_simple("PodcastSettings"), _simple("RefreshPodcast")]
-    if state.backfill_failed:
-        actions.append(_simple("RetryPodcastBackfill"))
-    actions.append(PodcastSubscriptionAction(blocked=None, subscribed=state.subscribed))
-    actions.append(_simple("LibraryPlacement"))
+        actions.append(_simple("RefreshPodcast"))
+    if state.has_episodes:
+        actions.append(_simple("RemovePodcastEpisodes"))
     return actions
 
 
@@ -235,8 +249,6 @@ def _highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[Resourc
         _simple("EditHighlight", owner),
         HighlightNoteAction(blocked=None, note_block_id=facts.note_block_id),
     ]
-    if facts.learn_applicable:
-        actions.append(_simple("LearnHighlight"))
     if facts.edit_bounds_applicable:
         actions.append(_simple("EditHighlightBounds", owner))
     actions.append(_simple("DeleteHighlight", owner))

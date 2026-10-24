@@ -25,15 +25,16 @@ import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { focusableElements } from "@/lib/ui/overlay";
 
 function followingRowIds(root: HTMLElement, target: HTMLElement): string[] {
-  const row = target.closest("[data-collection-row-id]");
+  const row = target.closest<HTMLElement>("[data-collection-row-id]");
+  if (row === null) return [];
   const all = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-  return all.slice(all.indexOf(row as HTMLElement) + 1).map((item) => item.dataset.collectionRowId!);
+  return all.slice(all.indexOf(row) + 1).map((item) => item.dataset.collectionRowId!);
 }
 
 export interface CollectionViewRowRenderProps {
+  readonly afterRemoval: () => HTMLElement | null;
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
-  readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly rowActionsAvailable: boolean;
   readonly viewTransitionName?: string;
@@ -41,7 +42,7 @@ export interface CollectionViewRowRenderProps {
 
 /**
  * Orchestrates the one canonical collection path. Panes own retrieval, toolbar,
- * optional row panels, and at most one row-level primary control; they do not
+ * and at most one row-level primary control; they do not
  * own row chrome, action placement, density, or alternate views.
  */
 export default function CollectionView({
@@ -54,7 +55,6 @@ export default function CollectionView({
   error,
   empty,
   footer,
-  rowPanels,
   rowControls,
   renderRow,
   rowActionsAvailable = true,
@@ -72,7 +72,6 @@ export default function CollectionView({
   readonly error?: ReactNode;
   readonly empty?: ReactNode;
   readonly footer?: ReactNode;
-  readonly rowPanels?: Readonly<Record<string, ReactNode>>;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
   readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
   readonly rowActionsAvailable?: boolean;
@@ -169,10 +168,17 @@ export default function CollectionView({
     row: CollectionRowView,
     as?: "li" | "div",
   ) => {
+    const following = rowsForRender.slice(rowsForRender.indexOf(row) + 1).map(item => item.id);
     const props: CollectionViewRowRenderProps = {
+      afterRemoval: () => {
+        const root = returnScopeRef.current;
+        const remaining = Array.from(root?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
+        return following.map(id => remaining.find(item => item.dataset.collectionRowId === id)?.querySelector<HTMLElement>("[data-row-focusable]")).find(item => item !== undefined && item !== null)
+          ?? root?.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]')
+          ?? findPaneChromeFocusTarget(root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+      },
       row,
       as,
-      panel: rowPanels?.[row.id],
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
       viewTransitionName: viewTransitionsReady && !order
@@ -208,7 +214,7 @@ export default function CollectionView({
         renderItem={(row) => renderCollectionRow(row, "div")}
       />
     ) : (
-      <ResourceList scope={returnScope} ariaLabel={ariaLabel} busy={collectionBusy}>
+      <ResourceList ariaLabel={ariaLabel} busy={collectionBusy}>
         {rowsForRender.map((row) => (
           <Fragment key={row.id}>{renderCollectionRow(row)}</Fragment>
         ))}
@@ -248,7 +254,7 @@ export default function CollectionView({
         <PaneSurface
           toolbar={toolbar}
           state={notice}
-          footer={status === "ready" ? footer : undefined}
+          footer={footer}
         >
           {body}
         </PaneSurface>
@@ -257,7 +263,7 @@ export default function CollectionView({
           {toolbar}
           {notice}
           {body}
-          {status === "ready" ? footer : null}
+          {footer}
         </>
       )}
     </div>

@@ -1,122 +1,163 @@
 # offline (android)
 
-owner of: episode audio and document reading copies kept on an android 14+
-phone, the packaged Downloads screen (the *shelf*) that lists and reads them,
-and carrying reading positions taken offline back to nexus.
+owner of: immutable episode packages and document reading copies on android
+14+, the ordinary private `/downloads` workspace pane, the isolated shelf reader
+for non-episode copies and reading-position delivery.
 
 ## the idea
 
-offline is one thing on one device: a **download list** of items (episode
-audio or a reading copy), each fetched by **one user-initiated data-transfer
-job** into **one directory**, recorded in **one json state file**, exposed to
-web code through **one bridge** (`window.nexusDownloads`), and shown in **one
-screen**, the shelf. the shelf is the Downloads screen whether or not there is
-a network. the hosted app only enqueues, reflects item state in its resource
-menus, opens the shelf and purges on sign-out. a reading copy is a zip of the
-**reader document** the signed-in reader reads (`GET /media/{id}/reader`), so
-the shelf renders it with the same reader (`lib/documentReader`). the server
-owns one route and one optional field.
+the device owns acquired bytes and readiness. the ordinary workspace lists every
+download independently of catalog coverage; account-menu navigation opens its
+`/downloads` pane without leaving mounted writing. episode rows open ordinary
+`/media/{id}` and use the global native player. a reading-copy action guards the
+actual document exit, then opens the isolated shelf. its return control opens
+`/downloads`; the shelf has no management list.
+
+saved episodes resolve their package before remote detail reads. a new online
+open can promote the complete saved presentation to the ordinary live pane;
+reader intent pins the saved view so a late reply cannot discard interaction.
+offline opens stay saved across reconnect. `?view=downloaded` explicitly pins the
+package, and `?view=live` explicitly selects the current server presentation.
+media location links retain `loc` alongside at most one `view=downloaded|live`;
+unknown query keys, unknown view values and duplicate selectors are refused.
+live refusal keeps usable downloaded content. saved transcripts use the shared
+reader with no progress port, annotations or automatic playback highlighting.
+contents, selection/copy and published timestamp seeks remain available.
 
 ## parts
 
-| part | where | does |
-|---|---|---|
-| store | `apps/android/.../offline/OfflineStore.kt` | `files/offline/state.json` + `files/offline/items/{mediaId}/`; items, positions, leases, account binding, wipe |
-| jobs | `offline/OfflineJobService.kt`, `Transfers.kt`, `PositionSync.kt` | one UIDT transfer job (both kinds, network per policy) and one persisted sync job |
-| bridge | `offline/OfflineBridge.kt` ⇄ `apps/web/src/lib/offline/bridge.ts` | `window.nexusDownloads` on the hosted and shelf origins |
-| router | `offline/ShelfRouter.kt` | serves `https://appassets.androidplatform.net/shelf/**`; 404s every other subresource while the shelf is the main document |
-| shelf | `apps/web/src/shelf/` (`Shelf.tsx`, `ShelfReader.tsx`) | the Downloads screen and the shared reader core over a copy; built by `bun run build:shelf` into the git-ignored `assets/shelf` |
-| hosted | `lib/actions/project.tsx` (`Download`), `components/appnav/AccountMenu.tsx` | menu commands, *Downloads* entry, purge before sign-out |
-| server | `python/nexus/services/reading_copy.py`, `POST /media/{id}/reading-copy`, `PUT /media/{id}/reader-state` + `expected_reader_generation` | builds copies; fences offline position writes |
+| owner | path | contract |
+| --- | --- | --- |
+| content store | `apps/android/.../offline/OfflineStore.kt` | account namespace, durable acquisition intent, immutable packages, optional slots, reading positions, leases and local streams |
+| transfer jobs | `offline/OfflineJobService.kt`, `Transfers.kt` | persisted user-initiated transfer job, media policy, complete-body validation, staged publication and interruption recovery |
+| reading sync | `offline/PositionSync.kt` | existing reading-generation/base-revision delivery and explicit conflict resolution |
+| native boundary | `offline/OfflineBridge.kt`, web `lib/offline/localContent.ts` | `nexusLocalContent` commands and revision invalidations on the installed and shelf origins |
+| local routes | `AppRouter.kt`, `offline/ShelfRouter.kt` | account-bound fixed index/component reads and the isolated reading-copy origin |
+| presentation | web `downloads/DownloadsPaneBody.tsx`, `shelf/ShelfReader.tsx` | workspace management and the shared reader over non-episode copies |
+| server acquisition | `services/episode_download.py`, `services/reading_copy.py` | one captured episode snapshot and pinned transcript bytes; existing reading-copy archives |
 
-the player plays a ready episode from its file: `NexusPlaybackService` takes a
-lease (`store.open`) and plays `file://`, else streams.
+## acquisition and publication
 
-## flows
+an episode enqueue supplies only `{media_id,title}`. the provisional title grants
+no playback authority. native mints `package_id`, obtains the authenticated fixed
+`GET /media/{id}/episode-download` capture, and persists it before touching the
+publisher enclosure. retries reuse that capture and package. a capture includes
+its real consumption observation, settings, rendition, sanitized notes and
+published-transcript identity; source refusal never retires an acquired package.
 
-- **download.** a `Download{mediaKind, title, audioUrl}` capability (episodes
-  with an https enclosure; pdf/epub/web article while readable: a ready reader
-  publication, a pdf's file too) →
-  `enqueue`. the store refuses with `Storage` below 512 MiB free or
-  `Unsupported` for a url OkHttp cannot parse as https (a shared workspace
-  advisory); otherwise the
-  item is `Queued` and the transfer job drains the queue. audio streams the
-  enclosure into `staging/{id}/audio`, retrying a retryable failure three times
-  on the job's backoff, then failing (a waiting item never holds back the items
-  queued behind it); it is sniffed as mp3/m4a. a partial outlives every failure
-  but a bad sniff and resumes only as the same representation: `Range` with
-  `If-Range` set to the first answer's strong ETag, appending only a 206 for
-  exactly the rest of the recorded length; anything else restarts from zero,
-  and a server without a strong ETag always restarts. a reading copy checks
-  `GET /api/me` against the bound account, asks
-  `POST /api/media/{id}/reading-copy` for a stored copy, fetches its signed url
-  without credentials, unzips into staging (zip-slip guard, CRC, drained
-  length), reads
-  `GET /api/media/{id}/reader-state` as its baseline, and publishes by rename.
-- **read offline.** cold start without a validated network, the "could not
-  connect" terminal and the account menu's *Downloads* all load the shelf.
-  *Open* takes a lease; `ShelfReader` reads `/shelf/copies/{id}/reader.json`
-  (pdf: `document.pdf`, ranged), rewrites epub `/api/media/{id}/assets/`
-  to `/shelf/copies/{id}/assets/` and mounts the whole document in the shared
-  reader with contents and the overview rail. web articles are text-only. a
-  copy that does not open (incomplete, or made before the reader-document
-  format) says so and offers *Remove downloaded copy*; download it again.
-- **positions.** every reader save is fsynced before its reply and schedules
-  the sync job (10 s; 0 s on hello, on resume and when the user leaves the
-  app). a pass checks `me()`, then for
-  each pending position `PUT reader-state {locator, base_revision,
-  expected_reader_generation, adopt_unresolved}`: 200 syncs it; `E_READER_STATE_CONFLICT` reads
-  the canonical cursor and either agrees (equal locators) or becomes
-  `Conflict`, resolved only by the user; `E_READER_CONTENT_CHANGED` keeps the
-  copy and position on the device; 404 is retried later; 401/403 sets
-  `authRequired` (for the account the pass started with) and stops. a pass
-  also refreshes the baseline of every synced ready copy that is not open, so
-  reading the same document online never yields a false conflict, while an
-  open copy keeps the revision its reader started from (its next save still
-  meets a remote move as a conflict).
-- **identity.** `hello {accountId}` from the hosted page binds the store; a
-  different account wipes everything first. elective signout first asks the
-  common work guard, then makes the document inert while it awaits `purge`,
-  then submits the normal `POST /auth/signout`. refusal precedes both effects;
-  observable failure restores editing and unload protection. the approved
-  signout suppresses only its first unload warning. without the bridge (desktop, android < 14) the
-  download action is disabled *Not supported on this device*, there is no
-  *Downloads* entry, and sign-out is the plain web post.
+required audio streams to `staging/{package_id}/audio`. strong-etag range resume
+appends only the exact pinned remaining representation; a changed response starts
+from zero. declared and final full lengths must agree. every output chunk keeps
+the 512-mib reserve, including unknown-length bodies. media3 inspector 1.11.1 uses
+playback's default media-source/extractors, requires an unencrypted audio track
+handled by the default renderer capabilities, and bounds inspection to 30 seconds.
+renderer construction, capability probes and release share one private looper;
+future waits stay off the app/player looper. inspection closes the retriever,
+cancels futures and releases renderers without playback or audio focus.
 
-## contracts
+`episode.json` is `{format_version:1,account_id,media_id,package_id,capture,audio}`;
+`audio` contains validated `byte_count`, `mime` and nullable measured `duration_ms`.
+source duration remains in the captured rendition. payload and manifest are synced,
+the package directory is renamed to `episodes/{package_id}` and its parent synced,
+then the next atomic state commits before memory publishes `Ready`. the required
+recording and manifest never change in place.
 
-**bridge** `window.nexusDownloads` (both origins, main frame, json string
-frames). request `{id, op, ...args}`; reply `{id, ok: true, ...}` or
-`{id, ok: false, error}`; push `{snapshot}` to the document that last said
-hello, always before the reply to the op that caused it (download progress
-throttled to 500 ms). ops: `hello {accountId?}` → `{snapshot}`; `enqueue
-{mediaId, kind, title, url?}` (`Storage`, `Unsupported`); `cancel`, `retry`,
-`remove`, `open`, `close {mediaId}` (`NotFound`); `save {mediaId, locator, baseRevision, expectedReaderGeneration, adoptUnresolved}`
-after fsync; `resolve {mediaId, choice: Canonical|Device}`; `policy {value}`;
-`showDownloads`; `openHosted {path}`; `purge`. a malformed frame is `Invalid`.
-there is no version: the object name is the identity, and an incompatible
-change renames it.
+artwork and transcript slots are independent `Absent|Pending|Ready|Failed` values.
+transcripts use the captured source key and complete serialized-body sha256/length;
+a changed publication is refused, never silently recaptured. artwork retries use
+the captured url. each optional component is staged/synced/replaced before its
+matching slot commits; a successful slot never refreshes implicitly. optional
+failure leaves ready audio usable. limits are 512 kib notes and 8 mib each for
+transcript/artwork; excess is explicit unavailability, never truncation. notes
+retain formatted text, links and truthful inline-image placeholders. acquisition
+does not generate a transcript or download linked pages.
 
-`Snapshot = {policy: UnmeteredOnly|AnyConnected, authRequired, consumptionRevision, items}`, items
-in enqueue order: `{mediaId, kind, title, state: Queued|Downloading|Ready|
-Failed|Removing, failure, attempts, received, total, sizeBytes, savedAt,
-progress}`. `progress` is set only on a ready reading copy: `Canonical
-{snapshot}`, `Pending|ContentChanged|SourceUnavailable {baseline, device, adoptUnresolved}` or
-`Conflict {canonical, device, adoptUnresolved}`.
+reading copies retain their authenticated archive/baseline operation and CRC/path
+validation. each attempt has a unique staging directory, preventing canceled work
+from writing a replacement attempt. a retry rebuilds its archive. both transfer
+kinds use the configured unmetered/any-connected policy. schedule rejection is
+`Failed/Scheduler`, not fictitious running work. a replacement job joins canceled
+writers before reusing resumable package staging; sign-out drains all workers.
 
-`consumptionRevision` advances after accepted canonical saves, including an
-equal-locator save whose cursor revision is unchanged. Pending storage alone
-does not advance it. A newer equal canonical cursor retires old pending data
-without resuming unread; genuine equal-position activity at the matching base
-still sends a real save. The reader adopts `Pending → Canonical` even when the
-revision is unchanged.
+## state, recovery and leases
 
-the persisted state envelope is version 2. startup converts the former bare
-pending locator once to `{locator, adopt_unresolved: false}`, preserving its
-baseline and position state. audio is unchanged. unresolved canonical evidence
-is never replaced by ordinary movement; only explicit *read from here* records
-adoption against that revision and the copy's generation. a changed source
-retains the device position and refreshes the canonical frozen evidence.
+`initialize()` loads/reconciles on io before local admission. the format-3 atomic
+state owns account, policy, acquisition captures, optional slots and reading-copy
+positions. replacement commits before memory changes; a failed state write cannot
+make a later enqueue falsely report an acquired package. operational write failures
+remain actionable while the last durable intent remains authoritative.
+
+startup converts format-2 reading copies without changing their positions. former
+audio lacks capture/baseline authority and becomes `Failed/NeedsDownload`, with no
+package or local-play action. its old files stay until explicit removal or
+`download again`; that action mints a fresh package and capture. there is no old
+audio reader. invalid/incompatible state preserves all files, refuses content
+admission and exposes a typed repair error while other device stores remain usable.
+
+system interruption requeues required work without exposing partial readiness.
+recovery discards renamed-but-uncommitted required packages and optional components;
+committed optional identity/length checks do not require hashing every supplement
+before shell startup. component reads verify their pinned digest. task-manager stop
+and force-stop are detected through a newer `ApplicationExitInfo.REASON_USER_REQUESTED`
+relative to the persisted process-start timestamp; interrupted intent becomes
+`Failed/Stopped` with explicit retry. recovery does not depend on `onStopJob`.
+
+`openEpisode(media_id)` atomically returns a package-bound `EpisodeLease` with audio,
+rendition, playback baseline, measured duration and the currently committed optional
+artwork file. it reads validated native facts without a remote request. the loaded
+source never refreshes its artwork/title/chapters from later network or optional
+work. remove prevents new leases and defers deletion until the last close. pause
+retains the lease; replacement/dismissal releases it. listening history belongs to
+[playback](player.md), independently of package removal.
+
+reading-copy leases retain their account namespace across document cleanup. every
+local response stream registers for account retirement, including in-memory index
+streams. explicit sign-out closes streams and drains workers before purge; old
+results cannot publish into a replacement account or package.
+
+## bridge and local reads
+
+`window.nexusLocalContent` is the only content bridge identity; there is no old-name
+alias. strict snake_case json commands fit 64 kib. `hello`, push and successful
+mutation receipts carry process-monotone decimal-string `revision`, never a whole
+index or document. mutations run on io and receipt follows durable intent/state,
+not completed network transfer; push precedes its causal receipt. account/document
+retirement clears subscriptions, cached indexes and causal waits.
+
+commands are:
+
+- `enqueue {subject: Episode{media_id,title}|ReadingCopy{media_id,media_kind,title}}`;
+- `cancel|retry|remove {media_id}`, `retry_extras {media_id,package_id}`, `policy {value}`;
+- `open_reader {media_id}` for ready non-episode copies, plus reading `open|close`,
+  `save {media_id,locator,base_revision,expected_reader_generation,adopt_unresolved}`
+  and `resolve {media_id,choice:Canonical|Device}`;
+- `open_hosted {path}` and `purge`.
+
+`/_nexus/device/downloads.json` and `/shelf/downloads.json` share one implementation:
+`{account_id,revision,policy,auth_required,consumption_revision,items}`. all download
+rows appear in enqueue order regardless of catalog coverage. the explicit limit is
+10,000 rows/16 mib; no truncation. `consumption_revision` is the numeric accepted
+reading-save invalidation counter, independent of index/server observation revisions.
+accepted canonical saves advance it even when an equal locator preserves cursor
+revision. the adapter still publishes consumption invalidations.
+
+rows carry `{media_id,kind,title,state,failure,attempts,received,total,size_bytes,
+saved_at,progress,package_id,extras}`. missing values are null. package identity
+exists from episode intent; extras are null before capture and for non-episodes.
+reading progress remains `Canonical{snapshot}`, `Conflict{canonical,device,adopt_unresolved}`
+or `Pending|ContentChanged|SourceUnavailable{baseline,device,adopt_unresolved}`.
+
+`/_nexus/device/episodes/{media_id}/{package_id}/{episode.json|transcript.json|artwork}`
+serves committed matching resources only. absent/removed/mismatched identities are
+404; unreadable/incompatible local data is a typed error. json reads require the
+normal wire header; web artwork uses header-aware blob fetching. the shelf serves
+only its fixed index, packaged reader and confined copy paths, with no added allowed
+origin or renderer-supplied credentials/path. its csp/router prevent remote subresources.
+
+reading `PUT /media/{id}/reader-state` retains generation/base-revision fences.
+canonical refresh does not move an open copy's baseline. changed content/source
+refusal keeps local position evidence; unresolved canonical evidence is adopted
+only through explicit `read from here` or the existing choice flow.
 
 **reading copy** `POST /media/{id}/reading-copy` (the bff's copy lane: 280 s,
 `maxDuration = 300`) builds the zip, stores it at
@@ -146,42 +187,42 @@ equal it, else 409 `E_READER_CONTENT_CHANGED`.
 
 ## states and copy
 
-- item: absent → Queued (enqueue) → Downloading (job) → Ready (publish) |
-  Queued (retryable failure, system stop, process death) | Failed(reason);
-  Queued/Downloading → absent (cancel); Failed → Queued (retry); Ready/Failed →
-  absent, or Removing while leased (remove); Removing → absent (last close).
-- position (ready reading copies): synced → Pending (save); Pending and
-  SourceUnavailable → synced | Conflict | ContentChanged | SourceUnavailable
-  (sync); Conflict → Conflict with the new device position (save: reading on
-  while the choice waits) | synced (Canonical) | Pending (Device).
-- shelf copy: *Download queued · waits for Wi-Fi · another download is
-  active*, *Retrying after interruption*, *x of y*, *Downloaded · size · saved
-  date* with *Position synced / saved on this device / needs your choice / A
-  newer source version exists… / kept locally · source unavailable*, *Download
-  failed · sign in required / source unavailable / source changed · retry /
-  not enough storage / network interrupted / server unavailable / not a
-  playable file / stopped by Android*, *Removes when playback stops* (episode)
-  or *Removes when closed* (copy).
+- acquisition says `queued`, then bytes received, with a denominator only when
+  known. the configurable mobile-data policy is separate from the actual wait
+  reason; a queued row never invents a wi-fi wait.
+- ready audio says `downloaded · {size}` with ordinary play. missing optional
+  artwork or transcript never disables it. no published transcript, partial
+  coverage, pending acquisition, download failure, size limits and changed
+  publication have distinct copy. retry missing content retains the same
+  package; changed publication directs explicit removal and redownload.
+- source refusal says `original no longer available · downloaded copy kept`;
+  listening remains saved locally, with explicit sync retry. sign-in language
+  applies to remote download/sync work, never local playback or reading.
+- removal during a lease says `removal pending · episode still open` or
+  `removal pending · copy still open`. pausing audio retains its lease.
+  episode removal keeps listening history; removing a reading copy with an
+  unsynced position uses the existing confirmation dialog.
+- list completion/failure announces once, never on byte-progress ticks.
+  removal recovers owned focus to a surviving row or heading. publisher notes
+  remain expanded formatted text with links and image placeholders; empty
+  sections are omitted. artwork failures remain optional and visible.
 
 ## invariants
 
-- I1 nothing of a previous account is listed, opened, played or synced:
-  binding wipes first (by rename, swept at start), and `me()` precedes all
-  authenticated remote work.
-- I3, I5 `Ready` only after a complete, sniffed or CRC-checked body; staging is
-  renamed into place and deleted at start.
-- I4, I7 a file in use is leased; remove defers to `Removing`; a page start
-  closes its document's leases. purge and account switch do not wait.
-- I8 the shelf makes no network request: CSP `default-src 'none'` (`img-src
-  'self' data:`), the router's 404, and gated navigations.
-- I9, I10 offline positions write against their generation and base revision;
-  conflicts are the user's.
-- there is no in-place redownload: a changed source keeps its copy and position
-  until the user removes it (confirmed when the position is unsynced).
+- ready audio means complete supported bytes, matching immutable capture and a real
+  consumption baseline; optional content does not own audio readiness.
+- local playback/reading never depends on remote admission. remote refusal affects
+  synchronization/acquisition, and explicit sign-out retires the account namespace.
+- bytes publish before their state; state commits before memory. cancellation,
+  removal, policy replacement and account retirement cannot publish stale results.
+- collection membership belongs to the catalog; download discovery is independent.
+  queue lifetime never owns a downloaded episode's listening history.
+- reading position conflicts remain explicit; offline episodes add no notes,
+  highlights, reader-position writes or automatic transcript following.
 
 ## not here
 
-integrity beyond TLS, `Content-Length`, zip CRC and the audio sniff; a manifest
-or digest; server attestation; sign-out from the shelf;
-offline images for web articles; android < 14. release order and skew:
-[offline-cutover-release-steps](../issues/offline-cutover-release-steps.md).
+adaptive/drm/video downloads, automatic subscription downloads, eviction, a browser
+corpus replica, server download jobs/audio proxy, or offline mutation parity.
+remaining installed-release requirements live in
+[offline episodes release steps](../issues/release-offline-episodes.md).

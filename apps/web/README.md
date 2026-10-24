@@ -39,6 +39,10 @@ Prerequisites:
 
 - `make dev` (local postgres, seaweedfs, and supabase auth)
 - `make api` (FastAPI)
+- a trusted certificate chain and key for the exact public origin
+
+the canonical runtime serves tls/http2 and uses build/restart. `bun run dev`
+builds the production package and starts it; it does not run hot reload.
 
 ## Environment
 
@@ -49,7 +53,8 @@ Primary variables for this app:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_ISSUER`, `SUPABASE_AUDIENCES` (the bearers the api accepts; required outside local/test, default the url + `/auth/v1` and `authenticated`)
-- `APP_PUBLIC_URL` (the one public origin; required outside local/test, default `http://localhost:3000`)
+- `APP_PUBLIC_URL` (the one https public origin; required outside local/test, default `https://127.0.0.1:3000`)
+- `PORT`, `HOSTNAME`, `NEXUS_WEB_TLS_CERT_FILE`, `NEXUS_WEB_TLS_KEY_FILE` (required by canonical serving; certificate inputs are pem paths)
 - `NEXUS_EXTENSION_REDIRECT_ORIGINS` (the firefox extension's one redirect origin)
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
 
@@ -107,9 +112,10 @@ Reference map for reader internals used in code comments:
 export the same local `APP_PUBLIC_URL`, `FASTAPI_BASE_URL`,
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXUS_ENV` for
 both commands. set `VERCEL_GIT_COMMIT_SHA` to the checkout's full head. then, from
-`apps/web`, run `bun run build` followed by `PORT=3000 bun run start` (use the
-port in the public origin). build prepares pdf.js and packages public/static
-assets; start runs the generated standalone server. stop it before the static
+`apps/web`, run `bun run build` followed by `PORT=3000 HOSTNAME=127.0.0.1 bun run start`
+with the certificate/key paths above (use the port in the public origin).
+build prepares pdf.js and packages public/static assets; start runs the canonical
+http2 edge with next on a private loopback port. stop it before the static
 gate or a disposable invocation in this checkout.
 
 vercel's project root is `apps/web`; its `vercel.json` selects `bun run build:next`

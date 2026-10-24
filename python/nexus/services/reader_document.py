@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -37,6 +36,7 @@ from nexus.schemas.reader_document import (
     ReaderSectionOut,
     ReaderTextDocumentOut,
     ReaderTocNodeOut,
+    ReaderTranscriptDocumentOut,
     ReaderUnitOut,
     ReaderXCaptureOut,
     ReaderXPostOut,
@@ -52,6 +52,10 @@ from nexus.services.reader_navigation import read_media_navigation
 from nexus.services.reader_publication import (
     read_publication_source_issues,
     read_ready_publication_generation,
+)
+from nexus.services.transcript_navigation import (
+    project_transcript_navigation,
+    read_transcript_navigation_source,
 )
 from nexus.services.x_source import x_article_content_facts
 
@@ -72,7 +76,7 @@ _UNIT_ROWS_SQL = """
 
 def read_reader_document(
     db: Session, viewer_id: UUID, media_id: UUID
-) -> ReaderTextDocumentOut | ReaderPdfDocumentOut:
+) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -89,7 +93,7 @@ def build_reader_document(
     media_id: UUID,
     viewer_id: UUID | None,
     pdf_file: Callable[[], ReaderPdfFileOut],
-) -> ReaderTextDocumentOut | ReaderPdfDocumentOut:
+) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
     """An authorized publication; public reads include its X bodies without child grants."""
     media = db.execute(text(_MEDIA_SQL), {"media_id": media_id}).one()
     title = str(media.title)
@@ -99,26 +103,19 @@ def build_reader_document(
         ):
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
         units, embeds = _units(db, media_id=media_id, epub=False, viewer_id=viewer_id)
-        sections = _chapter_sections(db, media_id=media_id, units=units)
-        return ReaderTextDocumentOut(
+        navigation = read_transcript_navigation_source(db, media_id=media_id)
+        return ReaderTranscriptDocumentOut(
             kind="transcript",
             identity=transcript_identity([unit.id for unit in units]),
             title=title,
             units=units,
-            sections=sections,
-            toc_nodes=[
-                ReaderTocNodeOut(
-                    id=section.id,
-                    label=section.label,
-                    at=section.at,
-                    section_id=section.id,
-                    children=[],
-                )
-                for section in sections
-            ],
+            sections=[],
+            toc_nodes=[],
             source_issues=[],
             embeds=embeds,
             x_article_content=None,
+            transcript_coverage=media.transcript_coverage,
+            transcript_navigation=project_transcript_navigation(navigation, units),
         )
     if media.kind not in ("web_article", "epub", "pdf"):
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Media has no reader document")
@@ -649,30 +646,3 @@ def _units(
 
 def _point(point: NavigationTextPointOut) -> ReaderPointOut:
     return ReaderPointOut(unit_id=str(point.fragment_id), offset=point.offset)
-
-
-def _chapter_sections(
-    db: Session, *, media_id: UUID, units: list[ReaderUnitOut]
-) -> list[ReaderSectionOut]:
-    """Publisher chapters at the segment that is playing when each one starts."""
-    if not units:
-        return []
-    starts = [unit.t_start_ms or 0 for unit in units]
-    return [
-        ReaderSectionOut(
-            id=f"chapter-{row.chapter_idx}",
-            label=str(row.title),
-            depth=0,
-            at=ReaderPointOut(
-                unit_id=units[max(0, bisect_right(starts, row.t_start_ms) - 1)].id, offset=0
-            ),
-            anchor_id=None,
-        )
-        for row in db.execute(
-            text(
-                "SELECT chapter_idx, title, t_start_ms FROM podcast_episode_chapters"
-                " WHERE media_id = :media_id ORDER BY chapter_idx"
-            ),
-            {"media_id": media_id},
-        )
-    ]

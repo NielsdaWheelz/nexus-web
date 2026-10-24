@@ -1,32 +1,43 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
-// One show: its head (detail and library count), then its episodes, which
-// always reload after the head (a terminal subscription has committed its
-// episodes). While the subscription is live and the pane active, its
-// lifecycle stream refetches the head on every change.
+// One show: exact listening counts and visit-local detail above episode pages.
+// Head reads observe lifecycle/settings; episode and ordering changes reload pages.
+// Reviewed commands belong to the account owner. Observation stops outside
+// the visible pane.
 
 import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import AcquisitionControl from "@/components/browse/AcquisitionControl";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { PlaybackSourceContext, captureSavedView, capturePlaybackSource } from "@/lib/actions/playbackSource";
+import { paneFilterText } from "@/lib/panes/paneFilterText";
+import CollectionView from "@/components/collections/CollectionView";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import { presentMedia } from "@/lib/collections/presenters/media";
+import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
+import type { CollectionRowView } from "@/lib/collections/types";
+import { libraryDisplayName } from "@/lib/collections/presenters/library";
+import { projectCollectionConsumptionAction, projectPodcastTranscriptAction, projectPodcastLibrariesAction, projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
+import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import PodcastOverview from "@/components/podcasts/PodcastOverview";
+import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
+import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
+import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
+import { selectMediaAuthors } from "@/lib/contributors/credits";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import PaneSurface from "@/components/ui/PaneSurface";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { placements as libraryPlacements } from "@/lib/libraries/api";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -35,30 +46,32 @@ import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { shouldPollTranscriptProvisioning } from "@/lib/media/transcriptView";
 import {
   usePaneIsActive,
+  usePaneIsVisible,
+  usePaneRuntime,
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   getPodcastDetail,
   listEpisodes,
-  observeSubscription,
-  retryPodcastSubscriptionBackfill,
-  subscribeToPodcast,
+  requestPodcastRefresh,
   type EpisodeState,
   type PodcastDetail,
   type PodcastEpisodeRow,
-  type PodcastLifecycle,
-  type PodcastSubscription,
 } from "@/lib/podcasts/api";
-import { useChangeStamp } from "@/lib/api/changes";
-import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
+import { useCatalogRead, useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
+import { oldestRevision, unstamped, type ConsumptionStamp, type StampedRead } from "@/lib/consumption/listening";
+import { catalogShow, catalogEpisodes } from "@/lib/catalog/selectors";
+import { remoteReady } from "@/lib/native/admission";
+import { ApiError, isApiError } from "@/lib/api/client";
+import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import {
   listRowStatus,
   pageQuery,
@@ -71,22 +84,17 @@ import {
   useCommand,
 } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { pluralize } from "@/lib/text/pluralize";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
+  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import PodcastEpisodeList from "./PodcastEpisodeList";
 import styles from "./page.module.css";
 
-interface Head {
-  readonly detail: PodcastDetail;
-  readonly libraryCount: number;
-}
-
-const HEAD = definePaneVisitDataKey<Visit<Head>>("PodcastDetail.Head");
-const EPISODES = definePaneVisitDataKey<ListSnapshot<PodcastEpisodeRow>>(
+const HEAD = definePaneVisitDataKey<Visit<StampedRead<PodcastDetail>>>("PodcastDetail.Head");
+const DETAILS = definePaneVisitDataKey<boolean>("PodcastDetail.Details");
+const EPISODES = definePaneVisitDataKey<ListSnapshot<PodcastEpisodeRow, ConsumptionStamp>>(
   "PodcastDetail.Episodes",
 );
 const STATES: readonly {
@@ -104,97 +112,140 @@ const SORTS = [
   { value: "duration_asc", label: "Shortest duration" },
   { value: "duration_desc", label: "Longest duration" },
 ];
-const TERMINAL = new Set(["Complete", "SourceLimited", "Failed"]);
-const BACKLOG = "Podcast backlog retry wasn’t started";
-
-const UPDATES: Readonly<Record<PodcastSubscription["sync_status"], string>> = {
-  Pending: "Episode updates pending",
-  Running: "Checking for new episodes",
-  Complete: "Episode updates current",
-  SourceLimited: "Episode updates source-limited",
-  Failed: "Episode updates failed",
-};
-
-function backfillFact({
-  state,
-  processed_count: processedCount,
-  added_count: addedCount,
-}: PodcastSubscription["backfill"]) {
-  const label =
-    state === "Running"
-      ? "Backfilling"
-      : state === "SourceLimited"
-        ? "Backfill source limited"
-        : `Backfill ${state.toLowerCase()}`;
-  return `${label} · ${processedCount} processed · ${addedCount} added`;
-}
-
-function subscriptionFacts(subscription: PodcastSubscription) {
-  const speed = subscription.default_playback_speed ?? 1;
-  const queue = subscription.auto_queue ? "on" : "off";
-  return [
-    UPDATES[subscription.sync_status],
-    backfillFact(subscription.backfill),
-    `${formatPlaybackRate(speed)} default speed · Auto-queue ${queue}`,
-  ];
-}
-
-const sameLifecycle = (
-  subscription: PodcastSubscription | null,
-  snapshot: PodcastLifecycle,
-) =>
-  subscription !== null &&
-  subscription.sync_status === snapshot.sync_status &&
-  (["id", "state", "processed_count", "added_count"] as const).every(
-    (field) => subscription.backfill[field] === snapshot.backfill[field],
-  );
+const HEAD_POLL_INTERVAL_MS = 60_000;
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
-  if (podcastId === null) {
+  const runtime = usePaneRuntime();
+  if (podcastId === null || runtime === null) {
     // justify-defect: the podcastDetail route always binds its podcastId.
     throw new Error("Podcast detail pane without a podcastId");
   }
-  return <PodcastDetailPane key={podcastId} podcastId={podcastId} />;
+  return <PodcastDetailPane key={`${runtime.visitId}:${podcastId}`} podcastId={podcastId} />;
 }
 
 function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const active = usePaneIsActive();
+  const paneVisible = usePaneIsVisible();
+  const [documentVisible, setDocumentVisible] = useState(true);
+  useEffect(() => {
+    const changed = () => setDocumentVisible(document.visibilityState === "visible");
+    changed();
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
+  const observing = active && paneVisible && documentVisible;
+  const foreground = useRefreshStamp(active && paneVisible, 0);
+  const capturedDetails = useRef<boolean | null>(null);
+  const savedDetails = usePaneVisitData(DETAILS, () => capturedDetails.current);
+  const [expanded, setExpanded] = useState(savedDetails ?? false);
+  capturedDetails.current = expanded;
+  const detailId = useId();
+  const detailsButton = useRef<HTMLButtonElement>(null);
+  const detailPanel = useRef<HTMLDivElement>(null);
+  const { ctx, run } = useActionRuntime();
+  const librariesCard = useRef<HTMLElement>(null);
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const consumption = useChangeStamp("Consumption");
-  const head = useServerValue<Head>({
-    key: podcastId,
-    stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
-    visit: HEAD,
-    load: async (signal) => {
-      const [detail, placements] = await Promise.all([
-        getPodcastDetail(podcastId, signal),
-        libraryPlacements({ kind: "Podcast", id: podcastId }, signal),
-      ]);
-      const placed = placements.filter((row) => row.relation !== "Absent");
-      return { detail, libraryCount: placed.length };
-    },
-  });
-  const ready = head.status === "ready" ? head : null;
+  const seenConsumption = useRef(consumption);
+  if (observing) seenConsumption.current = consumption;
+  const entries = useChangeStamp("Entries", "Metadata");
+  const queryRevision = useMediaQueryRevision();
+  const headStale = `${useChangeStamp("Podcasts", "Libraries")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`;
+  const catalog = useCatalogState();
   const query = new URLSearchParams({ state, sort }).toString();
-  const episodes = useServerList<PodcastEpisodeRow>({
-    key: ready === null ? null : `${podcastId}?${query}`,
-    stale: `${ready?.generation}:${state === "all" ? "-" : consumption}`,
+  // Heading and episodes are one consumption group.
+  const group = useLiveGroup(`${podcastId}?${query}`);
+  const savedHead = useCatalogRead(value => {
+    const show = catalogShow(value, podcastId);
+    return show === null ? null : { data: show, consumption_revision: value.value.consumption_revision };
+  });
+  const rawHead = useServerValue<StampedRead<PodcastDetail>>({
+    catalog: savedHead,
+    key: `podcast-head:${podcastId}`,
+    stale: `${headStale}|${group.stale}`,
+    visit: HEAD,
+    load: signal => getPodcastDetail(podcastId, signal),
+  });
+  const sourceRevision = rawHead.status === "ready" ? JSON.stringify([
+    rawHead.data.data.recurring.last_checked_at, rawHead.data.data.imports.map(operation => [operation.id, operation.updated_at]),
+  ]) : "";
+  const savedEpisodes = useCatalogRead(value => {
+    const page = catalogEpisodes(value, podcastId, new URLSearchParams(query));
+    return page === null ? null : { ...page, metadata: { consumption_revision: value.value.consumption_revision } };
+  });
+  const rawEpisodes = useServerList<PodcastEpisodeRow, ConsumptionStamp>({
+    catalog: savedEpisodes,
+    foldMetadata: oldestRevision,
+    key: rawHead.status === "ready" || catalog.data?.shows.has(podcastId) === true ? `/podcasts/${podcastId}/episodes?${query}` : null,
+    stale: `${sourceRevision}:${entries}:${queryRevision}:${useChangeStamp("PodcastEpisodes")}:${state === "all" ? "-" : consumption}:${group.stale}`,
     pageSize: 100,
-    drain: false,
-    active,
+    active: observing,
     visit: EPISODES,
     id: (episode) => episode.id,
     fetchPage: (cursor, limit, signal) =>
       listEpisodes(podcastId, pageQuery(query, cursor, limit), signal),
   });
+  // Relevance is the show's complete saved episode selection, never the filtered rows.
+  const showEpisodes = useMemo(() => new Set(catalog.raw?.value.episodes.flatMap(row => row.podcast_id === podcastId ? [row.media_id] : []) ?? []), [catalog.raw, podcastId]);
+  usePromoteLiveGroup(group, rawHead.status === "ready" && rawHead.source.kind === "live" && rawHead.error === null &&
+    rawEpisodes.source.kind === "live" && rawEpisodes.complete && rawEpisodes.failure === null && rawEpisodes.metadata !== null
+    ? [rawHead.data.consumption_revision, rawEpisodes.metadata.consumption_revision] : null, showEpisodes);
+  const saved = useMemo(() => {
+    if (catalog.data === null) return null;
+    try {
+      const head = catalogShow(catalog.data, podcastId);
+      const episodes = catalogEpisodes(catalog.data, podcastId, new URLSearchParams(query));
+      return head === null || episodes === null ? null : { head, episodes,
+        source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
+    } catch (error) { if (isApiError(error)) return null; throw error; }
+  }, [catalog.data, podcastId, query]);
+  const showingSaved = !group.live && saved !== null;
+  const head: ServerValue<PodcastDetail> = !showingSaved ? unstamped(rawHead) : {
+    status: "ready", data: saved.head, source: saved.source, generation: 0,
+    error: rawHead.status === "loading" ? null : rawHead.error,
+    refreshing: rawHead.status === "ready" && rawHead.refreshing, refetch: rawHead.refetch,
+  };
+  const episodes: typeof rawEpisodes = !showingSaved ? rawEpisodes : {
+    ...rawEpisodes, source: saved.source, status: "ready", items: saved.episodes.items,
+    fresh: false,
+    orderRevision: saved.episodes.order_revision ?? null, metadata: saved.episodes.metadata ?? null,
+    current: true, complete: true,
+  };
+  const live = episodes.source.kind === "live";
+  const authority = useRef<{ stale: string; generation: number | null }>({ stale: headStale, generation: null });
+  if (authority.current.stale !== headStale) authority.current = { stale: headStale, generation: head.status === "ready" ? head.generation : null };
+  const headError = head.status === "loading" ? null : head.error;
+  const ready = head.status === "ready" ? head : null;
+  const destinations = ready?.data.destinations ?? [];
+  const namedDestinations = destinations.filter(destination => !destination.is_default);
+  const libraryRows: CollectionRowView[] = namedDestinations.map(destination => ({
+    id: destination.library_id, kind: "library", presentation: "Index",
+    primary: { kind: "link", href: `/libraries/${destination.library_id}`, paneLabelHint: libraryDisplayName(destination) },
+    title: { text: libraryDisplayName(destination) }, contributors: [], publicationDate: null,
+    context: null, activity: null, exceptionalStatus: null,
+    resourceRef: canonicalResourceRef({ scheme: "library", id: destination.library_id }), selected: false,
+  }));
+  const following = destinations.length > 0;
+  const history = ready?.data.imports ?? [];
+  const recurring = ready?.data.recurring;
   const loaded = episodes.status === "ready" ? episodes.items : null;
   const summaries = useMediaSummaries(
-    (loaded ?? []).map((episode) => episode.media_summary),
+    (loaded ?? []).map((episode) => episode.media_summary), episodes.source,
   );
+  const transcriptSignature = live && episodes.current && episodes.status === "ready" && episodes.failure === null
+    ? JSON.stringify(episodes.items.map(episode => [episode.id, episode.transcript_state] as const).sort((a, b) => a[0].localeCompare(b[0])))
+    : null;
+  const observedTranscripts = useRef<string | null>(null);
+  const retrySummaries = summaries.retry;
+  useEffect(() => {
+    if (transcriptSignature === null || observedTranscripts.current === transcriptSignature) return;
+    observedTranscripts.current = transcriptSignature;
+    retrySummaries();
+  }, [transcriptSignature, retrySummaries]);
   const resolved = useMemo(
     () =>
       (loaded ?? []).flatMap((episode) => {
@@ -206,83 +257,44 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     [loaded, summaries],
   );
 
-  const subscription = ready?.data.detail.subscription ?? null;
-  const terminal =
-    subscription === null ||
-    (TERMINAL.has(subscription.sync_status) &&
-      TERMINAL.has(subscription.backfill.state));
-  const backfillId = subscription?.backfill.id ?? null;
-  const subscriptionRef = useRef(subscription);
-  subscriptionRef.current = subscription;
-  const [lost, setLost] = useState<{
-    readonly backfillId: string;
-    readonly error: Error;
-  } | null>(null);
-  const refetchHead = head.refetch;
+  const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
+  // justify-polling: podcast publication has no push stream. The existing visible
+  // pane owner revalidates quickly during work, otherwise on its settled cadence.
+  useIntervalPoll({ enabled: live && remoteReady() && observing && (following || working), pollIntervalMs: working ? 3000 : HEAD_POLL_INTERVAL_MS,
+    onPoll: () => { if (head.status === "ready" && !head.refreshing) head.refetch(); },
+  });
+  const observedPublication = useRef<string | null>(null);
   useEffect(() => {
-    if (!active || terminal || backfillId === null) return;
-    const controller = new AbortController();
-    observeSubscription(
-      podcastId,
-      controller.signal,
-      (snapshot) => {
-        setLost(null);
-        if (!sameLifecycle(subscriptionRef.current, snapshot)) refetchHead();
-      },
-      (error) => {
-        setLost({ backfillId, error });
-        refetchHead();
-      },
-    );
-    return () => controller.abort();
-  }, [active, backfillId, podcastId, refetchHead, terminal]);
-  // A lost stream matters only while that same subscription is still live.
-  const lostNotice =
-    lost !== null && lost.backfillId === backfillId && !terminal
-      ? podcastErrorMessage(lost.error, "Podcast updates couldn’t be observed")
-      : null;
+    if (!live) { observedPublication.current = null; return; }
+    if (ready === null || observedPublication.current === sourceRevision) return;
+    const previous = observedPublication.current; observedPublication.current = sourceRevision;
+    if (previous !== null) publishChange("Entries");
+  }, [ready, sourceRevision, live]);
 
   // justify-polling: transcript provisioning has no push stream here; the
   // queued or running episodes end the schedule.
   useIntervalPoll({
     enabled:
-      active &&
+      live && remoteReady() && observing &&
       (loaded ?? []).some((episode) =>
         shouldPollTranscriptProvisioning(episode.transcript_state),
       ),
     pollIntervalMs: 3000,
     // a failed reread shows as the list's failure
-    onPoll: () => episodes.refetch().catch(() => {}),
+    onPoll: episodes.revalidate,
   });
 
   const command = useCommand();
-  const complete = episodes.complete;
-  const getRowStatus = useCallback(
-    (text: string) => {
-      const visible = resolved.filter((episode) =>
-        matchesPaneFilterQuery(
-          text,
-          mediaListFilterFields(episode.media_summary),
-        ),
-      );
-      return listRowStatus(episodes, resolved.length, visible.length, {
-        singular: "episode",
-        plural: "episodes",
-      });
-    },
-    [episodes, resolved],
-  );
   const filterRows = usePaneFilterRows({
     sourceKey: `PodcastDetail.Episodes:${podcastId}`,
-    getRowStatus,
+    getRowStatus: (text) => {
+      const visible = resolved.filter(episode => matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)));
+      return listRowStatus(episodes, resolved.length, visible.length, { singular: "episode", plural: "episodes" });
+    },
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
-      router.replace(
-        viewHref(`/podcasts/${podcastId}`, params, changes),
-        {
-          },
-      ),
+      router.replace(viewHref(`/podcasts/${podcastId}`, params, changes)),
     [params, podcastId, router],
   );
   const { inputRef, focusInput } = usePaneQueryInput();
@@ -291,11 +303,9 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
   const chips = state === "all" ? [] : [{ id: "state", label: `Playback: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
   const canReset = sort !== "newest" || chips.length > 0;
-  const headerMeta: PaneHeaderMeta = complete
-    ? { kind: "Count", value: loaded?.length ?? 0, unit: "episode" }
-    : episodes.status === "loading" && head.status !== "failed"
-      ? { kind: "Pending" }
-      : { kind: "None" };
+  const headerMeta: PaneHeaderMeta = ready !== null
+    ? { kind: "Count", value: destinations.length, unit: "destination" }
+    : head.status === "loading" ? { kind: "Pending" } : { kind: "None" };
   const queryControls = {
     kind: "Controls" as const,
     label: "Filter podcast episodes",
@@ -313,11 +323,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       status={{
         placement: "Inline",
         id: queryStatusId,
-        visible: paneFilterRowsStatusVisible({
-          status: filterRows.rowStatus,
-          filtering: filterRows.query.trim() !== "" || chips.length > 0,
-        }),
-        content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+        visible: false,
+        content: <PaneFilterRowsStatus announceQueryChanges={episodes.current && episodes.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}
       onReset={canReset ? () => {
         filterRows.clearQuery();
@@ -337,15 +344,36 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   );
   useResourceInspector({
     scheme: "podcast",
-    handle: podcastId,
+    handle: ready !== null && headError?.status !== 404 && headError?.status !== 403 ? podcastId : null,
     bodies: { linkedItems: connections },
   });
-  const insertion = useResourceComposer({kind:"resource",ref:`podcast:${podcastId}`}, `podcast:${podcastId}`, "add item");
+  const text = filterRows.query.trim();
+  const known = STATES.find(option => option.value === state)?.value;
+  const podcast = ready?.data.podcast;
+  const paneFallback = () => findPaneLandmarkFocusTarget(librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+  const blocked = !live || !remoteReady() || head.status !== "ready" || head.error !== null || head.refreshing || head.generation === authority.current.generation
+    ? "TemporarilyUnavailable" : null;
+  const bulkActions = known === undefined || known === "all" || podcast === undefined ? [] : [
+    projectCollectionConsumptionAction({ selection: { kind: "Podcast", podcast_id: podcastId, state: known }, desiredState: "finished", title: podcast.title, blocked, ctx, run, returnFocus: paneFallback }),
+    projectCollectionConsumptionAction({ selection: { kind: "Podcast", podcast_id: podcastId, state: known }, desiredState: "unread", title: podcast.title, blocked, ctx, run, returnFocus: paneFallback }),
+    projectPodcastTranscriptAction({ podcastId, title: podcast.title, state: known, blocked, ctx, run, returnFocus: paneFallback }),
+  ];
+  const librariesAction = podcast === undefined ? null : projectPodcastLibrariesAction({ target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title, disabledReason: blocked === null ? null : "requires a connection and current podcast facts.", ctx, run,
+    focus: { trigger: null, returnFocus: () => librariesCard.current?.querySelector<HTMLButtonElement>("header button") ?? librariesCard.current ?? paneFallback(), afterRemoval: paneFallback },
+  });
   usePaneChrome({
-    menuActions: insertion.action ? [insertion.action] : [],
+    displayTitle: podcast?.title,
+    menuActions: bulkActions,
+    resourceActions: !live || !remoteReady() || podcast === undefined ? undefined : { kind: "Podcast", subject: {
+      target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title,
+      facts: headError !== null
+        ? { kind: "Failed", error: headError, retry: head.refetch, retrying: head.status === "failed" ? head.retrying : head.status === "ready" && head.refreshing }
+        : head.status !== "ready" || head.refreshing || head.generation === authority.current.generation
+          ? { kind: "Resolving" } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: podcastId, subscribed: following } },
+    } },
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
-      subscription !== null
+      live && remoteReady() && following
         ? {
             kind: "Refreshable",
             sourceKey: `Podcast.Detail:${podcastId}`,
@@ -358,179 +386,172 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     header: { kind: "Section", meta: headerMeta },
     query: queryControls,
   });
-  const podcast = ready?.data.detail.podcast;
   usePaneReturnReady(
     head.status === "failed" ||
       (ready !== null && episodes.status !== "loading"),
   );
 
-  const text = filterRows.query.trim();
-  const known = STATES.find((option) => option.value === state)?.value;
   const visible = resolved.filter((episode) =>
     matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)),
   );
+  const emptyTitle = text !== ""
+    ? episodes.complete ? "no episodes match this filter." : "no matching episode found so far."
+    : !episodes.complete ? "no episodes loaded so far."
+      : known === "all"
+        ? history.some(operation => operation.state === "pending" || operation.state === "running") && ready?.data.episode_counts.available_count === 0
+          ? "loading episode history…" : "no episodes available."
+        : `no ${known === "in_progress" ? "in-progress" : known} episodes.`;
+  const readFeedback = useCollectionReadFeedback({
+    list: episodes, unit: { singular: "episode", plural: "episodes" },
+    waiting: ready !== null && known !== undefined && episodes.status === "loading",
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
+  const checkAgain = () => command.run("the episode check wasn’t confirmed", async () => {
+    await requestPodcastRefresh({ kind: "Podcast", podcast_id: podcastId });
+  });
   return (
-    <div className={styles.page}>
-      {insertion.content}
-      <div className={styles.bar}>
-        <Link href="/podcasts" className={styles.navLink}>
-          Podcasts
-        </Link>
-        {ready ? (
-          <AcquisitionControl
-            key={podcastId}
-            kind="Subscribe"
-            subscribed={subscription !== null}
-            commit={async (acquisition) => {
-              const result = await subscribeToPodcast({
-                target: { kind: "Canonical", podcast_id: podcastId },
-                namedLibraryIds: acquisition.namedLibraryIds,
-                replaceEpisodes: acquisition.replaceEpisodes,
-              });
-              return { href: result.href };
-            }}
-            onCommitted={() => undefined}
-          />
-        ) : null}
-      </div>
-      <PaneSection>
-        {head.status === "loading" ? (
-          <PaneLoadingState label="Loading podcast…" announcement="Polite" />
-        ) : null}
-        {head.status !== "loading" && head.error ? (
-          <FeedbackNotice
-            content={podcastErrorMessage(
-              head.error,
-              "Podcast details couldn’t be loaded",
-            )}
-            announcement="Assertive"
-            actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
-          />
-        ) : null}
-        {ready && podcast ? (
-          <PodcastOverview
-            title={podcast.title}
-            image={
-              podcast.image_url
-                ? { kind: "Remote", url: podcast.image_url }
-                : { kind: "Absent" }
-            }
-            contributors={podcast.contributors}
-            description={podcast.description}
-            facts={[
-              subscription ? "Subscribed" : "Not subscribed",
-              `In ${pluralize(ready.data.libraryCount, "library", "libraries")}`,
-              ...(subscription ? subscriptionFacts(subscription) : []),
-            ]}
-            links={[
-              { label: "RSS feed", href: podcast.feed_url },
-              ...(podcast.website_url
-                ? [{ label: "Website", href: podcast.website_url }]
-                : []),
-            ]}
-            note={
-              subscription
-                ? "Subscription is active. Manage playback defaults, episode updates, and library membership from this header."
-                : "Subscribe to save playback defaults and add this show to your libraries."
-            }
-            error={
-              subscription?.sync_error_code
-                ? [
-                    subscription.sync_error_code,
-                    subscription.sync_error_message,
-                  ]
-                    .filter(Boolean)
-                    .join(": ")
-                : undefined
-            }
-          />
-        ) : null}
-        {lostNotice ? (
-          <FeedbackNotice content={lostNotice} announcement="Polite" />
-        ) : null}
-        {subscription?.backfill.state === "Failed" ? (
-          <div>
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={command.running === BACKLOG}
-              disabled={command.running !== null}
-              onClick={() =>
-                command.run(BACKLOG, () =>
-                  retryPodcastSubscriptionBackfill(podcastId),
-                )
-              }
-            >
-              Retry backlog
-            </Button>
-          </div>
-        ) : null}
-      </PaneSection>
-      <PaneSection>
-        {episodes.status === "failed" && episodes.failure !== null ? (
-          <FeedbackNotice
-            content={podcastErrorMessage(
-              episodes.failure.error,
-              "Episodes couldn’t be loaded",
-            )}
-            announcement="Assertive"
-            actions={[
-              episodes.failure.error.code === "E_INVALID_REQUEST"
-                ? {
-                    label: "Reset view",
-                    onClick: () => replaceView({ state: null, sort: null }),
-                  }
-                : { label: "Retry", onClick: episodes.retry, busy: episodes.running !== null },
-            ]}
-          />
-        ) : known === undefined || ready === null ? null : (
-          <PodcastEpisodeList
-            podcastId={podcastId}
-            state={known}
-            episodes={visible}
-            filter={text}
-            complete={complete}
-            loading={episodes.status === "loading"}
-            command={command}
-            notice={
-              <>
-                {command.failure ? (
-                  <FeedbackNotice
-                    content={command.failure}
-                    announcement="Assertive"
-                  />
-                ) : null}
-                {episodes.status === "ready" && episodes.failure ? (
-                  <FeedbackNotice
-                    content={podcastErrorMessage(
-                      episodes.failure.error,
-                      episodes.failure.op === "More"
-                        ? "More episodes couldn’t be loaded"
-                        : "Episodes couldn’t be refreshed",
-                    )}
-                    announcement="Polite"
-                    actions={[{ label: "Retry", onClick: episodes.retry, busy: episodes.running !== null }]}
-                  />
-                ) : null}
-                <MediaSummaryNotice
-                  error={summaries.error}
-                  retry={summaries.retry}
-                busy={summaries.retrying}
-                />
-              </>
-            }
-            footer={
-              episodes.current && !episodes.complete ? (
-                <LoadMoreFooter
-                  hasMore
-                  loading={episodes.running === "More"}
-                  onLoadMore={episodes.more}
-                />
-              ) : undefined
-            }
-          />
-        )}
-      </PaneSection>
-    </div>
+    <>
+      {readFeedback.announcement}
+      <PaneSurface>
+          {head.status === "loading" ? (
+            <PaneLoadingState label="Loading podcast…" announcement="Polite" />
+          ) : null}
+          {ready && podcast ? (
+            <PaneSection className={styles.overview}>
+              <div className={styles.identity}>
+                <PodcastArtwork title={podcast.title} image={podcast.image_url !== null ? { kind: "Remote", url: podcast.image_url } : { kind: "Absent" }} size={56} className={styles.artwork} />
+                <div className={styles.identityCopy}>
+                  <ContributorCreditList credits={selectMediaAuthors(podcast.contributors)} />
+                  <p className={styles.counts}>
+                    {ready.data.episode_counts.available_count === 0 ? "0 available" : `${ready.data.episode_counts.unfinished_count} unfinished · ${ready.data.episode_counts.available_count} available`}
+                  </p>
+                </div>
+                <Button ref={detailsButton} className={styles.detailButton}
+                  icon={expanded ? <ChevronDown /> : <ChevronRight />}
+                  aria-expanded={expanded} aria-controls={detailId}
+                  onClick={() => {
+                    if (expanded && detailPanel.current?.contains(document.activeElement)) detailsButton.current?.focus();
+                    setExpanded(!expanded);
+                  }}>{expanded ? "show less" : "show more"}</Button>
+              </div>
+              <div id={detailId} ref={detailPanel} hidden={!expanded}>
+                {expanded ? <div className={styles.detailContent}>
+                  <p className={styles.description}>{podcast.description?.trim() || "no description from the publisher."}</p>
+                  <ContributorRoleGroups credits={podcast.contributors} />
+                  <div className={styles.detailLinks}>
+                    {podcast.website_url !== null ? <a href={podcast.website_url} target="_blank" rel="noopener noreferrer">website</a> : null}
+                    <a href={podcast.feed_url} target="_blank" rel="noopener noreferrer">rss feed</a>
+                  </div>
+                  <div className={styles.playbackDefaults}>
+                    <span>playback defaults · {formatPlaybackRate(ready.data.playback_settings.default_playback_speed ?? 1)} · skip silence on android: {ready.data.playback_settings.pause_shortening_mode === "Natural" ? "on" : "off"}</span>
+                    {live && remoteReady() ? <Button className={styles.detailButton} onClick={() => ctx.overlays.open({ kind: "PodcastSettings", podcastId })}>edit…</Button> : <span>at last catalog save</span>}
+                  </div>
+                </div> : null}
+              </div>
+            </PaneSection>
+          ) : null}
+          {head.status !== "loading" && head.error ? (
+            <FeedbackNotice
+              content={podcastErrorMessage(
+                head.error,
+                "Podcast details couldn’t be loaded",
+              )}
+              announcement="Assertive"
+              actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
+            />
+          ) : null}
+          {ready && podcast ? <PaneSection ref={librariesCard} title="libraries" aria-label="libraries" tabIndex={-1}
+            actions={librariesAction ? <Button aria-haspopup="dialog" aria-disabled={librariesAction.disabled} tooltip={librariesAction.disabledReason ? { text: librariesAction.disabledReason } : undefined} onClick={event => { if (librariesAction.disabled) return; const detail = prepareActionSelect(event, event.currentTarget); if (detail) librariesAction.onSelect(detail); }}>libraries…</Button> : null}>
+            <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
+              rows={libraryRows}
+              rowControls={live && remoteReady() ? Object.fromEntries(namedDestinations.map(destination => {
+                const focus = {
+                  trigger: null,
+                  returnFocus: () => librariesCard.current?.querySelector<HTMLButtonElement>("header button") ?? librariesCard.current,
+                  get afterRemoval() {
+                    const paneId = librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+                    const rows = Array.from(librariesCard.current?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
+                    const after = rows.slice(rows.findIndex(item => item.dataset.collectionRowId === destination.library_id) + 1).map(item => item.dataset.collectionRowId!);
+                    return () => after.map(id => findPaneCollectionRowFocusTarget(paneId, id)).find(target => target !== null)
+                      ?? librariesCard.current?.querySelector<HTMLButtonElement>("header button")
+                      ?? librariesCard.current ?? findPaneLandmarkFocusTarget(paneId);
+                  },
+                };
+                const action = projectPodcastLibraryRemovalAction({
+                  podcastId, title: podcast.title, libraryId: destination.library_id, libraryName: libraryDisplayName(destination),
+                  canRemove: destination.can_add_content,
+                  blocked: ready.error !== null || ready.refreshing || ready.generation === authority.current.generation ? "TemporarilyUnavailable" : null,
+                  ctx, run, focus,
+                });
+                const reasonId = `${detailId}-library-${destination.library_id}`;
+                return [destination.library_id, <span key={destination.library_id}>
+                  <Button iconOnly icon={action.icon} aria-label={action.accessibleLabel} aria-haspopup="dialog"
+                    aria-disabled={action.disabled} aria-describedby={action.disabledReason ? reasonId : undefined}
+                    tooltip={{ text: action.disabledReason ? `${action.accessibleLabel}: ${action.disabledReason}` : action.accessibleLabel }}
+                    onClick={event => { const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
+                  {action.disabledReason ? <span className="sr-only" id={reasonId}>{action.disabledReason}</span> : null}
+                </span>];
+              })) : undefined}
+              empty={<p>choose a library to receive new episodes.</p>} />
+          </PaneSection> : null}
+          {live && ready && podcast && (history.length > 0 || recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps) ? <PaneSection title="episode imports">
+            {recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps ? <FeedbackNotice content={{ tone: "Warning", title: "the last check could not load all available episodes.", message: "nexus will try again automatically." }} announcement="Polite" actions={[{ label: "check again", onClick: checkAgain, busy: command.running !== null }]} /> : null}
+            {history.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={podcast.title} following={destinations.some(destination => destination.library_id === operation.library_id)} />)}
+          </PaneSection> : null}
+        {command.failure ? <FeedbackNotice content={command.failure} announcement="Assertive" /> : null}
+          {episodes.status === "failed" && episodes.failure !== null ? (
+            <FeedbackNotice
+              content={podcastErrorMessage(
+                episodes.failure.error,
+                "Episodes couldn’t be loaded",
+              )}
+              announcement="Assertive"
+              actions={[
+                episodes.failure.error.code === "E_INVALID_REQUEST"
+                  ? {
+                      label: "Reset view",
+                      onClick: () => replaceView({ state: null, sort: null }),
+                    }
+                  : { label: "Retry", onClick: episodes.retry, busy: episodes.running !== null },
+              ]}
+            />
+          ) : known === undefined || ready === null ? null : (
+            <PlaybackSourceContext.Provider value={async selected_media_id => {
+              const sourceSort = (["newest", "oldest", "duration_asc", "duration_desc"] as const).find(value => value === sort);
+              if (sourceSort === undefined) throw new Error("invalid podcast queue sort");
+              if (episodes.source.kind === "catalog")
+                return captureSavedView(visible.map(episode => episode.media_summary), selected_media_id,
+                  { kind: "Podcast", label: ready.data.podcast.title, podcast_id: podcastId, query: paneFilterText(text), state: known, sort: sourceSort });
+              if (!live || !remoteReady()) throw new ApiError(503, "E_REMOTE_UNAVAILABLE", "requires a connection and current episode facts");
+              return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
+            }}>
+            <CollectionView
+              surface={false}
+              returnScope="PodcastDetail.Episodes"
+              rows={visible.map(episode => presentMedia(episode.media_summary, {
+                id: episode.id, primary: { kind: "link", href: `/media/${episode.id}` },
+                resourceRef: canonicalResourceRef({ scheme: "media", id: episode.id }), selected: false,
+              }))}
+              status={episodes.status === "loading" ? "loading" : "ready"}
+              ariaLabel="Episodes"
+              rowActionsAvailable={episodes.current}
+              collectionBusy={!episodes.current || !episodes.complete}
+              rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+              notice={<>
+                {episodes.status === "ready" && episodes.failure !== null && episodes.failure.op !== "More" ? <FeedbackNotice
+                  content={podcastErrorMessage(episodes.failure.error, "episodes couldn’t be refreshed")}
+                  announcement="Polite" actions={[{ label: "retry", onClick: episodes.retry, busy: episodes.running !== null }]} /> : null}
+                <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />
+                {text && episodes.current && !episodes.complete && episodes.failure === null && visible.length > 0
+                  ? <p>filter applies to loaded items.</p> : null}
+              </>}
+              footer={readFeedback.notice}
+              empty={<FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />}
+            />
+            </PlaybackSourceContext.Provider>
+          )}
+      </PaneSurface>
+    </>
   );
 }

@@ -12,7 +12,7 @@ import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Select from "@/components/ui/Select";
 import PeopleSearch, { personLabel, type Person } from "@/components/users/PeopleSearch";
 import { useThrowLater } from "@/lib/api/serverState";
@@ -31,6 +31,7 @@ import {
   type LibraryRole,
 } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryMembers.module.css";
 
@@ -51,6 +52,7 @@ interface Question {
 /** Null unless the viewer manages the library; lists load while `open`. */
 export function useLibraryMembers(library: Library | null, open: boolean, reread: () => void) {
   const fail = useThrowLater();
+  const active = usePaneIsActive() && open;
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
@@ -62,8 +64,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     key: key && `members:${key}`,
     stale: String(version),
     pageSize: 100,
-    drain: false,
-    active: open,
+    active,
     visit: MEMBERS,
     id: (member) => member.user_id,
     fetchPage: (cursor, limit, signal) => membersPage(id, cursor, limit, signal),
@@ -72,8 +73,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     key: key && `invitations:${key}`,
     stale: String(version),
     pageSize: 100,
-    drain: false,
-    active: open,
+    active,
     visit: INVITATIONS,
     id: (invitation) => invitation.id,
     fetchPage: (cursor, limit, signal) => invitationsPage(id, cursor, limit, signal),
@@ -113,6 +113,16 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
   const triggers = useRef(new Map<string, HTMLElement>());
   const heading = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
+  const memberFeedback = useCollectionReadFeedback({
+    list: members, unit: { singular: "member", plural: "members" },
+    waiting: members.status === "loading", outcome: members.items.length > 0 ? "results updated." : members.complete ? "no members." : "no members found so far.",
+    returnFocus: () => heading.current,
+  });
+  const invitationFeedback = useCollectionReadFeedback({
+    list: invitations, unit: { singular: "invitation", plural: "invitations" },
+    waiting: invitations.status === "loading", outcome: invitations.items.length > 0 ? "results updated." : invitations.complete ? "no pending invitations." : "no pending invitations found so far.",
+    returnFocus: () => heading.current,
+  });
   const trigger = (key: string) => (node: HTMLElement | null) => {
     if (node) triggers.current.set(key, node);
     else triggers.current.delete(key);
@@ -159,8 +169,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       <span>{q.description}</span>
       <span className={styles.actions}>
         <Button
-          variant="secondary"
-          size="sm"
           autoFocus
           disabled={busy}
           aria-label={q.cancelLabel}
@@ -169,13 +177,13 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           Cancel
         </Button>
         <Button
-          variant="danger"
-          size="sm"
-          loading={busy}
+          emphasis="strong" tone="danger"
           aria-label={q.yesLabel}
           onClick={async () => {
             if (await q.run()) close(q.key);
           }}
+          disabled={busy}
+          aria-busy={busy}
         >
           {q.yes}
         </Button>
@@ -183,10 +191,10 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
     </div>
   );
 
-  const footer = (list: ServerList<unknown>, what: string) =>
-    list.status === "loading" ? (
-      <FeedbackStatus content={{ tone: "Neutral", title: `loading ${what}…` }} announcement="Polite" />
-    ) : list.failure ? (
+  const footer = (list: ServerList<unknown>, what: string) => <>
+    {list.status === "loading" ? (
+      <FeedbackStatus content={{ tone: "Neutral", title: `loading ${what}…` }} announcement={list.active ? "Polite" : "None"} />
+    ) : list.failure && list.failure.op !== "More" ? (
       <FeedbackNotice
         content={
           libraryErrorFeedback(list.failure.error, `The ${what} couldn’t be loaded`, throwDefect) ?? {
@@ -197,15 +205,8 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
         announcement="Polite"
         actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
       />
-    ) : (
-      <LoadMoreFooter
-        hasMore={list.current && !list.complete}
-        loading={list.running === "More"}
-        disabled={busy}
-        onLoadMore={list.more}
-        label={`Load more ${what}`}
-      />
-    );
+    ) : null}
+  </>;
 
   return (
     <section className={styles.surface} aria-labelledby={headingId}>
@@ -218,6 +219,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       {state.feedback ? <FeedbackNotice content={state.feedback} announcement="Assertive" /> : null}
       <div className={styles.invite}>
         <PeopleSearch
+          context={library.id}
           label="Find an existing Nexus user by name or account email"
           placeholder="Name or email…"
           description="Search display names, or enter an account’s exact email."
@@ -237,8 +239,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             <option value="admin">Admin</option>
           </Select>
           <Button
-            variant="secondary"
-            size="sm"
+            emphasis="strong"
             disabled={busy || person === null}
             onClick={() => void sendInvite()}
           >
@@ -249,6 +250,9 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
 
       <div className={styles.section}>
         <h4>People</h4>
+        {members.current && members.failure === null && members.items.length === 0 ? (
+          <p className={styles.note}>{members.complete ? "no members." : "no members found so far."}</p>
+        ) : null}
         {members.items.map((member) => {
           const key = `member:${member.user_id}`;
           const name = personLabel(member);
@@ -335,12 +339,13 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           );
         })}
         {footer(members, "members")}
+        {memberFeedback.notice}
       </div>
 
       <div className={styles.section}>
         <h4>Pending invitations</h4>
-        {invitations.complete && invitations.items.length === 0 ? (
-          <p className={styles.note}>No pending invitations.</p>
+        {invitations.current && invitations.failure === null && invitations.items.length === 0 ? (
+          <p className={styles.note}>{invitations.complete ? "no pending invitations." : "no pending invitations found so far."}</p>
         ) : null}
         {invitations.items.map((invitation) => {
           const key = `invitation:${invitation.id}`;
@@ -359,8 +364,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               ) : (
                 <Button
                   ref={trigger(key)}
-                  variant="ghost"
-                  size="sm"
                   disabled={busy}
                   aria-label={`Revoke invitation for ${name}`}
                   onClick={() =>
@@ -385,11 +388,14 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           );
         })}
         {footer(invitations, "invitations")}
+        {invitationFeedback.notice}
       </div>
       <p className={styles.note}>
         Removing a member closes only this library’s access; they may keep access through another
         library or a direct share.
       </p>
+      {memberFeedback.announcement}
+      {invitationFeedback.announcement}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {state.announcement}
       </div>

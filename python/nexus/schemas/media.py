@@ -93,7 +93,6 @@ class MediaOut(BaseModel):
     chapters: list[PodcastEpisodeChapterOut]
     capabilities: CapabilitiesOut
     contributors: list[ContributorCreditOut]
-    author_mode: Literal["automatic", "manual"]
     original_published_date: PublicationDate | None
     edition_published_date: PublicationDate | None
     edition_isbn: str | None
@@ -127,4 +126,5 @@ class MediaProcessingSnapshotOut(BaseModel):
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None
     reader_generation: int | None
+    transcript_reader_key: str | None
     work_in_flight: bool

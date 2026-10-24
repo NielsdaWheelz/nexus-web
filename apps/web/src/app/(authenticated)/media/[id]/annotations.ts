@@ -6,10 +6,15 @@
 // write settles (created, recoloured, rebounded and deleted alike). The map is
 // read while someone subscribes: a remounted subscriber reads it again.
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isAbortError } from "@/lib/errors";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { enqueueWrite, type WriteRequest } from "@/lib/notes/writes";
+import { admitWriting, type WritingAck, type WritingIntent } from "@/lib/notes/writes";
+import { adoptText, readText, setGone } from "@/lib/notes/texts";
+import { parseBody } from "@/lib/notes/noteBody";
+import { fetchNote } from "@/lib/notes/api";
+import { readSharedValue } from "@/lib/api/serverState";
+import { watchWritingResource, type WritingWatch } from "@/lib/api/writingReceive";
 import { captureResourceOutlineRead, isResourceOutlineReadCurrent } from "@/lib/resourceGraph/useResourceOutline";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type {
@@ -36,7 +41,7 @@ export type DocumentMap = Omit<WireDocumentMap, "evidence"> & {
   readonly evidence: Omit<WireDocumentMap["evidence"], "roots"> & { readonly roots: EvidenceRoot[] };
 };
 export type EvidenceHighlight = Schema<"ReaderEvidenceHighlightOut">;
-type Highlight = Schema<"TypedHighlightOut">;
+type Highlight = Schema<"WritingHighlight">;
 type HighlightSummary = Pick<EvidenceHighlight, "quote" | "color" | "is_owner" | "version"> & { readonly mediaId: string };
 
 export interface AnnotationState {
@@ -55,10 +60,10 @@ export interface AnnotationStore {
   refresh(): void;
   /** The viewer's own highlight of exactly this extent (library-mates' marks paint too). */
   twin(anchor: MarkAnchor): string | null;
-  prepareCreate(anchor: DraftAnchor, color: HighlightColor): WriteRequest;
-  acknowledge(highlight: Highlight): void;
-  recolor(id: string, color: HighlightColor, expectedVersion: string): Promise<Highlight>;
-  rebound(id: string, anchor: TextRange, expectedVersion: string): Promise<Highlight>;
+  prepareCreate(input: { anchor: DraftAnchor; color: HighlightColor; id: string; initialNote: Schema<"InitialHighlightNote"> | null }): Extract<WritingIntent, { kind: "passage" }>;
+  acknowledge(ack: WritingAck): void;
+  recolor(id: string, color: HighlightColor, expectedVersion: string): Promise<WritingAck>;
+  rebound(id: string, anchor: TextRange, expectedVersion: string): Promise<WritingAck>;
   remove(id: string): Promise<void>;
   highlight(id: string): HighlightSummary | null;
 }
@@ -92,14 +97,14 @@ const sameAnchor = (a: MarkAnchor, b: MarkAnchor) =>
 
 type CanonicalStore = Omit<AnnotationStore, "bind" | "source" | "prepareCreate" | "rebound"> & {
   generation(value: number): void;
-  prepareCreate(anchor: DraftAnchor, color: HighlightColor, generation: number | null): WriteRequest;
-  rebound(id: string, anchor: TextRange, expectedVersion: string, generation: number | null): Promise<Highlight>;
+  rebound(id: string, anchor: TextRange, expectedVersion: string, generation: number | null): Promise<WritingAck>;
 };
 const canonical = new Map<string, CanonicalStore>();
 
 /** One subscribed map per canonical media, shared by every mounted occurrence/pane. */
-function canonicalStore(mediaId: string): CanonicalStore {
-  const existing = canonical.get(mediaId);
+function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
+  const key = `${accountId}:${mediaId}`;
+  const existing = canonical.get(key);
   if (existing) return existing;
   let requestedGeneration: number | null = null;
   const listeners = new Set<() => void>();
@@ -114,6 +119,8 @@ function canonicalStore(mediaId: string): CanonicalStore {
   let last: DocumentMap | null = null;
   let reads = 0;
   let controller = new AbortController();
+  let mediaWatch: WritingWatch | null = null;
+  const noteWatches = new Map<string, { watch: WritingWatch; controller: AbortController | null }>();
 
   function project(data: DocumentMap | null) {
     const marks = new Map<string, Mark & { readonly order: string }>();
@@ -169,6 +176,8 @@ function canonicalStore(mediaId: string): CanonicalStore {
     const signal = controller.signal;
     const seq = (reads += 1);
     const generation = captureResourceOutlineRead();
+    const watchedGeneration = mediaWatch?.capture();
+    const noteGenerations = new Map([...noteWatches].map(([ref, held]) => [ref, held.watch.capture()]));
     if (state.map.status === "failed") {
       state = { ...state, map: { ...state.map, retrying: true } };
       project(last);
@@ -191,7 +200,9 @@ function canonicalStore(mediaId: string): CanonicalStore {
         void read();
         return;
       }
+      if (watchedGeneration !== undefined && !mediaWatch?.adopt({ annotations_version: wire.annotations_version }, watchedGeneration)) return;
       for (const [id, entry] of ledger) if (entry.after <= seq) ledger.delete(id);
+      watchNotes(data, noteGenerations);
       last = data;
       state = { ...state, map: { status: "ready", data } };
       project(data);
@@ -200,13 +211,6 @@ function canonicalStore(mediaId: string): CanonicalStore {
       state = { ...state, map: { status: "failed", error, data: last, retrying: false } };
       project(last);
     }
-  }
-
-  /** Records a write, paints it, and reads the map back. */
-  function settle(id: string, mark: Mark | null, highlight: HighlightSummary | null) {
-    ledger.set(id, { after: reads + 1, mark, highlight });
-    project(last);
-    void read();
   }
 
   function highlight(id: string): HighlightSummary | null {
@@ -224,19 +228,104 @@ function canonicalStore(mediaId: string): CanonicalStore {
         highlight(mark.id)?.is_owner === true,
     )?.id ?? null;
 
-  function acknowledge(highlight: Highlight) {
-    const painted = anchorOfHighlight(highlight);
-    settle(highlight.id, painted && { id: highlight.id, color: highlight.color, anchor: painted },
-      { quote: highlight.exact, color: highlight.color, is_owner: highlight.is_owner, version: highlight.version, mediaId });
+  function acknowledge(ack: WritingAck) {
+    for (const highlight of ack.highlights) {
+      if (highlight.anchor.media_id !== mediaId) continue;
+      const painted = anchorOfHighlight(highlight);
+      ledger.set(highlight.id, { after: reads + 1,
+        mark: painted && { id: highlight.id, color: highlight.color, anchor: painted },
+        highlight: { quote: highlight.exact, color: highlight.color, is_owner: highlight.author_user_id === accountId, version: highlight.version, mediaId } });
+    }
+    for (const ref of ack.deleted_refs) if (ref.startsWith("highlight:"))
+      ledger.set(ref.slice("highlight:".length), { after: reads + 1, mark: null, highlight: null });
+    project(last);
+    // the receive owner invalidates membership and previews once after settlement.
   }
 
-  /** The observed version is frozen by the caller, before this enters the tab's FIFO. */
-  function update(id: string, body: Schema<"UpdateHighlightRequest">): Promise<Highlight> {
-    return new Promise((resolve, reject) => enqueueWrite<Highlight>({
-      build: () => ({ path: `/api/highlights/${id}`, method: "PATCH", body }),
-      settle(reply) { acknowledge(reply); resolve(reply); },
-      fail: reject,
-    }));
+  function receiveNote(ref: string, incoming: Pick<Schema<"WritingNote">, "body_pm_json" | "body_text" | "body_version">) {
+    const current = readText(ref)?.acked;
+    const body = current && typeof current.value !== "string" && current.version > incoming.body_version
+      ? { ...current.value, body_version: current.version } : incoming;
+    adoptText(ref, parseBody(body.body_pm_json), body.body_version);
+    if (!last) return;
+    last = { ...last, evidence: { ...last.evidence, roots: last.evidence.roots.map(root => {
+      const content = root.content;
+      if (content.kind === "SourceReference" || content.item.preview.annotation?.note_ref !== ref) return root;
+      return { ...root, content: { ...content, item: { ...content.item, preview: { ...content.item.preview,
+        annotation: { ...content.item.preview.annotation, body_pm_json: body.body_pm_json, body_text: body.body_text, body_version: body.body_version },
+      } } } };
+    }) } };
+    state = { ...state, map: { ...state.map, data: last } };
+    project(last);
+  }
+
+  function watchNotes(data: DocumentMap, generations: ReadonlyMap<string, number>) {
+    const notes = new Map<string, Schema<"ResourceAnnotationOut">>();
+    for (const root of data.evidence.roots) {
+      const annotation = rootItem(root).preview.annotation;
+      if (annotation) notes.set(annotation.note_ref, annotation);
+    }
+    for (const [ref, held] of noteWatches) if (!notes.has(ref)) {
+      held.watch.stop(); held.controller?.abort(); noteWatches.delete(ref);
+    }
+    for (const [ref, note] of notes) {
+      if (readText(ref)?.gone) continue;
+      let generation = generations.get(ref);
+      let held = noteWatches.get(ref);
+      if (!held) {
+        const binding: { watch: WritingWatch; controller: AbortController | null } = {
+          controller: null,
+          watch: watchWritingResource({ accountId, ref, lanes: ["body_version"], acknowledge(ack) {
+            const note = ack.notes.find(note => `note_block:${note.id}` === ref);
+            if (!note) return {};
+            receiveNote(ref, note);
+            return { body_version: readText(ref)?.acked?.version ?? note.body_version };
+          }, invalidate(state) {
+            if (noteWatches.get(ref) !== binding) return;
+            binding.controller?.abort();
+            const generation = binding.watch.capture();
+            if (state === "unavailable") { retire(generation); return; }
+            binding.controller = new AbortController();
+            const signal = binding.controller.signal;
+            const noteId = ref.slice("note_block:".length);
+            void readSharedValue({ accountId, key: `/notes/blocks/${encodeURIComponent(noteId)}`,
+              load: readSignal => fetchNote(noteId, readSignal), signal, revalidate: true,
+            }).then(body => {
+              if (signal.aborted || noteWatches.get(ref) !== binding ||
+                !binding.watch.adopt({ body_version: body.body_version }, generation)) return;
+              receiveNote(ref, body);
+            }).catch(error => {
+              if (signal.aborted || isAbortError(error) || noteWatches.get(ref) !== binding ||
+                binding.watch.capture() !== generation) return;
+              if (isApiError(error) && !isSameSystemApiDefect(error) && error.status === 404) retire(generation);
+              else binding.watch.fail(error, generation);
+            });
+          } }),
+        };
+        function retire(generation: number) {
+          if (noteWatches.get(ref) !== binding || binding.watch.capture() !== generation) return;
+          noteWatches.delete(ref);
+          binding.controller?.abort();
+          binding.watch.stop();
+          setGone(ref);
+        }
+        held = binding; noteWatches.set(ref, held);
+        generation = held.watch.capture();
+      }
+      const current = readText(ref)?.acked;
+      if (current && typeof current.value !== "string" && current.version > note.body_version) {
+        Object.assign(note, { body_pm_json: current.value.body_pm_json, body_text: current.value.body_text, body_version: current.version });
+      }
+      if (generation !== undefined && held.watch.adopt({ body_version: note.body_version }, generation)) adoptText(ref, parseBody(note.body_pm_json), note.body_version);
+    }
+  }
+
+  /** admission freezes the exact observed version; delivery never belongs to a pane. */
+  async function update(id: string, request: Schema<"UpdateHighlightRequest">): Promise<WritingAck> {
+    const admitted = admitWriting({ kind: "highlight_update", highlight_id: id, request }, []);
+    const ack = await admitted.settled;
+    acknowledge(ack);
+    return ack;
   }
 
   const store: CanonicalStore = {
@@ -249,35 +338,37 @@ function canonicalStore(mediaId: string): CanonicalStore {
     getState: () => state,
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) void read();
+      if (listeners.size === 1) {
+        mediaWatch = watchWritingResource({ accountId, ref: `media:${mediaId}`, lanes: ["annotations_version"], invalidate() { void read(); } });
+        void read();
+      }
       return () => {
         listeners.delete(listener);
-        if (listeners.size === 0) { controller.abort(); canonical.delete(mediaId); }
+        if (listeners.size === 0) {
+          controller.abort(); mediaWatch?.stop(); mediaWatch = null;
+          for (const held of noteWatches.values()) { held.watch.stop(); held.controller?.abort(); }
+          noteWatches.clear(); canonical.delete(key);
+        }
       };
     },
     refresh: () => void read(),
     twin,
-    prepareCreate(anchor, color, generation) {
-      return { path: `/api/media/${mediaId}/highlights`, method: "POST",
-        body: { anchor: wireAnchor(anchor), color, expected_reader_generation: generation } };
-    },
     acknowledge,
     recolor: (id, color, expectedVersion) => update(id, { color, expected_version: expectedVersion }),
     rebound: (id, anchor, expectedVersion, generation) => update(id, { expected_version: expectedVersion, expected_reader_generation: generation,
       anchor: { type: "fragment_offsets", unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
     async remove(id) {
-      await apiFetch<void>(`/api/highlights/${id}`, { method: "DELETE" });
-      publishChange("Metadata");
-      settle(id, null, null);
+      const admitted = admitWriting({ kind: "highlight_delete", highlight_id: id }, []);
+        acknowledge(await admitted.settled);
     },
     highlight,
   };
-  canonical.set(mediaId, store);
+  canonical.set(key, store);
   return store;
 }
 
 /** An occurrence projection over canonical stores; body offsets never leave their source owner. */
-export function createAnnotationStore(mediaId: string): AnnotationStore {
+export function createAnnotationStore(mediaId: string, accountId: string): AnnotationStore {
   let doc: ReaderDocument | null = null;
   const listeners = new Set<() => void>();
   const held = new Map<string, { store: CanonicalStore; unsubscribe: () => void }>();
@@ -378,7 +469,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     for (const [id, binding] of held) if (!owners.has(id)) { binding.unsubscribe(); held.delete(id); }
     for (const [id, generation] of owners) {
       if (!held.has(id)) {
-        const store = canonicalStore(id);
+        const store = canonicalStore(id, accountId);
         if (generation !== null) store.generation(generation);
         const binding = { store, unsubscribe: () => {} };
         held.set(id, binding);
@@ -395,7 +486,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     return owner && anchor.kind === "text" ? { mediaId: owner.media_id, anchor: { ...anchor, unit: owner.fragment_id }, generation: owner.generation }
       : { mediaId, anchor, generation: doc?.identity.startsWith("g") ? Number(doc.identity.slice(1)) : null };
   }
-  const storeFor = (id: string) => held.get(id)?.store ?? canonicalStore(id);
+  const storeFor = (id: string) => held.get(id)?.store ?? canonicalStore(id, accountId);
   const highlightStore = (id: string) => [...held.values()].find(({ store }) => store.highlight(id) !== null)?.store;
   return {
     bind(next) { if (doc === next) return; doc = next; if (listeners.size) connect(); },
@@ -411,8 +502,19 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     },
     refresh() { for (const binding of held.values()) binding.store.refresh(); },
     twin(anchor) { const bound = source(anchor); return storeFor(bound.mediaId).twin(bound.anchor); },
-    prepareCreate(anchor, color) { const bound = source(anchor); return storeFor(bound.mediaId).prepareCreate(bound.anchor, color, bound.generation); },
-    acknowledge(highlight) { storeFor(highlight.anchor.media_id).acknowledge(highlight); },
+    prepareCreate({ anchor, color, id, initialNote }) {
+      const bound = source(anchor);
+      if (bound.generation === null && !(doc?.kind === "text" && doc.format === "transcript"))
+        throw new Error("the passage has no captured source generation");
+      return { kind: "passage", media_id: bound.mediaId, request: {
+        id, anchor: wireAnchor(bound.anchor), color,
+        expected_reader_generation: bound.generation, initial_note: initialNote,
+      } };
+    },
+    acknowledge(ack) {
+      const owners = new Set(ack.highlights.map(highlight => highlight.anchor.media_id));
+      for (const id of owners) storeFor(id).acknowledge(ack);
+    },
     recolor(id, color, version) { const store = highlightStore(id); if (!store) throw new Error("highlight owner is not mounted"); return store.recolor(id, color, version); },
     rebound(id, anchor, version) { const bound = source(anchor); return storeFor(bound.mediaId).rebound(id, { ...anchor, unit: bound.anchor.kind === "text" ? bound.anchor.unit : anchor.unit }, version, bound.generation); },
     remove(id) { const store = highlightStore(id); if (!store) throw new Error("highlight owner is not mounted"); return store.remove(id); },

@@ -1,4 +1,9 @@
-"""The author facade: search, detail, works, references, and every credit write entry point."""
+"""contributor reads and credit publication through source and research observations.
+
+publication replaces absolute role slices: a retry of the same observation preserves
+identical credits. batch publication owns sessions/retries; in-transaction publication
+uses its caller's transaction and never commits.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +15,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.middleware import Viewer
 from nexus.auth.permissions import (
-    can_read_media,
     credited_visible_contributor_ids_cte_sql,
     visible_content_credit_rows_sql,
     visible_contributor_ids_cte_sql,
@@ -20,7 +23,7 @@ from nexus.auth.permissions import (
 from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, Media
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.collection_page import CollectionPage, CollectionQuery, parse_collection_query
 from nexus.schemas.contributors import (
     ContributorDetailOut,
@@ -30,24 +33,18 @@ from nexus.schemas.contributors import (
     ContributorWorkExampleOut,
     ContributorWorkItemOut,
     ExternalContributorWorkItemOut,
-    ManualMediaAuthorsRequest,
-    MediaAuthorsOut,
-    MediaAuthorsPutRequest,
     MediaContributorWorkItemOut,
-    NewAuthorBinding,
     PodcastContributorWorkItemOut,
 )
-from nexus.services.capabilities import can_edit_media_authors
+from nexus.services.browse.targets import ProjectGutenbergEpubTarget, seal_target
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.contributor_credits import load_contributor_credits_for_catalogue
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
     ContributorHandle,
-    ContributorObservation,
     ContributorObservationBatch,
     NotObserved,
     ObservedRoleSlices,
-    clean_contributor_display,
     contributor_match_key,
 )
 from nexus.services.contributor_writes import (
@@ -57,7 +54,6 @@ from nexus.services.contributor_writes import (
     MediaTarget,
     ObservationIdentityPlan,
     PodcastTarget,
-    create_contributor,
     ensure_alias,
     materialize_observation_credits,
     plan_observation_credits,
@@ -345,6 +341,11 @@ def list_contributor_works(
                 ExternalContributorWorkItemOut(
                     title=row["title"],
                     href=row["href"],
+                    target=seal_target(
+                        ProjectGutenbergEpubTarget(
+                            ebookRef=str(row["project_gutenberg_catalog_ebook_id"])
+                        )
+                    ),
                     content_kind=row["content_kind"],
                     contributors=catalogue.get(row["project_gutenberg_catalog_ebook_id"], []),
                     role_facts=facts,
@@ -379,18 +380,11 @@ def _visible(db: Session, contributor_id: UUID, viewer_id: UUID) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class ContributorPublicationResult:
-    changed: bool
-    retained_manual_authors: bool
-
-
-@dataclass(frozen=True, slots=True)
 class PreparedContributorPublication:
     target: CreditTarget
     managed_roles: frozenset[str]
     identities: ObservationIdentityPlan
     source: str
-    retained_manual_authors: bool
 
 
 def replace_observed_role_slices_batch(
@@ -415,30 +409,30 @@ def replace_observed_role_slices_batch(
 def _publish_chunk(
     db: Session, chunk: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]]
 ) -> None:
-    changed_owners: set[str] = set()
+    changed_owners: list[str] = []
     for target, observation, source in chunk:
-        if not _write(
+        changed = apply_prepared_role_slices_in_current_transaction(
             db,
-            prepare_observed_role_slices_in_current_transaction(
+            prepared=prepare_observed_role_slices_in_current_transaction(
                 db, target=target, observation=observation, source=source
             ),
-        ):
-            continue
-        match target:
-            case MediaTarget(media_id):
-                changed_owners.add(f"media:{media_id}")
-            case PodcastTarget(podcast_id):
-                changed_owners.add(f"podcast:{podcast_id}")
-            case GutenbergTarget(ebook_id):
-                changed_owners.add(f"gutenberg_catalog:{ebook_id}")
+        )
+        if changed:
+            match target:
+                case MediaTarget(media_id):
+                    changed_owners.append(f"media:{media_id}")
+                case PodcastTarget(podcast_id):
+                    changed_owners.append(f"podcast:{podcast_id}")
+                case GutenbergTarget(ebook_id):
+                    changed_owners.append(f"gutenberg_catalog:{ebook_id}")
     if changed_owners:
         record_input_change(db, owners=changed_owners)
 
 
 def apply_observed_role_slices_in_current_transaction(
     db: Session, *, target: CreditTarget, observation: ContributorObservationBatch, source: str
-) -> ContributorPublicationResult:
-    """Prepare and apply one observation on the owning source transaction (no retry runner)."""
+) -> bool:
+    """prepare and apply on the caller's transaction; true when credit rows changed."""
     prepared = prepare_observed_role_slices_in_current_transaction(
         db, target=target, observation=observation, source=source
     )
@@ -448,33 +442,22 @@ def apply_observed_role_slices_in_current_transaction(
 def prepare_observed_role_slices_in_current_transaction(
     db: Session, *, target: CreditTarget, observation: ContributorObservationBatch, source: str
 ) -> PreparedContributorPublication:
-    """Validate the whole roster read-only, before the owner writes any fact.
-
-    A pinned media withholds its author slice: the proposal still takes part in
-    validation and in ``retained_manual_authors``, but never in allocation, and the
-    other roles are re-planned without it so withheld keys and spellings cannot shape
-    their identities.
-    """
+    """validate the whole roster read-only, before the owner writes any fact."""
     nothing = PreparedContributorPublication(
-        target, frozenset(), ObservationIdentityPlan((), (), ()), source, False
+        target, frozenset(), ObservationIdentityPlan((), (), ()), source
     )
     if isinstance(observation, NotObserved):
         return nothing
-    managed_roles = observation.managed_roles
-    pinned = False
-    current_authors: list[tuple[UUID, str, str | None]] = []
     if isinstance(target, MediaTarget):
-        media = db.get(Media, target.media_id)
-        if media is None:
+        if db.get(Media, target.media_id) is None:
             return nothing
-        pinned = media.authors_manually_managed
-        credited = db.execute(
-            select(ContributorCredit, Contributor.handle)
-            .join(Contributor, Contributor.id == ContributorCredit.contributor_id)
-            .where(ContributorCredit.media_id == target.media_id)
-            .order_by(ContributorCredit.ordinal)
-        ).all()
-        handles = {handle for _, handle in credited}
+        handles = set(
+            db.scalars(
+                select(Contributor.handle)
+                .join(ContributorCredit, ContributorCredit.contributor_id == Contributor.id)
+                .where(ContributorCredit.media_id == target.media_id)
+            )
+        )
         if any(
             c.contributor_handle is not None and c.contributor_handle not in handles
             for c in observation.credits
@@ -482,41 +465,19 @@ def prepare_observed_role_slices_in_current_transaction(
             raise ContributorObservationRejected(
                 "A bound contributor is not credited on this media"
             )
-        current_authors = [
-            (row.contributor_id, row.credited_name, row.raw_role)
-            for row, _ in credited
-            if row.role == "author"
-        ]
     plan = plan_observation_credits(db, observation.credits)
     planned = list(zip(plan.identities, plan.credits, strict=True))
     if source == "metadata_enrichment" and len(
         {(planned_contributor_identity(p), c.role) for p, c in planned}
     ) != len(planned):
         raise ContributorObservationRejected("Duplicate contributor identity within a role")
-    retained = False
-    if pinned:
-        if "author" in managed_roles:
-            proposed = [
-                (planned_contributor_identity(p), c.credited_name, c.raw_role)
-                for p, c in planned
-                if c.role == "author"
-            ]
-            retained = proposed != current_authors
-        managed_roles = managed_roles - {"author"}
-    relevant = [c for c in observation.credits if c.role in managed_roles]
-    if len(relevant) != len(plan.credits):
-        plan = plan_observation_credits(db, relevant)
-    return PreparedContributorPublication(target, managed_roles, plan, source, retained)
+    return PreparedContributorPublication(target, observation.managed_roles, plan, source)
 
 
 def apply_prepared_role_slices_in_current_transaction(
     db: Session, *, prepared: PreparedContributorPublication
-) -> ContributorPublicationResult:
-    """Write a prevalidated roster; no late rejection, no savepoint."""
-    return ContributorPublicationResult(_write(db, prepared), prepared.retained_manual_authors)
-
-
-def _write(db: Session, prepared: PreparedContributorPublication) -> bool:
+) -> bool:
+    """write a prevalidated roster; true when credit rows changed. never commits."""
     if not prepared.managed_roles:
         return False
     resolved = materialize_observation_credits(db, plan=prepared.identities)
@@ -556,72 +517,3 @@ def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> 
         resolved=(),
         source="cleanup",
     )
-
-
-def put_media_authors(
-    *, viewer: Viewer, media_id: UUID, request: MediaAuthorsPutRequest
-) -> MediaAuthorsOut:
-    """Pin a manual author list, or release the pin, in one fresh transaction. Absolute:
-    a resend applies the same list again (last writer wins)."""
-    db = get_session_factory()()
-    try:
-        op = partial(_put_media_authors, db, viewer.user_id, media_id, request)
-        return retry_serializable(db, "put_media_authors", op)
-    finally:
-        db.close()
-
-
-def _put_media_authors(
-    db: Session, viewer_id: UUID, media_id: UUID, request: MediaAuthorsPutRequest
-) -> MediaAuthorsOut:
-    media = db.get(Media, media_id)
-    if media is None or not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
-    if not can_edit_media_authors(can_read=True, is_creator=media.created_by_user_id == viewer_id):
-        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only the media creator can edit authors")
-    if isinstance(request, ManualMediaAuthorsRequest):
-        replace_role_slices(
-            db,
-            target=MediaTarget(media_id),
-            managed_roles=frozenset({"author"}),
-            resolved=_bind_manual_authors(db, viewer_id, request),
-            source="user",
-        )
-    # Releasing the pin leaves the rows; the next observed author slice replaces them.
-    media.authors_manually_managed = request.mode == "manual"
-    record_input_change(db, owners=(f"media:{media_id}",))
-    return MediaAuthorsOut(author_mode=request.mode)
-
-
-def _bind_manual_authors(
-    db: Session, viewer_id: UUID, request: ManualMediaAuthorsRequest
-) -> list[tuple[UUID, ContributorObservation]]:
-    rows: list[tuple[UUID, ContributorObservation]] = []
-    for row in request.authors:
-        binding = row.binding
-        if isinstance(binding, NewAuthorBinding) and db.get(Contributor, binding.id) is None:
-            display = clean_contributor_display(binding.display_name)
-            created = create_contributor(db, display_name=display, contributor_id=binding.id)
-            contributor_id = created.contributor_id
-        else:
-            # A chosen person, or the new one a resend that landed already created.
-            found = (
-                binding.id
-                if isinstance(binding, NewAuthorBinding)
-                else db.scalar(
-                    select(Contributor.id).where(Contributor.handle == binding.contributor_handle)
-                )
-            )
-            if found is None or not _visible(db, found, viewer_id):
-                # One answer for unknown and invisible: selection never reveals a person.
-                raise ApiError(
-                    ApiErrorCode.E_AUTHOR_NOT_SELECTABLE, "That author can't be selected."
-                )
-            contributor_id = found
-        if any(contributor_id == listed for listed, _ in rows):
-            raise ApiError(
-                ApiErrorCode.E_AUTHOR_ALREADY_LISTED, "That author is already listed for this role."
-            )
-        credited = clean_contributor_display(row.credited_name)
-        rows.append((contributor_id, ContributorObservation(credited, "author", None, None)))
-    return rows

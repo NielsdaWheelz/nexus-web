@@ -1,6 +1,5 @@
 "use client";
 
-import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import LibraryChooser from "@/components/libraries/LibraryChooser";
 import type { LibraryPlacementTarget } from "@/lib/libraries/api";
@@ -35,17 +34,13 @@ export default function PlacementOverlay({
 export function PlacementEditor({ targets }: { readonly targets: readonly LibraryPlacementTarget[] }) {
   const view = useLibraryPlacements(targets);
   return <>
-    {view.conflicts.map(conflict => <FeedbackNotice
-      key={conflict.key}
-      content={{ tone: "Warning", title: "replace filed episodes?", message: `${conflict.name} already files episodes from this show. Adding the show replaces those entries; the episodes stay in All.` }}
-      announcement="Assertive"
-      actions={[{ label: "add the show", onClick: conflict.confirm }, { label: "cancel", onClick: conflict.cancel }]}
-    />)}
     <LibraryChooser
+      context={JSON.stringify(targets.map(target => `${target.kind}:${target.id}`).toSorted())}
+      membershipKind="Confirmed"
       rows={view.items}
       onToggle={view.onToggle}
       loading={view.loading}
-      summary={view.summary}
+      summary={targets.length > 1 ? `applies to ${targets.length} items · ${view.summary}` : null}
       status={view.status}
       error={view.error}
       create={{ available: view.creationAvailable, pendingNames: view.pendingNames, onCreate: view.onCreate }}

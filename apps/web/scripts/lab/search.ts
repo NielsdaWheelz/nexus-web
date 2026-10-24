@@ -2,17 +2,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { chromium } from "@playwright/test";
-import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
+import type { components } from "@/lib/api/wire.gen";
+import { browserRequest } from "./browser";
+import { readLabContext } from "./context";
 
-const contextPath = process.env.NEXUS_LAB_CONTEXT;
-if (!contextPath || !isAbsolute(contextPath)) throw new Error("search checks require nexus_lab_context");
-// justify-type-assertion: the disposable runtime owns this private context contract.
-const context = JSON.parse(await readFile(contextPath, "utf8")) as {
-  worktree: string; web_origin: string; browser_state_file: string;
-};
+const context = readLabContext();
 const python = String.raw`import asyncio, json, os, sys
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -198,22 +194,26 @@ async function run(mode: string): Promise<string> {
 }
 // justify-type-assertion: the owned fixture emits exactly these public ids.
 const fixture = JSON.parse(await run("seed")) as { a: string; b: string; left: string; right: string; fragment_id: string };
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
+});
 try {
   const session = await browser.newContext({ storageState: context.browser_state_file });
   const page = await session.newPage();
   await page.goto(context.web_origin, { waitUntil: "domcontentloaded" });
   async function search(scope = "all") {
-    const result = await page.evaluate(async ({ scope, wire }) => {
-      const query = new URLSearchParams({ q: "labneedle", phase: "lexical", view: "resources", scope,
-        kinds: "documents", limit: "50" });
-      const response = await fetch(`/api/search?${query}`, { headers: { "X-Nexus-Wire": String(wire) },
-        signal: AbortSignal.timeout(15_000) });
-      return { status: response.status, body: await response.json() };
-    }, { scope, wire: WIRE_REVISION });
-    assert.equal(result.status, 200, "browser search request failed");
+    const query = new URLSearchParams({ q: "labneedle", phase: "lexical", view: "resources", scope,
+      kinds: "documents", limit: "50" });
+    const response = await browserRequest(page, {
+      web_origin: context.web_origin,
+      path: `/api/search?${query}`,
+      method: "GET",
+      headers: {},
+      body: null,
+    });
+    assert.equal(response.status, 200, "browser search request failed");
     // justify-type-assertion: the search route returns the generated page directly; the BFF preserves its body.
-    const body = result.body as components["schemas"]["SearchResourcesResponse"];
+    const body = JSON.parse(response.body) as components["schemas"]["SearchResourcesResponse"];
     assert.equal(body.phase, "lexical", "browser returned the wrong search phase");
     assert.equal(body.view, "resources", "browser returned the wrong search view");
     assert.ok(Array.isArray(body.results), "browser search page has no results array");

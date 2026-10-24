@@ -36,7 +36,8 @@ manifest.
 `env-prod-backup` contains exactly `R2_BACKUP_S3_API_ORIGIN`,
 `R2_BACKUP_BUCKET`, `R2_BACKUP_ACCESS_KEY_ID`, and
 `R2_BACKUP_SECRET_ACCESS_KEY`. use a separate private bucket and credentials
-scoped to object read/write access in that bucket. these values never enter
+scoped to object read/write access in that bucket; retention lists and deletes
+archives with them. these values never enter
 the three application inputs, vercel settings, api, or workers. the bounded
 backup container receives them only during backup operations.
 the access key id is 32 lowercase hexadecimal characters; its secret is 64.
@@ -75,9 +76,6 @@ memory credential. publishing a changed file, including absence, requires the
 ordinary next release to activate it; no live reload or automatic deployment.
 the first release with this handoff requires config publication even when
 memory stays disabled.
-
-the rollback window to the `7dc68929b` image closed on 2026-10-18; the keys only
-that image read are owed for removal ([release steps](../../docs/issues/release-repair-purge.md)).
 
 for local host processes, `MEMORY_CLIENT_CONFIG_PATH` may name the original
 owner-only file. local interactive compose instead takes
@@ -151,6 +149,6 @@ Before a config-bearing release, prove:
 - R2 bucket policy, browser upload CORS, lifecycle, and scoped credentials are
   current;
 - the backup bucket has neither an enabled `r2.dev` endpoint nor a public custom
-  domain, and its dedicated credentials can read and write objects;
+  domain, and its dedicated credentials can list, read, write and delete objects;
 - paid provider accounts have the capacity implied by enabled feature flags;
 - Vercel and VPS hold the same internal secret without displaying it.

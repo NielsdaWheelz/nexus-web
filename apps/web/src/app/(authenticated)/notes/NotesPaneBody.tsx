@@ -1,16 +1,21 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import { useCallback, useEffect, useId, useMemo, useRef, useSyncExternalStore } from "react";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogNotes } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
+import { useWritingRevision } from "@/lib/api/writingReceive";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
   listRowStatus,
@@ -36,9 +41,12 @@ import { isAbortError } from "@/lib/errors";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
+import { subscribeWriting } from "@/lib/notes/writes";
+import { isDeletedResource } from "@/lib/resourceGraph/links";
 import {
   dailyDateFor,
   fetchNotePages,
+  isDeletingPage,
   type NotePageSummary,
 } from "@/lib/notes/api";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
@@ -46,7 +54,6 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -54,10 +61,8 @@ import {
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { resourceDraftOwnerId, useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { useLatestWorkspace } from "@/lib/workspace/store";
-import { planWorkspaceTarget, type WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import type { WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import {
   definePaneVisitDataKey,
@@ -70,6 +75,7 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<NotePageSummary>>(
   "Notes.Index",
 );
 const UNIT = { singular: "page", plural: "pages" };
+
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
 const VIEW_CODEC = {
   basePath: "/notes",
@@ -92,11 +98,15 @@ export default function NotesPaneBody() {
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
   const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
+  // Writing revisions discover pages other sessions made; Notes, this tab's own.
+  const notesStamp = useChangeStamp("Notes");
+  const writingRevision = useWritingRevision();
+  const catalog = useCatalogRead(value => catalogNotes(value, new URLSearchParams(viewQuery)));
   const list = useServerList<NotePageSummary>({
     key: invalid ? null : `/notes/pages?${viewQuery}`,
-    stale: useChangeStamp("Notes"),
+    stale: `${notesStamp}:${writingRevision}`,
+    catalog,
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (item) => item.id,
@@ -113,7 +123,13 @@ export default function NotesPaneBody() {
     [captureScroll, setDecoded],
   );
 
-  const rows = useMemo(() => list.items.map(presentNote), [list.items]);
+  const pendingDeletes = useSyncExternalStore(subscribeWriting,
+    () => list.items.filter(item => isDeletingPage(item.id)).map(item => item.id).join(" "), () => "");
+  const items = useMemo(() => {
+    const pending = new Set(pendingDeletes.split(" "));
+    return list.items.filter(item => !pending.has(item.id) && !isDeletedResource(`page:${item.id}`));
+  }, [list.items, pendingDeletes]);
+  const rows = useMemo(() => items.map(presentNote), [items]);
   const filterRows = usePaneFilterRows({
     sourceKey: "Notes.Pages",
     getRowStatus: (text) =>
@@ -128,11 +144,21 @@ export default function NotesPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const filtering = query.trim() !== "";
+  const visible = rows.filter((row) => matchesPaneFilterQuery(query, [row.title.text]));
+  const emptyTitle = filtering
+    ? list.complete ? "no pages match this filter." : "no matching page found so far."
+    : list.complete ? "no pages yet." : "no pages loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT, waiting: list.status === "loading" && !invalid,
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
     : list.complete
-      ? { kind: "Count", value: list.items.length, unit: "page" }
+      ? { kind: "Count", value: items.length, unit: "page" }
       : { kind: "Pending" };
   const reset = useCallback(() => {
     clearQuery();
@@ -175,11 +201,8 @@ export default function NotesPaneBody() {
           status={{
             placement: "Inline",
             id: queryStatusId,
-            visible: paneFilterRowsStatusVisible({
-              status: filterRows.rowStatus,
-              filtering: query.trim() !== "",
-            }),
-            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+            visible: false,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
           }}
           onReset={canReset ? reset : undefined}
         />
@@ -189,11 +212,10 @@ export default function NotesPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const title = useResourceDraft("Notes.NewPageTitle", () => "", value => ({ changed: value !== "", unconfirmed: false, stopsBrowserWork: false }));
+  const title = useResourceDraft("Notes.NewPageTitle", () => "");
   const titleInput = useRef<HTMLInputElement>(null);
   const setTitle = title.set;
   useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
-  const workspace = useLatestWorkspace();
   const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
   const openToday = (event: TargetActivationEvent) =>
     activateTargetLink({
@@ -205,13 +227,7 @@ export default function NotesPaneBody() {
       disposition: { kind: fork ? "Fork" : "Follow" },
       ...(title.read() ? { entry: { kind: "ComposePage", title: title.read() } } : {}),
     };
-    const current = workspace();
-    const plan = planWorkspaceTarget(current.state, current.dailyPageByPaneId, request);
-    const destination = current.state.panes.find(pane => pane.id === plan.paneId);
-    const discardOwnerIds = title.read() && destination && (plan.kind === "Unchanged" || plan.kind === "ActivatedExisting")
-      ? [resourceDraftOwnerId(JSON.stringify([destination.current_visit.id, resolvePaneRouteModel(destination.current_visit.href).routeKey]), "Notes.NewPage")]
-      : [];
-    const result = runtime.activateTarget({ ...request, discardOwnerIds });
+    const result = runtime.activateTarget(request);
     if (result.kind !== "Cancelled") title.set("");
     return result;
   };
@@ -226,17 +242,20 @@ export default function NotesPaneBody() {
 
   if (invalid) {
     return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid pages view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: reset }]}
-      />
+      <div>
+        {readFeedback.announcement}
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Invalid pages view" }}
+          announcement="Assertive"
+          actions={[{ label: "Reset view", onClick: reset }]}
+        />
+      </div>
     );
   }
   const failed = list.failure?.op === "More" ? null : list.failure?.error;
   const loadFailure = failed ? (
     <FeedbackNotice
-      content={{
+      content={catalogErrorFeedback(failed) ?? {
         tone: "Danger",
         title: "Notes couldn’t be loaded.",
         requestId: failed.requestId,
@@ -245,14 +264,12 @@ export default function NotesPaneBody() {
       actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
-  const filtering = query.trim() !== "";
   return (
     <div>
+      {readFeedback.announcement}
       <CollectionView
         returnScope="Notes.Pages"
-        rows={rows.filter((row) =>
-          matchesPaneFilterQuery(query, [row.title.text]),
-        )}
+        rows={visible}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Notes"
         rowChangePresentation={{
@@ -260,22 +277,22 @@ export default function NotesPaneBody() {
           key: query.trim(),
         }}
         collectionBusy={list.running !== null || !list.current}
-        notice={list.status === "ready" ? loadFailure : undefined}
+        notice={<>
+          {list.status === "ready" ? loadFailure : null}
+          {filtering && list.current && !list.complete && list.failure === null && visible.length > 0
+            ? <p>filter applies to loaded items.</p> : null}
+        </>}
         error={list.status === "ready" ? undefined : loadFailure}
         empty={
           <FeedbackNotice
             content={{
               tone: "Neutral",
-              title: !filtering
-                ? "No pages yet."
-                : list.complete
-                  ? "No pages match this filter."
-                  : "No matching page found so far.",
+              title: emptyTitle,
             }}
             announcement="None"
           />
         }
-        footer={<CollectionExhaustionNotice list={list} />}
+        footer={readFeedback.notice}
         toolbar={
           <>
             <form
@@ -295,13 +312,9 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page" onClick={submitGesture}>
-                <Plus size={16} aria-hidden="true" />
-              </Button>
+              <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Plus size={16} aria-hidden="true" />} />
             </form>
-            <Button variant="secondary" size="sm" asChild>
-              <a href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</a>
-            </Button>
+            <ButtonLink href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
           </>
         }
       />

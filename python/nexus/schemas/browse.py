@@ -56,11 +56,9 @@ class BrowseQuery(BaseModel):
 
 
 class BrowsePreviewQuery(BaseModel):
-    """``GET /browse/preview`` query parameters; ``cursor`` pages a podcast's episodes."""
+    """``GET /browse/preview`` accepts only one discovery target; unknown keys are refused."""
 
     target: str
-    limit: int = Field(ge=1, le=20)
-    cursor: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -81,7 +79,6 @@ class InNexusPodcastResolution(_Out):
 
 class PreviewResolution(_Out):
     kind: Literal["Preview"] = "Preview"
-    target: DiscoveryTargetHandle
 
 
 type BrowseResolution = Annotated[
@@ -105,9 +102,13 @@ class VideoFacts(_Out):
 
 class PodcastFacts(_Out):
     podcast_ref: str
+    feed_href: str
+    website_href: str | None
 
 
 class _Candidate[Source: BrowseSource](_Out):
+    # Provider identity stays stable when the viewer acquires this candidate.
+    target: DiscoveryTargetHandle
     source: Source
     resolution: BrowseResolution
     title: str
@@ -180,12 +181,6 @@ class VideoPreviewFacts(_Out):
     embed_href: str
 
 
-class PodcastPreviewFacts(_Out):
-    podcast_ref: str
-    feed_href: str
-    website_href: str | None
-
-
 class EpisodePreviewFacts(_Out):
     podcast_ref: str
     episode_ref: str
@@ -204,9 +199,9 @@ class PodcastPreviewEpisode(_Out):
     kind_facts: EpisodePreviewFacts
 
 
-class PodcastPreviewEpisodePage(_Out):
+class PodcastPreviewEpisodes(_Out):
     items: list[PodcastPreviewEpisode]
-    next_cursor: str | None
+    source_limit: Literal[1000]
 
 
 class _Preview(_Out):
@@ -241,8 +236,8 @@ class VideoPreview(_Preview):
 class PodcastPreview(_Preview):
     kind: Literal["Podcast"] = "Podcast"
     source: Literal[BrowseSource.PodcastIndex] = BrowseSource.PodcastIndex
-    kind_facts: PodcastPreviewFacts
-    episodes: PodcastPreviewEpisodePage
+    kind_facts: PodcastFacts
+    episodes: PodcastPreviewEpisodes
 
 
 class EpisodePreview(_Preview):

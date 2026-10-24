@@ -72,15 +72,16 @@ export function MapRail({
   const groups = [
     ...lane(
       "structure",
-      (doc.kind === "text" ? doc.sections : []).map((section) => {
+      (doc.kind === "text" ? doc.sections : []).flatMap((section) => {
+        if (section.at === null) return [];
         const point = { kind: "text" as const, ...section.at };
-        return {
+        return [{
           id: `section:${section.id}`,
           position: structure.fraction(point),
           kind: "contents",
           label: section.label,
           target: { kind: "point" as const, point },
-        };
+        }];
       }),
     ),
     ...lane(

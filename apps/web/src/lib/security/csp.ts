@@ -1,7 +1,6 @@
 // the per-request content security policies, built by middleware.ts (the
 // static header suite is ./headers.ts). runtime-agnostic: web crypto and btoa
-// only, so it runs on the edge. dossier articles render in the app document
-// (a shadow root): never add 'unsafe-inline' without a nonce, or
+// only, so it runs on the edge. never add 'unsafe-inline' without a nonce, or
 // 'unsafe-hashes', to script-src.
 import { YOUTUBE_EMBED_ORIGINS } from "./youtube";
 
@@ -62,11 +61,11 @@ function serialize(
   return policy.join("; ");
 }
 
-// connect: the presigned storage origin (the api is reached only through the
-// bff).
+// the validated storage origins serve presigned fetches and media; the api is
+// reached only through the bff.
 export const appCsp = (
   request: PolicyRequest & { readonly connect: readonly string[] },
-) => serialize(APP, request, { "connect-src": request.connect });
+) => serialize(APP, request, { "connect-src": request.connect, "media-src": request.connect });
 
 export const publicReaderCsp = (request: PolicyRequest) =>
   serialize(PUBLIC_READER, request);

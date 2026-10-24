@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas import podcast as wire
-from nexus.services import library_entries
+from nexus.services import libraries, library_entries, users
 from nexus.services.browse.targets import ResolvedEpisode
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
+from . import imports
 from .feed import EpisodeFacts
 from .ingest import aliases_of, identity_conflict, ingest_episodes, lock_aliases
 from .provider import PROVIDER
@@ -23,7 +24,8 @@ def acquire_episode(
     db: Session, viewer_id: UUID, body: wire.PodcastEpisodeFromDiscoveryRequest
 ) -> wire.PodcastEpisodeFromDiscoveryOut:
     """Upsert the show and the episode, file the episode in All and the named libraries.
-    A repeat finds the same media and reports its destinations AlreadyPresent."""
+    Retry rule: identity deduplicates catalog rows; every fresh admission validates
+    its frozen removal/destination guards. There is no receipt to bypass stale guards."""
     from nexus.services.browse.service import resolve_podcast_discovery_target  # imports us
 
     resolved = resolve_podcast_discovery_target(body.target)  # provider i/o, no txn
@@ -43,9 +45,11 @@ def acquire_episode(
     show = resolved.podcast
 
     def attempt() -> wire.PodcastEpisodeFromDiscoveryOut:
+        users.lock_viewer(db, viewer_id)
         # The alias locks precede the show row lock, as for every episode writer.
         lock_aliases(db, f"{PROVIDER}:{show.podcast_ref}", aliases_of(episode))
         podcast_id = upsert_show(db, show)
+        db.execute(text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
         result = ingest_episodes(
             db,
             viewer_id=viewer_id,
@@ -56,23 +60,51 @@ def acquire_episode(
         media_id = result.media_ids[0]
         if media_id is None:
             raise identity_conflict()
-        outcomes = {}
-        for library_id in dict.fromkeys(body.named_library_ids):
-            if library_entries.entry_exists(
-                db, library_id, library_entries.podcast_target(podcast_id)
-            ):
-                outcomes[library_id] = "IncludedThroughPodcast"
-            elif library_entries.entry_exists(
-                db, library_id, library_entries.media_target(media_id)
-            ):
-                outcomes[library_id] = "AlreadyPresent"
-            else:
-                outcomes[library_id] = "Added"
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media_id, body.named_library_ids
+        rule_libraries = list(
+            db.scalars(
+                text("SELECT library_id FROM library_podcast_subscriptions WHERE podcast_id=:id"),
+                {"id": podcast_id},
+            )
         )
-        db.flush()
-        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+        libraries.lock_library_rows_in_order(
+            db,
+            [
+                libraries.default_library_id(db, viewer_id),
+                *[guard.library_id for guard in body.destinations],
+                *rule_libraries,
+            ],
+        )
+        destinations = library_entries.validate_acquisition_destinations(
+            db,
+            viewer_id=viewer_id,
+            expected_removal_revision=int(body.expected_removal_revision),
+            destinations=body.destinations,
+        )
+        outcomes = {}
+        for library_id in destinations:
+            outcomes[library_id] = (
+                "AlreadyPresent"
+                if library_entries.entry_exists(
+                    db, library_id, library_entries.media_target(media_id)
+                )
+                else "Added"
+            )
+        imports.publish_episodes(
+            db,
+            podcast_id=podcast_id,
+            media_ids=[media_id],
+            new_media_ids=result.inserted_media_ids,
+            import_id=None,
+        )
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media_id, destinations
+        )
+        library_entries.finish_acquisition_destinations(db, destinations=body.destinations)
+        shared_viewers = db.scalars(
+            text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+            {"ids": destinations},
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer_id, *shared_viewers])
         record_input_change(db, owners=(f"media:{media_id}",))
         return wire.PodcastEpisodeFromDiscoveryOut(
             href=f"/media/{media_id}",

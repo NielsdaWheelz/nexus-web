@@ -6,6 +6,7 @@
 
 import { useId, useState } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -17,31 +18,39 @@ import {
   type ViewerInvitation,
 } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { installedApp, remoteReady } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryInvitations.module.css";
 
 const VISIT = definePaneVisitDataKey<ListSnapshot<ViewerInvitation>>("Libraries.Invitations");
 
-export default function LibraryInvitations() {
+export default function LibraryInvitations({ returnFocus }: {
+  readonly returnFocus: () => HTMLElement | null;
+}) {
   const headingId = useId();
+  const admission = useRemoteAdmission();
   const fail = useThrowLater();
   const [answered, setAnswered] = useState(0);
   const list = useServerList<ViewerInvitation>({
     key: "invitations",
     stale: `${useChangeStamp("Libraries")}:${answered}`,
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (invitation) => invitation.id,
     fetchPage: viewerInvitationsPage,
+  });
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null, returnFocus,
   });
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
 
   const answer = async (id: string, accept: boolean) => {
+    if (installedApp && !remoteReady()) return;
     setBusy(id);
     try {
       await respondToInvitation(id, accept);
@@ -56,15 +65,19 @@ export default function LibraryInvitations() {
     }
   };
 
+  if (installedApp && admission !== "Ready") return <FeedbackNotice announcement="Polite" content={{
+    tone: "Neutral", title: "library invitations require a connection",
+  }} />;
+
   const failure =
-    list.failure &&
+    list.failure && list.failure.op !== "More" &&
     (libraryErrorFeedback(list.failure.error, "Library invitations couldn’t be loaded", throwDefect) ?? {
       tone: "Danger",
       title: "Library invitations couldn’t be loaded",
     });
-  if (list.items.length === 0 && feedback === null && !failure) return null;
-  return (
-    <section className={styles.inbox} aria-labelledby={headingId}>
+  const shown = list.items.length > 0 || feedback !== null || Boolean(failure);
+  return <>
+    {shown ? <section className={styles.inbox} aria-labelledby={headingId}>
       <div>
         <h2 id={headingId}>Library invitations</h2>
         <p>Accept to add the library here, or decline the invitation.</p>
@@ -92,17 +105,15 @@ export default function LibraryInvitations() {
                 <>
                   <span>Decline this invitation?</span>
                   <Button
-                    variant="danger"
-                    size="sm"
-                    loading={busy === invitation.id}
+                    emphasis="strong" tone="danger"
+                    aria-label={`Decline invitation to ${invitation.library_name}`}
                     disabled={busy !== null}
                     onClick={() => void answer(invitation.id, false)}
+                    aria-busy={busy === invitation.id}
                   >
                     Decline
                   </Button>
                   <Button
-                    variant="ghost"
-                    size="sm"
                     disabled={busy !== null}
                     onClick={() => setDeclining(null)}
                   >
@@ -112,17 +123,14 @@ export default function LibraryInvitations() {
               ) : (
                 <>
                   <Button
-                    variant="primary"
-                    size="sm"
-                    loading={busy === invitation.id}
+                    emphasis="strong"
                     disabled={busy !== null}
                     onClick={() => void answer(invitation.id, true)}
+                    aria-busy={busy === invitation.id}
                   >
                     Accept
                   </Button>
                   <Button
-                    variant="ghost"
-                    size="sm"
                     disabled={busy !== null}
                     onClick={() => setDeclining(invitation.id)}
                   >
@@ -134,6 +142,8 @@ export default function LibraryInvitations() {
           </div>
         ))}
       </div>
-    </section>
-  );
+    </section> : null}
+    {readFeedback.notice}
+    {readFeedback.announcement}
+  </>;
 }

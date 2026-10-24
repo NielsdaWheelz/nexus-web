@@ -1,6 +1,10 @@
+.frame {
+  display: contents;
+}
+
 .header {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--space-3);
   block-size: var(--pane-chrome-header-height);
@@ -14,44 +18,11 @@
 .navigation {
   display: inline-flex;
   align-items: center;
-  inline-size: 64px;
+  min-inline-size: 64px;
 }
 
 .navigationButton {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  transition:
-    background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
-}
-
-.navigationButton:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.navigationButton:active:not(:disabled) {
-  background: var(--surface-active);
-}
-
-.navigationButton:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: calc(-1 * var(--focus-ring-offset));
-}
-
-.navigationButton:disabled {
-  color: var(--ink-faint);
-  cursor: default;
-  opacity: 0.55;
+  flex: 0 0 auto;
 }
 
 .identity {
@@ -67,6 +38,11 @@
   gap: var(--space-2);
 }
 
+.overflow {
+  position: relative;
+  display: inline-flex;
+}
+
 .statusMarker {
   position: absolute;
   inset-block-start: var(--space-1);
@@ -78,22 +54,9 @@
   pointer-events: none;
 }
 
-/* This header owns both axes through Button's existing density contract. */
-.trailing .companion {
-  --pane-control-size: var(--size-md);
-}
-
-@media (any-pointer: coarse) {
-  .trailing .companion {
-    --pane-control-size: var(--size-xl);
-  }
-}
-
-/* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
-.trailing .pressed,
-.trailing .pressed:hover:not(:disabled) {
-  background: var(--surface-active);
-  color: var(--ink);
+.headerButton {
+  --control-min-size: var(--size-md);
+  flex: 0 0 auto;
 }
 
 @container primaryPane (max-width: 479px) {
@@ -104,6 +67,10 @@
 
   .trailing {
     gap: var(--space-1);
+  }
+
+  .header :global([data-resource-actions]) {
+    display: none;
   }
 }
 
@@ -191,17 +158,22 @@
   );
 }
 
-/* Mobile: the fixed top bar. Reader controls overlay the page; visibility
-   never changes its geometry (the authenticated layout reserves its height). */
-.mobile {
-  --mobile-chrome-offset: calc(-1 * var(--space-2));
+/* The transparent frame retains measured geometry while its header retreats. */
+.mobileFrame {
   position: fixed;
   inset: 0 0 auto;
   z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.mobile {
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
+  position: relative;
+  pointer-events: auto;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
+  min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
   padding: var(--viewport-safe-top) max(var(--space-2), var(--viewport-safe-right)) 0
     max(var(--space-2), var(--viewport-safe-left));
   background: var(--surface-2);
@@ -219,21 +191,21 @@
   align-self: stretch;
 }
 
-/* 48px targets; the desktop button's states otherwise. */
-.mobile .navigationButton {
-  position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-md);
+/* The shared control keeps desktop paint and a 48px mobile target. */
+.mobile {
+  --control-min-size: 48px;
 }
 
-.mobile .navigationButton:disabled {
-  opacity: 0.5;
-}
-
+.mobile .headerButton,
 .mobileOverflow {
-  min-inline-size: 48px;
-  min-block-size: 48px;
+  --control-min-size: 48px;
+}
+
+.workspaceAction {
+  display: flex;
+  flex: 0 0 48px;
+  inline-size: 48px;
+  justify-content: center;
 }
 
 .mobile .statusMarker {
@@ -242,6 +214,11 @@
   inline-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
   block-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
   border: var(--stroke-hairline) solid var(--surface-2);
+}
+
+/* The shared button is relative; hidden recovery must stay outside pane flow. */
+.readerChromeToggle:not(:focus-visible) {
+  position: absolute;
 }
 
 .readerChromeToggle:focus-visible {
@@ -275,30 +252,13 @@
     background: Canvas;
   }
 
-  .navigationButton {
-    color: ButtonText;
-  }
-
-  .navigationButton:disabled {
-    color: GrayText;
-  }
-
   .mobile .statusMarker {
     border-color: Canvas;
   }
+}
 
-  .navigationButton:focus-visible {
-    outline-color: Highlight;
-  }
-
-  .trailing .pressed,
-  .trailing .pressed:hover:not(:disabled) {
-    background: Highlight;
-    color: HighlightText;
-    forced-color-adjust: none;
-  }
-
-  .trailing .pressed:focus-visible {
-    outline-color: Highlight;
+@media (max-width: 479px) {
+  .mobile :global([data-resource-actions]) {
+    display: none;
   }
 }

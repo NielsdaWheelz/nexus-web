@@ -34,7 +34,7 @@ from nexus.schemas.library_members import (
     SetMemberRoleRequest,
     ViewerInvitationOut,
 )
-from nexus.services import libraries
+from nexus.services import libraries, resource_grants
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
@@ -130,7 +130,8 @@ def set_member_role(
         )
         if body.role == "member":
             delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
-        record_input_change(db, owners=[f"library:{library_id}"])
+        projection.refresh_viewer_contributors(db, [user_id])
+        record_input_change(db, owners=(f"library:{library_id}",))
 
     retry_serializable(db, "set_member_role", attempt)
 
@@ -138,7 +139,6 @@ def set_member_role(
 def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID) -> None:
     """An admin removes a member, or a member leaves (`user_id` is the viewer); the
     owner transfers first. Already gone, or a library the viewer cannot see: success."""
-    from nexus.services.dossier.engine import on_visibility_lost
 
     def attempt() -> None:
         try:
@@ -150,6 +150,7 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
             library.require_admin()
         if user_id == library.owner_user_id:
             raise ForbiddenError(ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, "Transfer ownership first")
+        projections = resource_grants.library_annotation_visibility(db, library_id)
         removed = db.scalar(
             text("""
                 DELETE FROM memberships WHERE library_id = :library_id AND user_id = :user_id
@@ -158,9 +159,10 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
             {"library_id": library_id, "user_id": user_id},
         )
         if removed is not None:
-            on_visibility_lost(db, user_id=user_id)
             delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
-            record_input_change(db, owners=[f"library:{library_id}"])
+            resource_grants.invalidate_annotation_visibility(db, projections)
+            projection.refresh_viewer_contributors(db, [user_id])
+            record_input_change(db, owners=(f"library:{library_id}",))
 
     retry_serializable(db, "remove_member", attempt)
 
@@ -194,7 +196,8 @@ def transfer_ownership(db: Session, viewer_id: UUID, library_id: UUID, user_id: 
             """),
             params,
         )
-        record_input_change(db, owners=[f"library:{library_id}"])
+        projection.refresh(db, "library", [library_id])
+        record_input_change(db, owners=(f"library:{library_id}",))
 
     retry_serializable(db, "transfer_ownership", attempt)
 
@@ -345,8 +348,11 @@ def respond_to_invitation(
                 """),
                 {"library_id": row.library_id, "viewer_id": viewer_id, "role": row.role},
             )
+            resource_grants.invalidate_annotation_visibility(
+                db, resource_grants.library_annotation_visibility(db, row.library_id)
+            )
             projection.refresh_viewer_contributors(db, [viewer_id])
-            record_input_change(db, owners=[f"library:{row.library_id}"])
+            record_input_change(db, owners=(f"library:{row.library_id}",))
 
     retry_serializable(db, "respond_to_invitation", attempt)
 

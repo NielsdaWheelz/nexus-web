@@ -3,6 +3,8 @@
 // One account's synchronous loss decision. Owners retain their own input and
 // requests; this registry reads their current risks and never stores either.
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
+import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { hasUnsettledWriting } from "@/lib/notes/writes";
 
 export type WorkRisk = Readonly<{
   changed: boolean;
@@ -24,6 +26,7 @@ export interface WorkGuard {
   register(owner: WorkOwner): () => void;
   confirmLoss(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): boolean;
   confirmDocumentExit(): boolean;
+  hasWork(): boolean;
 }
 
 function matches(scope: WorkScope, owner: WorkScope): boolean {
@@ -67,11 +70,12 @@ function createWorkRegistry() {
       refresh();
       return;
     }
-    if (!risky(risk(() => true))) return;
+    if (securityTeardownStarted() || !risky(risk(() => true))) return;
     event.preventDefault();
     event.returnValue = "";
   }
   const confirm = (value: WorkRisk): boolean => {
+    if (securityTeardownStarted()) return true;
     if (!active) return false;
     if (!risky(value)) return true;
     return window.confirm([
@@ -99,6 +103,7 @@ function createWorkRegistry() {
     confirmLoss: ({ scopes, ownerIds }) => confirm(risk(owner =>
       ownerIds.includes(owner.id) || scopes.some(scope => matches(scope, owner.scope)))),
     confirmDocumentExit: () => confirm(risk(() => true)),
+    hasWork: () => risky(risk(() => true)),
   };
   const restore = () => {
     signingOut = null;
@@ -166,4 +171,9 @@ export function useGuardedSignOut() {
   const registry = useContext(WorkContext);
   if (!registry) throw new Error("useGuardedSignOut requires WorkProvider");
   return registry.signOut;
+}
+
+/** Automatic exits also retain admitted explicit writing, without adding a user-exit warning. */
+export function reloadStrandsWriting(guard: WorkGuard): boolean {
+  return guard.hasWork() || hasUnsettledWriting();
 }

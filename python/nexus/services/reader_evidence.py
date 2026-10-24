@@ -230,7 +230,6 @@ def build_reader_evidence(
             root.resolution is None
             and root.authored_placement is None
             and connection.origin == "user"
-            and connection.link_note is None
             and not connection.other.missing
             and capability(assert_resource_ref(ref).scheme).link_mode == "direct"
         ):

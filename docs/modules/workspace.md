@@ -163,13 +163,25 @@ Mobile mode:
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
 
-desktop maximize is one page-lifetime `WorkspaceHost` flag. it follows the
-active pane, including close/minimize successors, and resets on reload. mobile
-suspends its projection and desktop resumes it. the active wrapper fills the
+desktop maximize is transient `Data.desktopMaximized` in the workspace store,
+outside persisted `WorkspaceState`. it follows the active pane, including
+close/minimize successors. host remounts preserve it; reload and account
+replacement reset it. mobile suspends its projection and desktop resumes it;
+mobile title activation does not clear the dormant flag. the active wrapper fills the
 canvas; siblings stay mounted, hidden and inert. the runtime receives effective
 visibility, while stored visibility, widths, visits and history stay unchanged.
 maximized primary resize is absent; error, loading and unsupported panes keep
 the same full-width host geometry.
+
+`maximizePane(id)` and `restoreCanvas(id)` resolve the live target, select and
+unminimize it through ordinary activation, and atomically publish the requested
+mode with that selection. both return the committed `WorkspaceSelection`; a
+missing target returns null without effects. an already selected, visible target
+in the requested mode does not publish again. mode-only changes preserve
+`state` identity and schedule no cloud or native save. these management commands
+request no content focus, history entry or loss decision. title activation keeps
+the current mode. the host owns effective visibility, inertness and geometry;
+[panes and tabs](panes-tabs.md) owns controls and focus.
 
 The workspace store is the sole owner of sequential traversal. It follows
 stored-visible panes in strip order, clamps at the first and last pane,
@@ -286,7 +298,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, primaryAction, query, menuActions,
+`usePaneChrome` (`{ header, navigation, primaryAction, resourceActions, query, menuActions,
 resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -332,8 +344,10 @@ focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
-submit, followed by operation actions, inline options disclosure and native
-sort and reset. optional status declares `Inline` or `Details` placement; inline
+submit, followed by operation actions, inline options disclosure, native
+sort/reset and optional trailing actions. options may use the shared icon-only
+contract; their accessible name retains the active-option count. optional status
+declares `Inline` or `Details` placement; inline
 feedback shares the actions group. applied text, chips and details status share
 one compact summary; errors and expanded options remain in its single bounded
 refinement region, capped by the shell. mounted options retain their drafts.
@@ -354,21 +368,31 @@ supplied status requires `{ placement, id, content, visible }`. omit status for
 idle find. visibility changes only the
 wrapper's sighted presentation (`sr-only` when false); the described element
 and domain-owned live subtree stay mounted. local-filter publishers use fixed
-inline placement and `paneFilterRowsStatusVisible({ status, filtering })`:
-complete counts appear only for trimmed text or narrowing facets; partial,
-retained and failed status remains explicit. sorting, reset eligibility and
-independent header counts do not imply filtering. local reset appears only for
-changed facets/order and clears text plus those settings; text-only views use
-clear/escape. ordering feedback is independent of count visibility. totals cover
-the current server scope before local text filtering, never an inferred global
-collection. outline counts cover top-level items and preserve their branches;
-failed outlines publish failed status, and definitive no-match requires ready.
-browse, search and imports retain their own status policy. empty details have zero
+inline placement with `visible: false`: full scope descriptions remain attached
+to the input, while routine loading/count text has no chrome footprint. local
+query changes speak after 400ms only with a usable source in the active pane;
+imports server queries disable that narrator. the first-read feedback owner
+speaks its own initial outcome once. no narrator speaks automatic page arrivals.
+sorting, reset eligibility and independent header counts do not imply filtering.
+local reset appears only for changed facets/order and clears text plus those
+settings; text-only views use clear/escape. header totals retain their existing
+exact/domain meaning. unfinished local filters use provisional empty copy and,
+when matches exist, explain “filter applies to loaded items.” at the results
+boundary. outline filters name loaded top-level items and retain explicit show
+more; failures and complete empty results stay distinct. browse/search keep
+explicit query waiting, failures and ordering descriptions, without rolling
+counts or automatic-pagination completion summaries. empty details have zero
 visual height and no tab stop; a suppressed status keeps its live subtree
 mounted and accessible. empty details without that subtree are hidden. capture
 focus ownership before hiding; repair to the enabled input before paint, or
 existing pane chrome/landmark if the input is disabled. retain focus already
 transferred outside.
+
+`usePaneFilterRows` captures its committed source and query in the existing
+per-visit memento. pane back/forward restores that query before list and scroll
+restoration; a fresh visit starts empty, and a query applies only to its captured
+source. this memory lasts only while the visit remains reachable and never
+enters browser storage.
 
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
@@ -378,8 +402,16 @@ interaction overlays win and unsupported/resolving panes retain native find.
 menu commands focus the permanent desktop field. source identity is
 `paneSourceKey(runtime)` (`visitId:routeId:pathname`), excluding query/hash.
 
-`usePaneFilterRows` owns source-local text and honest complete/partial/retained/
-failed status for local rows. `useFind({ownerKey, source, presentation?})` owns
+`usePaneFilterRows` owns source-local text and honest complete/partial/failed
+status for local rows. shared lists expose only current-key rows and metadata;
+same-key refresh retains usable data. `useCollectionReadFeedback` owns only
+continuation failure recovery and a single outcome after an announced active
+initial wait, bound to `list.requestedKey` so restoring another ready query
+retires the abandoned wait. its notice is literal null when quiet; mount its persistent live
+node outside optional footer/state wrappers so hidden speech creates no gap.
+initial/refresh errors remain with their feature owner. inactive/abandoned waits
+retire without replay; restored-ready mounts and passive traversal stay silent.
+`useFind({ownerKey, source, presentation?})` owns
 find lifetime, frozen first-query scope, computation, movement and painting.
 return aborts movement while pending computation settles at the restored origin;
 new query/options/retry allow automatic navigation again. the shell
@@ -387,7 +419,11 @@ retires only its disclosure/results; ordinary clear preserves find preferences
 and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar: idle is silent, complete counts are compact, and partial/failure
-details stay explicit. one persistent status region supplies full descriptions.
+details stay explicit. navigation/retry precede icon-only find options, followed
+by icon-only results, optional return and mobile close. applied-option chips
+remain visible. options uses sliders; the results trigger and companion tab use
+the same text-search glyph. results opens its existing column/sheet and never
+toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
 keyboard details are specified in the pane controls plan (#578, revised by #628);
@@ -397,8 +433,9 @@ current toolbar presentation is specified in the query toolbar plan (#628);
 its verification records browser and dom
 evidence, including native page/text zoom, with no spoken assistive-technology claim.
 
-A resource pane publishes only its canonical `resourceRef`
-(`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
+a resource pane publishes its canonical `resourceRef`
+(`CanonicalResourceRef`) and explicit inline `resourceActions` subject.
+`PaneShell` composes its pane commands and the body's
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
@@ -407,21 +444,27 @@ so the pane menu includes `Open`. Pane bodies never build resource action
 arrays. Both header projections render inside the pane, so a menu defect breaks
 only that pane.
 
+podcast discovery headers additionally publish their current explicit podcast
+subject through `resourceActions`; their immediate menu shares the shortcut
+projectors. canonical headers retain prepared resource menus. `resourceActions`
+also carries media subjects; it replaces the former media-only chrome slot.
+the host owns compact promotion and original-control/more/pane focus recovery.
+
 A delete settles panes after the command succeeds: the active pane on the
 deleted ref adopts its collection and other panes on it close; they are not
 offered in recently closed, which holds closes only. A failed or lost
 response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
-`primaryAction` is one existing link or command descriptor. the shared shell
-renders its full label in the controls band below identity, after reader navigation
-and before query controls at every width. it stays outside query-specific keyed
-or hidden subtrees; narrow controls wrap. the mobile bar does not duplicate it.
-chats publish `new chat`, libraries `new library`, an individual library its
-existing `add content`, and podcasts `browse`. promoted existing commands remain
-in More; `Libraries.Create` exists only as the principal task, independent of
-list loading, filtering and invalid views. native anchors retain modified-click
-behavior; commands receive their actual invoking button.
+`primaryAction` is one link or command descriptor with a required decorative
+icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
+ghost button or native anchor, accessible name, tooltip, projected state and
+disabled explanation. chats publish `new chat`, libraries `new library`, an
+individual library `add content`, and podcasts `browse podcasts`, each with a
+20px plus. existing menu entries reuse those descriptors; `Libraries.Create`
+exists only as the primary action, independent of list loading, filtering and
+invalid views. native anchors retain modified-click behavior; commands receive
+their actual invoking button. query controls contain no primary action.
 
 libraries creation is a pane-owned dialog. its immutable id/name survives
 uncertainty in visit memory; close relinquishes automatic opening without
@@ -430,10 +473,14 @@ later completion offers explicit open. pane back restores filter/sort/position.
 `usePaneVisitDataWriter` records or clears the attempt synchronously against the
 latest committed visit key before navigation can unmount the body.
 
-Desktop and mobile primary headers keep stable Back and Forward positions,
-render exactly one **More** trigger when contextual commands exist, followed by
-the optional typed companion action. the principal task belongs in the controls
-band below this identity bar. Search/Return, Refresh, route Share,
+desktop and mobile headers order back/forward, identity, optional primary action,
+the shared media action group when published,
+optional passive subscription status, exactly one more trigger when contextual
+commands exist, and the optional typed companion action. identity yields width;
+controls retain whole targets. at primary-pane widths up to 479px, media shortcuts
+move into the existing more menu; history, identity, more and inspector stay in
+one line. the fixed mobile header uses the same viewport threshold outside the
+desktop containment boundary. search/return, refresh, route share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -442,19 +489,28 @@ Owner separation never creates a second trigger.
 the overflow control uses `OverflowMenuButton`: 32px desktop, at least 44px with a
 coarse pointer, and 48px in the mobile bar. its glyph and open/disabled/focus
 paint belong to the [visual system](visual-system.md#overflow-buttons).
-headers own only placement and the decorative status marker. the menu retains
-its existing commands, composition, refs and focus policy.
+for overflow, headers own only placement and the decorative status marker. the
+menu retains its existing commands, composition, refs and focus policy.
 
-Every primary identity projection uses one 60px track. The mobile safe area is
-additive.
+every primary header starts with `--pane-chrome-header-height`; compact media
+commands move into overflow instead of adding an action row. desktop, coarse-pointer
+and mobile controls retain 32px, 44px and 48px shared-control targets. mobile
+headers can grow naturally. the viewport owner measures their stationary frames
+and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
+publishes their shown envelope in each content surface. routes reserve no extra
+media action row. hidden reader chrome follows the measured overlay contract,
+not a permanent header reservation. refinement-room measurement consumes that
+result. the content row explicitly occupies grid row two, the declared fill row,
+so loading content cannot determine scrollport height. reader composition is
+selected from the active route before publication loading; mounting a reader
+does not change layout.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
 state. both headers render its decorative 20px glyph with the stable accessible
-name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
-local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
-mobile keeps its 48px bar button. its open state is visually distinct and
+name `Inspector`. both projections use the shared icon-only ghost `Button` and
+header density. its open state is visually distinct and
 announced through `aria-expanded`; `aria-controls` names the mounted region
 while open. the shared text-only `Tooltip` shows the projected
 `Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard
@@ -493,6 +549,9 @@ flip moves focus only when the focused element went away (focus on the body):
 a focused editor, find, filter or collection input keeps focus and the soft
 keyboard. an active interaction owner retains focus when one of its commands
 changes the workspace selection.
+removed shortcut recovery runs before the host's generic breakpoint fallback,
+so a surviving more control keeps focus. the host rechecks for lost focus before
+choosing the pane landmark.
 
 pointer or focus entry physically inside a visible pane synchronizes active
 ownership from the live store, preserving the reached control and suppressing
@@ -504,7 +563,7 @@ focus. strip management retains strip focus; its contract lives in
 ### mobile reader chrome
 
 `lib/mobileShell/chrome.tsx` owns one visibility target for the hosted reader's
-top bar, active pane controls and nexus button. `useMobileChromeSurface` registers
+top bar, active pane controls, player footer and nexus button. `useMobileChromeSurface` registers
 those roots; the controller alone writes `inert`,
 `data-mobile-chrome-visibility` (`Shown`/`Hidden`) and
 `data-mobile-chrome-motion` (`Animated`/`Instant`). `lib/mobileShell/chrome.css`
@@ -512,11 +571,26 @@ owns interpolation: `--duration-base`, `--ease-snap`, an 8px retreat and opacity
 each surface supplies its travel direction. hiding makes the
 roots inert immediately and defers `visibility:hidden` until the fade ends;
 showing restores interactivity immediately. reversal starts at the current
-visual values. reduced motion and command focus reveal instantly. content
-geometry, padding, scroll offsets and the nexus bottom wrapper stay fixed.
+visual values. reduced motion and command focus reveal instantly. the hosted mobile reader uses a stable canvas inside platform protection. header,
+controls, player and nexus occupy overlays; hiding removes their paint and input
+without changing document extent or position. stationary frames supply shown
+geometry independently of animated visibility. ordinary panes retain their flow
+composition. the player registers its moving inner footer and stable outer frame
+through every runtime state and reader retreat.
+chrome alone owns the footer's inertness; local keyboard/sheet suppression owns
+the outer slot. desktop anchored player pickers leave the footer interactive.
+the player drawer uses the shared sheet's native handle button; playback and
+chapters are mutually exclusive inline regions inside its existing body.
+`MobileSheet` accepts either `handleLabel` or `renderHeader`, never both.
+its captured header drag uses sticky 8px tap slop and a 96px downward dismissal
+threshold. moved/cancelled gestures suppress only their own click; every exit
+uses the same dismissal guard. default title/close and custom headers retain
+their existing behavior.
 
 the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
-media pane binds `registerReaderScrollport`. the newest mobile registration
+media pane composes chrome and viewport `registerReaderScrollport` capabilities.
+the viewport registry gates local reader geometry by the active route-owned
+`data-reader-composition` marker, including breakpoint and active-pane changes. the newest mobile registration
 accepts taps; desktop has no driver. fresh reader entry, tab return and viewport
 breakpoint changes start shown. scrolling, reflow and same-mounted reader
 navigation preserve the target. a new chrome surface inherits it immediately.
@@ -525,7 +599,10 @@ reader disposal restores the surrounding shell.
 `readerTap.ts` admits a trusted, primary, unmodified completed pointer sequence
 and its native click, within 8 css px. selection and overlay ownership are
 sampled before light-dismiss; interactive targets and consumed clicks retain
-their actions. semantic handlers finish before the toggle decision. browser
+their actions. reader-owned focusable reading surfaces mark
+`data-reader-input-boundary`; the bounded interactive-target check still excludes
+their links and controls. pdf text layers retain native keyboard focus.
+semantic handlers finish before the toggle decision. browser
 momentum-stop suppression, pan, pinch and context menus produce no toggle.
 completed presses await their own pointer's native click, even when later
 presses arrive first. cancellation retires only its pointer; unmatched numeric
@@ -606,8 +683,7 @@ them over whatever the durable Companion was doing; picking a durable tab ends
 them and selects that tab; ✕, closing Find or leaving the source end them and
 the durable presentation returns as it was. Their width is the durable
 record's when one exists. in sheet presentation a successful preview hides it while
-the results live on. A pane whose body publishes no Companion (an artifact)
-shows its results with a solo title and no tablist.
+the results live on. A pane whose body publishes no Companion shows its results with a solo title and no tablist.
 
 The region id is `paneSecondaryRegionId(paneId)` (`pane-<id>-companion`) for
 both groups; the Inspector's disclosure names it only while it is open.
@@ -623,19 +699,20 @@ external opener; demotion retains inspector focus on the same connected control,
 else its selected tab. a hidden pane and another interaction owner take precedence
 over these repairs.
 
-Standalone Artifact panes publish pane find and no Companion. The dossier
-article renders into an open shadow root of the app document, so find is the
-plain DOM case over that article (citation buttons excluded), keyed on the
-revision ref.
-
 ## Browse And Preview Panes
 
 Browse is a standard section pane at `/browse`; Preview is a standard resource
 pane at `/browse/preview`. Both use `PaneShell` as their vertical scroll owner.
 The Browse visit identity is the exact normalized `q`, `kind`, `source`, and
-`sort` query. Its route-owned memento captures the committed section pages and
-cursors together with focus and scroll, so Back restores the accepted snapshot
-without refanning provider requests.
+`sort` query. each kind/source section uses the shared server list with its own
+stable pane-visit key. external candidate identity is its top-level sealed target,
+which survives resolution into an owned resource; nexus candidates use their
+resource identity. accepted pages publish immediately, then continue in
+source order while the pane is active and the document visible. one provider
+failure stops only its section and retains its rows. the parent aggregates loaded
+counts and section status. its route-owned memento captures committed pages and
+cursors with focus and scroll, so back restores the accepted snapshot; unfinished
+sections resume when eligible.
 
 Preview identity is its sealed discovery target. It re-resolves provider truth,
 publishes a matching-visit title hint and a source credit plus an
@@ -647,7 +724,7 @@ owned pane after any eligible one-shot position transfer; failure leaves Preview
 and its staged destination choices intact.
 
 browse publishes its submitted query and inline facets as stationary query controls. its form
-retains draft/commit semantics; the body owns requests and section continuation.
+retains draft/commit semantics; the shared list owns section continuation.
 preview keeps its resource controls and publishes no query capability.
 
 ## Target Activation
@@ -662,11 +739,11 @@ pane creation directly.
 - `Fork`: always create and activate a fresh pane immediately after the origin.
 
 ordinary destination opening uses `Follow`; shifted activation uses `Fork`.
-explicit open-in-new-tab commands also use `Fork`. materialising an already
+explicit open-in-new-pane actions also use `Fork`. materialising an already
 placed provisional view replaces that view without another opening.
 acquisition uses `originHistory: "replace"` for its already-placed preview:
 only a `NavigatedOrigin` landing replaces the origin visit instead of pushing.
-matching existing panes and `Fork` keep their normal history. an offered result
+matching existing panes retain their navigation history; `Fork` starts independently. an offered result
 is a fresh opening and never inherits this replacement request.
 
 identity is resource plus material view: arrival parameters and fragments do not
@@ -726,9 +803,20 @@ page delivery replaces only the title; it retains body, editor identities and
 live requests. its title owner and body/request owner read the same draft cell,
 so changing a title never discards an attachment or warns about preserved prose.
 
-a fork copies only the selected source pane's reader view memento, not pending
-commands or domain drafts. new arrival takes precedence over a source-valid
-visit memento, which takes precedence over the shared durable reading cursor.
+`activateWorkspacePane` selects an exact pane or forks its current visit; missing
+panes return null. `goBackPane`/`goForwardPane` require a disposition: `Follow`
+traverses the exact adjacent occurrence; `Fork` peeks without changing either
+source stack. named forks insert after the named pane, preserving minimization.
+all forks create fresh pane/visit ids, empty history, default width and no inspector.
+
+named/history forks copy only shell scroll/eye-line (without keyboard focus) and
+`Reader.InspectionView` from the exact visit/route key. authored data, drafts and
+pending commands retain their owners. generic href forks carry a fresh target.
+`InspectSource.purpose` is required: `Open` invalidates old arrival presentation;
+`RestoreVisit` waits for destination validation of its copied view. a valid view
+wins even over an obsolete locator; absent/obsolete views inspect the canonical
+href; failed restoration refuses visibly. admission precedes capture/copy/delivery
+and one focused commit. refusal changes no workspace state or presentation.
 canonical source hrefs and their single parser cover current resources, captured
 quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
@@ -748,8 +836,9 @@ the helper always removes its input listeners.
 superseded success offers its exact result. that action captures a fresh origin
 and intent; ordinary offered open follows. result offers are session-local.
 targets, surfaces and entries travel through one workspace commit; the workspace
-owns destination focus. the palette keeps its local focus handoff only for named
-tab switches and direct restoration, which do not activate a target.
+owns destination focus, including exact named-pane selection. the palette keeps
+its local handoff only for reopening closed panes. delayed offers inherit neither
+automatic create/send placement nor obsolete source discard owners.
 add's media and import controls share one accepted-source lookup and busy id.
 the durable attempt is read once before placement: a settled media target uses
 its resolved media id; an unsettled target keeps the exact attempt selector on
@@ -764,7 +853,11 @@ Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and
 ordinary input, and only verified return or explicit adoption ends inspection.
 Conversation find keeps its own way back, offered in the find bar and the pane
-header. previews write no pane history entry.
+header. previews write no pane history entry. named result rows also carry pure
+canonical hrefs: ordinary activation reveals locally, shift opens independently.
+`activate(row)` and `targetHref(row)` validate the captured computation/source;
+stale rows never dispatch. local sheets close after successful reveal; fork
+sheets close only after workspace admission.
 
 `lib/ui/targetActivation.ts` is the pure gesture classifier;
 `lib/panes/targetLinkActivation.ts` binds it to a complete workspace target.
@@ -772,9 +865,11 @@ shift-click and shift-enter create one fresh, focused pane after the origin,
 including an already-open/current target. plain activation uses `Follow`.
 `onDefault` is only for same-source local inspection or materialising an already
 placed provisional view; it cannot choose placement. owned repeated enter is
-consumed; composition and multiline shift-enter remain editor-owned. normal
-anchors use pane capture; rich targets bind both handlers and bypass capture.
-presenters suppress return focus after new-pane navigation. Meta/Ctrl/Alt,
+consumed; composition on destination controls is inert and multiline shift-enter
+remains editor-owned. normal anchors use scoped pane/queue/metadata capture;
+rich targets bind both handlers and bypass capture. global controls capture the
+active origin at activation. accepted modal openings close and suppress trigger
+return-focus; cancelled or unavailable openings keep their presenter open. Meta/Ctrl/Alt,
 middle-click, downloads, external links, `_blank`, fragments, browser-owned
 paths and already-prevented events remain browser- or route-owned. Browser-owned
 paths are `/` (the workspace entry) and what Next serves outside the catch-all
@@ -851,58 +946,49 @@ forced account teardown remains unconditional and fences old callbacks.
 
 ## Mobile Viewport And Bottom Geometry
 
-the shell main clears the fixed mobile top bar; pane offsets clear only their own controls.
+`globals.css` alone adapts platform insets to `--viewport-safe-{top,right,bottom,left}`.
+`readMobileCssLength` resolves those tokens to css pixels. the route owner derives
+mobile reader composition from the active route's `returnKind === "Reader"`;
+the pane and global player consume the same value. reader composition excludes
+platform protection once and overlays shell controls. ordinary panes reserve the
+measured `--mobile-header-height` and retain a normal-flow player.
 
-`globals.css` is the sole raw platform-inset adapter. It maps WebView's four
-CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`, and
-`readMobileCssLength` (in `lib/mobileShell/viewport.tsx`) resolves one of those
-published tokens to CSS pixels when JavaScript needs a number; an expression
-that does not resolve reads as 0.
+`MobileViewportProvider` owns top surfaces (`Header`, `Controls`), bottom surfaces
+(`Nexus`, `Player`), pane content and hosted reader scrollports. each
+shell registration supplies a stationary frame and nullable animated surface;
+the frame determines shown endpoint extent,
+while computed visibility determines current obstruction. the one border-box
+resize observer and coalesced viewport/transition pass own invalidation.
 
-`MobileViewportProvider` (`lib/mobileShell/viewport.tsx`) owns two registration
-kinds. Id-keyed bottom surfaces register through
-`registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
-Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
-unavailable notice, and the in-flow workspace feedback slot (registered by its
-presentation host). The active mobile pane body registers through
-`registerContentSurface(element)`; mobile renders one pane, so there is one.
-Every cleanup is idempotent, removes the element-local variable and recomputes
-immediately; one lazily created `ResizeObserver` (border box) watches every
-registered element. `useKeyboardReport` (`lib/ui/useKeyboardInset.ts`) reports an active sheet's or
-full-screen task's keyboard inset as a token stack: the newest report wins and
-releasing it restores the one before. `useRootTextEntryFocused()` recognizes a
-focused text-entry target outside modal layers; while it holds, the mounted
-MiniPlayer is hidden/inert and its `"Player"` bottom surface is unregistered;
-playback continues through system controls. No keyboard inset is reported for
-root text entry.
+one ordered pass measures the header, places controls and nexus, publishes
+`--mobile-feedback-top` at the stationary header/control endpoint plus 12px,
+and publishes local content clearance,
+then publishes reader endpoint extent and current occlusion. overlapping
+rectangles form a conservative full-width envelope; their heights are never
+summed. nexus placement uses
+shown frames and stays fixed on tap; `--mobile-content-bottom-clearance` and its
+subscribers report current visible obstruction. the chrome controller refreshes
+geometry synchronously after visibility writes and before holds/focus return.
+fade-out retains conservative bounds until computed visibility is hidden;
+reduced motion needs no transition event.
 
-Geometry resolves in one ordered measurement pass, because each rectangle can
-only be measured after the write it depends on. The pass resolves the Nexus
-bottom offset from the safe bottom and the Player and Feedback rectangles and
-writes root `--mobile-nexus-bottom-offset`; then measures the placed Nexus
-wrapper and writes root `--mobile-content-bottom-clearance` — the maximum of
-safe bottom, the Nexus band, and the newest overlay keyboard inset — alongside
-root `--mobile-overlay-keyboard-inset`; then projects that protected band into
-each registered content surface's local bottom coordinate and writes an
-element-local `--mobile-content-bottom-clearance` on that element. Every
-registration and release measures at once; observed resizes, `window.resize`
-and top-level `visualViewport` resize/scroll share one animation-frame-coalesced
-pass. The `globals.css` defaults equal the empty-registry result, so nothing
-measures before the first registration.
+reader scrollports receive `--reader-content-inset-top/bottom` for real scrollable
+endpoint extent and `--reader-occlusion-top/bottom` for current obstruction.
+the first pair stays fixed on hide/show. the second releases hidden surfaces.
+registration measures immediately; release or loss of active mobile composition
+removes all local values. desktop,
+public and downloaded readers retain their own spacing. geometry callbacks report
+`Layout` for endpoint/dimension changes and otherwise `Occlusion`; layout wins
+when both change. reader-local feedback adds its measured height outside hidden
+roots and follows current shell obstruction without changing endpoint extent.
 
-The MiniPlayer stays normal flow. It is a bottom surface that only places
-Nexus and is never added to content clearance: its flow layout already shortens
-every surface above it, and the Nexus rectangle resting on it carries the whole
-protected band, so the Player is counted exactly once.
-
-The fixed Nexus wrapper consumes root `--mobile-nexus-bottom-offset` plus its
-gap. Terminal scroll content consumes `--mobile-content-bottom-clearance` from
-its nearest owner: full-window consumers inherit the root value, while every
-scroll owner nested inside an active mobile pane body — reader document
-viewport, PDF viewer, chat surface, and standard pane bodies — inherits the
-element-local value published on `PaneShell`'s registered `.body`, with no
-per-consumer subtraction. Components do not read raw safe-area values or
-independently recalculate platform, Player, Nexus, focus, or keyboard geometry.
+keyboard reporting retains its existing stack owner: the newest sheet/task
+report wins, and release restores the prior report. focused root text entry and
+the expanded player sheet suppress and unregister the outer player frame;
+playback continues. hiding reader controls retains its registration. ordinary
+pane scrollports consume their nearest content clearance; readers consume their
+explicit endpoint/occlusion contract. consumers never recalculate shell or
+platform geometry independently.
 
 The Android shell remains edge-to-edge. `MainActivity` enables the platform
 edge-to-edge policy before creation, keeps the WebView at full window bounds,

@@ -1,4 +1,9 @@
-"""User service layer: the profile and people search."""
+"""Account profiles, people search and canonical account mutation serialization.
+
+viewer locks precede admission, podcast, media and library locks. removal revisions
+fence fresh acquisition; accepted workspace removal, unsubscribe and library
+deletion advance them, including absence. acquisition and background sync do not.
+"""
 
 from datetime import date, datetime
 from uuid import UUID
@@ -9,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import User
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError
 from nexus.schemas.user import (
     DISPLAY_NAME_MAX_LENGTH,
     UpdateProfileRequest,
@@ -17,6 +22,41 @@ from nexus.schemas.user import (
     UserSearchOut,
 )
 from nexus.text import escape_like
+
+
+def lock_viewer(db: Session, viewer_id: UUID) -> int:
+    """Serialize account writers before admission, podcast, media and library locks.
+
+    no-key-update permits the foreign-key key-share locks of concurrent publication.
+    """
+    revision = db.scalar(
+        text("SELECT removal_revision FROM users WHERE id = :id FOR NO KEY UPDATE"),
+        {"id": viewer_id},
+    )
+    if revision is None:
+        # justify-defect: authenticated bootstrap guarantees the account row.
+        raise AssertionError("authenticated user row is missing")
+    return revision
+
+
+def require_removal_revision(db: Session, viewer_id: UUID, expected: int) -> None:
+    """Compare a frozen acquisition fence while the caller holds the viewer lock."""
+    current = db.execute(
+        text("SELECT removal_revision FROM users WHERE id = :id"), {"id": viewer_id}
+    ).scalar_one()
+    if current != expected:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Save needs review")
+
+
+def advance_removal_revision(db: Session, viewer_id: UUID) -> int:
+    """Publish accepted removal, including absence; caller holds the viewer lock."""
+    return db.execute(
+        text(
+            "UPDATE users SET removal_revision = nextval('collection_order_revision_seq') "
+            "WHERE id = :id RETURNING removal_revision"
+        ),
+        {"id": viewer_id},
+    ).scalar_one()
 
 
 def get_user_profile(

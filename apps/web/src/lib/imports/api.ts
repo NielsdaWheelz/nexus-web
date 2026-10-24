@@ -8,13 +8,18 @@
 
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 
 export type ImportSummary = ApiJson<"/imports/summary", "get">["data"];
-export type ImportPage = ApiJson<"/imports", "get">["data"];
+type ImportPage = ApiJson<"/imports", "get">["data"];
 export type ImportItem = Schema<"ImportItem">;
+/** The count from the latest page observation, not a traversal-wide total. */
+export interface ImportPageMetadata {
+  readonly matched_count: number;
+}
 export type ImportObligation = Schema<"ImportObligation">;
 export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
-export type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
+type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
 export type HistoryEntry = Schema<"HistoryEntry">;
 export type ImportStage = ImportObligation["stage"];
 export type Classification = ImportItem["classification"];
@@ -47,6 +52,7 @@ export type UploadSessionOutcome =
       readonly kind:
         /** The bytes never landed; sending the same id again re-opens the upload. */
         | "BytesMissing"
+        | "Expired"
         /** This attempt no longer owns the session; Imports is authoritative. */
         | "Superseded"
         /** Acceptance is unknown; sending the same id again converges. */
@@ -87,14 +93,9 @@ export function subscribeImportsInvalidations(handler: () => void): () => void {
 
 async function read<T>(
   path: ApiPath,
-  cursor: string | null,
   signal: AbortSignal,
 ): Promise<T> {
-  const next: ApiPath =
-    cursor === null
-      ? path
-      : `${path}${path.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(cursor)}`;
-  const body = await apiFetch<{ data: T }>(next, { cache: "no-store", signal });
+  const body = await apiFetch<{ data: T }>(path, { cache: "no-store", signal });
   return body.data;
 }
 
@@ -104,31 +105,35 @@ const refPath = (ref: string): ApiPath =>
 export function fetchImportSummary(
   signal: AbortSignal,
 ): Promise<ImportSummary> {
-  return read("/api/imports/summary", null, signal);
+  return read("/api/imports/summary", signal);
 }
 
 /** One server page of `query`, already narrowed to what its view correlates. */
-export function fetchImportPage(
+export async function fetchImportPage(
   query: string,
   cursor: string | null,
+  limit: number,
   signal: AbortSignal,
-): Promise<ImportPage> {
-  return read(`/api/imports?${query}`, cursor, signal);
+): Promise<ListPage<ImportItem, ImportPageMetadata>> {
+  const page = await read<ImportPage>(`/api/imports?${pageQuery(query, cursor, limit)}`, signal);
+  return { items: page.items, next_cursor: page.next_cursor, metadata: { matched_count: page.matched_count } };
 }
 
 export function fetchImportDetail(
   ref: string,
   signal: AbortSignal,
 ): Promise<ImportDetail> {
-  return read(refPath(ref), null, signal);
+  return read(refPath(ref), signal);
 }
 
-export function fetchImportHistory(
+export async function fetchImportHistory(
   ref: string,
   cursor: string | null,
+  limit: number,
   signal: AbortSignal,
-): Promise<HistoryPage> {
-  return read(`${refPath(ref)}/history`, cursor, signal);
+): Promise<ListPage<HistoryEntry>> {
+  const page = await read<HistoryPage>(`${refPath(ref)}/history?${pageQuery("", cursor, limit)}`, signal);
+  return { items: page.entries, next_cursor: page.next_cursor };
 }
 
 /**

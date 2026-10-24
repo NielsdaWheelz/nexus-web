@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useState, type ComponentProps, type FormEvent } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -19,14 +19,17 @@ import {
   type Visit,
 } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
 } from "@/lib/workspace/paneReturnMemento";
-import { runSettingsAction } from "../settingsAction";
-import { changeEmailAction } from "./actions";
+import { installedApp } from "@/lib/native/admission";
+import { accountEmailChange } from "@/lib/native/client";
+import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
+import type { EmailChangeResult } from "@/lib/account/settingsWire";
 import AssistantWrites from "./AssistantWrites";
 import styles from "./page.module.css";
 
@@ -77,10 +80,21 @@ function ProfileForm(props: {
   readonly submit: string;
   readonly save: (value: string) => Promise<Outcome>;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const current = props.current;
+  const draft = useResourceDraft<{ text: string | null; pending: boolean }>(
+    `Settings.Account.${props.title}`,
+    () => ({ text: null, pending: false }),
+    value => ({
+      changed: value.text !== null && (props.normalize ?? String)(value.text.trim()) !== current,
+      unconfirmed: value.pending,
+      stopsBrowserWork: false,
+    }),
+  );
+  const setDraft = (text: string | null) => draft.set(value => ({ ...value, text }));
+  const setPending = (pending: boolean) => draft.set(value => ({ ...value, pending }));
+  const { pending } = draft.value;
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const value = draft ?? props.current ?? "";
+  const value = draft.value.text ?? current ?? "";
   const next = (props.normalize ?? String)(value.trim());
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -115,9 +129,10 @@ function ProfileForm(props: {
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
         <Button
           type="submit"
-          variant="primary"
-          loading={pending}
+          emphasis="strong"
+          aria-busy={pending || undefined}
           disabled={
+            pending ||
             props.current === null ||
             next === props.current ||
             (props.input.required && !next)
@@ -134,7 +149,8 @@ export default function SettingsAccountPaneBody() {
   const params = usePaneSearchParams();
   const generationId = params.get("generation_id");
   const toolCallId = params.get("tool_call_id");
-  const { setCalendarTimeZone } = useAuthenticatedAccount();
+  const refreshSettings = useSettingsRefresh();
+  const { accountId, setCalendarTimeZone } = useAuthenticatedAccount();
   const fail = useThrowLater();
   const account = useServerValue({
     key: "/me",
@@ -173,6 +189,7 @@ export default function SettingsAccountPaneBody() {
       account.refetch();
       if ("calendar_time_zone" in body)
         setCalendarTimeZone(response.data.calendar_time_zone);
+      if ("calendar_time_zone" in body) void refreshSettings();
       return { feedback: null, done: true };
     } catch (error) {
       return failure(error, fail, title, invalid);
@@ -181,7 +198,9 @@ export default function SettingsAccountPaneBody() {
   const changeEmail = async (email: string): Promise<Outcome> => {
     const title = "We couldn't update your email. Please try again.";
     try {
-      const outcome = await runSettingsAction(() => changeEmailAction(email));
+      const { data: { outcome } } = installedApp
+        ? await accountEmailChange(email)
+        : await apiFetch<{ data: EmailChangeResult }>("/api/me/email-change", { method: "POST", body: JSON.stringify({ email }) });
       if (outcome === "Sent")
         return {
           feedback: {
@@ -243,11 +262,9 @@ export default function SettingsAccountPaneBody() {
         <p className={styles.current}>
           Set or replace the password used with your account email.
         </p>
-        <Button asChild variant="secondary">
-          <Link href="/account/password?next=%2Fsettings%2Faccount">
-            Set or replace password
-          </Link>
-        </Button>
+        <a href={installedApp ? `/account/password?expected_account_id=${encodeURIComponent(accountId)}&next=%2Fsettings%2Faccount` : "/account/password?next=%2Fsettings%2Faccount"} className={buttonClassName({})}>
+          Set or replace password
+        </a>
       </PaneSection>
       <ProfileForm
         title="Display name"
@@ -285,7 +302,6 @@ export default function SettingsAccountPaneBody() {
               <code>{profile.email_ingest_address}</code>
             </p>
             <Button
-              variant="ghost"
               onClick={() => void copy(profile.email_ingest_address ?? "")}
             >
               {copied ?? "Copy address"}

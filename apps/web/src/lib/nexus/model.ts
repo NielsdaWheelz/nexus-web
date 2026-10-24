@@ -65,7 +65,8 @@ export type NexusTarget =
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | { readonly kind: "ManageTabs" };
+  | { readonly kind: "ManageTabs" }
+  | { readonly kind: "Activity" };
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
@@ -85,6 +86,8 @@ export type NexusHomeSection = "Commands" | "Resources" | "Saved" | "Inside";
 export interface NexusRow {
   /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", …: identity and last tie-break. */
   readonly key: string;
+  /** Existing resources, panes and destinations qualify for automatic highlight. */
+  readonly existing: boolean;
   readonly label: string;
   readonly icon: NexusIcon;
   readonly type?: string;
@@ -157,7 +160,8 @@ export type NexusPage =
       readonly submit: ReplayableSubmitState;
     }
   | { readonly kind: "Add"; readonly sessionId: string }
-  | { readonly kind: "ManageTabs" };
+  | { readonly kind: "ManageTabs" }
+  | { readonly kind: "Activity"; readonly origin: NexusRootOrigin };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

@@ -181,13 +181,13 @@ class GenerationCatalogRoute(_Frozen):
     billing: Annotated[SubscriptionBilling | MeteredApiBilling, Field(discriminator="kind")]
     privacy: PrivacyDisclosure
     processor_chain: ProcessorChain
-    models: tuple[GenerationModelRow, ...] = Field(min_length=1)
+    models: tuple[GenerationModelRow, ...]
 
 
 class ChatSeed(_Frozen):
     selection: GenerationSelection
     state: SelectionState
-    presentation: SelectionPresentation
+    presentation: SelectionPresentation | None
 
 
 class GenerationCatalog(_Frozen):

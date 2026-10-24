@@ -1,14 +1,15 @@
 "use client";
 
 // A preview shows something outside Nexus without acquiring it: opening,
-// playing and leaving write nothing. Only AcquisitionControl acquires. A
+// playing and leaving write nothing. Media actions retain admission intent. A
 // target already in Nexus redirects to its owned pane.
 
 import { useEffect, useState } from "react";
-import AcquisitionControl, {
-  type AcquisitionCommand,
-  type AcquisitionSuccess,
-} from "@/components/browse/AcquisitionControl";
+import { podcastActionFacts } from "@/lib/actions/inlineActions";
+import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
+import MediaActions from "@/components/media/MediaActions";
+import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
@@ -18,24 +19,22 @@ import {
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
 import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import type { ApiError } from "@/lib/api/client";
+import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import {
-  browsePreviewHref,
   fetchBrowsePreview,
   type BrowsePreview,
 } from "@/lib/browse/api";
 import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
+import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
-import { addMediaFromUrl } from "@/lib/imports/ingest";
 import {
   usePaneRouter,
   requirePaneRuntime,
@@ -43,11 +42,6 @@ import {
   usePaneSearchParams,
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import {
-  addEpisodeFromDiscovery,
-  subscribeToPodcast,
-} from "@/lib/podcasts/api";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "../browse.module.css";
 
@@ -101,83 +95,67 @@ function previewErrorMessage(error: ApiError): Failure {
       return terminal("Invalid preview link");
     case "E_NOT_FOUND":
       return terminal("No longer available");
-    default:
+    default: {
+      const transport = apiTransportFeedback(error, "preview couldn’t be loaded");
+      if (transport !== null) return { content: transport, retryable: true };
       throw error;
+    }
   }
 }
 
-/** The preview carries the first page; Load more continues from its cursor. */
-function PreviewEpisodes({
-  preview,
-}: {
+/** The preview read owns the whole bounded snapshot; this section never fetches. */
+function PreviewEpisodes({ preview }: {
   readonly preview: Extract<BrowsePreview, { kind: "Podcast" }>;
 }) {
-  const first = preview.episodes;
-  const list = usePaneFreeServerList<(typeof first.items)[number]>({
-    key: `browse-preview-episodes:${preview.target}`,
-    stale: "",
-    pageSize: 20,
-    drain: false,
-    active: true,
-    id: (episode) => episode.target,
-    fetchPage: async (cursor, _limit, signal) => {
-      if (cursor === null) return first;
-      const next = await fetchBrowsePreview(preview.target, cursor, signal);
-      if (next.kind !== "Podcast") {
-        // justify-defect: a podcast target always previews as a podcast.
-        throw new Error("A podcast preview continued as another kind");
-      }
-      return next.episodes;
-    },
-  });
-  // Until the list takes up the first page, it is the preview's own.
-  const items = list.current ? list.items : first.items;
+  const display = useRenderEnvironment();
   return (
     <PaneSection title="Episodes">
+      <p className={styles.note}>{`directory preview: up to ${formatDisplayNumber(preview.episodes.source_limit, display)} episodes. playable episodes shown; full history may differ.`}</p>
       <CollectionView
         returnScope="Browse.Preview.PodcastEpisodes"
-        rows={items.map(presentPreviewEpisode)}
+        rows={preview.episodes.items.map(presentPreviewEpisode)}
         status="ready"
         ariaLabel="Podcast episodes"
-        empty={<FeedbackStatus content={{ tone: "Neutral", title: "no episodes available" }} announcement="None" />}
+        empty={<FeedbackStatus content={{ tone: "Neutral", title: "no playable episodes in this directory preview" }} announcement="None" />}
         surface={false}
-        rowActionsAvailable={false}
-      />
-      {list.failure ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: "more episodes couldn’t load", requestId: list.failure.error.requestId }}
-          announcement="Polite"
-          actions={[{ label: "retry", onClick: list.retry, busy: list.running !== null }]}
-        />
-      ) : null}
-      <LoadMoreFooter
-        hasMore={list.current ? !list.complete : first.next_cursor !== null}
-        loading={list.running === "More"}
-        onLoadMore={list.more}
       />
     </PaneSection>
   );
 }
 
 export default function BrowsePreviewPaneBody() {
+  const display = useRenderEnvironment();
   const pane = requirePaneRuntime(usePaneRuntime(), "BrowsePreviewPaneBody");
   const router = usePaneRouter();
-  const target = usePaneSearchParams().get("target");
+  const params = usePaneSearchParams();
+  const target = params.get("target");
   const resource = usePaneFreeServerValue<BrowsePreview>({
     key: target === null ? null : `browse-preview:${target}`,
     stale: "",
     // justify-type-assertion: the read runs only for a non-null key.
-    load: (signal) => fetchBrowsePreview(target as string, null, signal),
+    load: (signal) => fetchBrowsePreview(target as string, signal),
   });
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const { playPreviewAudio } = usePlayerCommands();
   const preview = resource.status === "ready" ? resource.data : null;
-  const owned =
-    preview !== null && preview.resolution.kind !== "Preview"
-      ? preview.resolution.href
-      : null;
+  const actionFacts = usePodcastActionFacts({ scope: `Browse.Preview:${target}`,
+    targets: preview?.kind === "Podcast" ? [{ kind: "Discovery", target: preview.target }] : [],
+    refresh: `${resource.status}:${resource.status === "ready" ? resource.generation : ""}`,
+  });
+  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
+  const sourceError = resource.status === "loading" ? null : resource.error;
+  const podcast = preview?.kind === "Podcast" ? {
+    target: { kind: "Discovery" as const, target: preview.target }, title: preview.title,
+    facts: sourceError !== null
+      ? { kind: "Failed" as const, error: sourceError, retry: resource.refetch, retrying: resource.status === "failed" ? resource.retrying : resource.status === "ready" && resource.refreshing }
+      : resource.status !== "ready" || resource.refreshing ? { kind: "Resolving" as const }
+      : podcastActionFacts(actionFacts, { kind: "Discovery", target: preview.target }),
+  } : null;
+  const owned = preview?.kind === "Podcast"
+    ? podcast?.facts.kind === "Ready" && podcast.facts.resolution.kind === "Canonical" ? `/podcasts/${podcast.facts.resolution.podcast_id}` : null
+    : preview !== null && preview.resolution.kind !== "Preview" ? preview.resolution.href : null;
   useEffect(() => {
-    if (owned !== null) router.replace(owned, { labelHint: preview?.title });
+    // A background read canonicalizes its pane without changing the active pane.
+    if (owned !== null) router.replace(owned, { labelHint: preview?.title, activate: false });
   }, [owned, preview?.title, router]);
   const failure =
     target === null
@@ -187,6 +165,8 @@ export default function BrowsePreviewPaneBody() {
         : null;
   usePreviewTitleHint(target, preview?.title);
   usePaneChrome({
+    podcastMetadata: preview?.kind === "Podcast" ? { kind: "DiscoveryPodcastPreview", preview } : undefined,
+    resourceActions: podcast === null || owned !== null ? undefined : { kind: "Podcast", subject: podcast },
     header:
       failure !== null
         ? { kind: "Resource", resource: { status: "Failed" } }
@@ -196,7 +176,7 @@ export default function BrowsePreviewPaneBody() {
               kind: "Resource",
               resource: {
                 status: "Ready",
-                creditGroups: [
+                creditGroups: preview.kind === "Podcast" ? [] : [
                   {
                     kind: "Role",
                     label: "Source",
@@ -215,7 +195,7 @@ export default function BrowsePreviewPaneBody() {
 
   if (failure !== null) {
     const back = () =>
-      router.canGoBack ? router.back() : router.replace("/browse");
+      router.canGoBack ? router.back({ disposition: { kind: "Follow" } }) : router.replace("/browse");
     return (
       <PaneSurface
         state={
@@ -240,51 +220,6 @@ export default function BrowsePreviewPaneBody() {
     );
   }
 
-  const commit = async (
-    command: AcquisitionCommand,
-  ): Promise<AcquisitionSuccess> => {
-    const { namedLibraryIds, idempotencyKey } = command;
-    switch (preview.kind) {
-      case "Podcast": {
-        const result = await subscribeToPodcast({
-          target: { kind: "Discovery", target: preview.target },
-          namedLibraryIds,
-          replaceEpisodes: command.replaceEpisodes,
-        });
-        return { href: result.href };
-      }
-      case "Episode": {
-        const { href, media_id: mediaId } = await addEpisodeFromDiscovery({
-          target: preview.target,
-          namedLibraryIds,
-        });
-        return { href, mediaId };
-      }
-      default: {
-        const url =
-          preview.kind === "Epub"
-            ? preview.kind_facts.import_href
-            : preview.kind === "WebArticle"
-              ? preview.kind_facts.canonical_url
-              : preview.source_href;
-        const { mediaId, href } = await addMediaFromUrl({
-          url,
-          libraryIds: namedLibraryIds,
-          id: idempotencyKey,
-        });
-        return { href, mediaId };
-      }
-    }
-  };
-  const acquisition = (
-    <AcquisitionControl
-      key={preview.target}
-      kind={preview.kind === "Podcast" ? "Subscribe" : "Add"}
-      previewTarget={preview.target}
-      commit={commit}
-      openAfterCommit={{ originPaneId: pane.paneId, labelHint: preview.title }}
-    />
-  );
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =
@@ -304,21 +239,20 @@ export default function BrowsePreviewPaneBody() {
           description={description}
           facts={["Podcast Index"]}
           links={[
-            { label: "Open source", href: preview.source_href },
-            { label: "RSS feed", href: preview.kind_facts.feed_href },
+            { label: "open feed", href: preview.kind_facts.feed_href },
             ...(website !== null
-              ? [{ label: "Website", href: website }]
+              ? [{ label: "open source", href: website }]
               : []),
           ]}
           note="Previewing does not subscribe or add episodes."
         />
-        {acquisition}
+        {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check subscription", requestId: factsError.requestId }} announcement="Polite"
+          actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
         <PreviewEpisodes preview={preview} />
       </PaneSurface>
     );
   }
   const audio = preview.kind === "Episode" ? preview.kind_facts : null;
-  const host = audio === null ? null : new URL(audio.audio_href).hostname;
   return (
     <PaneSurface>
       <div className={styles.lead}>
@@ -334,6 +268,8 @@ export default function BrowsePreviewPaneBody() {
         ) : null}
         <div>
           {audio ? <p>{audio.podcast_title}</p> : null}
+          <ContributorRoleGroups credits={preview.contributors} />
+          {preview.published_at ? <p>source published: <time dateTime={preview.published_at}>{formatDisplayDate(preview.published_at, display, { dateStyle: "medium" })}</time></p> : null}
           <p>{description ?? "No summary from source."}</p>
           <a
             href={preview.source_href}
@@ -350,36 +286,24 @@ export default function BrowsePreviewPaneBody() {
           className={styles.video}
         />
       ) : (
-        <Button variant="secondary" onClick={() => setVideoLoaded(true)}>
+        <Button onClick={() => setVideoLoaded(true)}>
           Load video
         </Button>
       )}
-      {audio !== null && host !== null ? (
-        <div className={styles.actions}>
-          <Button
-            variant="secondary"
-            onClick={() =>
-              playPreviewAudio({
-                target: preview.target,
-                previewHref: browsePreviewHref(preview.target),
-                title: preview.title,
-                source: host,
-                sourceHref: preview.source_href,
-                audioUrl: audio.audio_href,
-                imageUrl: image ? image : null,
-                durationMs:
-                  audio.duration_seconds !== null
-                    ? (audio.duration_seconds * 1000)
-                    : null,
-              })
-            }
-          >
-            Play preview
-          </Button>
-          <span>Audio from {host}</span>
-        </div>
-      ) : null}
-      {acquisition}
+      <MediaActions
+        subject={{
+          kind: "External",
+          target: preview.target,
+          media_kind: preview.kind === "Episode" ? "podcast_episode"
+            : preview.kind === "Epub" ? "epub"
+            : preview.kind === "Video" ? "video" : "web_article",
+          title: preview.title,
+          contributors: preview.contributors,
+        }}
+        knownDescriptor={null}
+        density="Row"
+        returnFocus={() => findPaneLandmarkFocusTarget(pane.paneId)}
+      />
     </PaneSurface>
   );
 }

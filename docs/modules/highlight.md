@@ -131,10 +131,13 @@ highlight there never blocks the viewer's own.
 
 highlight responses are generated wire types (`TypedHighlightOut`), including the
 viewer's note attachment `links_version`. `POST /media/{id}/highlights` takes
-`{anchor, color}` and returns `{created, highlight}`. it authoritatively reuses
-the viewer's current exact extent or creates it; the map's twin lookup is only
-an optimization. retry converges on current state, without historical receipts:
-if the highlight was deleted, a later ensure may create a new one.
+`{id, anchor, color, expected_reader_generation, initial_note}` and returns the
+writing owner's acknowledgement. recognized ids resolve current canonical state
+without repeating initialization; an exact extent can alias an existing highlight.
+creation and its initial note commit together. the map's twin lookup is only an
+optimization. published documents require their exact positive generation;
+transcripts require a null generation and their current immutable unit id. the
+media lock prevents transcript replacement from crossing that unit check.
 
 ## Mutations And Notes
 
@@ -145,7 +148,10 @@ owner and require the selection's `exact` quote.
 
 every `PATCH /highlights/{id}` carries the observed `expected_version` and
 absolute desired fields. fragment-offset updates also carry their `unit_id`;
-offsets from another text section are rejected before no-op handling. the
+an unresolved quote may relocate to matching current text; transcripts use null
+and current immutable fragment membership, while published text requires its
+positive reader generation. other cross-section updates are rejected before
+no-op handling. the
 opaque `version` returned by highlight and document-map reads is a deterministic
 digest of the id, raw stored anchor (ordered canonical pdf quads), colour and
 quote triple. timestamps, notes and links do not change it; unresolved reader
@@ -184,8 +190,8 @@ note remains absent. the [notes](notes.md) teardown owns this transaction;
 acknowledgement announces `resource_deleted`, settles note panes through
 `settleDeletedResourcePanes`, and invalidates loaded projections and older reads.
 Ordinary highlight deletion is explicit and child-first: graph/view-state
-attachments (including any `link_note` motif and user links naming the
-highlight), then PDF quads, then the PDF/fragment anchor, then the highlight
+attachments (including user links naming the highlight), then PDF quads,
+then the PDF/fragment anchor, then the highlight
 row itself — never a DB cascade. True media/note owner deletion runs the same
 explicit cleanup before removing highlight children/root, and always
 preserves detached note prose rather than deleting it.
@@ -197,35 +203,25 @@ deletion on refresh, and that call is removed. An unresolved Highlight after
 content changes stays visible in Evidence or Connections rather than
 disappearing or silently repointing to the wrong location.
 
-the reader composer uses the existing online `notes/writes` queue for highlight
-and note commands; chat admission uses the shared chat command owner. each
-mutation retains its request while the tab lives; there is no
-reload journal. ensure and note save are separate commits, so a failed note save
-can leave a valid highlight. normal note surfaces keep their autosave owner;
-the reader's unsaved draft is not registered with it. its retained visit owner
-instead participates in the common work guard. saving a note and sending a chat
-remain distinct commands; passage text is never autosaved as a chat side effect.
-chat preparation belongs to that visit until dispatch; dispatch transfers the
-immutable request to the shared chat command owner. a new-chat request belongs
-to its pane even when no chat composer is mounted, while an existing-chat request
-belongs to the account and conversation. hiding the reader keeps both its draft
-and any command. a retired visit cannot restore its draft through a late callback.
+the reader composer keeps unsubmitted rich input in account-scoped memory and
+submits explicit commands through `notes/writes`; chat admission uses the shared
+chat command owner. fixed identities, captured sources and absolute versioned
+updates survive retries. acknowledgement adopts saved identity/base facts without
+replacing newer prose or reopening an editor. dismissal abandons unsubmitted
+input; attachment loss keeps its existing guard. submitted work settles in its
+owner after dismissal and offers recovery/navigation when needed.
 
-## Learn
+mobile observation creates no draft, write or source-chat lookup. explicit note
+or ask opens the same rich composer used on desktop; initial ask never sends.
+commands submit the frozen passage, never a later selection. an empty paragraph
+without a note saves only its highlight; saving an existing empty note keeps it.
+chat conversion uses the rich grammar, independently of note emptiness. sending
+ensures the highlight and submits the question without saving its annotation.
 
-**Learn** is Highlight-first. A reader selection is created or reused through
-the existing Highlight owner; after that succeeds, the reader pane posts the
-durable `highlight:<id>` ref to `POST /artifacts/dossiers/learn`. Popover state
-ends normally. Global feedback owns pending/failure state, and success adopts
-the standalone Artifact pane.
-
-The Artifact subsystem, not Highlight, canonicalizes the selected text to one
-user-owned Idea and records the Highlight as a generation seed. Learning the
-same phrase twice reaches the same Idea, so the resolution row, the seed pair
-and the head key carry the replay; re-Learn is the recovery path. Highlight
-deletion explicitly removes Idea resolution, seed, and any leftover Learn rows
-before the Highlight row. Learn creates no Resource Graph Link and Highlight
-still publishes no Inspector.
+routine saving/saved/sent receipts have no state or renderer. operation/write/chat
+owners supply pending control availability. failures, conflicts, uncertain saves
+and sends retain visible recovery, exact retry requests and actionable late
+result navigation. later edits or departure revoke automatic handoff authority.
 
 ## Reader Presentation
 
@@ -249,39 +245,44 @@ in the visible band are marked), and the document-map rail shows marker
 locations across the document. Evidence owns neither highlight persistence nor
 mutation behavior.
 
-completed desktop selection opens one anchored group with a focused rich editor
-below visible actions. touch preserves native selection handles until the editor
-is tapped. applicable commands are icons with accessible names and hover/focus
-help. the highlighter applies the displayed colour; its disclosure opens the
-five-colour picker without moving or remounting the editor. fresh selections
-start yellow; an already-saved colour is inactive. unavailable commands remain
-focusable and explain their reason. controls wrap in stable order at narrow widths.
-saved-highlight actions reuse the canonical action descriptors and permissions;
-there is no selection overflow menu. one clicked mark opens the same composer;
-overlapping marks first offer `choose highlight`. Evidence retains its resource
-menu.
+desktop selection opens an anchored, focused rich composer: primary icon row,
+then a one-line input that grows to its bounded editor scrollport. mobile retains
+native selection and its passive highlight/note/ask/more bar; explicit composition
+uses a sheet whose guarded custom header is highlight/save/ask/more. desktop adds
+colour and existing-chat split controls. shortcuts appear only in tooltips.
 
-opening an existing mark loads its viewer note before editing. enter saves the
-current rich body; a canonical empty paragraph on a fresh passage creates only
-the highlight, while an existing note keeps its id and links when saved empty.
-shift-enter retains the editor's newline command. the platform modifier plus
-enter starts a new quoted chat; adding shift uses the displayed existing chat.
-both retain the annotation body and history without saving note edits. the footer
-names that destination and offers a paged chooser; destination and frozen branch
-belong to the visit draft, including after dismissal. unresolved reader chat
-admission blocks fresh sends across that visit's passages until its command
-owner settles. see [chat](chat.md) for conversion, continuation and recovery.
-a fresh unmodified, nonrepeating
-backspace on an already empty paragraph at its collapsed start deletes the
-persisted note globally. composition, selected content, last-character deletion,
-whitespace, breaks, code and embeds do not trigger that command. a visible
-`delete empty note` button invokes the same operation.
+copy, share, canonical resource actions, clamped source preview, colours on mobile,
+empty-note deletion and close live in overflow. copy and close do not wait for
+remote resource actions or pending writes. existing-chat actions use the newest
+updated chat linked to this source; an explicit choice replaces it without a
+send. `ConversationDestinationOverlay` composes `PickerSurface` and the existing
+search owner; the reader restores its caret after selection or dismissal.
 
-selection, opening, typing, blur and dismissal do not save. escape or an outside
-press hides the surface and retains the draft/caret in the reader visit; mobile
-body unmounts retain it, reload does not. late completions cannot focus or close a
-newer interaction. live passage measurement follows scroll, reflow and pdf zoom;
-an offscreen composer pins inside its source pane, without scrolling the reader.
+opening a saved mark loads its viewer note before editing; overlapping marks
+first offer `choose highlight`. the desktop highlighter's disclosure retains
+five-colour selection without remounting the editor. mobile observation retains
+its 250 ms source-activity settle period and never opens the keyboard.
+
+mobile bounds and draft reselection require `apply selection`. invalid or
+collapsed proposals keep cancel; no old valid range substitutes. apply freezes
+the confirmed capture before button focus and validates its owned session once.
+bounds submission shows `applying…` without cancellation and retains exact-quote
+relocation. only confirmed reselection carries body/history; cancel, dismissal,
+navigation, source replacement, deactivation, disposal, hiding, blur or viewport
+policy change retires it. desktop bounds admission remains immediate.
+
+enter saves; shift-enter inserts a line; cmd/ctrl-enter uses new chat and adding
+shift uses the selected existing chat. a fresh unmodified, nonrepeating backspace
+at the collapsed start of an already empty paragraph deletes its saved note
+globally. composition, selected content, last-character deletion, whitespace,
+breaks, code and embeds do not trigger deletion. overflow's
+`delete empty note (keep highlight)` invokes the same operation. unresolved chat
+admission blocks fresh sends across the visit until its command owner settles.
+
+outer dismissal discards unsubmitted input; child dismissal keeps it. passage
+geometry and native selection remain reader-owned; shared overlay placement,
+keyboard containment, dismissal and focus policy remain in
+[overlays](overlays.md#reader-action-placement).
 
 The canonical passage/document scope and typed highlight association contract
 is
@@ -292,8 +293,8 @@ is
 reader quote-to-chat is highlight-first. `new chat` sends a nonblank note-field
 prompt through existing atomic chat admission, with the canonical quote and the
 model selection frozen at invocation; annotation edits remain unsaved. blank
-text opens the quoted new-chat composer without a run. `existing chat…` retains
-the typed quote handoff without sending that field. [chat](chat.md#reader-quote-to-chat-immutable-snapshot)
+text opens the quoted new-chat composer without a run. the existing-chat action follows the same blank-open/nonblank-send contract
+for the selected source chat. [chat](chat.md#reader-quote-to-chat-immutable-snapshot)
 owns exact send retries and quote snapshots.
 
 On send the server row-locks the Highlight, derives the canonical `exact`,
@@ -339,8 +340,6 @@ resolved through the `highlight:<id>` resource and graph citation path.
   `resource_edges`.
 - Do not make Evidence the owner of highlight CRUD. It is an
   aggregate read and presentation surface.
-- Do not key a learning Dossier by Highlight occurrence or add a second Learn
-  preview surface; the Highlight is provenance for an Idea Artifact.
 - Do not delete a Highlight or its anchors from reindex/refresh code, and do
   not add a DB cascade between highlight-family rows; deletion is always
   explicit and child-first.

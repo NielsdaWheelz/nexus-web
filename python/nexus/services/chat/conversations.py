@@ -43,7 +43,6 @@ from nexus.services.collection_keyset import (
     encode_keyset_cursor,
     keyset_page,
 )
-from nexus.services.dossier import engine as dossier_engine
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup
@@ -113,6 +112,18 @@ def create(
     return retry_serializable(db, "create_conversation", attempt)
 
 
+def conversation_index_rows_sql() -> str:
+    """Complete owned chat summaries and canonical updated/title order facts."""
+    return """
+                SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
+                    lower(c.title) AS title_key,
+                    (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
+                        AS message_count
+                FROM conversations c
+                WHERE c.owner_user_id = :viewer_id
+    """
+
+
 def index(
     db: Session, *, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[ConversationListItemOut]:
@@ -167,12 +178,8 @@ def index(
         params={"viewer_id": viewer_id, "search": search, "media_id": media_id},
         sql=lambda keyset, order: f"""
             WITH facts AS (
-                SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
-                    lower(c.title) AS title_key,
-                    (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
-                        AS message_count
-                FROM conversations c
-                WHERE c.owner_user_id = :viewer_id
+                SELECT c.* FROM ({conversation_index_rows_sql()}) c
+                WHERE true
                   AND (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
                   {media_filter}
             )
@@ -384,7 +391,6 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
         return False
     chat = ResourceRef("conversation", conversation_id)
     cleanup.delete_edges_for_deleted_resource(db, ref=chat)
-    dossier_engine.on_subject_deleted(db, chat)  # a FK-less subject
     db.execute(text("DELETE FROM conversations WHERE id = :chat"), {"chat": conversation_id})
     projection.refresh(db, "conversation", [conversation_id])
     return True

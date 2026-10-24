@@ -1,6 +1,7 @@
 import { Fragment } from "react";
+import { MediaTitle } from "@/components/media/MediaIdentity";
 import type { Schema } from "@/lib/api/wire";
-import styles from "./ResourceOutline.module.css";
+import styles from "./ResourceContent.module.css";
 
 type Excerpt = Schema<"ExcerptOut">;
 type Body = Schema<"ResourceItemOut">["preview"]["body"];
@@ -13,6 +14,9 @@ export function separateMatchEvidence(body: Body, match: ResourceMatch | null): 
   if (!match?.excerpt.text) return null;
   const text = match.excerpt.text;
   switch (body.kind) {
+    case "media":
+      // MediaTitle owns canonical title phrasing and cannot render match ranges.
+      return match;
     case "named":
       return body.title === text ? null : match;
     case "passage":
@@ -29,7 +33,7 @@ export function separateMatchEvidence(body: Body, match: ResourceMatch | null): 
 }
 
 /** Omission marks are interface text; the excerpt itself is always literal evidence. */
-function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMatch | null }) {
+export function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMatch | null }) {
   const text = excerpt.text;
   const ranges = match?.excerpt.text === text ? match.ranges : [];
   const points = Array.from(text);
@@ -50,6 +54,8 @@ function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMat
 export default function ResourceBody({ body, match = null }: { body: Body; match?: ResourceMatch | null }) {
   const inlineEvidence = Boolean(match?.excerpt.text) && separateMatchEvidence(body, match) === null;
   switch (body.kind) {
+    case "media":
+      return <span data-resource-primary className={styles.named}><MediaTitle subject={{ kind: "Stored", summary: body.media_summary }} /></span>;
     case "named":
       return <span data-resource-primary data-resource-inline-evidence={inlineEvidence || undefined} className={styles.named}>{body.title ? <ExcerptText excerpt={{ text: body.title, truncated_before: false, truncated_after: false }} match={match} /> : "untitled"}</span>;
     case "passage":

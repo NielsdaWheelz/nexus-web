@@ -10,7 +10,12 @@ Retry rules (no replay ledger): a url accept carries a client-minted attempt id,
 resend finds its own attempt; a retry or refresh finds its own effect as the expected
 attempt's successor (I10), and a refresh joins the run already in flight; a repair
 finds its job no longer dead. A url accept of a deduped source takes its identity lock
-before any row lock (I12).
+after the viewer lock and before media/library locks (I12). Frozen removal and
+destination guards apply to every fresh acquisition. An existing own receipt
+only answers identity; it never retains or files again. Receipts share their
+media's lifetime: after hard teardown an old submission must pass its original
+guards before doing anything. Automatic children require current parent access
+and preserve child removal markers.
 """
 
 from __future__ import annotations
@@ -23,7 +28,6 @@ from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from sqlalchemy import exists, select, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -40,11 +44,7 @@ from nexus.db.models import (
     XThreadPost,
     XThreadSource,
 )
-from nexus.db.retries import (
-    TransactionRestart,
-    integrity_constraint_name,
-    retry_serializable,
-)
+from nexus.db.retries import retry_serializable
 from nexus.errors import (
     ApiErrorCode,
     ConflictError,
@@ -54,6 +54,7 @@ from nexus.errors import (
 )
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import jobs_for_payload, requeue_dead_job, supersede_unclaimed_job
+from nexus.schemas.acquisition import DestinationGuard
 from nexus.schemas.import_history import SourceRecoveryAccepted, SourceSucceeded
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
@@ -63,7 +64,7 @@ from nexus.schemas.media_sources import (
     SourceAttemptOut,
     SourceRepairAdmission,
 )
-from nexus.services import libraries, library_entries
+from nexus.services import libraries, library_entries, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.media_processing_state import mark_extracting
@@ -322,17 +323,18 @@ def accept_url_source(
     viewer_id: UUID,
     id: UUID,
     url: str,
-    library_ids: list[UUID],
+    expected_removal_revision: int,
+    destinations: list[DestinationGuard],
     request_id: str | None,
-    ingest_purpose: Literal["artifact_research"] | None = None,
 ) -> FromUrlOut:
     """Accept a url on a fresh session; ``id`` is the client-minted attempt id.
 
-    Retry rule: the same id answers its own acceptance (destinations as first sent);
+    Retry rule: the same id answers its own acceptance without reapplying destinations;
     another user's id is a 409.
     """
 
     def admit() -> FromUrlOut:
+        users.lock_viewer(db, viewer_id)
         sa.lock_identity(db, f"attempt:{id}")
         # A replay only reads after this: keep teardown from removing its
         # media between the attempt and destination reads.
@@ -354,22 +356,24 @@ def accept_url_source(
             return _from_url_out(db, latest, id).model_copy(update={"source_attempt_id": id})
         if sent is not None:
             return _from_url_out(db, sent, id)
-        libraries.resolve_writable_destinations(db, viewer_id, library_ids)
-        payload: dict[str, object] = {"library_ids": [str(i) for i in library_ids]}
-        if ingest_purpose is not None:
-            payload["ingest_purpose"] = ingest_purpose
-        try:
-            result = _accept_url(db, viewer_id, id, url, library_ids, payload, request_id)
-            db.flush()
-        except IntegrityError as exc:
-            if integrity_constraint_name(exc) not in {
-                "media_source_attempts_pkey",
-                "uq_media_source_attempts_media_attempt",
-                "uix_media_canonical_url",
-            }:
-                raise
-            raise TransactionRestart from exc
-        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+        library_ids = [guard.library_id for guard in destinations]
+        result = _accept_url(
+            db,
+            viewer_id,
+            id,
+            url,
+            library_ids,
+            {},
+            request_id,
+            expected_removal_revision=expected_removal_revision,
+            destinations=destinations,
+        )
+        library_entries.finish_acquisition_destinations(db, destinations=destinations)
+        shared_viewers = db.scalars(
+            text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+            {"ids": [guard.library_id for guard in destinations]},
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer_id, *shared_viewers])
         record_input_change(db, owners=(f"media:{result.media_id}",))
         return result
 
@@ -429,16 +433,7 @@ def accept_system_url_source(
             ApiErrorCode.E_INVALID_KIND,
             f"URL source produced {kind!r}; expected {expected_kind!r}.",
         )
-    try:
-        return _accept_url(db, actor_user_id, id, url, None, {}, request_id)
-    except IntegrityError as exc:
-        if integrity_constraint_name(exc) not in {
-            "media_source_attempts_pkey",
-            "uq_media_source_attempts_media_attempt",
-            "uix_media_canonical_url",
-        }:
-            raise
-        raise TransactionRestart from exc
+    return _accept_url(db, actor_user_id, id, url, None, {}, request_id)
 
 
 def _accept_url(
@@ -449,6 +444,9 @@ def _accept_url(
     library_ids: list[UUID] | None,
     payload: dict[str, object],
     request_id: str | None,
+    *,
+    expected_removal_revision: int | None = None,
+    destinations: list[DestinationGuard] | None = None,
 ) -> FromUrlOut:
     validate_requested_url(url)
     spec = url_source_spec(url)
@@ -458,6 +456,13 @@ def _accept_url(
     if media is None:
         media = _new_media(db, spec, url=url, actor_id=actor_id)
         if library_ids is not None:
+            assert expected_removal_revision is not None and destinations is not None
+            library_entries.validate_acquisition_destinations(
+                db,
+                viewer_id=actor_id,
+                expected_removal_revision=expected_removal_revision,
+                destinations=destinations,
+            )
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db, actor_id, media.id, library_ids
             )
@@ -472,6 +477,13 @@ def _accept_url(
     library_entries.lock_media_rows_in_order(db, [media.id, *article_ids])
     db.refresh(media)
     if library_ids is not None:
+        assert expected_removal_revision is not None and destinations is not None
+        library_entries.validate_acquisition_destinations(
+            db,
+            viewer_id=actor_id,
+            expected_removal_revision=expected_removal_revision,
+            destinations=destinations,
+        )
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, actor_id, media.id, library_ids
         )
@@ -572,7 +584,7 @@ class EmbeddedSourceAcceptance:
 
 
 def accept_embedded_source(
-    *, db: Session, viewer_id: UUID, url: str, library_ids: list[UUID]
+    *, db: Session, viewer_id: UUID, url: str, library_ids: list[UUID], retaining_media_id: UUID
 ) -> EmbeddedSourceAcceptance:
     """Create or reuse the child source of a trusted embed, flush-only: the publisher
     enqueues a ``needs_enqueue`` child in its own transaction (I11).
@@ -587,7 +599,9 @@ def accept_embedded_source(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Unsupported embedded source provider."
         )
-    return _accept_child(db, viewer_id, url, library_ids, spec, {})
+    return _accept_child(
+        db, viewer_id, url, library_ids, spec, {}, retaining_media_id=retaining_media_id
+    )
 
 
 def _accept_child(
@@ -597,6 +611,8 @@ def _accept_child(
     library_ids: list[UUID],
     spec: UrlSourceSpec,
     payload: dict[str, object],
+    *,
+    retaining_media_id: UUID,
 ) -> EmbeddedSourceAcceptance:
     media = _reusable_media(db, spec)
     created = media is None
@@ -609,9 +625,7 @@ def _accept_child(
             id=new_uuid7(),
             actor_id=viewer_id,
             url=url,
-            payload=payload
-            if spec.source_type == st.X_POST
-            else {**payload, "library_ids": [str(i) for i in library_ids]},
+            payload=payload,
         )
         if spec.source_type == st.X_POST:
             assert spec.provider_target_ref is not None
@@ -631,10 +645,21 @@ def _accept_child(
         latest = sa.latest_attempt(db, media.id, lock=False)
         assert latest is not None  # a reusable media was accepted through an attempt
         attempt = latest
-    if spec.source_type != st.X_POST:
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
+    if (
+        spec.source_type != st.X_POST
+        and can_read_media(db, viewer_id, retaining_media_id)
+        and not db.scalar(
+            text("SELECT 1 FROM user_media_deletions WHERE user_id=:u AND media_id=:m"),
+            {"u": viewer_id, "m": media.id},
         )
+    ):
+        destinations = libraries.writable_destinations(db, viewer_id, library_ids)
+        libraries.lock_library_rows_in_order(
+            db, [libraries.default_library_id(db, viewer_id), *destinations]
+        )
+        library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
+        for library_id in libraries.writable_destinations(db, viewer_id, destinations):
+            library_entries.ensure_entry(db, library_id, library_entries.media_target(media.id))
     return EmbeddedSourceAcceptance(
         media_id=media.id,
         source_attempt_id=attempt.id,
@@ -682,6 +707,7 @@ def record_x_article_inspection(
                 provider_target_ref=carrier_post_id,
             ),
             {"article_id": article_id},
+            retaining_media_id=attempt.media_id,
         )
         child_id = accepted.media_id
         if accepted.needs_enqueue:

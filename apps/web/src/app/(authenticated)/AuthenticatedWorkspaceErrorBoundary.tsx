@@ -2,6 +2,7 @@
 
 import { Component, type ReactNode } from "react";
 import { FeedbackState } from "@/components/feedback/Feedback";
+import { ActivityControl } from "@/components/feedback/Activity";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import styles from "./layout.module.css";
 
@@ -38,19 +39,21 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
       <main
         id="entry-failure"
         ref={this.focusDisplaced}
-        role="alert"
         aria-label="workspace stopped"
         tabIndex={-1}
         className={styles.error}
       >
-        <FeedbackState
-          content={this.state.stale ? STALE_BUILD_FEEDBACK : {
-            tone: "Danger",
-            title: "the workspace stopped unexpectedly",
-            message: "nexus needs a fix before this can continue.",
-          }}
-          announcement="None"
-        />
+        <div role="alert">
+          <FeedbackState
+            content={this.state.stale ? STALE_BUILD_FEEDBACK : {
+              tone: "Danger",
+              title: "the workspace stopped unexpectedly",
+              message: "nexus needs a fix before this can continue.",
+            }}
+            announcement="None"
+          />
+        </div>
+        <ActivityControl iconOnly={false} />
       </main>
     );
   }

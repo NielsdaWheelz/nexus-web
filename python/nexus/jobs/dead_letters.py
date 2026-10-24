@@ -64,19 +64,56 @@ def media_unit_build(db: Session, job: JobRow) -> None:
     )
 
 
-def podcast_backfill(db: Session, job: JobRow) -> None:
-    """Podcast backfill: fail the backfill still at this step; "Retry backlog" reseeds it."""
-    code = job.error_code
+def podcast_feed_run(db: Session, job: JobRow) -> None:
+    """Pause only this exact live page, under the queue's fenced terminal execution."""
+    from nexus.services.podcasts import imports, sync
+
+    assert job.execution_id is not None
+    run_id = UUID(job.payload["run_id"])
+    params = {
+        "id": run_id,
+        "job_id": job.id,
+        "attempt": job.payload["expected_attempt_version"],
+        "step": job.payload["expected_step_no"],
+        "code": job.error_code,
+        "detail": (job.last_error or "Podcast page exhausted its retry budget")[:500],
+    }
+    podcast_id = db.scalar(text("SELECT podcast_id FROM podcast_feed_runs WHERE id=:id"), params)
+    if podcast_id is None:
+        return
+    db.execute(text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
+    row = db.execute(
+        text("""
+        SELECT r.id FROM podcast_feed_runs r JOIN podcasts p ON p.id=r.podcast_id
+        WHERE r.id=:id AND r.job_id=:job_id AND r.attempt_version=:attempt AND r.step_no=:step
+            AND r.completed_at IS NULL AND r.failed_at IS NULL AND r.cancelled_at IS NULL
+            AND (p.sync_run_id=r.id OR EXISTS(SELECT 1 FROM podcast_library_imports i WHERE i.run_id=r.id))
+        FOR UPDATE OF r
+    """),
+        params,
+    ).first()
+    if row is None:
+        return
     db.execute(
-        text("""UPDATE podcast_subscription_backfills
-            SET failed_at = now(), error_code = left(:code, 100), error_detail = left(:detail, 500),
-                updated_at = now()
-            WHERE id = :id AND step_no = :step_no AND completed_at IS NULL
-              AND source_limited_at IS NULL AND failed_at IS NULL"""),
-        {
-            "id": UUID(job.payload["backfillId"]),
-            "step_no": job.payload["expectedStepNo"],
-            "code": code,
-            "detail": f"Podcast backfill exhausted retries; job={job.id}; classification={code}",
-        },
+        text("""
+        UPDATE podcast_feed_runs SET failed_at=now(),job_id=NULL,error_code=:code,
+            error_detail=:detail,updated_at=now() WHERE id=:id
+    """),
+        params,
+    )
+    imports.finish_run(db, run_id=run_id)
+    sync.settle_recurring(db, run_id=run_id)
+
+
+def podcast_chapters(db: Session, job: JobRow) -> None:
+    """Release only this media/source/job; failed retrieval preserves published rows."""
+    assert job.execution_id is not None
+    media_id = UUID(job.payload["media_id"])
+    db.execute(text("SELECT id FROM media WHERE id=:id FOR UPDATE"), {"id": media_id})
+    db.execute(
+        text("""
+        UPDATE podcast_episodes SET chapters_job_id=NULL
+        WHERE media_id=:id AND chapters_job_id=:job_id AND chapters_source_url=:url
+    """),
+        {"id": media_id, "job_id": job.id, "url": job.payload["expected_source_url"]},
     )

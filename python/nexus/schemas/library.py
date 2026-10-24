@@ -8,13 +8,11 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.collection_page import CollectionPage
-from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.podcast import PodcastSyncStatus
 
 LibraryRole = Literal["admin", "member"]
 LibraryName = Annotated[str, Field(min_length=1, max_length=100)]
@@ -29,6 +27,16 @@ class CreateLibraryRequest(_In):
 
     id: UUID
     name: LibraryName
+    initial_items: list[str]
+    expected_removal_revision: OrderRevision | None
+
+    @model_validator(mode="after")
+    def _guard(self) -> "CreateLibraryRequest":
+        if bool(self.initial_items) != (self.expected_removal_revision is not None):
+            raise ValueError(
+                "Initial items require a removal revision; empty creation requires null"
+            )
+        return self
 
 
 class RenameLibraryRequest(_In):
@@ -51,9 +59,17 @@ class LibraryOrderOut(BaseModel):
 
 
 class PlaceItemRequest(_In):
-    """`replace_episodes` confirms that a show replaces its directly filed episodes."""
+    """One absolute media placement with frozen guards."""
 
-    replace_episodes: bool
+    included: bool
+    expected_order_revision: OrderRevision
+    expected_removal_revision: OrderRevision | None
+
+    @model_validator(mode="after")
+    def _guard(self) -> "PlaceItemRequest":
+        if self.included != (self.expected_removal_revision is not None):
+            raise ValueError("Inclusion requires a removal revision; exclusion requires null")
+        return self
 
 
 class LibraryOut(BaseModel):
@@ -61,6 +77,8 @@ class LibraryOut(BaseModel):
     name: str
     is_default: bool
     role: LibraryRole
+    order_revision: OrderRevision
+    can_add_content: bool
     # rename, file, reorder and manage members: an admin of a named, non-system library.
     can_manage: bool
     # delete and transfer: its owner.
@@ -70,9 +88,25 @@ class LibraryOut(BaseModel):
     can_leave: bool
 
 
+class LibraryMetadataOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    library: LibraryOut
+    kind: Literal["personal", "named", "system"]
+    created_at: datetime
+    updated_at: datetime
+    media_count: int = Field(ge=0)
+
+
 class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str
+    order_revision: OrderRevision
+
+
+class LibraryDestinationsOut(BaseModel):
+    removal_revision: OrderRevision
+    destinations: list[LibraryDestinationOut]
 
 
 class LibraryMediaEntryOut(BaseModel):
@@ -83,21 +117,7 @@ class LibraryMediaEntryOut(BaseModel):
     media_summary: MediaSummaryOut
 
 
-class LibraryPodcastEntryOut(BaseModel):
-    kind: Literal["podcast"]
-    entry_id: UUID | None
-    added_at: datetime
-    podcast_id: UUID
-    title: str
-    contributors: list[ContributorCreditOut]
-    unplayed_count: int = Field(ge=0)
-    published_date: datetime | None
-    sync_status: PodcastSyncStatus | None
-
-
-LibraryEntryOut = Annotated[
-    LibraryMediaEntryOut | LibraryPodcastEntryOut, Field(discriminator="kind")
-]
+LibraryEntryOut = LibraryMediaEntryOut
 
 
 class LibraryEntriesPageOut(CollectionPage[LibraryEntryOut]):
@@ -107,11 +127,15 @@ class LibraryEntriesPageOut(CollectionPage[LibraryEntryOut]):
 
 
 class LibraryPlacementOut(BaseModel):
-    """One library the item could sit in; `is_default` is the viewer's All (Saved in
-    Nexus). Inherited: an episode included through its filed show."""
+    """A named placement and its exact command precondition."""
 
     library_id: UUID
     name: str
-    is_default: bool
-    relation: Literal["Absent", "Direct", "Inherited"]
-    blocked: Literal["RequiresAdmin", "RequiresSubscription", "SystemManaged"] | None
+    order_revision: OrderRevision
+    relation: Literal["Absent", "Direct"]
+    blocked: Literal["RequiresAdmin", "SystemManaged"] | None
+
+
+class LibraryPlacementsOut(BaseModel):
+    removal_revision: OrderRevision
+    placements: list[LibraryPlacementOut]

@@ -1,0 +1,174 @@
+/* Shared collection paint and geometry; actual roots retain their semantics. */
+.surface {
+  min-inline-size: 0;
+  max-inline-size: var(--anchored-max-width, 100%);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-3);
+  color: var(--ink);
+}
+
+.compactViewport,
+.fillViewport,
+.contentViewport {
+  --collection-row-height: 32px;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.compactViewport,
+.fillViewport {
+  --collection-content-height: 12rem;
+  min-block-size: calc(var(--collection-row-height) + 2 * var(--space-1));
+}
+
+.contentViewport {
+  /* Parent flex constraints release as space grows; measured caps would not. */
+  min-block-size: 0;
+  max-block-size: var(--anchored-max-height, 100dvh);
+}
+
+.compactViewport {
+  max-block-size: min(calc(var(--collection-content-height) + 2 * var(--space-1)), var(--anchored-max-height, 100dvh), var(--collection-available-height, 100dvh));
+}
+
+.fillViewport {
+  flex: 1 1 auto;
+  max-block-size: var(--collection-available-height, 100dvh);
+}
+
+:global([data-collection-body]):has(.compactViewport, .fillViewport, .contentViewport) {
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+:global([data-collection-constrained="true"]):has(.compactViewport, .fillViewport, .contentViewport) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+:global([data-collection-constrained="true"]) .compactViewport,
+:global([data-collection-constrained="true"]) .fillViewport,
+:global([data-collection-constrained="true"]) .contentViewport {
+  flex: 0 0 auto;
+  max-block-size: none;
+  overflow: visible;
+}
+
+.search {
+  min-block-size: 32px;
+  min-inline-size: 0;
+  inline-size: 100%;
+  font-size: var(--text-sm);
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  text-align: start;
+  text-decoration: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.row:not([role="option"]):not([role="row"]):not([aria-disabled="true"]):hover,
+.row[data-active="true"] {
+  background: var(--surface-2);
+}
+
+.row:focus-visible,
+.compactViewport:focus-visible,
+.fillViewport:focus-visible,
+.contentViewport:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.row[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
+
+.row[data-tone="danger"] { color: var(--danger); }
+.row[data-tone="accent"] { color: var(--accent); }
+
+.row[aria-disabled="true"] {
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+.row[aria-disabled="true"][aria-current="true"] { background: transparent; }
+
+.content {
+  display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.adornment {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+}
+
+.row[data-selected="true"] .adornment { color: var(--accent); }
+.row[aria-disabled="true"] .adornment { color: var(--ink-muted); }
+
+@media (any-pointer: coarse) {
+  .compactViewport,
+  .fillViewport,
+  .contentViewport {
+    --collection-row-height: 44px;
+  }
+  .compactViewport,
+  .fillViewport {
+    --collection-content-height: 16.5rem;
+  }
+  .row,
+  .search { min-block-size: 44px; }
+  .search { font-size: 16px; }
+}
+
+@media (forced-colors: active) {
+  .surface { border-color: CanvasText; background: Canvas; color: CanvasText; box-shadow: none; }
+  .row[data-active="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
+  .row[data-selected="true"] .adornment { color: Highlight; }
+  .row[aria-disabled="true"],
+  .row[aria-disabled="true"] .adornment,
+  .detail { color: GrayText; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row,
+  .adornment,
+  .adornment > * { animation: none; transition: none; }
+}

@@ -51,6 +51,27 @@ store and the views).
 
 ## Contracts
 
+### index metadata
+
+the index and destination picker share `presentConversationListItem` and
+`ConversationMetadata`: a compact updated-age token, semantic time with an exact
+timestamp including seconds/timezone in its expanded caption and native title,
+and the message count once. exact timestamps stay passive; touch has no new
+disclosure. only the age token has a three-character budget.
+
+age floors completed minutes/hours/days/weeks/365-day years. below one minute
+in either direction it says `now`; more than nine years says `>9y`; a timestamp
+at least one minute ahead shows an em dash and explains clock uncertainty.
+malformed wire instants are defects. duration rounding and prose relative-time
+formatting have separate contracts.
+
+`useChatAgeClock` owns one minute interval per visible list/picker, never per row.
+the initial render instant preserves hydration; layout effects refresh after
+mount, stable source-array replacement and pane visibility changes. hidden panes
+and documents stop the interval; document return refreshes immediately. visible
+unfocused panes keep aging. callbacks/effects alone read the clock; ticks only
+re-present existing data and never refetch, publish, reorder or move focus.
+
 ### http (authenticated, `Data{data}`, every request carries `X-Nexus-Wire`)
 
 | route | request | answer | retry rule |
@@ -144,7 +165,14 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   Forks rows are canonical destinations with `?leaf` and `?message` arrival selectors:
   plain activation follows a matching pane, shift opens a fresh pane; nothing is written. an arrival or `?message`
   off the path moves a bare endpoint to the newest leaf under it; an explicit one must
-  contain it. a deleted endpoint falls back to its nearest surviving ancestor ("this
+  contain it. exact find uses `/conversations/{id}?leaf=…&loc=…`: the closed
+  `find_match` payload carries message id, codepoint bounds and sha-256 of complete
+  rendered searched text, excluding find chrome. search freezes branch/text and
+  hashes once per matched message. arrival verifies the terminal message on that
+  exact branch and the rebuilt cursor/digest before positioning/paint; it never
+  resolves via the backend, guesses a quote or substitutes a branch. native open
+  and reload decode identically. local find/navigation retires arrival paint.
+  without an exact `loc`, a deleted endpoint falls back to its nearest surviving ancestor ("this
   branch was deleted"); an invalid or missing one shows "this branch is no longer
   available" until the viewer chooses one.
 - **one command owner per account and chat, and per pane for a new chat** (`commands.ts`,
@@ -318,3 +346,10 @@ and source arrival remain resource-owned.
     warns before their actual loss; model selection alone is clean. accepted
     server runs continue after local discard, navigation or reload.
 24. every chat create names its id; every fork rename names the title it replaces.
+
+passage questions consume only their submitted rich input on server acceptance,
+through `ConversationCommands.execute(command, onAcceptance)`. newer editor input
+and an existing saved annotation remain. a fresh question ensures a highlight
+without creating a note. highlight creation and chat admission can partially
+succeed; unknown admission retries the same command, while definitive refusal
+requires a reviewed new command. generation completion does not own input reset.

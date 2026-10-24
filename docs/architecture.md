@@ -98,7 +98,7 @@ scaffolding.
                            └──────┬───────┘          ┌───────────────────────┐
                                   │                  │ Workers (two lanes)   │
                                   │ object refs      │ interactive: chat,    │
-                                  ▼                  │ dossier, metadata,    │
+                                  ▼                  │ metadata,    │
                            ┌──────────────┐          │ podcast sync, oracle  │
                            │ r2/seaweedfs  │◀─────────│ background: ingest,   │
                            │ object store │          │ index, repair, delete │
@@ -151,8 +151,8 @@ served by Vercel.
 Key topology facts (details: [`deployment.md`](../deployment.md),
 `deploy/hetzner/`, `deploy/vercel/`):
 
-- Default request path is **Browser → Next.js BFF → FastAPI → Postgres**.
-  SSE is the documented exception (**Browser → FastAPI `/stream/*`**).
+- default request path is **browser → next.js bff → fastapi → postgres**,
+  including live streams at the web origin's `/api/stream/*`.
 - One full Git SHA identifies a release vector. Each `main` push publishes one
   strict manifest (schema 3) containing immutable API/worker image digests and
   the expected schema. The host pulls those digests; it never
@@ -161,8 +161,10 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   entrypoint. It runs `deploy/hetzner/release.py`, one linear idempotent pass
   (preflight, declared host inputs, images, verified R2 backup, migration,
   `up --wait`, Caddy reload, health, Codex isolation assertions, `current`
-  pointer), then promotes the exact staged Vercel deployment. There is no
-  attempt state and no resume mode: rerun the same command.
+  pointer, archive retention), then promotes the exact staged Vercel
+  deployment. There is no attempt state and no resume mode: rerun the same
+  command. A host timer takes the same verified backup nightly with writers up;
+  one host lock keeps it apart from releases.
 - VPS and Vercel config publication are explicit prepare-only operations, never
   implicit release steps. The Oracle corpus seed is a separate idempotent
   operator command, safe while the app runs; application release never runs it.
@@ -333,7 +335,7 @@ A stream is an ordinary session request through the BFF:
    (cursor streams) or receives the whole snapshot again (snapshot streams); a
    401 sends the tab to login.
 
-This is used by chat runs, oracle readings, Dossier builds, media processing
+This is used by chat runs, oracle readings, media processing
 status, metadata enrichment, and the active Podcast subscription lifecycle.
 The lifecycle stream is keyed by the subscription epoch UUID while its public
 route remains viewer + Podcast addressed; every snapshot reasserts that exact
@@ -346,7 +348,7 @@ epoch and viewer before it can cross the stream.
 PostgreSQL is the single source of truth. The schema of record is the live
 database (`pg_dump --schema-only`) plus the **hand-written** Alembic migrations
 (`migrations/alembic/versions/NNNN_*.py`, linear chain, no autogenerate).
-Revisions `0001`-`0292` are squashed into one baseline, `0292_baseline.py`,
+Revisions `0001`-`0306` are squashed into one baseline, `0306_baseline.py`,
 which replays the dumped schema and seed rows beside it; the chain continues
 from there. `python/nexus/db/models.py` maps only the tables the code
 queries through the ORM: each class states its columns, their python types, its
@@ -416,7 +418,7 @@ targets are exact `evidence_span` rows. `services/media_intelligence_lifecycle.p
 owns the head lifecycle, `tasks/media_unit_build.py` publishes or fails a unit,
 and `services/media_intelligence.py` publishes audience-gated single/batch
 projections.
-Media Intelligence is current-only reusable interpretation, not a Dossier.
+Media Intelligence is current-only reusable interpretation, shared by discovery.
 
 **Highlights & passage anchors** — `highlights` (base row + the
 exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
@@ -493,22 +495,6 @@ public-web citation targets. see [connections](modules/connections.md).
 the librarian names the presentation role for assistant and automatic connection
 curation; stored origins and capabilities retain their operational meaning.
 
-**Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
-derived audience, and carries its one revision: `revision_id` (the
-`artifact_revision:` identity), one accepted semantic `content_html` article,
-its `content_text`, its `coverage` (counts plus the input fingerprint) and its
-provenance. `artifact_builds` records each generation attempt with a `status`
-(`active | succeeded | failed | cancelled`, at most one active per head by a
-partial unique index) and a failure code. Eight subject bindings cover Media,
-Conversation, Library, Podcast, Contributor, Page, Note, and the internal
-user-owned Idea (`artifact_idea_subjects`, seeded by `artifact_idea_seeds`). One
-engine, API and `dossier_build` job own the lifecycle; a success swaps the
-revision columns and citation edges and deletes every other build of the head in
-one transaction.
-published dossiers say `prepared by the librarian`; provenance distinguishes
-`requested by you` from `requested by a library member` using `by_viewer`, and
-retains model, tokens and date. media abstracts keep their own attribution.
-
 **Conversations / chat** — `conversations` (carries the owner's
 `active_leaf_message_id`), `messages` (the message tree with branch pointers;
 a user turn may carry a `fork_title`); plus the **chat-run** machinery: `chat_runs`
@@ -528,18 +514,13 @@ all completed branches without importing their attachments. Assistant
 message API responses include a
 `trust_trail` read model assembled from these durable rows.
 
-**Podcasts / playback** — `podcasts`, active-only `podcast_subscriptions`
-(`id` PK, unique viewer/Podcast relationship, live `sync_status`, and
-`auto_queue_watermark_at`), `podcast_subscription_backfills` (the separate
-durable history-traversal fence), `podcast_episodes` (PK = `media_id`),
-`podcast_episode_identities` (stable PodcastIndex/RSS aliases),
-`podcast_episode_chapters`,
-`podcast_listening_states` (position clamped to duration, nullable established
-episode rate, the `reset_epoch` that alone fences listening writes, and
-write-only `last_engaged_at`; operational `updated_at` is not engagement),
-`podcast_transcription_jobs`, `podcast_transcript_segments`. Named
-Podcast placement is only `library_entries(podcast_id)`; Default/All is virtual
-and stores no Podcast entry.
+**podcasts / playback** — canonical `podcasts`/`podcast_episodes`, per-library
+`library_podcast_subscriptions`, finite `podcast_library_imports`, shared
+`podcast_feed_runs` and temporary `podcast_import_processed_episodes`.
+`podcast_playback_settings` is independent viewer/show state. episode identities,
+chapter rows, listening states and explicit transcript publication retain their
+owners. entries contain only media; subscriptions appear in a separate section
+without folding episode contents. see [podcasts](modules/podcast.md).
 
 **Reader cursor / Lectern / consumption** — `reader_media_state` (the canonical
 revision-fenced resume cursor, including persisted `Empty` reset tombstones;
@@ -629,7 +610,6 @@ keepalive, never drops it.
 | ----------------------- | --------------------------------- | ---------------- |
 | `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
 | `oracle_readings`       | status change on `oracle_readings` | oracle SSE tail  |
-| `artifact_builds`       | insert, status change, delete     | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
@@ -661,10 +641,10 @@ The **registry** (`jobs/registry.py`) is the one table of kinds: lane, handler
 retention and hook paths. Lanes, budgets and prune retention derive from it. See
 [modules/jobs.md](modules/jobs.md).
 
-Kinds (17): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
-`oracle_reading_generate`, `podcast_sync_subscription_job`; background
+Kinds (16): interactive `chat_run`, `enrich_metadata`,
+`oracle_reading_generate`; background
 `ingest_media_source`, `media_content_reindex_job`, `note_reindex_job`,
-`media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`,
+`media_unit_build`, `connection_discovery_scan`, `podcast_feed_page`, `podcast_chapters`,
 `media_teardown`, and the periodic
 `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`,
 `prune_background_jobs_job`,
@@ -685,7 +665,7 @@ reconciled after the fact.
 > queue-level retries. A handler that wants the job dead returns `TerminalJobFailure`.
 
 **Generation boundary.** Every generative job — chat, Oracle, connection
-discovery, dossiers, media summaries, and metadata enrichment — makes one
+discovery, media summaries, and metadata enrichment — makes one
 `generate` call (`services/generation/run.py`). It reads the exact selection from
 the chat run or the operation table, checks the catalog, opens one `llm_calls`
 row, runs Codex Personal (the kernel's transient native mode) or a provider API
@@ -698,11 +678,8 @@ presets, or fallback routes.
 Nothing replays. A worker that dies mid-generation leaves its row open until its
 job's next attempt starts, the job dies or is revoked, or migration 0269 closes
 it `interrupted`; chat fails the run and the user reruns, background jobs rerun
-from scratch. Within `dossier_build`, `services/dossier/synthesis.py`
-owns the synthesis prompt and its `Published | Failed | Stopped` outcome; idea
-research keeps its billed web search picks in the job payload across
-reschedules. The existing PostgreSQL queue, leases, and publication owners
-remain unchanged. See [modules/llms.md](modules/llms.md).
+from scratch. the PostgreSQL queue, leases and publication owners remain
+independent of generation transport. See [modules/llms.md](modules/llms.md).
 
 Eligible Chat and background runs use one canonical tool authority. Provider
 API tool proposals adapt frozen plans to the executor and use
@@ -803,7 +780,7 @@ Other identity surfaces:
 browser discovery and strict evidence retrieval share `services/search/` visible
 sql families, scope predicates, embeddings and resource items. `discovery.py` owns
 `GET /search/preview` and `/search`: bounded launcher bands, resource grouping and
-an explicit passages view. `DiscoveryQuery` adds libraries, readings, dossiers and
+an explicit passages view. `DiscoveryQuery` adds libraries, readings and
 saved passages to the six browser kinds. `service.py` retains strict `SearchQuery`,
 six-kind evidence retrieval, frozen chat context and citation reopen; browse,
 connection discovery, oracle and the target picker keep those contracts.
@@ -863,7 +840,7 @@ resource reopening and visibility belong to `services/resource_graph/resolve.py`
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_passage_anchor`,
-  `artifact`, `artifact_revision`, `reader_apparatus_item`, `external_snapshot`,
+  `reader_apparatus_item`, `external_snapshot`,
   `contributor`, `podcast`, `passage_anchor`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
@@ -908,9 +885,7 @@ after fresh per-run consent:
   **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
   persist their exact effects with the tool result and support scoped Undo.
 
-Dossier model turns, Idea ones included, carry no model tools: Idea research
-calls the web search provider directly from the build, before the model turn.
-Other background operations retain their direct evidence algorithms and publish
+background operations retain their direct evidence algorithms and publish
 `NoModelTools`; none inherit Chat authority. Both transports hand every call to
 the one dispatcher, `services/tools/run.run_tool`; the tool contract, plans,
 domain handlers and the one `tool_calls` row per call are owned by
@@ -921,65 +896,31 @@ Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole tur
 edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
 source is the assistant message and whose target is the cited resource. The
 backend builds the `CitationOut` read-model from those edges via
-`resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
-Universal Dossiers), reconstructing the in-reader jump from the target's own
+`resource_graph.citations.build_citation_outs` (uniformly for chat and oracle), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
 the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
 resource activation plus an optional reader-internal focus target.
 
-### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
+### 7.8 resource inspector and media intelligence
 
-`CAPABILITIES` (`services/resource_items/capabilities.py`) is the backend authority for Inspector eligibility,
-linked-items policy, Forks, and default surface order; the committed TypeScript
-projection must agree with the backend. Every eligible resource implies Dossier.
-`useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents, Connections, Context, and Forks bodies plus the
-shared Dossier body. Selecting that action validates the requested surface
-against its route-owned publication and, when attached to the workspace host,
-synchronously reasserts the same publication before requesting its surface, so
-publication cleanup and command acceptance cannot race or silently discard a
-valid first click.
+`CAPABILITIES` (`services/resource_items/capabilities.py`) owns inspector
+eligibility, linked-items policy, forks and default preference. its generated
+web projection agrees with the backend. `components/resource-inspector/`
+composes route-owned bodies through `useResourceInspector` and the existing
+companion/find host. missing or unpublished subjects publish no inspector.
 
-The backend (`services/dossier/`) separates its owners:
+| subject | surfaces in order | default |
+| --- | --- | --- |
+| media | contents when available; connections | contents, else connections |
+| conversation | connections; forks | connections |
+| library | authorized members; connections | connections |
+| podcast, author, page, note | connections | connections |
 
-- `subjects.py` is the one eight-entry binding table: prompt phrase, operation,
-  the subject's visibility predicate (one sql string serving the single check
-  and the batch `CASE` of `head_visible_sql`), input collector, media
-  intelligence ensure, shared library audience, and route handle;
-- `inputs.py` collects each subject purely, so a build and a head's freshness
-  check call the same function; `research.py` gathers the Idea's sources;
-- `document.py` accepts the model article against the closed grammar and
-  compiles citations; `synthesis.py` runs the one model turn;
-- `engine.py` owns heads, builds and every status transition (compare-and-set
-  out of `active`), publish, purge and the head read; `run.py` is one worker
-  attempt.
-
-A revision's `coverage` (`unit`, `included`, `omitted`) is the coverage line;
-its stored fingerprint against the live collection is `stale`. Head reads
-never generate or mutate a dossier. Idea subject routes remain unavailable.
-Failure facts reach the browser as a code; the diagnostic detail stays in the
-database. Build identifiers are UUIDs, authorized through the owning head.
-
-Resource bootstrap/Inspector lookup uses
-`GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
-`POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`; an
-existing head regenerates only through
-`POST /artifacts/{artifact_ref}/builds`. `GET /artifacts/{artifact_ref}` is the
-canonical authorized head read. Selection Learn uses
-`POST /artifacts/dossiers/learn`, resolves an internal Idea, records the
-Highlight as a seed, and adopts the standalone Artifact pane. The remaining
-API is `POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
-`GET /stream/artifact-builds/{artifact_build_id}/events`, a snapshot stream:
-`state` frames carry the build's `DossierBuildOut` whenever it changes and
-`done` closes it once the build is no longer active. `lib/dossiers/dossierApi.ts`
-is the one browser Dossier transport boundary over generated wire types
-(typed-wire); Cancel is an exact 204. The browser renders a revision into an
-open shadow root of the app document under the app's nonce csp, after
-re-proving the grammar on the exact nodes it adopts (`DossierDocument`), with
-one delegated click listener for citations. Media Intelligence reaches the web
-only inside the Dossier read model as `media_abstract`; the Media Dossier
-renders it as a compact Abstract and offers the same claims as generation
-input.
+single-tab inspectors retain the host, remembered selection, visibility, width,
+keyboard/touch behavior and focus restoration. opening a resource reads its
+existing facts; it does not schedule synthesis. shared media intelligence still
+builds a current summary and grounded claims consumed by connection discovery.
+source abstracts and show notes remain reader content.
 
 ---
 
@@ -1061,9 +1002,13 @@ Routes are transport adapters; they call exactly one service owner. (The media r
 `media.py` catalog, `media_sources.py` and `media_uploads.py` ingest, `media_assets.py` image/EPUB-asset
 serving, `reader.py` reader read-model, `playback.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
-Ingest `library_ids` are writable non-default destinations; media services
-validate them through library governance and assign default plus selected
-destinations through `library_entries`.
+url/podcast admission carries `expected_removal_revision` and named destination
+revision guards. upload creation keeps initial destination ids; final confirmation
+owns the guarded choices. publication, personal retention and filing commit
+atomically. a known conflict allows confirm-only review with the same staged
+bytes/generation before expiry; unknown confirmation retains its exact body.
+losing the live request owner requires re-upload or recapture. `Published` carries
+current placements or null, so a receipt never falsely claims current saving.
 
 An upload session is durable intent, not media: signed url expiry never
 deletes it, and media/source attempt/exact queue job publish atomically only
@@ -1197,7 +1142,7 @@ apparatus is extracted before sanitization removes semantic attributes. PDF
 the bounded media `h1`-to-`h2` projection beneath the resource heading; the
 reader never rewrites that dom for decorations. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Connections`, and `Dossier`. Contents and Connections retain their
+available and `Connections`. Contents and Connections retain their
 internal **Document Map** semantics:
 connections is a target-centered aggregate of highlights, source references,
 generated citations, links, and librarian links, separated into passage and
@@ -1287,19 +1232,18 @@ Content organization + access control, split into four owned modules:
 one: `access()` returns the row plus the viewer's role, the one capability rule;
 create, rename, delete, the index, writable destinations),
 `services/library_entries.py` (the **sole writer** of `library_entries`: the
-`EntryTarget` media|podcast union, the locked append, the move command, filing,
-unfiling and show placement), `services/library_listing.py` (the entry view
+media target, locked append, move, filing and unfiling), `services/library_listing.py` (the entry view
 lenses and the one page statement; no DML), and `services/library_members.py` (the
   `memberships` and `library_invitations` tables; users and invitations are plain uuids). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
   private and total: the repeatable-read membership query filters visibility,
-  and every admitted Media or Podcast row must produce exactly one response item.
+  and every admitted media row must produce exactly one response item.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
   or receive physical Podcast entries) plus shareable libraries with `memberships`
   (`admin`/`member` roles; owner is a distinct concept layered on admin).
-  `library_entries` point at exactly one media or podcast and carry an integer
+  `library_entries` point at one media and carry an integer
   `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
   invariant since migration `0131`, with cleanup explicit in app code).
   mutable named libraries also carry a sequence-backed `order_revision`;
@@ -1329,48 +1273,35 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   `GET /libraries/destinations`; default libraries, member-only
   libraries, duplicate IDs, and inaccessible IDs are not valid write
   destinations.
-- **The default library's read surface is a live, deduplicated personal
-  "All" query**, not a materialized or backfilled set. It is the union of the
-  distinct Media reachable through the viewer's _current_ non-system
-  memberships and the viewer's active Podcast subscriptions, followed by one
-  root-subsumption step: an active subscription contributes its virtual Podcast
-  root and suppresses every child episode Media row from All. Subsumption runs
-  before projection, exact-type filtering, ordering, pagination, and count.
-  Child `library_entries` remain physical facts, so live sync and historical
-  backfill do not change the subscribed show's All root cardinality; when the
-  subscription is deleted, retained episodes immediately resurface with their
-  consumption state intact. Outside Default/All, named-Library parent/child
-  placement rules are unchanged. Media is otherwise deduplicated by `media_id`
-  — a direct default entry wins the tie, else the earliest entry. Losing a
-  membership removes that Library's Media contribution on the next read;
-  deleting a subscription removes its virtual Podcast row.
-  Default Podcast rows expose absent placement rather than a fabricated entry
-  ID or position. Filing media into the default library directly — the one
-  actor-authorized filing command in
-  `library_entries.ensure_media_in_library_in_current_transaction`
-  — always inserts (or idempotently keeps) a physical `library_entries` row
-  there; a work already visible virtually through another membership can
-  still be explicitly filed, and that direct entry is what a later
-  membership loss cannot take away. The browser presents the Default library
-  as **All** ("Across your libraries") on the closed alias boundary — library
-  row, pane title/label, resource-target results, Dossier and Atlas labels —
-  while the domain object, storage row, and API fields keep their internal
-  Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
-  any non-default create/rename). Entries page as a keyset list (§8.12) whose
-  cursor binds viewer, Library and view. Canonical order is
-  the durable authored order for named Libraries and
-  `(addedAt DESC, targetKind ASC, targetId DESC)` for Default. A `view` is the
-  order plus a fixed entry projection: `All items (all)` includes Podcast
-  shows, while `All items (unfinished)`, `Unfiled` (Default only — direct
-  Default media with no other current, non-system placement), or
-  `In Progress` (canonical consumption `read_state = 'InProgress'`; podcast
-  show rows never match, and the completion filter is unrepresentable with
-  it). Factual view lenses (Title/Creator/Published/Added/Remaining, each ascending or
-  descending), projections, and the hide-finished completion filter are
-  URL-only: they are never persisted and never write
-  `library_entries.position`. In the browser every placement and consumption
-  writer publishes its change topic after the write (§8.12), and the Library
-  pane rereads its view when a topic it follows moves.
+- **all and retention**: the stable default row retains personal media holdings;
+  all deduplicates physical media across current non-system memberships, excluding
+  viewer removal markers and teardown. named libraries contain physical media;
+  unfiled means default-held media without a direct named placement. subscriptions
+  have their own section and active-rule relation, outside content counts/sort/page.
+  default added dates win, otherwise the earliest qualifying physical entry.
+  canonical relations feed search, atlas and suggestions. all's podcast
+  commands cascade to affected destinations; [podcasts](modules/podcast.md) owns
+  exact preview, preservation and authority contracts.
+- **guarded organization**: destination and placement reads return named rows,
+  exact library revisions and the viewer removal revision from one snapshot.
+  public placement accepts one absolute `included` command with frozen expected
+  revision; even accepted no-ops advance it. stale commands conflict before
+  desired-state equality. create-and-file is one atomic client-id creation;
+  replay never reapplies initial contents. filing retains the actor's personal
+  copy; unfiling and library deletion preserve eligible holdings. automatic
+  preservation respects removal markers. all offers capture through
+  `can_add_content` without becoming manageable or a picker destination.
+- **acquisition and undo**: `users.removal_revision` advances on explicit removal,
+  library deletion and unsubscribe, fencing older acquisitions. viewer locks use no-key-update
+  before admission, podcast, sorted media and sorted library locks; external i/o
+  holds none of them. source/upload receipts return past acceptance without
+  reapplying placement; current availability controls displayed success. source
+  convergence transfers current references and removal markers, never initial
+  destination payloads. assistant filing uses the same command; undo needs the
+  exact inserted entry and unchanged library revision. historical unproved
+  revisions preserve provenance and disable undo. account and chat history use
+  execution's same eligibility rule. [libraries](modules/library.md) owns the
+  detailed contracts and [ingest](modules/ingest.md) owns publication.
 - **reading duration has one shared read owner.** `services/reading_time.py`
   composes stored integer counts from `media_document_metrics.py`, document
   quote-readiness from `capabilities.py`, and current-position facts from
@@ -1399,14 +1330,9 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   consumption and shared reading estimate; relation reasons remain internal.
   inline related discovery and `/media/{id}/related` are retired; the resource
   graph and opened-resource connections remain.
-- **Library Dossier** is the Library binding of Universal Dossiers, not a
-  Library-owned subsystem. The Library pane publishes Entries in primary
-  content and capability-gated `Members | Connections | Dossier` in the shared
-  Resource Inspector; Members is present only for mutable Libraries the viewer
-  can administer, and Dossier remains default. Its audience is the Library
-  membership scope; direct entries and expanded Podcast episodes are
-  intersected with audience-visible Media (the library owner's), and freshness
-  compares the stored input fingerprint with the same collection run live.
+- the library pane publishes entries in primary content and authorized
+  `Members | Connections` in the shared inspector, defaulting to connections.
+  members appear only for mutable libraries the viewer can administer.
 
 ### 8.6 Contributors
 
@@ -1467,20 +1393,18 @@ render `OutlineEditor`; `NoteEditor` is the one prose editor. Contracts and inva
 
 ### 8.8 Lectern & podcast playback
 
-`services/browse/*` owns Podcast Index discovery and read-only Preview.
-`services/podcasts/*` owns Subscribe/unsubscribe, canonical Podcast and
-episode identity, live feed sync, the independent historical backfill, and
-explicit Transcribe after acquisition. A subscription exists exactly while its
-row exists. Named Podcast placement is only `library_entries(podcast_id)`;
-Default/All projects active subscriptions virtually as one Podcast root and
-hides their retained child episode roots. Episode acquisition and sync still
-write physical Media placement; root hiding is a read predicate, not deletion.
-Unsubscribe removes the virtual parent predicate, so retained episodes resurface
-with their existing consumption state.
+`services/browse/*` owns podcast discovery and preview. `services/podcasts/*`
+owns canonical episodes, library subscriptions, finite imports, recurring scans
+and explicit transcription. subscription presence means delivery to that library;
+physical episodes remain ordinary contents. all deduplicates rules across current
+member libraries and is the parent command scope. no destination picker appears
+for contextless subscribe; it targets the account's default.
 
-Subscribe enqueues one live sync and one `podcast_subscription_backfills` chain.
-The live path keeps current episodes fresh while the backfill walks history in
-fenced, retryable steps, and either path may continue when the other fails.
+finite and recurring work share exact attempt/step/job-fenced page traversal.
+first canonical insertion delivers to current rules; metadata refresh never refiles.
+processed finite identities preserve later unfile intent through retry. stop chooses
+keep/remove; global removal preserves authored work and playback state. clean scans
+are due hourly, failure backs off, and chapter sidecars use separate bounded jobs.
 Both paths ingest metadata, stable aliases, chapters, playback URLs, and RSS
 transcript references only. They never fetch or publish a transcript. Explicit
 Episode Transcribe publishes the publisher sidecar when it yields segments, else
@@ -1541,14 +1465,11 @@ Canonical YouTube Video caption import lives in `_import_youtube_captions`. It
 crosses the provider boundary with no database transaction open, reauthorizes
 before atomic `Imported` transcript publication.
 
-The canonical Podcast detail pane observes those two independent owners through
-one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
-on the subscription and its current backfill notify only the subscription UUID;
-the stream re-reads durable state and remains nonterminal until both owners are
-`Complete | SourceLimited | Failed`. A serialized latest-state drain revalidates
-detail and episodes without overlap when committed snapshots change, so reused
-global episodes and later backfill pages converge without browser polling, a
-manual Refresh, or a second ingest path.
+The podcast detail and library section read library-owned subscriptions and finite
+imports through ordinary server values. The existing visible-tab polling owner
+revalidates active work; accepted commands and observed publication invalidate
+`Podcasts` and `Entries`. There is no subscription stream or notification trigger.
+Playback defaults belong to the viewer and show independently of subscriptions.
 
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
@@ -1670,7 +1591,7 @@ Year in Reading view. Exact session Exclude/Restore is the only correction
 lifecycle. Accepted writes publish the Consumption change topic (§8.12); the
 pane rereads on it only while active, on activation, and when the page returns
 to the screen, without polling. Its figures are one `useServerValue` and its
-sessions one `useServerList` (Load more) over the keyset sessions read. a
+sessions one automatically exhausted `useServerList` over the keyset sessions read. a
 `null` cursor ends the list; no empty-string cursor stands in for it. stats'
 full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
@@ -1733,8 +1654,10 @@ Podcast (Podcast Index). `/browse/preview` re-resolves a sealed
 their canonical pane; external results open Preview before explicit Add or
 Subscribe. Preview proxies remote images, never frames arbitrary web, loads the
 official YouTube iframe only after action, and starts remote Podcast audio only
-after action. `BrowseSearch` and `BrowsePreviewEpisodes` are signed, unversioned,
-query/plan-bound cursor families.
+after action. `BrowseSearch` has signed, unversioned, query/plan-bound cursors.
+podcast preview is one directory snapshot of up to 1,000 raw provider episodes;
+its target-only read has no continuation. external candidate identity is its
+discovery target, independent of ownership resolution.
 
 Acquisition reuses canonical owners: URL Add calls `/media/from-url`, episode
 Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
@@ -1788,7 +1711,7 @@ pane URL
   -> strict route parse + backend domain view
   -> authorized base relation
   -> domain filter -> order plan -> keyset -> limit+1
-  -> useServerList: one view's rows, drained or Load more (§8.12)
+  -> useServerList: publish each page and exhaust while active (§8.12)
   -> domain presenter + explicit local match fields
   -> visit-local Filter query -> CollectionView
 ```
@@ -1823,9 +1746,8 @@ history, and the chat read tool's completed messages.
 - **One page contract** for the six families (`schemas/collection_page.py`):
   query `limit` (1..200, default 100), `cursor` and the list's own keys; an
   unknown or repeated key, a bad limit or an empty cursor is
-  `400 E_INVALID_REQUEST`. The response is `{data: {items, nextCursor}}`.
-  The other lists keep their envelopes (`page.nextCursor`, snake
-  `next_cursor`).
+  `400 E_INVALID_REQUEST`. the response is `{data: {items, next_cursor}}`.
+  specialized lists retain their typed envelopes and snake_case keys.
 - **The keyset guarantee.** Following cursors to the end returns every row
   whose sort values do not change during the walk exactly once, in plan
   order. A row inserted or moved after the cursor appears; one inserted or
@@ -1836,27 +1758,45 @@ history, and the chat read tool's completed messages.
   "remaining" order with the in-progress and unfinished projections, and the
   episode state filter. The tab's own writes always reread from page one.
 
-The browser holds each list in `lib/api/useServerList.ts`. `key` names the
-view; a new key loads its first page while the previous view's rows stay
-shown (`current: false`), then swaps them at once and abandons the old
-continuation. Rows are deduped by id, first wins. `refetch()` rereads the
-loaded prefix (at least one page; a complete list to its end) in one commit,
-queued behind the read in flight and shared by every call made meanwhile; a
-change of `stale` under the same key calls it. `drain` loads to the end while
-the pane is active and the document visible and stops at the first failure
-until Retry; manual lists use `more()` (Load more, offered only while the
-rows shown are the current view's). Rows are always kept: a
-continuation that fails in transport or with a 5xx offers Retry, a rejected
-cursor restarts the entire walk from page one, and only "cursor absent" licenses the
-count header, the "Complete" filter status and reorder. A pane return paints
-the visit's snapshot and rereads only if `stale` moved since it was read; a
-server seed paints a first visit the same way.
+the browser holds every paginated collection in `lib/api/useServerList.ts`.
+`key` names the view; a new key exposes no previous-key rows or metadata,
+including before effects run, and admits its first page. same-key refresh keeps
+its usable snapshot until atomic replacement or failure. each page publishes immediately, even
+when empty, then the list appends sequentially to cursor exhaustion while its
+surface is active and the document visible. embedded disclosures additionally
+require their open lifetime. an admitted logical read may finish inactive;
+query change or unmount aborts. scrolling admits no work. rows deduplicate by
+stable id, first occurrence wins; metadata follows the latest committed page.
+`fresh` means the committed snapshot matches the requested key and `stale` token.
+actions using that snapshot also require no running read or settled failure.
+
+`refetch()` and `stale` changes supersede older work and atomically replace the
+loaded page prefix; a complete list rereads to its end. requests preserve each
+adapter's page size. `revalidate()` coalesces periodic observations behind
+initial traversal and strict refresh without superseding an admitted read; a
+last pending observation survives polling stopping. any settled failure stops
+automatic work until explicit recovery, a new query or strict invalidation.
+continuation failure retains usable current-query rows, including picker
+choices. an invalid cursor allows one source restart per logical operation,
+then requires explicit recovery. only a null cursor licenses completion counts
+and operations requiring completeness, including custom ordering.
+
+a pane return restores its visit snapshot and rereads only if `stale` moved;
+a server seed supplies the first page once. automatic continuation is visually
+and audibly quiet. `useCollectionReadFeedback` supplies a nullable continuation
+recovery notice and a persistent, separate live node: an announced active initial
+wait receives one first-response outcome, never a per-page or exhaustion receipt.
+inactive or abandoned waits retire without replay. local filter status speaks
+subsequent user query changes; complete single-response
+reads remain single responses. authored outline branches alone retain explicit
+`usePagePrefix` expansion with their first-page authority and generations.
 
 In-tab change topics (`lib/api/changes.ts`) tell mounted lists that a
 committed write in this tab changed server state. A writer publishes after
 the write; an observing list puts the topics' stamp in its `stale` token.
-Nothing crosses tabs, and no list rereads on focus (media summaries do,
-through the media query revision some lists also follow).
+change topics do not cross tabs. domain owners admit focus observations:
+imports refreshes its summary and reconciles collections when its observation
+clock advances; media-summary revisions also invalidate their observing lists.
 
 | topic | publishers | observers |
 | --- | --- | --- |
@@ -1936,13 +1876,11 @@ open over Resume and never become panes.
   row and the inner Nexus control, without moving the Nexus wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
-  (`Contents | Connections | Dossier`), Conversation
-  (`Context | Forks | Dossier`), Library
-  (`Members | Connections | Dossier` when the viewer can administer it, else
-  `Connections | Dossier`), and Podcast/Author/Page/Note
-  (`Connections | Dossier`). One visible inspector action opens the same group
-  on desktop and mobile; open state, active tab, width, and viewed Dossier
-  revision are workspace-local. The Imports pane publishes the one other
+  (`Contents | Connections`), Conversation
+  (`Connections | Forks`), Library
+  (`Members | Connections` when the viewer can administer it, else
+  `Connections`), and Podcast/Author/Page/Note (`Connections`). One visible inspector action opens the same group
+  on desktop and mobile; open state, active tab and width are workspace-local. The Imports pane publishes the one other
   secondary group, `imports-inspector` (`Import details`), the same way, because
   its selection is a row rather than a resource; its selection lives in the pane
   URL (`selected=<ref>`).
@@ -2125,7 +2063,7 @@ Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
 linear `NNNN_*` numbering, no autogenerate), rooted at the squashed baseline
-`0292_baseline.py`. Dev: `make migrate`. The PR check
+`0306_baseline.py`. Dev: `make migrate`. The PR check
 requires one canonical Alembic head without starting a database. Production
 applies the candidate's baked head only inside the release, after the
 stopped-writer verified R2 backup and a revision-ancestry proof, and before the
@@ -2221,7 +2159,7 @@ The things most likely to bite you, distilled:
 | Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
 | FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/api/edge.py`, `python/nexus/auth/`                                                                                                                                |
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
-| The schema                                                        | `migrations/alembic/versions/0292_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
+| The schema                                                        | `migrations/alembic/versions/0306_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/generation/`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md)                                                                                                    |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempts.py`, `source_runner.py`, `source_publication.py`, `web_article.py`, `x_ingest.py`, `youtube.py`, `remote_file.py`, `media_processing_state.py`, [`modules/ingest.md`](modules/ingest.md) |
@@ -2231,7 +2169,7 @@ The things most likely to bite you, distilled:
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,content_chunking,embeddings,note_indexing}.py`, `services/chat/retrievals.py` |
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `cleanup`)                                                     |
-| Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
+| media intelligence                           | `python/nexus/services/media_intelligence.py`                                                                               |
 | Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
 | Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_members,contributors,notes}.py`                                                                                               |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |

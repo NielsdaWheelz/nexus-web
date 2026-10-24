@@ -6,7 +6,7 @@ import {
   ListTree,
   Network,
   PanelRight,
-  Search,
+  TextSearch,
   Users,
   X,
   type LucideIcon,
@@ -65,9 +65,8 @@ const ICONS: Record<TabId, LucideIcon> = {
   "resource-members": Users,
   "resource-connections": Network,
   "resource-forks": GitBranch,
-  "resource-dossier": FileText,
   "import-detail": FileText,
-  "find-results": Search,
+  "find-results": TextSearch,
 };
 const title = (id: TabId) =>
   id === "find-results" ? "Search results" : SECONDARY_SURFACES[id].title;
@@ -519,16 +518,12 @@ export default function Companion(props: {
       ) : null}
       <Button
         ref={closeRef}
-        variant="ghost"
-        size="sm"
         iconOnly
         aria-label={activeId ? `close ${title(activeId)}` : "close inspector"}
         data-companion-close="true"
         className={styles.close}
         onClick={requestDismiss}
-      >
-        <X size={15} aria-hidden="true" />
-      </Button>
+        icon={<X size={15} aria-hidden="true" />} />
     </header>
   );
   // every tab's panel stays in the dom; only the active one mounts its body.

@@ -59,8 +59,8 @@ export interface PaneReturnMemento {
   forgetWorkOwner(id: string): void;
   /** A fresh source arrival owns position and focus over an old visit return. */
   prepareSourceArrival(visitId: string): void;
-  /** A duplicate source starts at the same reading view, without copying pending commands. */
-  forkReadingView(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void;
+  /** Exact visit forks copy presentation alone; authored state and commands keep their owner. */
+  forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void;
 }
 export interface PaneVisitDataKey<T> {
   readonly name: string;
@@ -254,7 +254,11 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         if (entries.size === 0) readiness.delete(key);
       };
     },
-    forkReadingView(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
+    forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
+      const shell = mementos.get(sourceVisitId);
+      if (shell?.routeKey === sourceRouteKey) {
+        mementos.set(visitId, { ...structuredClone(shell), routeKey, focus: null });
+      }
       const source = visitData.get(sourceVisitId);
       if (source?.routeKey !== sourceRouteKey) return;
       const view = source.values.get("Reader.InspectionView");
@@ -318,6 +322,12 @@ function useScope() {
   return { memory, ...scope };
 }
 
+/** Whether input cells outlive their mounted surface. Route identity and cell
+ * retention are independent: a surface may keep its enclosing visit identity. */
+export function usePaneVisitRetained(): boolean {
+  return useScope().paneId !== null;
+}
+
 /** The exact route identity whose retained memory owns this input. */
 export function usePaneVisitWorkScope(): Extract<WorkScope, { kind: "visit" }> {
   const { visitId, routeKey } = useScope();
@@ -337,8 +347,7 @@ export function usePaneVisitWorkOwner(owner: WorkOwner | null): void {
 
 /** The owner of visit-local draft cells, including synthetic overlay visits. */
 export function usePaneVisitIdentity(): string {
-  const { visitId, routeKey } = useScope();
-  return JSON.stringify([visitId, routeKey]);
+  return useScope().visitId;
 }
 
 /** PaneShell's scrollport and its route content; a new visit or route restores into it. */

@@ -1,18 +1,16 @@
-"""Mixed endpoint adjacency and atomic resource insertion commands.
+"""Mixed adjacency reads and atomic, lifetime-identified outline commands.
 
-Every command batch is serializable. Minted user-link ids are recognized before
-source materialization or placement. Retries return stored canonical endpoints;
-duplicate unordered pairs never move; require_created refuses a pair held by another
-id. Unlink-only batches deduplicate exact ids with the strictest annotation precondition,
-preserve all resource content, and acknowledge with empty arrays. Missing unlink ids
-are unchanged; foreign or unsupported origins refuse and roll back every effect.
-Structural remove and strict consume use complete graph retention; a batch cannot
-delete a note named by any of its set_body commands. Relink preserves its
-user-link and annotation guards. Relink recognizes its replacement id before
-preconditions; null position appends at commit, a concrete position fences the
-destination. Display ranks cover all facts; page-note traversal stays user-only.
-Saved edits and order changes renew inactivity grace.
-Version proofs validate transaction-start preconditions, never predicted increments.
+The serializable owner preflights the complete batch before applying commands.
+Creates recognize their accepted identities before transient source/placement
+checks; retired prerequisites refuse a mixed batch without a surviving subset.
+No create can remint a retired id. Absolute body/title writes are unique per lane.
+Structural consumption preserves complete retention/version guards.
+
+Shared graph/version owners collect compact effects, including embed far ends
+and cleanup. Checks use each lane's transaction baseline. Only a real check or
+an exclusively created endpoint supplies causal proof; retries and equal-value
+no-ops do not. The committing wrapper records input change once, last, only
+when domain state changed. No mutation hydrates an outline or scans account lanes.
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import assert_never, cast
 from uuid import UUID
@@ -35,14 +32,11 @@ from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFo
 from nexus.schemas.notes import (
     ConsumeNote,
     EnsureDaily,
-    InsertionOut,
     InsertLink,
     InsertNote,
-    LinkVersionOut,
     Move,
     NoteContentOut,
     OutlineCommand,
-    OutlineCommandsOut,
     OutlineNodeOut,
     OutlineOccurrenceOut,
     OutlineOut,
@@ -60,7 +54,8 @@ from nexus.schemas.resource_items import (
     ResourceItemOut,
     ResourcePreviewOut,
 )
-from nexus.services import note_bodies, notes
+from nexus.schemas.writing import IdentityKind, WritingAck, WritingInsertion, WritingPlacement
+from nexus.services import authored_identities, note_bodies, notes, writing
 from nexus.services.resource_graph import connections, edges, links, order, retention
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
@@ -70,19 +65,6 @@ from nexus.services.resource_items.items import resource_items_out
 from nexus.services.suggestion_changes import record_input_change
 
 _CURSOR = TypeAdapter(tuple[UUID, str, int, str | None, datetime, UUID])
-
-
-@dataclass(slots=True)
-class TreeNote:
-    block: NoteBlock
-    order_key: str
-    children: list[TreeNote] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class PageNoteTree:
-    page: Page
-    roots: list[TreeNote]
 
 
 def read(
@@ -152,128 +134,214 @@ def read(
     )
 
 
-def execute(
-    db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
-) -> OutlineCommandsOut:
-    def op() -> OutlineCommandsOut:
-        return execute_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
+def execute(db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]) -> WritingAck:
+    def op() -> WritingAck:
+        apply_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
+        result = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
+            record_input_change(db, owners=writing.input_owners(db))
+        return result
 
     return retry_serializable(db, "outline_commands", op)
 
 
-def execute_in_current_transaction(
+def apply_in_current_transaction(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
-) -> OutlineCommandsOut:
-    """Apply a batch; content writes require the caller's serializable attempt."""
-    unlinks: dict[UUID, bool] = {}
-    edits: list[
-        SetBody
-        | SetTitle
-        | EnsureDaily
-        | InsertNote
-        | InsertLink
-        | Move
-        | Relink
-        | Remove
-        | ConsumeNote
-    ] = []
-    for command in commands:
-        if isinstance(command, Unlink):
-            unlinks[command.link_id] = (
-                unlinks.get(command.link_id, False) or command.require_unannotated
-            )
-        else:
-            edits.append(command)
-    if unlinks and edits:
+) -> None:
+    """Preflight the whole batch, then apply; the caller notifies and commits."""
+    state = writing.effects(db)
+
+    def check(ref: ResourceRef, expected: int) -> None:
+        current = versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref).get("links", 1)
+        key = (viewer_id, ref, "links")
+        before, proof = state.lanes.get(key, (current, None))
+        baseline = 1 if before is None and proof == 1 else current if before is None else before
+        if baseline != expected:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Outline version changed")
+        writing.lane(
+            db, viewer_id=viewer_id, ref=ref, name="links", before=before, checked=expected
+        )
+
+    unlinks = [command for command in commands if isinstance(command, Unlink)]
+    if unlinks and len(unlinks) != len(commands):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Unlink commands cannot be mixed with other commands"
         )
-    if unlinks:
-        changed_owners: set[str] = set()
-        for link_id, require_unannotated in unlinks.items():
-            edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-            if links.unlink_in_txn(
-                db,
-                viewer_id=viewer_id,
-                link_id=link_id,
-                require_unannotated=require_unannotated,
-            ):
-                assert edge is not None
-                changed_owners.update((edge.source.uri, edge.target.uri))
-        if changed_owners:
-            record_input_change(db, owners=changed_owners)
-        return OutlineCommandsOut(
-            outlines=[], nodes=[], deleted=[], insertions=[], link_versions=[]
-        )
-    if any(isinstance(command, Move) for command in edits) and len(edits) != 1:
+    if any(isinstance(command, Move) for command in commands) and len(commands) != 1:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Move must be the only command")
-    edited_notes = {command.note_id for command in edits if isinstance(command, SetBody)}
+    if unlinks:
+        ids: set[UUID] = set()
+        for command in unlinks:
+            if command.expected is not None:
+                known = authored_identities.recognize(
+                    db, viewer_id=viewer_id, kind="link", id=command.link_id
+                )
+                row = (
+                    None
+                    if known is not None and known.deleted
+                    else db.get(
+                        ResourceEdge,
+                        known.canonical.resource_id if known is not None else command.link_id,
+                    )
+                )
+                if row is not None:
+                    endpoint = require_ref(command.expected.endpoint)
+                    if row.user_id != viewer_id or (
+                        endpoint.scheme,
+                        endpoint.id,
+                    ) not in edges.link_pair(row):
+                        raise ConflictError(
+                            ApiErrorCode.E_RESOURCE_CONFLICT,
+                            "Unlink fence is not an owned link endpoint",
+                        )
+                    check(endpoint, command.expected.links_version)
+            ids.add(command.link_id)
+        for id in sorted(ids):
+            links.unlink_in_txn(db, viewer_id=viewer_id, link_id=id)
+        return
+    body_targets = {command.note_id for command in commands if isinstance(command, SetBody)}
+    removed_ids = {
+        command.link_id for command in commands if isinstance(command, Remove | ConsumeNote)
+    }
+    minted_ids = {
+        command.link_id for command in commands if isinstance(command, InsertNote | InsertLink)
+    }
+    minted_ids.update(command.new_link_id for command in commands if isinstance(command, Relink))
+    minted_count = sum(
+        isinstance(command, InsertNote | InsertLink | Relink) for command in commands
+    )
+    if len(minted_ids) != minted_count:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Create ids must be unique in a batch"
+        )
+    if removed_ids & minted_ids:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Cannot delete and remint an id")
     lanes: set[tuple[str, UUID]] = set()
-    for command in edits:
-        lane = (
+    recognized: dict[UUID, authored_identities.Binding] = {}
+    for command in commands:
+        write_lane = (
             ("body", command.note_id)
             if isinstance(command, SetBody)
-            else (("title", command.page_id) if isinstance(command, SetTitle) else None)
+            else ("title", command.page_id)
+            if isinstance(command, SetTitle)
+            else None
         )
-        if lane is not None:
-            if lane in lanes:
+        if write_lane is not None:
+            if write_lane in lanes:
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST, "Only one final write per lane"
                 )
-            lanes.add(lane)
-
-    starts = {
-        (row.resource_scheme, row.resource_id): row.version
-        for row in db.scalars(
-            select(ResourceVersion).where(
-                ResourceVersion.user_id == viewer_id, ResourceVersion.lane == "links"
-            )
+            lanes.add(write_lane)
+        new_id = (
+            command.link_id
+            if isinstance(command, InsertNote | InsertLink)
+            else command.new_link_id
+            if isinstance(command, Relink)
+            else None
         )
-    }
-    checked: dict[ResourceRef, int | None] = {}
-    touched: dict[ResourceRef, None] = {}
-    written: dict[ResourceRef, None] = {}
-    insertion_edges: list[tuple[bool, UUID, ResourceRef]] = []
-    minted: set[UUID] = set()
-    minted_pairs: dict[UUID, frozenset[edges.Pair]] = {}
-    created_daily: set[ResourceRef] = set()
-
-    def touch(ref: ResourceRef) -> None:
-        touched[ref] = None
-        checked.setdefault(ref, None)
-
-    def check(ref: ResourceRef, expected: int) -> None:
-        base = starts.get((ref.scheme, ref.id), 1)
-        if base != expected:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Outline version changed")
-        checked[ref] = base
-
-    def held(id_: UUID) -> ResourceEdge | None:
-        row = db.get(ResourceEdge, id_)
-        if row is not None and (row.user_id != viewer_id or row.origin != "user"):
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Link id is taken")
-        return row
-
-    for index, command in enumerate(edits):
-        if isinstance(command, InsertNote | InsertLink):
-            row = held(command.link_id)
+        if new_id is not None:
+            binding = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=new_id)
+            if binding is not None:
+                recognized[new_id] = binding
+                if binding.deleted and len(commands) > 1:
+                    authored_identities.require_live(binding)
+        if isinstance(command, Remove | ConsumeNote):
+            removed = authored_identities.recognize(
+                db, viewer_id=viewer_id, kind="link", id=command.link_id
+            )
+            canonical_id = removed.canonical.resource_id if removed is not None else command.link_id
+            if canonical_id in minted_ids:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST, "Cannot delete and remint an id"
+                )
+            row = db.get(ResourceEdge, canonical_id)
             if row is not None:
-                source = require_ref(f"{row.source_scheme}:{row.source_id}")
-                target = require_ref(f"{row.target_scheme}:{row.target_id}")
-                write = edges.EdgeWrite(edges.edge_out(row), True)
-                checked[source] = checked[target] = None
+                target = _other(row, require_ref(command.endpoint))
+                if target.scheme == "note_block" and target.id in body_targets:
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_REQUEST, "Cannot write a note consumed by this batch"
+                    )
+    # Known retired prerequisites refuse before any surviving command can mutate.
+    for command in commands:
+        if isinstance(command, Relink) and command.new_link_id in recognized:
+            continue
+        if isinstance(command, InsertNote | InsertLink) and command.link_id in recognized:
+            continue
+        prerequisites: list[tuple[IdentityKind, UUID]] = []
+        if isinstance(command, SetBody):
+            prerequisites.append(("note_block", command.note_id))
+        elif isinstance(command, SetTitle):
+            prerequisites.append(("page", command.page_id))
+        elif isinstance(command, InsertNote | InsertLink):
+            if isinstance(command, InsertNote):
+                prerequisites.append(("note_block", command.note_id))
+            elif command.target.kind == "resource":
+                target_ref = require_ref(command.target.ref)
+                if target_ref.scheme in ("page", "note_block", "highlight"):
+                    prerequisites.append((cast(IdentityKind, target_ref.scheme), target_ref.id))
+            if command.source.kind == "resource":
+                ref = require_ref(command.source.ref)
+                if ref.scheme in ("page", "note_block", "highlight"):
+                    prerequisites.append((cast(IdentityKind, ref.scheme), ref.id))
+            elif command.source.kind == "daily_page":
+                prerequisites.append(("page", command.source.page_id))
+            elif (
+                command.source.kind == "fragment_selection"
+                or command.source.kind == "pdf_selection"
+            ):
+                prerequisites.append(("highlight", command.source.highlight_id))
+            if command.position is not None and command.position.after is not None:
+                prerequisites.append(("link", command.position.after))
+        elif isinstance(command, Move | Relink | Remove | ConsumeNote):
+            if isinstance(command, Move):
+                prerequisites.append(("link", command.edge_id))
+            elif isinstance(command, Relink | Remove | ConsumeNote):
+                prerequisites.append(("link", command.link_id))
+        for kind, id in prerequisites:
+            binding = authored_identities.recognize(db, viewer_id=viewer_id, kind=kind, id=id)
+            if binding is not None:
+                if not (len(commands) == 1 and isinstance(command, Remove)):
+                    authored_identities.require_live(binding)
+
+    created_daily: set[ResourceRef] = set()
+    for command in commands:
+        if isinstance(command, Unlink):
+            # justify-service-invariant-check: all-unlink batches returned above;
+            # mixed batches were rejected, which list-based control flow cannot narrow.
+            raise AssertionError("Unlink batch reached mixed command application")
+        if isinstance(command, InsertNote | InsertLink):
+            binding = recognized.get(command.link_id)
+            if binding is not None:
+                writing.identity(db, binding.out())
+                if isinstance(command, InsertNote):
+                    child = authored_identities.recognize(
+                        db, viewer_id=viewer_id, kind="note_block", id=command.note_id
+                    )
+                    if child is None:
+                        if not binding.deleted:
+                            raise ConflictError(
+                                ApiErrorCode.E_RESOURCE_CONFLICT,
+                                "Initialized link cannot take a new note",
+                            )
+                    else:
+                        writing.identity(db, child.out())
+                if binding.deleted:
+                    continue
+                row = db.get(ResourceEdge, binding.canonical.resource_id)
+                if row is None:
+                    raise RuntimeError("Live authored link has no edge")
+                source = require_ref(binding.row.source_ref or "")
+                write = edges.EdgeWrite(
+                    edges.edge_out(row), binding.row.canonical_identity_id is None
+                )
             else:
                 source, created_source = links.materialize_source(
                     db, viewer_id=viewer_id, source=command.source
                 )
                 if created_source:
-                    checked[source] = 1
                     if source.scheme == "page":
                         created_daily.add(source)
                 if isinstance(command, InsertNote):
-                    exists = note_bodies.note_exists(
-                        db, viewer_id=viewer_id, note_id=command.note_id
-                    )
                     note_bodies.ensure_note(
                         db,
                         viewer_id=viewer_id,
@@ -282,8 +350,6 @@ def execute_in_current_transaction(
                         reason="outline_insert",
                     )
                     target = note_bodies.note_ref(command.note_id)
-                    if not exists:
-                        checked[target] = 1
                 else:
                     target = links.materialize_link_endpoint(
                         db, viewer_id=viewer_id, endpoint=command.target
@@ -291,49 +357,45 @@ def execute_in_current_transaction(
                 _require_endpoint(db, viewer_id, source)
                 assert_ref_visible(db, viewer_id=viewer_id, ref=target)
                 pair = edges.existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
-                if pair is not None:
-                    if isinstance(command, InsertLink) and command.require_created:
-                        raise ConflictError(
-                            ApiErrorCode.E_RESOURCE_CONFLICT,
-                            "These resources are already linked",
-                        )
-                    write = edges.EdgeWrite(edges.edge_out(pair), False)
-                    if any(
-                        _depends_on_link(later, command.link_id) for later in edits[index + 1 :]
-                    ):
-                        raise ConflictError(
-                            ApiErrorCode.E_RESOURCE_CONFLICT,
-                            "Dependent command requires its minted link",
-                        )
-                else:
-                    if command.position is not None:
-                        check(source, command.position.expected_links_version)
-                        if command.position.after is not None and command.position.after not in [
-                            edge.id for edge, _ in order.ordered(db, viewer_id, source)
-                        ]:
-                            raise ConflictError(
-                                ApiErrorCode.E_RESOURCE_CONFLICT,
-                                "Position is not in this outline",
-                            )
-                    write = edges.create_link(
-                        db,
-                        viewer_id=viewer_id,
-                        source=source,
-                        target=target,
-                        link_id=command.link_id,
+                if pair is not None and isinstance(command, InsertLink) and command.require_created:
+                    raise ConflictError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT, "These resources are already linked"
                     )
-                    if command.position is not None:
-                        order.place(db, viewer_id, source, write.edge.id, command.position.after)
-            if write.edge.id == command.link_id:
-                minted.add(command.link_id)
-                minted_pairs[command.link_id] = edges.link_pair(write.edge)
+                if pair is None and command.position is not None:
+                    check(source, command.position.expected_links_version)
+                    if command.position.after is not None and command.position.after not in [
+                        edge.id for edge, _ in order.ordered(db, viewer_id, source)
+                    ]:
+                        raise ConflictError(
+                            ApiErrorCode.E_RESOURCE_CONFLICT, "Position is not in this outline"
+                        )
+                write = edges.create_link(
+                    db, viewer_id=viewer_id, source=source, target=target, link_id=command.link_id
+                )
+                if write.created and command.position is not None:
+                    order.place(db, viewer_id, source, write.edge.id, command.position.after)
+            state.link_ids.add(write.edge.id)
+            state.addressed.update((write.edge.source, write.edge.target))
             for ref in (write.edge.source, write.edge.target):
-                touch(ref)
-                if ref.scheme == "note_block":
-                    written[ref] = None
-            insertion_edges.append(
-                (write.created or write.edge.id == command.link_id, write.edge.id, source)
+                current_version = versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref).get(
+                    "links", 1
+                )
+                writing.lane(db, viewer_id=viewer_id, ref=ref, name="links", before=current_version)
+            state.insertions[command.link_id] = WritingInsertion(
+                requested_link_id=command.link_id,
+                source_ref=source.uri,
+                canonical_link_id=write.edge.id,
+                created=write.edge.id == command.link_id,
             )
+            # Current placement is evidence, never a fabricated expected-version check.
+            sequence = [edge.id for edge, _ in order.ordered(db, viewer_id, source)]
+            if write.edge.id in sequence:
+                index = sequence.index(write.edge.id)
+                state.placements[(source.uri, write.edge.id)] = WritingPlacement(
+                    endpoint=source.uri,
+                    link_id=write.edge.id,
+                    after_link_id=sequence[index - 1] if index else None,
+                )
         elif isinstance(command, Move):
             endpoint = _endpoint(db, viewer_id, command.endpoint)
             current, desired = order.desired(
@@ -342,145 +404,96 @@ def execute_in_current_transaction(
             if [edge.id for edge in current] != desired:
                 check(endpoint, command.expected_links_version)
                 order.place(db, viewer_id, endpoint, command.edge_id, command.after)
-            touch(endpoint)
+            state.placements[(endpoint.uri, command.edge_id)] = WritingPlacement(
+                endpoint=endpoint.uri, link_id=command.edge_id, after_link_id=command.after
+            )
         elif isinstance(command, Relink):
-            if command.link_id in minted:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT,
-                    "Minted links cannot be relinked in their batch",
-                )
-            row = held(command.new_link_id)
-            if row is not None:
-                for raw in (
-                    f"{row.source_scheme}:{row.source_id}",
-                    f"{row.target_scheme}:{row.target_id}",
-                ):
-                    touch(require_ref(raw))
-            else:
-                endpoint = _endpoint(db, viewer_id, command.endpoint)
-                destination = _endpoint(db, viewer_id, command.destination)
-                edge = _require_incident(db, viewer_id, endpoint, command.link_id)
-                target = _other(edge, endpoint)
-                check(endpoint, command.expected_source_links_version)
-                if command.position is not None:
-                    check(destination, command.position.expected_links_version)
-                if (
-                    edges.existing_link_pair(db, viewer_id=viewer_id, a=destination, b=target)
-                    is not None
-                ):
-                    raise ConflictError(
-                        ApiErrorCode.E_RESOURCE_CONFLICT, "Relink destination is already linked"
+            binding = recognized.get(command.new_link_id)
+            if binding is not None:
+                writing.identity(db, binding.out())
+                if not binding.deleted:
+                    row = db.get(ResourceEdge, binding.canonical.resource_id)
+                    if row is None:
+                        raise RuntimeError("Live authored link has no edge")
+                    state.addressed.update(
+                        (
+                            require_ref(f"{row.source_scheme}:{row.source_id}"),
+                            require_ref(f"{row.target_scheme}:{row.target_id}"),
+                        )
                     )
-                edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge.id)
-                write = edges.create_link(
-                    db,
-                    viewer_id=viewer_id,
-                    source=destination,
-                    target=target,
-                    link_id=command.new_link_id,
+                    for ref in (
+                        require_ref(f"{row.source_scheme}:{row.source_id}"),
+                        require_ref(f"{row.target_scheme}:{row.target_id}"),
+                    ):
+                        current_version = versions.versions_for_ref(
+                            db, viewer_id=viewer_id, ref=ref
+                        ).get("links", 1)
+                        writing.lane(
+                            db, viewer_id=viewer_id, ref=ref, name="links", before=current_version
+                        )
+                    state.insertions[command.new_link_id] = WritingInsertion(
+                        requested_link_id=command.new_link_id,
+                        source_ref=binding.row.source_ref or "",
+                        canonical_link_id=row.id,
+                        created=row.id == command.new_link_id,
+                    )
+                continue
+            endpoint = _endpoint(db, viewer_id, command.endpoint)
+            destination = _endpoint(db, viewer_id, command.destination)
+            edge = _require_incident(db, viewer_id, endpoint, command.link_id)
+            target = _other(edge, endpoint)
+            check(endpoint, command.expected_source_links_version)
+            if command.position is not None:
+                check(destination, command.position.expected_links_version)
+            if (
+                edges.existing_link_pair(db, viewer_id=viewer_id, a=destination, b=target)
+                is not None
+            ):
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "Relink destination is already linked"
                 )
-                if command.position is not None:
-                    order.place(db, viewer_id, destination, write.edge.id, command.position.after)
-                for ref in (endpoint, destination, target):
-                    touch(ref)
-            minted.add(command.new_link_id)
-            minted_edge = held(command.new_link_id)
-            assert minted_edge is not None
-            minted_pairs[command.new_link_id] = edges.link_pair(minted_edge)
+            edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge.id)
+            write = edges.create_link(
+                db,
+                viewer_id=viewer_id,
+                source=destination,
+                target=target,
+                link_id=command.new_link_id,
+            )
+            if command.position is not None:
+                order.place(db, viewer_id, destination, write.edge.id, command.position.after)
+            state.insertions[command.new_link_id] = WritingInsertion(
+                requested_link_id=command.new_link_id,
+                source_ref=destination.uri,
+                canonical_link_id=write.edge.id,
+                created=True,
+            )
         elif isinstance(command, EnsureDaily):
             created = db.get(Page, command.page_id) is None
             ref = notes.ensure_daily_page(db, viewer_id, command.local_date, command.page_id)
-            touch(ref)
+            state.addressed.add(ref)
             if created:
-                checked[ref] = 1
                 created_daily.add(ref)
         else:
-            if isinstance(command, Remove | ConsumeNote) and command.link_id in minted:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT, "Minted links must survive their batch"
+            if isinstance(command, Remove | ConsumeNote):
+                binding = authored_identities.recognize(
+                    db, viewer_id=viewer_id, kind="link", id=command.link_id
                 )
-            refs = _apply(db, viewer_id, command, edited_notes)
-            for ref in refs:
-                touch(ref)
-            if isinstance(command, SetBody | SetTitle):
-                written.update(dict.fromkeys(refs))
+                if binding is not None and not binding.deleted:
+                    writing.identity(db, binding.out())
+                    command = command.model_copy(update={"link_id": binding.canonical.resource_id})
+                endpoint = require_ref(command.endpoint)
+                if (
+                    command.expected_links_version is not None
+                    and _incident(db, viewer_id, endpoint, command.link_id) is not None
+                ):
+                    check(endpoint, command.expected_links_version)
+            state.addressed.update(_apply(db, viewer_id, command))
     for ref in created_daily:
-        if not db.scalar(select(ResourceEdge.id).where(*_incident_to(viewer_id, ref)).limit(1)):
+        if not any(edge.origin == "user" for edge, _ in order.ordered(db, viewer_id, ref)):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, "Add an item to save this day"
             )
-    for id_ in minted:
-        survivor = held(id_)
-        if survivor is None or edges.link_pair(survivor) != minted_pairs[id_]:
-            raise ConflictError(
-                ApiErrorCode.E_RESOURCE_CONFLICT, "Minted links must survive their batch"
-            )
-    # Body writes and structural deletion may affect far endpoints not named by
-    # the primitive. Compare actual lanes against their transaction-start values.
-    for row in db.scalars(
-        select(ResourceVersion).where(
-            ResourceVersion.user_id == viewer_id, ResourceVersion.lane == "links"
-        )
-    ):
-        if row.version != starts.get((row.resource_scheme, row.resource_id), 1):
-            touch(require_ref(f"{row.resource_scheme}:{row.resource_id}"))
-    visible = {
-        item.ref
-        for item in resource_items_out(db, viewer_id=viewer_id, refs=list(touched))
-        if not item.missing
-    }
-    outlines = [read(db, viewer_id=viewer_id, ref=ref) for ref in touched if ref.uri in visible]
-    nodes = _nodes(db, viewer_id, [ref for ref in written if ref.uri in visible])
-    insertion_rows = [db.get(ResourceEdge, edge_id) for _, edge_id, _ in insertion_edges]
-    if any(row is None for row in insertion_rows):
-        raise ConflictError(
-            ApiErrorCode.E_RESOURCE_CONFLICT, "Insertion results must survive their batch"
-        )
-    insertion_connections = connections.hydrate_connections(
-        db,
-        viewer_id,
-        [row for row in insertion_rows if row is not None],
-        {(row.source_scheme, row.source_id) for row in insertion_rows if row is not None},
-        "both",
-    )
-    insertions = [
-        InsertionOut(
-            created=created,
-            connection=connection.model_copy(
-                update={
-                    "other": connection.target
-                    if connection.source.ref == source.uri
-                    else connection.source
-                }
-            ),
-        )
-        for (created, _, source), connection in zip(
-            insertion_edges, insertion_connections, strict=True
-        )
-    ]
-    result = OutlineCommandsOut(
-        outlines=outlines,
-        nodes=nodes,
-        deleted=[
-            ref.uri
-            for ref in touched
-            if ref.scheme == "note_block" and db.get(NoteBlock, ref.id) is None
-        ],
-        insertions=insertions,
-        link_versions=[
-            LinkVersionOut(
-                ref=ref.uri,
-                checked_from_version=checked.get(ref),
-                links_version=versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref).get(
-                    "links", 1
-                ),
-            )
-            for ref in touched
-            if ref.uri in visible
-        ],
-    )
-    record_input_change(db, owners=(ref.uri for ref in touched))
-    return result
 
 
 def _depends_on_link(command: OutlineCommand, link_id: UUID) -> bool:
@@ -502,10 +515,7 @@ def _depends_on_link(command: OutlineCommand, link_id: UUID) -> bool:
 
 
 def _apply(
-    db: Session,
-    viewer_id: UUID,
-    command: SetBody | SetTitle | Remove | ConsumeNote,
-    edited_notes: set[UUID],
+    db: Session, viewer_id: UUID, command: SetBody | SetTitle | Remove | ConsumeNote
 ) -> list[ResourceRef]:
     """Retained prose/daily and guarded destructive primitives, flush-only."""
     match command:
@@ -529,12 +539,28 @@ def _apply(
             )
             return [notes.page_ref(command.page_id)]
         case Remove() | ConsumeNote():
+            binding = authored_identities.recognize(
+                db, viewer_id=viewer_id, kind="link", id=command.link_id
+            )
+            if binding is not None:
+                writing.identity(db, binding.out())
+                if binding.deleted:
+                    return []
             raw = require_ref(command.endpoint)
             if raw.scheme == "note_block" and db.get(NoteBlock, raw.id) is None:
+                known = authored_identities.recognize(
+                    db, viewer_id=viewer_id, kind="note_block", id=raw.id
+                )
+                if known is not None:
+                    writing.identity(db, known.out())
                 return [raw]
             endpoint = _endpoint(db, viewer_id, command.endpoint)
             edge = _incident(db, viewer_id, endpoint, command.link_id)
             if edge is None:
+                retired = authored_identities.retire(
+                    db, viewer_id=viewer_id, kind="link", id=command.link_id
+                )
+                writing.identity(db, retired.out())
                 return [endpoint]
             target = _other(edge, endpoint)
             if target.scheme != "note_block":
@@ -552,18 +578,15 @@ def _apply(
             )
             if block is None:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-            retained = retention.has_retainer(db, target, excluding_edge_ids=[edge.id])
+            retained = retention.has_retainer(
+                db, block.user_id, target, excluding_edge_ids=[edge.id]
+            )
             if retained and isinstance(command, ConsumeNote):
                 raise ConflictError(
                     ApiErrorCode.E_RESOURCE_CONFLICT,
                     "This note is retained elsewhere and cannot be consumed",
                 )
             if not retained:
-                if target.id in edited_notes:
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "A batch cannot delete a note it edits",
-                    )
                 if command.expected_body_version is None:
                     raise ConflictError(
                         ApiErrorCode.E_NOTE_CONFLICT, "Deleting a note requires its body version"
@@ -593,7 +616,9 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
                 action_ref=ref.uri,
                 label=title,
                 preview=ResourcePreviewOut(
-                    body=NamedResourceBodyOut(title=title, media_kind=None, contributors=None),
+                    body=NamedResourceBodyOut(
+                        title=title, image_url=None, media_kind=None, contributors=None
+                    ),
                     source=None,
                     annotation=None,
                 ),
@@ -611,62 +636,16 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
     )
 
 
-def page_note_tree(db: Session, *, viewer_id: UUID, page_id: UUID) -> PageNoteTree:
-    """The page's notes depth-first in outline order, each note once (dossier input)."""
-    page = db.get(Page, page_id)
-    if page is None or page.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
-    seen: set[UUID] = set()
-
-    def children(endpoint: ResourceRef) -> list[TreeNote]:
-        out: list[TreeNote] = []
-        for edge, order_key in _ordered(db, viewer_id, endpoint):
-            other = _other(edge, endpoint)
-            block = db.get(NoteBlock, other.id) if other.scheme == "note_block" else None
-            if block is None or block.user_id != viewer_id or block.id in seen:
-                continue
-            seen.add(block.id)
-            out.append(TreeNote(block=block, order_key=order_key or "", children=children(other)))
-        return out
-
-    return PageNoteTree(page=page, roots=children(notes.page_ref(page_id)))
-
-
-def _ordered(
-    db: Session, viewer_id: UUID, endpoint: ResourceRef
-) -> list[tuple[ResourceEdge, str | None]]:
-    rows = db.execute(
-        select(ResourceEdge, ResourceViewState.order_key)
-        .outerjoin(
-            ResourceViewState,
-            (ResourceViewState.edge_id == ResourceEdge.id)
-            & (ResourceViewState.user_id == viewer_id)
-            & (ResourceViewState.surface_scheme == endpoint.scheme)
-            & (ResourceViewState.surface_id == endpoint.id),
-        )
-        .where(*_incident_to(viewer_id, endpoint))
-        .order_by(
-            ResourceViewState.order_key.asc().nulls_last(),
-            ResourceEdge.created_at,
-            ResourceEdge.id,
-        )
-    )
-    return [(edge, order_key) for edge, order_key in rows]
-
-
-def _incident_to(viewer_id: UUID, endpoint: ResourceRef):
-    return (
-        ResourceEdge.user_id == viewer_id,
-        ResourceEdge.origin == "user",
-        or_(edges.source_is(endpoint), edges.target_is(endpoint)),
-    )
-
-
 def _incident(
     db: Session, viewer_id: UUID, endpoint: ResourceRef, link_id: UUID
 ) -> ResourceEdge | None:
     return db.scalar(
-        select(ResourceEdge).where(ResourceEdge.id == link_id, *_incident_to(viewer_id, endpoint))
+        select(ResourceEdge).where(
+            ResourceEdge.id == link_id,
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "user",
+            or_(edges.source_is(endpoint), edges.target_is(endpoint)),
+        )
     )
 
 
@@ -700,23 +679,24 @@ def _require_endpoint(db: Session, viewer_id: UUID, ref: ResourceRef) -> None:
 def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[OutlineNodeOut]:
     resolved = resource_items_out(db, viewer_id=viewer_id, refs=refs)
     missing = {item.ref for item in resolved if item.missing}
-    note_ids = [ref.id for ref in refs if ref.scheme == "note_block" and ref.uri not in missing]
-    page_ids = [ref.id for ref in refs if ref.scheme == "page" and ref.uri not in missing]
+    live = [ref for ref in refs if ref.uri not in missing]
+    note_ids = [ref.id for ref in live if ref.scheme == "note_block"]
+    page_ids = [ref.id for ref in live if ref.scheme == "page"]
     bodies = note_bodies.read_notes(db, viewer_id=viewer_id, note_ids=note_ids)
     pages = notes.page_facts(db, viewer_id, page_ids)
-    lanes = {
-        (row.resource_id, row.lane): row.version
+    titles = {
+        row.resource_id: row.version
         for row in db.scalars(
             select(ResourceVersion).where(
                 ResourceVersion.user_id == viewer_id,
-                ResourceVersion.resource_id.in_([*note_ids, *page_ids]),
-                ResourceVersion.lane.in_(("body", "title")),
+                ResourceVersion.resource_id.in_(page_ids),
+                ResourceVersion.lane == "title",
             )
         )
     }
-    places = {
-        note_id: retention.retainer_count(db, note_bodies.note_ref(note_id)) for note_id in note_ids
-    }
+    places = retention.retainer_counts(
+        db, viewer_id, [note_bodies.note_ref(note_id) for note_id in note_ids]
+    )
     out: list[OutlineNodeOut] = []
     for ref, item in zip(refs, resolved, strict=True):
         body, page = bodies.get(ref.id), pages.get(ref.id)
@@ -728,21 +708,16 @@ def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[Ou
                 body_text=body.body_text,
                 body_version=body.body_version,
                 embedded_item=body.embedded_item,
-                places=places.get(ref.id, 0),
+                places=places.get(ref, 0),
             )
         elif page is not None:
             content = PageContentOut(
                 kind="page",
                 title=page.title,
-                title_version=lanes.get((ref.id, "title"), 1),
+                title_version=titles.get(ref.id, 1),
                 daily_date=page.daily_date,
             )
         else:
             content = ResourceContentOut(kind="resource")
-        out.append(
-            OutlineNodeOut(
-                item=item,
-                content=content,
-            )
-        )
+        out.append(OutlineNodeOut(item=item, content=content))
     return out

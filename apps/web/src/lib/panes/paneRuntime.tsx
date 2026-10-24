@@ -12,6 +12,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { NavigationIdentity } from "@/lib/host/policy";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import type {
@@ -19,7 +20,7 @@ import type {
   WorkspaceSecondaryPane,
 } from "@/lib/workspace/model";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import { useWorkspaceStore, type PaneViewHrefUpdate, type WorkspaceNavigationResult } from "@/lib/workspace/store";
+import { useWorkspaceStore, type PaneViewHrefUpdate, type PaneHistoryOptions, type WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type {
   PaneDailyPage,
   PaneEntryDelivery,
@@ -43,8 +44,8 @@ export interface PaneScopedRouter {
   readonly canGoForward: boolean;
   push(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
   replace(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
-  back(options?: { discardOwnerIds?: readonly string[] }): WorkspaceNavigationResult;
-  forward(options?: { discardOwnerIds?: readonly string[] }): WorkspaceNavigationResult;
+  back(options: PaneHistoryOptions): WorkspaceNavigationResult;
+  forward(options: PaneHistoryOptions): WorkspaceNavigationResult;
 }
 
 /** What a body knows that its href alone does not say, and what it may do. */
@@ -203,7 +204,7 @@ export function PaneRuntimeProvider(props: {
     <PaneReturnVisitScope paneId={pane.id} visitId={visitId} routeKey={route.routeKey}>
       <ActiveContext value={props.isActive}>
         <VisibleContext value={props.isVisible}>
-          <RuntimeContext value={value}>{props.children}</RuntimeContext>
+          <RuntimeContext value={value}><NavigationIdentity value={`${pane.id}:${visitId}:${href}`}>{props.children}</NavigationIdentity></RuntimeContext>
         </VisibleContext>
       </ActiveContext>
     </PaneReturnVisitScope>

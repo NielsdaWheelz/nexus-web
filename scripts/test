@@ -48,6 +48,7 @@ shellcheck "${shell_files[@]}"
   # the android shelf and the firefox extension are build outputs; building
   # them here proves both packages and feeds the CSS-token closure check below.
   bun run build:shelf
+  bun run build:android
   bun run build:extension
   bun run lint:css-tokens
   wire="$(mktemp)"

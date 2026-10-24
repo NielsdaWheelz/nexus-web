@@ -45,8 +45,6 @@ const SCHEMES: Record<ResourceScheme, [LucideIcon, string]> = {
   message: [MessageSquare, "Chat message"],
   oracle_reading: [Sparkles, "Oracle reading"],
   oracle_passage_anchor: [TextQuote, "Oracle passage"],
-  artifact: [Sparkles, "Generated item"],
-  artifact_revision: [Sparkles, "Generated revision"],
   external_snapshot: [Globe, "Saved web page"],
   contributor: [User, "Author"],
   podcast: [Disc3, "Podcast"],

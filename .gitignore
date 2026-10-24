@@ -8,6 +8,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+!apps/web/src/app/(authenticated)/downloads/
 eggs/
 .eggs/
 /lib/
@@ -74,6 +75,7 @@ next-env.d.ts
 /apps/web/public/pdfjs/
 # Android shelf (the Downloads screen) built by `bun run build:shelf` at gradle time
 /apps/android/app/src/main/assets/shelf/
+/apps/android/app/src/main/assets/app/
 # Firefox extension package built by `bun run build:extension`
 /apps/extension/dist/
 

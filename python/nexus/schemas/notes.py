@@ -58,11 +58,8 @@ class CreatePageRequest(_Closed):
 
 class DailyCaptureRequest(_Closed):
     note_id: UUID
+    link_id: UUID
     text: str
-
-
-class DailyCaptureOut(_Closed):
-    page_id: UUID
 
 
 class NoteBlockOut(_Closed):
@@ -84,7 +81,7 @@ class PageContentOut(_Closed):
 
 
 class NoteContentOut(_Closed):
-    """``places`` counts cross-owner retaining graph facts and saved dossier heads."""
+    """``places`` counts cross-owner retaining graph facts."""
 
     kind: Literal["note"]
     body_pm_json: dict[str, Any]
@@ -187,7 +184,12 @@ class Move(_Closed):
 class Unlink(_Closed):
     kind: Literal["unlink"]
     link_id: UUID
-    require_unannotated: bool
+    expected: UnlinkExpected | None
+
+
+class UnlinkExpected(_Closed):
+    endpoint: str
+    links_version: int = Field(ge=1)
 
 
 class Relink(_Closed):
@@ -205,6 +207,7 @@ class Remove(_Closed):
     endpoint: str
     link_id: UUID
     expected_body_version: int | None
+    expected_links_version: int | None = Field(ge=1)
 
 
 class ConsumeNote(_Closed):
@@ -212,6 +215,7 @@ class ConsumeNote(_Closed):
     endpoint: str
     link_id: UUID
     expected_body_version: int
+    expected_links_version: int | None = Field(ge=1)
 
 
 OutlineCommand = Annotated[
@@ -231,26 +235,3 @@ OutlineCommand = Annotated[
 
 class OutlineCommandsRequest(_Closed):
     commands: list[OutlineCommand] = Field(min_length=1, max_length=1000)
-
-
-class InsertionOut(_Closed):
-    """``connection.other`` is the target relative to this insertion's actual source."""
-
-    created: bool
-    connection: ConnectionOut
-
-
-class LinkVersionOut(_Closed):
-    ref: str
-    checked_from_version: int | None
-    links_version: int
-
-
-class OutlineCommandsOut(_Closed):
-    """Affected reads, insertion receipts and version proofs; unlink only acknowledges (empty lists)."""
-
-    outlines: list[OutlineOut]
-    nodes: list[OutlineNodeOut]
-    deleted: list[str]
-    insertions: list[InsertionOut]
-    link_versions: list[LinkVersionOut]

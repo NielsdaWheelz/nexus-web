@@ -35,7 +35,6 @@ from nexus.services.reader_publication import (
     read_publication_generation,
     replace_reader_document_title,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.transcripts.state import read_transcript_content_revision
 
@@ -304,5 +303,4 @@ def merge_findings(db: Session, media: Media, findings: MetadataFindings) -> lis
             changed.append(name)
     db.flush()
     projection.refresh(db, "media", [media.id])
-    projection.refresh_subject_dossiers(db, [ResourceRef("media", media.id)])
     return changed

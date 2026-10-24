@@ -1,6 +1,5 @@
 import {
   ArrowUpRight,
-  BookOpenText,
   Captions,
   CircleCheck,
   CircleX,
@@ -20,6 +19,7 @@ import {
   PanelsTopLeft,
   Pencil,
   Play,
+  Pause,
   RefreshCw,
   RotateCcw,
   Rss,
@@ -31,7 +31,6 @@ import {
   Trash2,
   Undo2,
   Upload,
-  Users,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -75,19 +74,24 @@ export const ACTION_CATALOG = {
     icon: PanelsTopLeft,
     group: "Navigate",
   },
-  OpenSource: { label: "Open source", icon: ExternalLink, group: "Navigate" },
-  MediaMetadata: { label: "metadata…", icon: Info, group: "Navigate" },
+  OpenSource: { label: "open source", icon: ExternalLink, group: "Navigate" },
+  OpenPodcastFeed: { label: "open feed", icon: Rss, group: "Navigate" },
+  Metadata: { label: "metadata…", icon: Info, group: "Navigate" },
   Playback: {
     label: "Play",
     icon: Play,
     group: "Consume",
     states: {
-      Idle: { label: "Play", icon: Play },
-      Paused: { label: "Resume", icon: Play },
-      Ended: { label: "Replay", icon: RotateCcw },
+      Idle: { label: "play", icon: Play },
+      Playing: { label: "pause", icon: Pause },
+      Buffering: { label: "pause", icon: Pause },
+      Paused: { label: "resume", icon: Play },
+      Ended: { label: "replay", icon: RotateCcw },
     },
   },
-  PlayNext: { label: "Play next", icon: ListStart, group: "Consume" },
+  PlayFromHere: { label: "play from here", icon: Play, group: "Consume" },
+  AddToQueue: { label: "add to queue", icon: ListPlus, group: "Consume" },
+  PlayNext: { label: "play next", icon: ListStart, group: "Consume" },
   Consumption: {
     label: "Mark as finished",
     icon: CircleCheck,
@@ -99,6 +103,8 @@ export const ACTION_CATALOG = {
       EpisodePlayed: { label: "Mark as unplayed", icon: Undo2 },
     },
   },
+  MarkCollectionFinished: { label: "mark all finished…", icon: CircleCheck, group: "Consume" },
+  MarkCollectionUnread: { label: "mark all unread…", icon: Undo2, group: "Consume" },
   ResetProgress: { label: "Reset progress", icon: RotateCcw, group: "Consume" },
   Transcript: {
     label: "Request transcript…",
@@ -114,6 +120,7 @@ export const ACTION_CATALOG = {
       failed_provider: { label: "Retry transcript", icon: RotateCcw },
     },
   },
+  TranscribePodcastEpisodes: { label: "transcribe all episodes…", icon: Captions, group: "Consume" },
   Download: {
     label: "Download for offline",
     icon: Download,
@@ -134,15 +141,11 @@ export const ACTION_CATALOG = {
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },
-  PodcastSubscription: {
-    label: "Subscribe",
-    icon: Rss,
-    group: "Organize",
-    states: {
-      Unsubscribed: { label: "Subscribe", icon: Rss },
-      Subscribed: { label: "Unsubscribe", icon: Rss },
-    },
-  },
+  AddUnfinishedToLectern: { label: "add unfinished contents to lectern…", icon: ListPlus, group: "Organize" },
+  PodcastLibraries: { label: "libraries…", icon: Library, group: "Organize" },
+  SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
+  UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
+  ImportPodcastEpisodes: { label: "import available episodes…", icon: Download, group: "Organize" },
   Chat: {
     label: "Chat about this…",
     icon: MessageCircle,
@@ -161,11 +164,6 @@ export const ACTION_CATALOG = {
       Absent: { label: "Add note…", icon: NotebookPen },
       Present: { label: "Edit note…", icon: NotebookPen },
     },
-  },
-  LearnHighlight: {
-    label: "Learn from this",
-    icon: BookOpenText,
-    group: "CreateTransform",
   },
   EditHighlightBounds: {
     label: "Edit bounds",
@@ -191,11 +189,6 @@ export const ACTION_CATALOG = {
   EditNoteBody: {
     label: "Edit note",
     icon: FilePenLine,
-    group: "CreateTransform",
-  },
-  RegenerateArtifact: {
-    label: "Regenerate",
-    icon: Sparkles,
     group: "CreateTransform",
   },
   Share: { label: "Share…", icon: Share2, group: "ShareExport" },
@@ -232,14 +225,16 @@ export const ACTION_CATALOG = {
     icon: CircleCheck,
     group: "Manage",
   },
-  EditAuthors: { label: "Edit authors…", icon: Users, group: "Manage" },
+  LeaveLibrary: { label: "leave library…", icon: ListMinus, group: "Manage", confirmation: {
+    title: "leave library?", body: "leave “{title}”? its contents remain in the library. you may lose access to items held only here.",
+  } },
   LibrarySettings: {
     label: "Library settings…",
     icon: Settings,
     group: "Manage",
   },
   PodcastSettings: {
-    label: "Podcast settings…",
+    label: "playback defaults…",
     icon: Settings,
     group: "Manage",
   },
@@ -248,19 +243,15 @@ export const ACTION_CATALOG = {
     icon: RefreshCw,
     group: "Manage",
   },
-  RetryPodcastBackfill: {
-    label: "Retry backlog",
-    icon: RotateCcw,
-    group: "Manage",
-  },
+  RemovePodcastEpisodes: { label: "remove podcast and episodes…", icon: Trash2, group: "Danger" },
   RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
-    label: "Remove from Nexus",
+    label: "remove from nexus",
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Remove from Nexus?",
-      body: "Remove “{title}” from Nexus, every Library, and the Lectern? This can’t be undone.",
+      title: "remove from nexus",
+      body: "remove “{title}” from your nexus and lectern? this removes its individual entries in libraries you manage and revokes sharing you created. your highlights and passage attachments are deleted; note text remains. progress may be lost. other readers may lose access. this cannot be undone.",
     },
   },
   DeleteLibrary: {
@@ -332,10 +323,17 @@ export function actionFailure(
   label: string,
   error: ApiError,
 ): FeedbackContent {
+  if (id === "Playback" && error.code === "E_AUDIO_UNAVAILABLE")
+    return { tone: "Warning", title: "audio unavailable", requestId: error.requestId };
+  if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
+    return { tone: "Warning", title: `couldn’t ${label}`, message: error.message };
+  if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")
+    return { tone: "Warning", title: "playback request not confirmed",
+      message: "check the player’s current state before trying again." };
   const recovery =
     id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
   if (
-    (id === "LecternMembership" || id === "PlayNext") &&
+    id === "LecternMembership" &&
     error.code === "E_RESOURCE_CONFLICT"
   )
     return {

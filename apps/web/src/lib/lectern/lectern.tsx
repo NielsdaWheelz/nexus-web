@@ -12,6 +12,7 @@
 // revision moved, so the lane then waits for a read past it; a move's conflict
 // can come at an unchanged revision (its row went hidden), so it leaves the floor.
 
+import { remoteReady } from "@/lib/native/admission";
 import {
   createContext,
   useContext,
@@ -22,8 +23,8 @@ import {
   type ReactNode,
 } from "react";
 import { useFeedback, useWorkspaceCondition } from "@/components/feedback/Feedback";
-import { publishChange, useChangeStamp } from "@/lib/api/changes";
-import { usePaneFreeServerValue, useThrowLater, type ServerValue } from "@/lib/api/serverState";
+import { invalidateReads, publishChange, useChangeStamp } from "@/lib/api/changes";
+import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import {
   compareRevision,
   deliver,
@@ -35,6 +36,9 @@ import {
   type OrderRevision,
   type PendingMove,
 } from "@/lib/collections/order";
+import { ApiError } from "@/lib/api/client";
+import type { Schema } from "@/lib/api/wire";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import {
   findPaneChromeFocusTarget,
@@ -46,15 +50,14 @@ import {
   moveLecternItem,
   readLectern,
   writeLecternItem,
+  writeCollectionLectern,
   type Lectern,
   type LecternItem,
-  type Placement,
 } from "./api";
 
 export type LecternOutcome = "Acknowledged" | "Unconfirmed" | "Superseded";
 export type LecternIntent =
   | { readonly kind: "Ensure" }
-  | { readonly kind: "Place"; readonly placement: Placement }
   | { readonly kind: "Remove" };
 export const LECTERN_INTENT_COPY = {
   Ensure: { verb: "adding", check: "check add", message: "it may already be on lectern." },
@@ -62,11 +65,6 @@ export const LECTERN_INTENT_COPY = {
     verb: "removing",
     check: "check removal",
     message: "it may already have been removed from lectern.",
-  },
-  Place: {
-    verb: "placing",
-    check: "check placement",
-    message: "its position on lectern may already have changed.",
   },
 } as const;
 export interface LecternPending {
@@ -87,14 +85,17 @@ interface Input {
   readonly title: string;
 }
 export interface LecternCommands {
+  /** Thrown below the account owner, so command recovery survives a defect. */
+  readonly defect: { readonly error: unknown } | null;
   /** The floor writes are sent at; null before the first read and after a conflict
    * until a read passes it. */
   readonly revision: OrderRevision | null;
   readonly pending: ReadonlyMap<string, LecternPending>;
   readonly receipts: ReadonlyMap<string, LecternReceipt>;
+  readonly collectionPending: { readonly title: string; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
+  readonly addCollection: (input: { readonly title: string; readonly request: Schema<"CollectionLecternRequest">; readonly onAcknowledged?: () => void }) => Promise<LecternOutcome>;
   readonly ensure: (input: Input) => Promise<LecternOutcome>;
   readonly remove: (input: Input) => Promise<LecternOutcome>;
-  readonly place: (input: Input & { readonly placement: Placement }) => Promise<LecternOutcome>;
 }
 interface Request extends Input {
   readonly intent: LecternIntent;
@@ -105,10 +106,19 @@ interface Request extends Input {
   settle: (outcome: LecternOutcome) => void;
   reject: (error: unknown) => void;
 }
+interface CollectionRequest {
+  readonly onAcknowledged: (() => void) | null;
+  readonly title: string;
+  readonly body: string;
+  readonly expected: OrderRevision;
+  phase: "Sending" | "Checking" | "Unconfirmed";
+  unregister(): void;
+}
 /** The membership intents, and the order's move (`pending`, its notice, the last
  * acknowledged order). */
 interface Lane extends MoveEntry {
   readonly requests: Map<string, Request>;
+  collection: CollectionRequest | null;
   /** The newest read's revision, as the last commit saw it. */
   read: OrderRevision | null;
   lastAck: OrderRevision | null;
@@ -118,16 +128,12 @@ interface Lane extends MoveEntry {
 }
 interface Context {
   readonly read: ServerValue<Lectern>;
+  /** The shown read's consumption revision, for lectern group promotion. */
+  readonly consumptionRevision: string | null;
   readonly commands: LecternCommands;
   readonly order: CollectionOrder;
 }
 const LecternContext = createContext<Context | null>(null);
-const intentKey = (intent: LecternIntent) =>
-  intent.kind !== "Place"
-    ? intent.kind
-    : intent.placement.kind === "First"
-      ? "Place:First"
-      : `Place:After:${intent.placement.media_id}`;
 const newer = (a: OrderRevision | null, b: OrderRevision | null) =>
   a === null || (b !== null && compareRevision(b, a) > 0) ? b : a;
 const past = (read: OrderRevision | null, revision: OrderRevision) =>
@@ -140,16 +146,21 @@ const floorOf = (lane: Lane, read: OrderRevision | null) =>
     : newer(newer(read, lane.lastAck), lane.acked?.revision ?? null);
 
 export function LecternProvider({ children }: { readonly children: ReactNode }) {
-  const read = usePaneFreeServerValue({
+  const [defect, fail] = useState<{ error: unknown } | null>(null);
+  const stamped = usePaneFreeServerValue({
     key: "/lectern",
     stale: `${useChangeStamp("Lectern", "Metadata")}|${useRefreshStamp(true, 60_000)}`,
     load: readLectern,
+    onDefect: fail,
   });
+  const read: ServerValue<Lectern> = stamped.status === "ready" ? { ...stamped, data: stamped.data.data } : stamped;
+  const consumptionRevision = stamped.status === "ready" ? stamped.data.consumption_revision : null;
   const workspace = useLatestWorkspace();
   const feedback = useFeedback();
-  const fail = useThrowLater();
+  const guard = useWorkGuard();
   const [lane] = useState<Lane>(() => ({
     requests: new Map(),
+    collection: null,
     pending: null,
     read: null,
     lastAck: null,
@@ -164,14 +175,15 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const [loadRequired, setLoadRequired] = useState(false);
   const readRevision = read.status === "ready" ? read.data.order_revision : null;
   const revision = floorOf(lane, readRevision);
-  const emit = () => setVersion((value) => value + 1);
-  const current = async (signal: AbortSignal) => (await readLectern(signal)).order_revision;
+  const [collectionListeners] = useState(() => new Set<() => void>());
+  const emit = () => { setVersion(value => value + 1); for (const listener of collectionListeners) listener(); };
+  const current = async (signal: AbortSignal) => (await readLectern(signal)).data.order_revision;
 
   function finish(request: Request, outcome: LecternOutcome) {
     lane.requests.delete(request.mediaId);
     request.settle(outcome);
     if (outcome === "Superseded")
-      feedback.offer({
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
         key: `lectern-change:${request.mediaId}`,
         announcement: "Polite",
         content: {
@@ -199,7 +211,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
             intent:
               intent.kind === "Remove"
                 ? intent
-                : { kind: "Place", placement: intent.kind === "Ensure" ? null : intent.placement },
+                : { kind: "Place", placement: null },
             expectedRevision: expected,
           },
           signal,
@@ -243,11 +255,71 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     pump();
   }
 
+  async function sendCollection(request: CollectionRequest, checking: boolean): Promise<LecternOutcome> {
+    if (lane.collection !== request || alive.signal.aborted) return "Superseded";
+    const signal = alive.signal;
+    request.phase = checking ? "Checking" : "Sending";
+    emit();
+    const result = await deliver({ expected: request.expected, checking, current,
+      send: signal => writeCollectionLectern(request.body, signal), signal,
+    }).catch((error: unknown) => ({ kind: "Defect" as const, error }));
+    if (signal.aborted || lane.collection !== request) return "Superseded";
+    switch (result.kind) {
+      case "Acknowledged":
+        lane.lastAck = newer(lane.lastAck, result.value.order_revision);
+        lane.collection = null; request.unregister();
+        publishChange("Lectern");
+        emit(); pump();
+        // The acknowledged lane and guard settle before presentation can close.
+        try { request.onAcknowledged?.(); } catch (error) { fail({ error }); }
+        feedback.settleCondition({ key: "lectern-collection", content: { tone: "Success", title: `${result.value.added_count} item${result.value.added_count === 1 ? "" : "s"} added to lectern · ${request.title}` } });
+        return "Acknowledged";
+      case "Moved":
+        lane.collection = null; request.unregister(); read.refetch();
+        feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "lectern-collection-result", announcement: "Polite", content: { tone: "Warning", title: "lectern changed", message: "the earlier request is superseded. its acknowledgement was not recovered; review lectern before another change." } });
+        emit(); pump(); return "Superseded";
+      case "Unknown":
+        request.phase = "Unconfirmed"; invalidateReads("Lectern"); emit(); return "Unconfirmed";
+      case "Refused":
+        lane.collection = null; request.unregister();
+        if (result.error.code === "E_RESOURCE_CONFLICT") { lane.conflict = request.expected; read.refetch(); }
+        emit(); pump(); throw result.error;
+      case "Defect":
+        // Delivery may have crossed the boundary before the defect; keep the lane blocked.
+        request.phase = "Unconfirmed"; invalidateReads("Lectern"); emit(); fail({ error: result.error }); return "Unconfirmed";
+    }
+  }
+
+  function collectionPending(request: CollectionRequest): NonNullable<LecternCommands["collectionPending"]> {
+    return { title: request.title, phase: request.phase, check: () => {
+      if (lane.collection !== request) return Promise.resolve("Superseded");
+      return request.phase === "Unconfirmed" ? sendCollection(request, true) : Promise.resolve("Unconfirmed");
+    } };
+  }
+
+  function addCollection(input: { readonly title: string; readonly request: Schema<"CollectionLecternRequest">; readonly onAcknowledged?: () => void }): Promise<LecternOutcome> {
+    if (alive.signal.aborted || !remoteReady()) return Promise.resolve("Superseded");
+    if (lane.collection !== null || lane.pending !== null || lane.requests.size > 0)
+      return Promise.reject(new ApiError(409, "E_RESOURCE_CONFLICT", "finish the current lectern change before reviewing another"));
+    if (revision === null || input.request.expected_order_revision !== revision) {
+      read.refetch();
+      return Promise.reject(new ApiError(409, "E_RESOURCE_CONFLICT", "lectern changed; review it before submitting"));
+    }
+    const request: CollectionRequest = { title: input.title, onAcknowledged: input.onAcknowledged ?? null, body: JSON.stringify(input.request), expected: input.request.expected_order_revision, phase: "Sending", unregister: () => {} };
+    request.unregister = guard.register({ id: "lectern-collection", scope: { kind: "account" },
+      subscribe: listener => { collectionListeners.add(listener); return () => { collectionListeners.delete(listener); }; },
+      read: () => ({ changed: false, unconfirmed: lane.collection === request, stopsBrowserWork: false }),
+    });
+    lane.collection = request;
+    return sendCollection(request, false);
+  }
+
   /** Send the head when nothing else is in flight and the floor is known. */
   function pump() {
+    if (!remoteReady()) return;
     const floor = floorOf(lane, lane.read);
     const head = lane.requests.values().next().value;
-    if (lane.pending === null && floor !== null && head?.phase === "Queued")
+    if (lane.collection === null && lane.pending === null && floor !== null && head?.phase === "Queued")
       void send(head, floor, false);
   }
 
@@ -262,13 +334,13 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   }
 
   function submit(input: Input, intent: LecternIntent): Promise<LecternOutcome> {
-    if (alive.signal.aborted) return Promise.resolve("Superseded");
+    if (alive.signal.aborted || lane.collection !== null) return Promise.resolve("Superseded");
     const previous = lane.requests.get(input.mediaId);
     if (previous !== undefined)
-      return intentKey(previous.intent) === intentKey(intent)
+      return previous.intent.kind === intent.kind
         ? check(previous)
         : Promise.resolve("Superseded");
-    if (revision === null) {
+    if (revision === null || !remoteReady()) {
       setLoadRequired(true);
       return Promise.resolve("Superseded");
     }
@@ -305,6 +377,11 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     lane.read = readRevision;
     let changed = false;
     if (readRevision !== null) {
+      if (lane.collection?.phase === "Unconfirmed" && past(readRevision, lane.collection.expected)) {
+        const request = lane.collection; lane.collection = null; request.unregister();
+        feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "lectern-collection-result", announcement: "Polite", content: { tone: "Warning", title: "lectern changed", message: "the earlier request is superseded. its acknowledgement was not recovered." } });
+        changed = true;
+      }
       for (const request of [...lane.requests.values()]) {
         if (request.phase === "Unconfirmed" && past(readRevision, request.expected!)) {
           finish(request, "Superseded");
@@ -335,6 +412,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       controller.abort();
       for (const request of lane.requests.values()) request.settle("Superseded");
       lane.requests.clear();
+      lane.collection?.unregister(); lane.collection = null;
       lane.pending = null;
     };
   }, [alive, lane]);
@@ -342,6 +420,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     "lectern-read-required",
     loadRequired && revision === null
       ? {
+          needsAttention: true,
           priority: "Action",
           announcement: "Polite",
           content: {
@@ -365,8 +444,12 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const value = useMemo<Context>(
     () => ({
       read,
+      consumptionRevision,
       commands: {
-        revision,
+        defect,
+        revision: lane.collection === null ? revision : null,
+        collectionPending: lane.collection === null ? null : collectionPending(lane.collection),
+        addCollection,
         pending: new Map(
           [...lane.requests].map(([id, request]): [string, LecternPending] => [
             id,
@@ -381,7 +464,6 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         receipts: new Map(lane.receipts),
         ensure: (input) => submit(input, { kind: "Ensure" }),
         remove: (input) => submit(input, { kind: "Remove" }),
-        place: (input) => submit(input, { kind: "Place", placement: input.placement }),
       },
       order: {
         state: {
@@ -403,13 +485,13 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         // Moves wait for an idle lane at the floor: the read's revision, or this tab's
         // last move when its acknowledgement is the newest thing the tab knows.
         revision:
-          lane.requests.size === 0 &&
+          lane.collection === null && lane.requests.size === 0 &&
           revision !== null &&
           (revision === readRevision || revision === lane.acked?.revision)
             ? revision
             : null,
         move: (command) => {
-          if (lane.requests.size > 0 || lane.pending !== null || command.expectedRevision !== revision)
+          if (lane.collection !== null || lane.requests.size > 0 || lane.pending !== null || command.expectedRevision !== revision)
             return Promise.resolve("Rejected");
           lane.originPaneId = workspace().state.active_primary_pane_id;
           lane.notice = null;
@@ -419,11 +501,12 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     }),
     // The lane is mutable and `version` is its change; the closures read it live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [read, revision, readRevision, version],
+    [stamped, revision, readRevision, version, defect],
   );
   return (
     <LecternContext.Provider value={value}>
       {children}
+      <CollectionLecternRecovery pending={value.commands.collectionPending} fail={fail} />
       {[...value.commands.pending].map(([mediaId, request]) => (
         <LecternRecovery
           key={mediaId}
@@ -445,6 +528,16 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   );
 }
 
+function CollectionLecternRecovery({ pending, fail }: { pending: LecternCommands["collectionPending"]; fail(input: { error: unknown }): void }) {
+  useWorkspaceCondition("lectern-collection", pending === null ? null : {
+    needsAttention: pending.phase !== "Sending", priority: "Write", announcement: "Polite",
+    content: { tone: pending.phase === "Unconfirmed" ? "Warning" : "Neutral", title: pending.phase === "Unconfirmed" ? `change not confirmed · ${pending.title}` : `adding selected items to lectern… · ${pending.title}`,
+      message: pending.phase === "Unconfirmed" ? "the request may have succeeded. checking retains the same reviewed order and items." : undefined },
+    actions: pending.phase === "Unconfirmed" ? [{ label: "check lectern change", onClick: () => void pending.check().catch(error => fail({ error })) }] : undefined,
+  });
+  return null;
+}
+
 function LecternRecovery({
   mediaId,
   request,
@@ -462,6 +555,7 @@ function LecternRecovery({
     request.phase === "Sending"
       ? null
       : {
+          needsAttention: true,
           priority: "Write",
           announcement: "Polite",
           content: {
@@ -473,7 +567,7 @@ function LecternRecovery({
             {
               label: copy.check,
               busy: request.phase === "Checking",
-              commandKey: `${mediaId}:${intentKey(request.intent)}`,
+              commandKey: `${mediaId}:${request.intent.kind}`,
               onClick: () => void request.check().catch((error: unknown) => fail({ error })),
             },
           ],
@@ -491,6 +585,7 @@ function useLecternContext(): Context {
 
 /** The shared read; ready rows stay shown while a reread runs. */
 export const useLectern = (): ServerValue<Lectern> => useLecternContext().read;
+export const useLecternConsumptionRevision = (): string | null => useLecternContext().consumptionRevision;
 export const useLecternCommands = (): LecternCommands => useLecternContext().commands;
 export const useLecternOrder = (): CollectionOrder => useLecternContext().order;
 

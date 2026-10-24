@@ -2,6 +2,7 @@
   --floating-action-enter-x: 0;
   --floating-action-enter-y: 4px;
 
+  max-block-size: var(--anchored-max-height, 100dvh);
   display: flex;
   align-items: stretch;
   padding: var(--space-1);
@@ -20,7 +21,18 @@
   min-width: 0;
   min-height: 0;
   max-width: var(--floating-action-content-max-width);
-  max-height: var(--floating-action-content-max-height);
+  max-block-size: var(--floating-action-content-max-height);
+}
+
+/* One scrollport keeps enlarged compact commands reachable inside live bounds. */
+.surface[data-strategy="mobile-selection-actions"] {
+  animation-name: floatingActionSurfaceFadeOnly;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.surface[data-strategy="mobile-selection-actions"] > * {
+  max-block-size: none;
 }
 
 .surface[data-strategy="text-selection"][data-placement="above"] {

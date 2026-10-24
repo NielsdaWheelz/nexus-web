@@ -1,18 +1,14 @@
-"""Podcast Index: signed http and a show's recent-episode window."""
+"""Podcast Index: signed directory HTTP. Feed traversal never requires directory evidence."""
 
 import hashlib
 import time
 from typing import Any
 
-from nexus.coerce import coerce_int
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.net.http_retry import get_json_with_retry
 
-from .feed import EpisodeFacts, parse_datetime, text_or_none
-
 PROVIDER = "podcast_index"
-WINDOW = 100
 
 
 class PodcastIndexClient:
@@ -45,27 +41,6 @@ class PodcastIndexClient:
             provider_name=PROVIDER,
             honor_retry_after=True,
         )
-
-    def recent_episodes(self, podcast_ref: str) -> list[EpisodeFacts]:
-        """The provider's newest WINDOW episodes; a malformed item is dropped."""
-        items = self.get("/episodes/byfeedid", {"id": podcast_ref, "max": WINDOW}).get("items")
-        items = items[:WINDOW] if isinstance(items, list) else []
-        return [_episode(item) for item in items if isinstance(item, dict)]
-
-
-def _episode(item: dict[str, Any]) -> EpisodeFacts:
-    author = text_or_none(item.get("author"))
-    return EpisodeFacts(
-        title=text_or_none(item.get("title")) or "Untitled Episode",
-        audio_url=text_or_none(
-            item.get("enclosureUrl") or item.get("enclosure_url") or item.get("url")
-        ),
-        provider_ref=text_or_none(item.get("id")),
-        guid=text_or_none(item.get("guid")),
-        published_at=parse_datetime(item.get("datePublished")),
-        duration_seconds=coerce_int(item.get("duration"), minimum=1),
-        authors=[author] if author else [],
-    )
 
 
 def get_podcast_index_client() -> PodcastIndexClient:

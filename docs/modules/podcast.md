@@ -1,60 +1,239 @@
-# Podcast Module
+# podcasts
 
-## Scope
+podcasts own canonical shows/episodes, per-library automatic delivery, finite
+history imports, source traversal and independent playback defaults. library
+entries are physical media memberships; shows have no entry and never hide their
+episodes. all aggregates member-library subscriptions once per show and is the
+parent command scope. subscribe adds available episodes and ongoing delivery to
+one destination; contextless subscribe uses the existing default library. finite
+import chooses that personal destination or one writable named library and never
+changes subscriptions.
 
-The podcast module owns Subscribe/unsubscribe, canonical
-Podcast and episode identity, RSS feed sync, episode + chapter ingest, the
-independent per-subscription history backfill, and explicit episode Transcribe.
-Podcast Index search and read-only Preview are owned by
-`python/nexus/services/browse/*`. Listening state, the global player, queue, and
-`external_audio` resolution are owned by the [player module](player.md);
-transcript chunk indexing is owned by `content_indexing`.
+the show pane's libraries section contains named subscription destinations, including
+read-only rows. its shared title links navigate; inline removal unsubscribes only
+that library and keeps episodes. the section's library control manages named
+subscription destinations, including reviewed removal. the header's shared rss
+action subscribes personally or unsubscribes everywhere from loaded aggregate
+facts. the default destination is
+excluded only from section rows, never from subscription state. library changes
+invalidate these names immediately within the tab.
 
-Backend owners live under `python/nexus/services/podcasts/*` (`feed`, `provider`,
-`shows`, `ingest`, `sync`, `backfill`, `subscriptions`, `subscriptions_query`,
-`episodes`, `episode_acquisition`, `transcription`, `transcription_failure`,
-`deepgram_adapter`), the media-level
-`python/nexus/services/transcripts/*`, the YouTube transcript owner
-`python/nexus/services/youtube.py` (`fetch_youtube_transcript`), and the egress helpers under
-`python/nexus/services/net/*`. Terminal transcript failure lives in
-`podcasts/transcription_failure.py`, which does not import the provider adapter
-on the background supervisor path. Frontend pane composition lives under
-`apps/web/src/app/(authenticated)/podcasts/*`. `lib/podcasts/api.ts` owns the
-podcast http and its types; `lib/api/serverState.tsx` (one resource) and
-`lib/api/useServerList.ts` (one list, architecture §8.12) own the panes' server
-state (shared with the author pane and the metadata overlay);
-`lib/podcasts/paneState.ts` owns the podcast failure copy, command runner and
-chrome refresh; reusable presentation lives under
-`apps/web/src/components/podcasts/*`.
+library podcast sections and the podcast index share the native `browse podcasts`
+plus link. browse has no destination context: discovery and canonical subscribe
+both use the personal default; named placement requires explicit selection.
+browsing remains available in readable, read-only libraries. all promotes global
+unsubscribe; named sections promote local removal with the same projector as the
+show's libraries section. confirmed rows remain during failed/refreshing reads, with
+their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
+warnings and import progress remain.
+local removal uses the permission from the same current section read as its rows.
 
-Pane server state: `useServerValue` (one resource) and `useServerList` (one
-list) load on their key, refetch when a `stale` token changes, coalesce
-refetches (at most one queued, never aborting the run in flight), show the pane
-visit's snapshot on return and throw defects at render. A list keeps the
-previous view's rows ("Retained · Updating") while a new sort or filter loads,
-and a return rereads it only when its `stale` token moved since it was read.
-Every podcast write in `api.ts` publishes `Podcasts` after success; the index
-and detail panes put its stamp in their tokens, so a change from a pane, a
-resource action, the settings overlay or the player rereads them. The detail
-head's token also carries the media query revision, and its generation feeds
-the episodes' token, so episodes are read again after each detail read. A
-state-filtered episode view also rereads on `Consumption`.
+index rows use the shared compact layout below 32em; headers move shortcuts into
+more at 479px and below. named menus
+contain distinct local occurrence removal and canonical global unsubscribe; all
+contains the canonical action once. hiding a focused shortcut returns focus to
+more. removal captures displayed successor ids at selection; acknowledged success
+focuses the next surviving title, then the section's browse/picker control, then its
+section or pane. cancellation restores the opener. list refresh does not own
+acknowledgement or this success target.
 
-Both lists load 100 rows and continue on Load more with plain keyset cursors
-(architecture §8.12). A rejected cursor keeps the rows and offers Retry, which
-rereads the loaded prefix. The header count appears once a list is complete.
+import and destructive cleanup are separate menu commands. cleanup chooses one
+named affected library or everywhere, including while subscribed and for
+episode-only destinations. changing scope remounts the review and reads fresh
+guards; it never slices an aggregate preview. all four intents use fixed dialogs,
+the existing account command owner and retained uncertainty recovery. canonical
+admission reads the exact library/show relationship; the default section's
+aggregate cannot establish personal membership. destination choice writes
+nothing. progress/retry/cancel remain available without subscription rows.
+acknowledgement settles the command's feedback condition before offering a
+`subscribed` or `import started` receipt. modal and unrelated-work suppression
+still apply; authoritative rereads never settle an uncertain command.
+command feedback names the observed destination or everywhere, including refusal
+and exact-request recovery.
 
-Followed-show and episode text filtering is local over the loaded rows ("found
-so far" until the list is complete). It matches title and contributor names,
-preserves the server-owned order and never enters URL or request; the list APIs
-reject `q`. Episode-wide Mark Played and transcript selection is state-only and
-server-resolved; while a local query is active those commands stay
-discoverably disabled because rendered rows never define command scope.
+the show identity keeps its 56px cover, contributor links, counts and explicit
+show-more disclosure. expanded description, contributor roles, source links and
+playback defaults retain their order and 12px group spacing. description is
+primary prose; source/default facts are secondary interface text. no second title.
+
+## owners and contracts
+
+`subscriptions.py` owns admission/stop; `imports.py` owns finite operations and
+processed identities; `traversal.py` owns one fetched page per durable step;
+`sync.py` owns recurring show scans; `ingest.py` owns canonical identities;
+`chapters.py` owns chapter source/jobs/publication; `settings.py` owns viewer/show
+playback defaults. `subscriptions_query.py` owns aggregate reads and section guards.
+all physical placement goes through the [library writer](library.md).
+
+| resource | contract |
+| --- | --- |
+| `library_podcast_subscriptions` | unique library/show; presence means future delivery; initial import id binds exact create recovery |
+| `podcast_library_imports` | finite library/run operation with committed addition/presence counts; one unfinished operation per destination/show |
+| `podcast_feed_runs` | one owning finite import or current recurring scan; exact attempt/step/job fences, url worklist and coverage facts |
+| `podcast_import_processed_episodes` | temporary import/episode set preserves first processing and later removal intent; retain through failure, clear on completion/cancel |
+| `podcast_playback_settings` | independent viewer/show identity/version and nullable speed/silence pair; unsubscribe preserves it |
+
+admission creates rule+initial import or only a finite import, copies known source
+episodes and schedules traversal atomically. explicit re-add restores visibility
+and retained work; it does not require old episode readability. replaying the same
+ids returns current resources without recopying. fresh admission checks exact
+library/removal guards; existing different rules/unfinished operations require review.
+
+ongoing delivery occurs only at first canonical insertion, to current rules. known
+metadata refresh never refiles. a finite import processes its own observations
+once even when another scan discovered them first. validated individual unfile
+marks every unfinished destination import processed before deleting. workspace
+removal also covers pending destinations without entries. fresh explicit import
+can restore an episode; background work never clears viewer suppression.
+
+named unsubscribe keeps episodes; separate cleanup removes all show episodes
+there, including manual placements, and preserves personal retention. all stop cascades to affected
+non-system member libraries and own default, with confirmation. all/remove deletes
+all selected placements/actor lectern items and sets visibility markers while
+preserving highlights, notes, attachments, grants, listening history and settings.
+read-only affected libraries block the whole operation. no partial parent mutation.
+
+stop previews freeze exact rule/import identities and attempts plus removal fence;
+keep ignores changing media revisions so imports cannot prevent stopping. removal
+also freezes library revisions/counts. cancellation freezes import identity/attempt,
+keeps arrivals and does not stop an ongoing rule. failure retry increments attempt,
+retains processed identities and resumes cursor; drained-gap repair restarts at head.
+old fetched pages/dead letters cannot affect newer work. cancel never waits on queue
+rows while holding show locks.
+
+## source publication
+
+lock order: exact worker queue claim, actor guard when applicable, sorted aliases,
+show, run/import, complete sorted media, complete sorted libraries. fetch outside
+transactions; commit identities, placement, counts, cursor and next job together.
+
+rss and namespace-aware atom follow next/prev-archive links with requested/final
+url dedupe, preserving meaningful case/query. imports include undated/future items;
+finite means observed available history, not an exact publication-time snapshot.
+unsafe/rejected observations retain coverage gaps while safe branches continue.
+fetch exhaustion pauses finite work; clean pages cannot erase earlier gaps.
+
+recurring scans walk the full reachable graph, once per show. successful settlement
+schedules the next hourly slot; failure backs off 15m/1h/6h/24h. settlement copies
+observation, clears current pointer and deletes the run. no active rule stops the
+recurring owner; finite operations retain their independent lifetime. supported feed
+traversal requires no directory success. no bulk audio, transcript or model-enrichment
+requests occur; those remain explicit operations.
+
+canonical identity is per-show guid/provider/enclosure aliases. title/date are
+never identity. a stable guid may gain enclosure aliases; contradictory stored
+aliases are rejected and coverage stays explicit. source facts do not overwrite
+unchanged enriched metadata. catalog merge transfers current memberships/processed
+identities rather than replaying original destinations.
+
+feed fetching uses safe_get (60s, 10mib); chapters use independent bounded jobs
+(15s, 2mib). inline chapters publish immediately and supersede external ownership;
+absence preserves existing chapters. external url/job identity fences publication,
+including a→b→a changes. successful sidecars revalidate after 24h; changed urls
+reset freshness. failures preserve old chapters; core imports never await chapters.
+
+chapter ingestion retains every publisher occurrence and its source times. supplied
+invalid ends reject the observation with `E_PODCAST_FEED_UNAVAILABLE`; zero-length
+intervals remain supplied and cannot support exact scope. source decimal seconds,
+including numeric json fractions, floor exactly once to integer milliseconds within
+the storage bound. `end_absence_confirmed` records actual absent
+ends; existing nulls remain unverified until a new observation. reader navigation may
+derive the next later start only from confirmed absence, never lost provenance.
+
+## wire and presentation
+
+library podcast section/detail reads provide relationships and guards in one
+snapshot; ordinary media counts/sort/paging exclude that section. api routes use
+client-minted ids, typed snake_case envelopes and nullable fields. podcast acquisition,
+imports, previews/stops and settings have dedicated routes. ordinary item placement
+accepts only media; no old subscription/backfill CRUD, SSE or show replacement path.
+
+web account owners retain exact pending command bytes across presentation close.
+unknown outcomes are inspected/retried without rebasing or claiming success.
+accepted progress is server-owned and uses visible-tab polling/change invalidation.
+no app data or admission drafts enter browser storage. add modes, scope, counts,
+coverage errors and keep/remove consequences are explicit. global removal remains
+available on show detail after unsubscribing when saved episodes remain.
+
+the subscriptions index, discovery results, live search/context rows and pane
+headers share subscription and libraries shortcuts with their complete menus.
+global subscribe uses the actual default library; global
+unsubscribe reviews every destination and keeps arrived episodes. libraries
+manages named subscriptions, including checked, locked read-only memberships.
+one choice opens the existing exact subscription or scoped removal review;
+cancel or acknowledgement closes the whole flow. finite import remains separate.
+
+`POST /podcasts/action-facts/resolve` is an authenticated, read-only snapshot of
+1–100 distinct canonical/sealed discovery targets, in input order. canonical
+visibility matches detail: catalog existence. discovery decoding resolves local
+provider identity even when unsubscribed; a valid local miss is `Discovery`,
+not provider availability. missing ids and invalid signed targets are explicit
+unavailable results. malformed requests fail validation. resolution performs one
+catalog batch and reuses aggregate `podcast_states`; it contacts no provider and
+acquires nothing.
+
+`usePodcastActionFacts` belongs to the containing view. its account/scope/target
+set owns one cancellable read, sequential chunks of at most 100 and publication
+only after all chunks succeed. the last canonical observation supplies every
+alias's subscription state. changed target sets clear facts; same-key refresh
+retains disabled presentation. podcast/library changes and foreground observation
+reread local facts without repeating directory content reads. failed or refreshing
+facts authorize no new shortcut. sealed row identity and admitted command identity
+never migrate when local resolution becomes canonical.
+
+the account action owner retains one scoped library-creation helper and loss
+guard. creation retries preserve the exact uuid/name. only the originating live
+chooser can advance to subscription review; dismissal leaves an empty created
+library and never subscribes or reopens. account feedback retains recovery after
+dismissal. checks always describe acknowledged subscription, never proposed choice.
+
+the podcast overview uses one visit-local expansion state for its panel and
+existing disclosure button: `show more` with a right chevron when closed,
+`show less` with a down chevron when open. shared button anatomy owns the
+decorative icon; visible text names the action. visits retain their own expansion
+and the existing trigger retains focus recovery before hiding panel content.
+
+## episode-wide commands
+
+whole-show state and unfinished-lectern actions use the shared
+[collection actions](collection-actions.md) contract. filtered podcast state
+commands name their state selection explicitly and use the same projectors and
+account owner. unfiltered commands appear only once. collection selection never
+walks browser pages or follows the current sort/text filter.
+
+transcript forecast/admission retains its episode owner and exact count/scope
+review. preparation belongs to the current visit; admitted requests and uncertain
+outcomes belong to the account. retry/inspection never infer acknowledgement from
+reads. there is no transcript behavior or cost-estimation change.
+
+acknowledged state changes publish `Podcasts` and `Consumption`; acknowledged
+transcript batches publish `PodcastEpisodes` and invalidate imports. unknown
+outcomes, conflicts and inspection invalidate reads without announcing a commit.
+episode lists and retained summaries observe `PodcastEpisodes`. an active visible
+pane polls queued/running transcripts; each changed current id/transcript-state
+signature invalidates retained summaries after that observation. stale in-flight
+summary replies are discarded. unchanged observations end the refresh chain;
+settings/head-only writes do not invalidate episode pages.
 
 The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` view
 is URL-owned (defaults omitted) and sent to the API as given, defaults included;
 the server validates it. A 400 shows the failure notice with `Reset view`; a 404
 from the subscriptions list (podcasts disabled) shows the failure notice.
+
+followed-show and library-show outputs always include stored `image_url`
+(string or null), selected in their existing list queries. `presentPodcast`
+projects it into an artwork capability; suggestions omit that capability.
+rows never fetch show details or provider metadata for artwork.
+`PodcastRowArtwork` owns presentation for each source through `MediaImage` and
+the authenticated image proxy. null, pending and failed sources show initials:
+the first grapheme of each of the first two uppercased words, or `P` for an
+empty title. success hides initials even for transparent images. image and
+initials nodes stay mounted across completion, changing opacity only; source
+changes remount the artwork child while preserving the row. artwork is passive
+with empty alt text and no duplicate accessible name. image delivery retains
+original bytes and the existing private one-day cache.
+next can report cached failures through `onLoad`; readiness requires positive
+`naturalWidth`.
 
 ## Android Offline Downloads
 
@@ -71,156 +250,11 @@ later enclosure freshness. A Ready snapshot stays removable even if the
 canonical episode later loses eligibility. There is no server download table,
 migration, archive copy, or browser/PWA path.
 
-## Browse Acquisition Boundary
-
-Browse and Preview are read-only. Preview may stream a remote episode through
-the player's ephemeral `PreviewAudio`, but open, reload, playback, and natural
-end create no Podcast, episode Media, subscription, Library entry, queue item,
-progress, transcript, or job.
-
-Episode Add uses `POST /podcast-episodes/from-discovery`; Subscribe uses
-`POST /podcasts/subscriptions`; failed-backfill repair uses
-`POST /podcasts/subscriptions/{podcastId}/backfill/retry`. Subscribe accepts a
-sealed discovery target or any persisted Podcast id (catalog facts, readable by
-id like its detail); Add accepts a sealed episode target. A discovery target is
-re-resolved against the provider with no transaction open: a vanished target is
-404 `E_NOT_FOUND`, a failing directory its browse code (503/429
-`E_BROWSE_PROVIDER_*`, `browse.targets.provider_api_error`). Every podcast
-command is idempotent by construction and takes no `Idempotency-Key`: a repeat
-converges on the same rows and reports what it found (`AlreadySubscribed`,
-`AlreadyPresent`, `AlreadyUnsubscribed`, `NotEligible`). Named Library inputs
-are additive. Selecting or opening a discovery result never auto-subscribes.
-
-## Concepts and owners
-
-Four durable facts, every other surface a read model over them:
-
-- **Show** (`podcasts`, show credits) — `shows.upsert_show`: resolve by
-  `provider_podcast_id`, then normalized `feed_url`, else insert (an identity
-  race re-resolves); the provider-matched row wins and keeps another row's feed
-  url untouched. The provider author is the one `author` credit.
-- **Episode** (`media` + `podcast_episodes` + chapters + aliases) —
-  `ingest.ingest_episodes` is the only writer. Identity is a set of aliases per
-  show (`podcast_episode_identities`): at most one `PodcastIndex`, at most one
-  `RssGuid`, any number of canonical `RssEnclosure`. Title, date and random
-  values are never identity. An item whose identity is ambiguous (no alias; a
-  strong alias a newer item of the batch claimed; aliases naming two episodes; a
-  second ref or guid; a known guid on a new enclosure without the stored
-  PodcastIndex ref) is skipped, counted and logged (`podcast_episode_skipped`),
-  never guessed; the sync or backfill then reads `SourceLimited`. Adding one
-  episode answers 409 `E_PODCAST_EPISODE_IDENTITY_CONFLICT` instead. The
-  bibliography is rewritten only when the feed's observation (fingerprint)
-  changed, and a missing value never erases a stored one (show notes, sidecar,
-  duration, date). Every written episode lands in the ingesting viewer's All;
-  the slice never deletes episodes (an episode's aliases cascade with it).
-- **Subscription** (`podcast_subscriptions`) — `subscriptions.py`: a row exists
-  iff the viewer follows the show. The row is also the sync's state and owns the
-  playback-rate and pause-shortening defaults (pause shortening is
-  `Off | Natural | null`, null = Android device default) and
-  auto-queue. Enabling auto-queue starts its watermark at that moment
-  (`auto_queue ⇒ auto_queue_watermark_at IS NOT NULL` is a CHECK).
-- **Backfill** (`podcast_subscription_backfills`, one per subscription, deleted
-  with it) — `backfill.py`: the pre-subscription history walk.
-
-Named placement is only `library_entries(podcast_id)`, with `library_entries.py`
-as sole writer. `GET /libraries/placements/podcast:{podcastId}` lists where a
-show sits; `PUT /libraries/{libraryId}/items/podcast:{podcastId}` is
-placement-only and never creates a subscription. Default/All stores no Podcast
-entry: each subscription projects one virtual Podcast root and suppresses its
-child episode roots. Subscribe adds named destinations (a Library holding direct
-episodes of the show answers 409 `E_PODCAST_REPLACES_EPISODES` with the counts;
-resending with `replace_episodes: true` replaces them; placement through
-Libraries… takes the same flag); unsubscribe deletes the row (the backfill cascades), removes the
-viewer's sole-owned placements and keeps shared ones; episodes resurface in All
-with their progress.
-
-- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save lifecycle owner: it
-  loads the subscription and saves one PATCH through `lib/podcasts/api.ts`. The
-  save (and the player's
-  remember-speed) publishes `Podcasts`, so open podcast panes reread; the
-  Library pane rereads on its own topics. There is no install publisher or
-  mutation tail.
-
-Feed-controlled urls (rss pages, Podcasting 2.0 chapter json, transcript
-sidecars) are fetched only through `net.safe_fetch.safe_get` (feed pages 60 s
-for up to 10 MiB, chapters 15 s and 2 MiB). The Podcast Index api is trusted
-and uses `net.http_retry.get_json_with_retry` (`provider.PodcastIndexClient.get`,
-which browse also calls). Sync, backfill and add store sidecar urls but never
-fetch transcripts or enclosures.
-
-Lock order, shared by every podcast writer: the subscription row or the backfill
-row, then the batch's alias advisory locks (sorted), then the `podcasts` row,
-then media rows, library rows and the user row (Lectern). Acquisition takes the
-alias locks before `upsert_show` touches the show row; subscribe inserts its own
-subscription row `ON CONFLICT DO NOTHING` and takes no alias lock.
-
-Podcast lists keep no revision. A write that moves a show or an episode across
-an open continuation (an ingest, a title or credit change, listening) falls
-under the keyset guarantee (architecture §8.12); the tab that made the write
-rereads. The followed list's recency orders break ties on the follow time,
-never on `updated_at`.
-
-## Sync and backfill
-
-`sync.py` owns the sync state machine `Pending -> Running -> Complete |
-SourceLimited | Failed`. Admission (subscribe, manual refresh, the due sweep)
-flips only terminal rows to Pending and enqueues one
-`podcast_sync_subscription_job` (payload `{subscription_id}`, priority 75
-interactive / 100 bulk) per flipped row under the row lock; an already-live row
-is joined, so at most one sync is admitted per subscription and the queue's
-single claim runs it. Manual refresh is `POST /podcasts/refresh` with a Podcast,
-Podcasts or Library scope (Default = all) and answers 202 with the selected
-count, joins included. The background lane runs `podcast_refresh_due_job` every
-15 minutes: the oldest due terminal rows by `(next_sync_at, id)`, at most 100,
-`FOR UPDATE SKIP LOCKED`, no network i/o.
-
-A run claims the row (`Running`, attempts + 1, `sync_started_at`), fetches the
-provider's newest 100 episodes and the feed head with no transaction open, then
-in one transaction locks the row while it is still `Running`, ingests the merged
-batch (rss items enrich the provider window by guid, enclosure or provider ref;
-unmatched rss items are appended), auto-queues each episode published in
-`(watermark, sync start]` onto the Lectern once (a full Lectern holds the
-watermark for a later sync), and settles `SourceLimited` (window full, a next
-page, or a skipped item) or `Complete` with the next sync 23 h plus a stable
-jitter ≤ 30 min away. A provider or feed failure settles `Failed` with backoff
-15 m / 1 h / 6 h / 24 h; a retry-exhausted job dead-letters to `sync.dead_letter`
-(`E_PODCAST_SYNC_RETRY_EXHAUSTED`) so the sweep re-admits it. There is no epoch
-or attempt fence: a stalled run that outlived its 900 s lease and overlaps its
-retry finds the row already settled at commit and writes nothing (`Stale`), and
-episode writes are idempotent by alias anyway. The trade-offs: a stray run whose
-own dead letter settled the row Failed, committing after a newer admission was
-claimed, settles that newer sync with its older fetch (the next due sync
-corrects it); a stray that fails while a newer admission is Pending settles it
-Failed and counts one failure against it.
-
-Subscribe also seeds the backfill at the subscription's creation (its cutoff)
-and enqueues `podcast_backfill_subscription` (`{backfillId, expectedStepNo}`,
-deduped per step). The row is the traversal: `step_no` names the next step and
-`cursor` the next page with the visited chain. A step fetches its page with no
-transaction open, then, under the backfill row lock and only at its step and
-non-terminal, ingests the page's episodes at or before the cutoff (undated
-included), advances the step and enqueues the next, or stamps `completed_at` /
-`source_limited_at` (a revisit, an unsafe url, 10 pages, or a skipped item). A
-page that cannot be fetched or parsed raises: the job retries (60 s, 300 s) and
-its `on_dead` reaction (`jobs/dead_letters.podcast_backfill`,
-matching backfill id and step) stamps it Failed. Retry backlog replaces a failed
-backfill with a fresh one at the same cutoff, else answers `NotEligible`. Live
-sync continues while the backfill runs, is source-limited, or failed.
-
-The active Podcast detail pane converges both through
-`/stream/podcast-subscriptions/{podcast_id}/events`. PostgreSQL triggers on the
-subscription and backfill tables publish the subscription id to
-`podcast_subscription_events`; the stream (`subscriptions.read_subscription_lifecycle`)
-resolves viewer + Podcast to that subscription, re-reads it on every
-notification and closes when sync and backfill are both terminal; a replaced
-subscription ends the old stream with 404. The web refetches the detail head
-whenever a snapshot differs from the loaded detail.
-
 ## Transcription
 
-Add, Subscribe, live sync, and backfill store RSS sidecar references but never
-fetch or publish transcript content. Only explicit Transcribe enters this
+recurring scans and finite imports store observed rss sidecar references without fetching
+transcript content. discovery-only add currently does not observe those references
+([issue](../issues/podcast-discovery-misses-publisher-transcript.md)). only explicit transcribe enters this
 boundary (`transcription.py`). Admission precedence for an episode: a readable
 transcript only asks for semantic repair; one in flight (transcript `queued |
 running` or job `pending | running`) writes nothing; otherwise the episode's one
@@ -229,6 +263,22 @@ the transcript marked `queued`, and one durable source attempt created. "Transcr
 all ⟨state⟩" forecasts a count and a selection fingerprint, then queues the whole
 recomputed selection or nothing (409 `E_SELECTION_CHANGED`): the forecast is the
 exactness guard, not vestigial. A video's request imports its YouTube captions.
+
+the episode's transcript admission area displays only `transcribe` before admission,
+then truthful queued, running, failed or unavailable states. its mounted processing
+stream owns updates.
+readable full/partial text mounts the shared reader and tools; failed document reads
+remain reader retries. available publisher notes occupy one expanded `show notes`
+section before transcript content, including document loading and failure. absent notes
+omit the section. notes use the existing content scrollport and surrounding typography
+and palette; restored reading destinations retain precedence. playback remains in the
+canonical header action; body playback explanations and chapter inventories are gone.
+notes retain profile font/size on their public root, reader ink and body leading;
+the shared section owns its header. their centered prose measure subtracts the
+reader column's two 16px gutters from the profile width, matching transcript
+text after removing the section inset. reader-surface/accent tokens still serve
+rich content. notes introduce no vertical scrollport or collapse. presentation
+issues no seek or progress command; explicit timestamps retain their destinations.
 
 - **Current transcript publication — `transcripts.current`.** This is the single,
   advisory-locked writer of `podcast_transcript_segments`, `fragments`, and

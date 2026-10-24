@@ -19,14 +19,12 @@ server components: callFastAPI ────────────────�
 
 - `client.ts`: `apiFetch(path: "/api/…", init)` answers the parsed json (an
   empty 2xx is `undefined`) or throws `ApiError {status, code, message,
-  requestId?, details?}`; status 0 `E_NETWORK` is a transport failure. Every
-  call carries `X-Nexus-Wire` and an `X-Request-ID` assigned before dispatch
-  (a caller-supplied id is preserved). structured api calls enforce
-  `cache: "no-store"`; independently owned reads must reach the server without
-  browser cache coordination. `keepalive: true` lets a write outlive the page.
-  `readResponse` is the one envelope reader (the
+  requestId?, details?, retryAfterMs?}`; status 0 `E_NETWORK` is a transport failure. Every
+  call carries `X-Nexus-Wire`; a supplied sealed revision must match this build
+  and is never rewritten; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
   request id comes from the body, else the `x-request-id` header). A 426 reloads
-  the tab once per (tab, build): a `sessionStorage` marker holds the bundle's
+  the tab once per (tab, build), unless authored memory or incompatible/sealed
+  pending writing holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
   every 426 reads "Nexus was updated. Reload this page to continue."
   (`STALE_BUILD_FEEDBACK`: the notice's title, whatever failed, with reload as
@@ -34,12 +32,17 @@ server components: callFastAPI ────────────────�
   shows it through `apiTransportFeedback`; one that throws it (`isStaleBuild`)
   reaches the pane or workspace boundary, which shows it and reports no client
   defect. The workspace save keeps the workspace up.
+  structured api calls assign `X-Request-ID` before dispatch, preserve a supplied
+  id and enforce `cache: "no-store"`. independent application read owners are not
+  coordinated by the browser http cache. search manual reads have one aggregate
+  operation deadline; an owned expiry remains distinct from caller cancellation.
+
 - `serverState.tsx`: the one owner of keyed async reads.
-  `useServerValue({key, stale, visit, load})` and `usePaneFreeServerValue` (no
-  pane visit) answer `loading | failed | ready {data, generation, error,
+  `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
+  pane visit) answer `loading | failed | ready {data, source, generation, error,
   refreshing}` with `refetch()`. A new key loads (a null key waits); a moved
-  `stale` refetches over the shown data; refetches queue behind the read in
-  flight. invalidation supersedes that read's success and failure; only the
+  `stale` refetches over the shown data; invalidation aborts the superseded flight and queues one fresh read.
+  invalidation supersedes that read's success and failure; only the
   current key/stale request may publish. existing snapshots remain while the
   fresh read runs, and queued refetch waiters settle from that fresh read.
   `requestWithRetry` retries transport failures and non-defect 5xx
@@ -51,40 +54,60 @@ server components: callFastAPI ────────────────�
   pane is seeded), under the key of the hook that reads them, the api path. A hook in the pane body's first commit paints
   its first key's seed without a fetch; that commit spends the pane's seeds
   (`ServerSeedsSpent`, beside the body), so every later mount reads and a seed
-  no hook took is dropped unread. `useSettled(value, ms)` is a typed query
+  no hook took is dropped unread. concurrent identical reads share only a flight,
+  keyed by account, representation/query, policy and prefix demand. subscribers
+  cancel independently; the last departure aborts. completed responses never
+  suppress later mounts. account generations fence stale success and failure;
+  list subscribers append incoming rows to their own retained prefixes.
+  `useSettled(value, ms)` is a typed query
   once it held still: a search reads by its settled text and shows results
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
-  way (architecture §8.12); `usePagePrefix` is a value over page prefixes.
-  search supplies manual retry and one whole-operation deadline through these
-  owners; it does not automatically recover rejected cursors. the list's
-  `shownKey`/`shownStale` describe its committed snapshot together. defaults for
-  other reads retain their existing policy. see [search](search.md) for phase caps.
+  way (architecture §8.12), exposing only the requested key’s rows and metadata
+  from the first render and automatically exhausting active collections quietly.
+  same-key refresh retains its usable snapshot; a different key exposes loading
+  until its own snapshot exists. `requestedKey` names that requested scope, even
+  before a response; initial-wait feedback uses it to retire abandoned queries. private exact-key visit snapshots remain valid. strict
+  refresh supersedes; periodic `revalidate()` waits behind admitted reads and
+  coalesces observations. `usePagePrefix` belongs only to explicit authored
+  outline branches.
+  installed catalog loaders are explicit local reads, separate from `apiFetch`.
+  values, lists and retained snapshots identify their live/catalog source; a
+  complete saved result stages a complete live reread before promotion. local
+  coverage misses do not suppress admitted remote work. native admission gates
+  remote reads and retries; catalog failures do not change session admission.
+  see [installed catalog](offline-catalog.md) and
+  [device startup](device-startup.md) for local access and apk-update recovery.
 - `stream.ts`: `openStream({path: "/api/stream/…", after?, decode, isTerminal,
-  onEvent, onError, onComplete?, onReconnect?, signal?, maxReconnects = 8,
+  onEvent, onError, onSuspended, onComplete?, onReconnect?, signal?, maxReconnects = 8,
   maxBackoffMs = 30 s})` returns a stop function. Resume is `?after=<id>` only.
-  A 401 sends the tab to login (`handleUnauthenticatedApiError`), never to
-  `onError`. Every other 4xx but 429, a non-event-stream answer, a malformed or
+  hosted 401 starts sign-in (`handleUnauthenticatedApiError`) before `onError`.
+  every other 4xx but 429, a non-event-stream answer, a malformed or
   oversized (256 K characters) event and a throwing `decode`/`onEvent` are final
-  (`onError` once). Network failures, 5xx and 429 back off from 1 s doubling to
+  (`onError` once). same-system api defects are final before retry classification.
+  modeled network failures, upstream 5xx and 429 back off from 1 s doubling to
   `maxBackoffMs` with jitter and fire `onReconnect`. A clean end after an event
   (the bff's planned cut) resumes after ~250 ms without counting; a clean end
-  without one counts as a failure. A delivered event resets the count.
+  without one counts as a failure. A delivered event resets the count. exhaustion
+  retains the final normalized error, including its code and available request id.
+  installed admission suspends the same owner/cursor without spending its budget.
 - `proxy.ts` (server only): `proxySession(request, path, lane)`,
   `proxyShare`, `proxyExtension`. The session lane refuses a cross-origin
   mutation (403), resolves the session before reading a body (ended → 401 and
-  the cookies cleared; refreshable → refreshed inline), forwards the allow-listed
+  the cookies cleared; refreshable → refreshed inline). ordinary android requests
+  are passive: no rotation or clearing, including assets/streams. the fixed native
+  credential operations own those effects ([installed workspace](device-startup.md)).
+  it forwards the allow-listed
   headers (`content-type accept range if-none-match if-modified-since
   idempotency-key x-nexus-wire`) plus the bearer, internal secret, request id
   and `X-Nexus-Device` from `nx_device`, and answers `private, no-store`,
-  `Vary: Cookie`. Lanes: `Json` (30 s to response headers), `Asset` (identity
+  `Vary: Cookie`; `Retry-After` is forwarded and parsed as delay-seconds or
+  an http-date. Lanes: `Json` (30 s to response headers), `Asset` (identity
   encoding, `content-length` kept, the bff's own wire, FastAPI's cache policy
   kept when the answer writes no cookie), `Stream` (identity encoding, `private,
   no-store, no-transform`, the body ended cleanly at 280 s), `Copy` (280 s to
   headers). Upstream failures: 502 `E_UPSTREAM`, 504 `E_UPSTREAM_TIMEOUT`, 499
-  when the client left. search json uses its phase cap through headers and body;
-  the bff buffers its bounded page so a body timeout remains a typed failure.
-  The client leaving ends the upstream request at any
+  when the client left. The client leaving ends the upstream request at any
   point, before it starts or with its body unread; the cut's timer ends with
   the body. A path holding an encoded slash is refused 404: uvicorn decodes
   `%2F`, so FastAPI would split a segment a lane checked whole (the json lane's
@@ -123,13 +146,22 @@ server components: callFastAPI ────────────────�
   `X-Nexus-Device` header; absent → 400).
 - `api/routes/stream.py`: `GET /stream/...` authenticated like every route.
   The chat run stream is a cursor stream (`id: <seq>`, `?after=<seq>`, closes
-  after `done`); oracle readings, dossier builds, media processing, metadata
+  after `done`); oracle readings, media processing, metadata
   (done once nothing is unfinished) and podcast subscriptions are snapshot streams (`state` on
-  change, `done` when terminal, the whole snapshot again on reconnect). The
-  first read happens before any byte; every wake re-reads committed state in a
-  fresh session; a keepalive comment follows 15 s of quiet; an entity gone
+  change, `done` when terminal, the whole snapshot again on reconnect).
+  writing is an account revision stream: initial/changed `state {revision}`,
+  with a fresh committed revision read on each existing 15-second timeout even
+  if a postgres notification was lost. the browser probes only watched lanes.
+  snapshot setup acquires LISTEN before its initial read and accepts that snapshot
+  before response construction, so refusal is structured json. the first wake
+  consumes that snapshot; later wakes re-read committed state in a fresh session.
+  a keepalive comment follows 15 s of quiet; an entity gone
   mid-stream closes it cleanly. `db/listen.py` holds one autocommit LISTEN
-  connection per stream.
+  connection per stream. setup owns cleanup until response construction; the
+  response's `__call__` finally owns it afterward, including failed header sends.
+  listener close shields its complete idempotent cleanup and releases capacity
+  after connection closure settles. synchronous preflight queries retain their
+  existing cancellation/settlement semantics.
 
 ## wire revision
 

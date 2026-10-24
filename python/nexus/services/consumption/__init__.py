@@ -2,8 +2,8 @@
 they actually read, heard and watched.
 
 Every write runs in its own serializable transaction that first locks the viewer's ``users``
-row (I10): tabs and the Android app write one account at once, and every fence here assumes
-serialized writers. Writes inside a caller's transaction (the assistant, podcast sync) take the
+row with no-key-update (I10): tabs and the Android app write one account at once, and every fence here assumes
+serialized writers. Writes inside the assistant's transaction take the
 same lock first; re-taking a held lock is a no-op.
 """
 
@@ -12,15 +12,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-
-
-def lock_viewer(db: Session, viewer_id: UUID) -> None:
-    db.execute(text("SELECT 1 FROM users WHERE id = :id FOR UPDATE"), {"id": viewer_id})
+from nexus.services import users
 
 
 def viewer_txn[T](label: str, viewer_id: UUID, op: Callable[[Session], T]) -> T:
@@ -28,7 +24,7 @@ def viewer_txn[T](label: str, viewer_id: UUID, op: Callable[[Session], T]) -> T:
     with get_session_factory()() as db:
 
         def run() -> T:
-            lock_viewer(db, viewer_id)
+            users.lock_viewer(db, viewer_id)
             return op(db)
 
         return retry_serializable(db, label, run)

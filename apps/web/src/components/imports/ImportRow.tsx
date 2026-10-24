@@ -1,9 +1,6 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
-import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
-import outlineStyles from "@/components/resources/ResourceOutline.module.css";
+import { useRef } from "react";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import type { ImportItem } from "@/lib/imports/api";
@@ -17,7 +14,7 @@ import {
   reasonLine,
 } from "@/lib/imports/copy";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { ImportActions } from "./ImportActions";
+import { useImportActions } from "./ImportActions";
 import styles from "./Imports.module.css";
 
 /**
@@ -35,7 +32,13 @@ export default function ImportRow({
   readonly onSelect: (ref: string, triggerElement: HTMLButtonElement) => void;
 }) {
   const display = useRenderEnvironment();
-  const open=useResourceDraft<boolean>(`Imports.Disclosure:${item.ref}`,()=>false);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = () => {
+    const more = moreRef.current;
+    if (more?.isConnected && more.getClientRects().length && !more.closest("[hidden], [inert]")) return more;
+    return more?.closest("[data-import-ref]")?.querySelector<HTMLElement>("[data-row-focusable]") ?? null;
+  };
+  const actions = useImportActions({ item, triggerRef: moreRef, returnFocus });
   const now = new Date();
   const consequence = consequenceLine(item, (at) => momentText(at, display));
   const reason = reasonLine(item);
@@ -44,7 +47,6 @@ export default function ImportRow({
   return (
     <ResourceRow
       as="li"
-      wrapped
       selected={selected}
       rootProps={{
         "aria-label": item.title,
@@ -57,12 +59,11 @@ export default function ImportRow({
         onActivate: (triggerElement) => onSelect(item.ref, triggerElement),
       }}
       title={item.title}
-      supporting={<FeedbackStatus
+      content={{ kind: "Details", body: <><FeedbackStatus
         content={{ tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral", title: consequence,
           message: [reason, concurrent].filter(Boolean).join(" · ") || undefined }}
         announcement="None"
-      />}
-      status={
+      />
         <div className={styles.rowContext}>
           {item.matched_event !== null ? (
             <span>{matchLine(item.matched_event, display, now)}</span>
@@ -79,17 +80,9 @@ export default function ImportRow({
             <time dateTime={age.dateTime}>{age.text}</time>
           </span>
         </div>
-      }
-      leadingControl={item.media_id!==null ? <>
-        <button type="button" className={outlineStyles.control} aria-label={`${open.value ? "hide" : "show"} linked resources for ${item.title}`} aria-expanded={open.value} onClick={()=>open.set(!open.value)}><ChevronRight className={outlineStyles.arrow} data-open={open.value || undefined} size={14} aria-hidden="true" /></button>
-        <a href={`/media/${item.media_id}`} className={outlineStyles.control} aria-label={`open ${item.title}`}>•</a>
-      </> : undefined}
-      expanded={open.value && item.media_id!==null ? <ResourceDisclosure resourceRef={`media:${item.media_id}`} occurrencePrefix={`imports:${item.ref}`} /> : undefined}
-      primaryControl={
-        <div className={styles.rowActions}>
-          <ImportActions item={item} onAddItem={()=>open.set(true)} />
-        </div>
-      }
+        {actions.feedback}
+      </> }}
+      controls={<>{actions.shortcuts}{actions.menu}</>}
     />
   );
 }

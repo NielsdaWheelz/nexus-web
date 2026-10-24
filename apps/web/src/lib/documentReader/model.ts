@@ -1,11 +1,11 @@
-// The publication model: one immutable document of units (or one pdf) under
+// The publication model: an immutable text body (or one pdf) under
 // one identity, the points and targets that address it, and the one mapping
 // between its points and the cursor's wire locator. Offsets are codepoints
 // into a unit's canonical text, half-open.
 import type { Schema } from "@/lib/api/wire";
 
 export type ReaderDocumentOut =
-  Schema<"ReaderTextDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
+  Schema<"ReaderTextDocumentOut"> | Schema<"ReaderTranscriptDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
 export type Locator = Schema<"CursorWrite">["locator"];
 export type CursorSnapshot =
   Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned"> | Schema<"ReaderCursorUnresolved">;
@@ -44,8 +44,13 @@ export interface Section {
   readonly id: string;
   readonly label: string;
   readonly depth: number;
-  readonly at: TextPoint;
+  readonly at: TextPoint | null;
   readonly anchorId: string | null;
+}
+export interface TranscriptChapter extends Section {
+  readonly startMs: number;
+  readonly endMs: number | null;
+  readonly searchExtent: { readonly start: TextPoint; readonly end: TextPoint } | null;
 }
 export interface TocNode {
   readonly id: string;
@@ -74,6 +79,8 @@ export type TextDocument = {
   readonly format: "web" | "epub" | "transcript";
   readonly identity: string;
   readonly title: string;
+  readonly transcriptNavigation: { readonly key: string; readonly chapters: readonly TranscriptChapter[] } | null;
+  readonly transcriptCoverage: "full" | "partial" | null;
   readonly units: readonly TextUnit[];
   readonly ranges: readonly SourceRange[];
   readonly xCapture: Schema<"ReaderXCaptureOut"> | null;
@@ -91,7 +98,7 @@ export type PdfDocument = {
   readonly pages: number | null;
   readonly file: PdfFile;
 };
-/** Identity versions source content/targets; title and embedded-child presentation may change. */
+/** Identity versions the body; chapter navigation, title and embedded presentation may change. */
 export type ReaderDocument = TextDocument | PdfDocument;
 
 export type ReaderPoint =
@@ -116,6 +123,7 @@ export type ReaderTarget =
   | { readonly kind: "pdf"; readonly page: number; readonly view: import("./location").PdfView }
   /** A transient match in the current PDF query; never a saved locator. */
   | { readonly kind: "pdfMatch"; readonly page: number; readonly index: number }
+  | import("./location").PdfFindDestination
   | { readonly kind: "edge"; readonly edge: "start" | "end" };
 /** Where the eye is: a point and its pixel offset from the visible reading line.
  * offsetPx is positive below the line and negative above it; never persisted. */
@@ -141,7 +149,6 @@ export interface Structure {
   fraction(point: ReaderPoint): number;
   sectionAt(point: ReaderPoint): Section | null;
   unit(id: string): TextUnit | undefined;
-  unitAtTime(ms: number): TextUnit | undefined;
 }
 
 export const PDF_ZOOM = { min: 0.5, max: 2, step: 0.25 } as const;
@@ -216,6 +223,17 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     sectionId: node.section_id,
     children: node.children.map(toc),
   });
+  const transcriptNavigation = out.kind === "transcript" ? {
+    key: out.transcript_navigation.key,
+    chapters: out.transcript_navigation.chapters.map((chapter): TranscriptChapter => ({
+      id: chapter.id, label: chapter.label, depth: 0, anchorId: null,
+      startMs: chapter.start_ms, endMs: chapter.end_ms,
+      at: chapter.at === null ? null : point(chapter.at),
+      searchExtent: chapter.search_extent === null ? null : {
+        start: point(chapter.search_extent.start), end: point(chapter.search_extent.end),
+      },
+    })),
+  } : null;
   return {
     kind: "text",
     format: out.kind === "web_article" ? "web" : out.kind,
@@ -223,20 +241,39 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     title: out.title,
     units,
     ranges,
+    transcriptNavigation,
+    transcriptCoverage: out.kind === "transcript" ? out.transcript_coverage : null,
     xCapture: out.x_capture,
     xArticleContent: out.x_article_content,
     length,
-    sections: out.sections.map((section) => ({
+    sections: transcriptNavigation?.chapters ?? out.sections.map((section) => ({
       id: section.id,
       label: section.label,
       depth: section.depth,
       at: point(section.at),
       anchorId: section.anchor_id,
     })),
-    toc: out.toc_nodes.map(toc),
+    toc: transcriptNavigation ? transcriptNavigation.chapters.map((chapter) => ({
+      id: chapter.id, label: chapter.label, at: chapter.at, sectionId: chapter.id, children: [],
+    })) : out.toc_nodes.map(toc),
     sourceIssues: out.source_issues,
     embeds: out.embeds,
   };
+}
+
+/** Half-open source coverage; publication order breaks overlaps. */
+export function transcriptUnitAtTime(units: readonly TextUnit[], ms: number): TextUnit | null {
+  return units.findLast((unit) => unit.time !== null && unit.time.startMs <= ms && ms < unit.time.endMs) ?? null;
+}
+
+/** A reading chapter requires unique whole-cue membership, independently of playback. */
+export function transcriptChapterAtPoint(doc: TextDocument, point: TextPoint): TranscriptChapter | null {
+  const time = doc.units.find((unit) => unit.id === point.unit)?.time;
+  if (!time || time.endMs <= time.startMs) return null;
+  const chapters = doc.transcriptNavigation?.chapters.filter((chapter) =>
+    chapter.endMs !== null && chapter.startMs <= time.startMs && time.endMs <= chapter.endMs,
+  ) ?? [];
+  return chapters.length === 1 ? chapters[0] : null;
 }
 
 export function structureOf(
@@ -251,7 +288,6 @@ export function structureOf(
         p.kind === "pdf" ? Math.min(1, (p.page - 1 + p.y) / length) : 0,
       sectionAt: () => null,
       unit: () => undefined,
-      unitAtTime: () => undefined,
     };
   }
   const units = new Map(doc.units.map((unit) => [unit.id, unit]));
@@ -260,7 +296,7 @@ export function structureOf(
     return range ? range.position + Math.min(p.offset, range.end) - range.start : 0;
   };
   const sections = doc.sections
-    .map((section) => ({ section, at: offset(section.at) }))
+    .flatMap((section) => section.at === null ? [] : [{ section, at: offset(section.at) }])
     .sort((a, b) => a.at - b.at);
   return {
     length: doc.length,
@@ -268,13 +304,11 @@ export function structureOf(
       p.kind === "text" && doc.length > 0 ? offset(p) / doc.length : 0,
     sectionAt: (p) =>
       p.kind === "text"
-        ? (sections.findLast((entry) => entry.at <= offset(p))?.section ?? null)
+        ? doc.transcriptNavigation !== null
+          ? transcriptChapterAtPoint(doc, p)
+          : (sections.findLast((entry) => entry.at <= offset(p))?.section ?? null)
         : null,
     unit: (id) => units.get(id),
-    unitAtTime: (ms) =>
-      doc.units.findLast(
-        (unit) => unit.time !== null && unit.time.startMs <= ms,
-      ) ?? doc.units[0],
   };
 }
 

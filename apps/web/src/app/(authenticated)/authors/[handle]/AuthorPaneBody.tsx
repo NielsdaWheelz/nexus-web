@@ -1,14 +1,12 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // The author pane: the person's other names and their visible works. The url
 // owns the works view (`sort`, `direction`) and passes it to the server, which
-// validates it; the text filter stays local. While the pane is active it loads
-// every page, so the filter and the "N works" count cover all works.
+// validates it; the text filter stays local. The filter and count cover the
+// loaded prefix; the list footer owns explicit continuation.
 
 import { useCallback, useId, useMemo } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -38,6 +36,7 @@ import {
 } from "@/lib/api/useServerList";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { browsePreviewHref } from "@/lib/browse/api";
 import {
   getContributor,
   listContributorWorks,
@@ -48,7 +47,7 @@ import {
   contributorRoleLabel,
   selectMediaAuthors,
 } from "@/lib/contributors/credits";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -62,7 +61,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -116,6 +114,7 @@ function presentWork(work: ContributorWork): CollectionRowView {
   }
   const row = {
     kind: "contributor_work",
+    presentation: "Index",
     primary: { kind: "link", href: work.href, paneLabelHint: work.title },
     title: { text: work.title },
     publicationDate: null,
@@ -127,11 +126,21 @@ function presentWork(work: ContributorWork): CollectionRowView {
     return {
       ...row,
       id: work.href,
-      mediaIdentity: "External",
+      primary: { ...row.primary, href: browsePreviewHref(work.target) },
+      resourceActions: {
+        kind: "Media",
+        subject: {
+          kind: "External",
+          target: work.target,
+          media_kind: "epub",
+          title: work.title,
+          contributors: work.contributors,
+        },
+        knownDescriptor: null,
+      },
       contributors: selectMediaAuthors(work.contributors),
       context: null,
       resourceRef: null,
-      insertionSource:null,
     };
   }
   const roles = work.role_facts.map((fact) =>
@@ -145,7 +154,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
     contributors: [],
     context: { kind: "Text", text },
     resourceRef,
-    insertionSource:{kind:"resource",ref:work.resource_ref},
   };
 }
 
@@ -167,17 +175,16 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   ]).toString();
   const stale = `${useMediaQueryRevision()}:${useChangeStamp("Podcasts")}`;
   const detail = useServerValue({
-    key: handle,
+    key: `/contributors/${encodeURIComponent(handle)}`,
     stale,
     visit: DETAIL,
     load: (signal) => getContributor(handle, signal),
   });
   const works = useServerList<ContributorWork>({
-    key: `${handle}?${view}`,
+    key: `/contributors/${encodeURIComponent(handle)}/works?${view}`,
     stale,
     pageSize: 100,
-    drain: true,
-    active,
+    active: active && detail.status === "ready",
     visit: WORKS,
     id: (work) => work.href,
     fetchPage: (cursor, limit, signal) =>
@@ -250,6 +257,16 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   }, [clearQuery, inputRef, setView]);
   const invalidView =
     works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
+  const visible = matches(text);
+  const emptyTitle = text
+    ? complete ? "no works match this filter." : "no matching work found so far."
+    : complete ? "no works yet." : "no works loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list: works, unit: { singular: "work", plural: "works" },
+    waiting: detail.status === "ready" && !invalidView && works.status === "loading",
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const canReset = view.length > 0;
   const headerMeta: PaneHeaderMeta = invalidView
     ? { kind: "None" }
@@ -267,11 +284,8 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       status={{
         placement: "Inline",
         id: queryStatusId,
-        visible: paneFilterRowsStatusVisible({
-          status: filterRows.rowStatus,
-          filtering: text !== "",
-        }),
-        content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+        visible: false,
+        content: <PaneFilterRowsStatus announceQueryChanges={works.current && works.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}
       onReset={canReset ? resetView : undefined}
     />,
@@ -302,7 +316,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   );
   useResourceInspector({
     scheme: "contributor",
-    handle: detail.status === "ready" ? detail.data.handle : null,
+    handle: detail.status === "ready" && detail.error?.status !== 403 && detail.error?.status !== 404 ? detail.data.handle : null,
     bodies: { linkedItems },
   });
   const { refetch: refetchDetail } = detail;
@@ -313,9 +327,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     refetchWorks().catch(() => {});
     return { kind: "Complete" as const, announcement: "Refreshing author" };
   }, [refetchDetail, refetchWorks]);
-  const insertion=useResourceComposer(detail.status === "ready" ? {kind:"resource",ref:detail.data.resource_ref} : null,`contributor:${handle}`,"add item");
   usePaneChrome({
-    menuActions:insertion.action ? [insertion.action] : [],
     query: queryControls,
     resourceRef:
       detail.status === "ready"
@@ -332,11 +344,14 @@ function AuthorPane({ handle }: { readonly handle: string }) {
 
   if (invalidView) {
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid works view" }}
         announcement="Assertive"
         actions={[{ label: "Reset view", onClick: resetView }]}
       />
+      </>
     );
   }
   const failure =
@@ -351,6 +366,8 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       if (works.status === "failed") works.retry();
     };
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={authorError(failure, "This author couldn’t be loaded")}
         announcement="Assertive"
@@ -360,81 +377,87 @@ function AuthorPane({ handle }: { readonly handle: string }) {
             : [{ label: "retry", onClick: retry, busy: (detail.status === "failed" && detail.retrying) || works.running !== null }]
         }
       />
+      </>
     );
   }
   if (detail.status !== "ready") {
     return (
+      <>
+      {readFeedback.announcement}
       <PaneSurface
         state={
           <PaneLoadingState label="Loading author…" announcement="Polite" />
         }
       />
+      </>
     );
   }
 
   const { other_names: otherNames } = detail.data;
   return (
-    <PaneSurface>
-      {insertion.content}
-      <div className={styles.detail}>
-        {otherNames.length > 0 ? (
-          <section className={styles.otherNames}>
-            <h2 className={styles.sectionHeading}>Other names</h2>
-            <p className={styles.otherNamesList}>
-              {otherNames.map((name, index) => (
-                <span key={`${name}-${index}`}>
-                  {index > 0 ? ", " : null}
-                  <span dir="auto">{name}</span>
-                </span>
-              ))}
-            </p>
+    <>
+      {readFeedback.announcement}
+      <PaneSurface>
+        <div className={styles.detail}>
+          {otherNames.length > 0 ? (
+            <section className={styles.otherNames}>
+              <h2 className={styles.sectionHeading}>Other names</h2>
+              <p className={styles.otherNamesList}>
+                {otherNames.map((name, index) => (
+                  <span key={`${name}-${index}`}>
+                    {index > 0 ? ", " : null}
+                    <span dir="auto">{name}</span>
+                  </span>
+                ))}
+              </p>
+            </section>
+          ) : null}
+          <section aria-label="Works">
+            <CollectionView
+              returnScope="Author.Works"
+              rows={visible}
+              status={works.status === "loading" ? "loading" : "ready"}
+              ariaLabel="Works"
+              rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+              collectionBusy={works.running !== null}
+              surface={false}
+              notice={<>
+                {works.status === "ready" &&
+                works.failure !== null &&
+                works.failure.op !== "More" ? (
+                  <FeedbackNotice
+                    content={authorError(works.failure.error, "Works couldn’t be loaded")}
+                    announcement="Polite"
+                    actions={[{ label: "Retry", onClick: works.retry, busy: works.running !== null }]}
+                  />
+                ) : (
+                  <MediaSummaryNotice
+                    error={summaries.error}
+                    retry={summaries.retry}
+                  busy={summaries.retrying}
+                  />
+                )}
+                {text && works.current && !complete && works.failure === null && visible.length > 0
+                  ? <p>filter applies to loaded items.</p> : null}
+              </>}
+              footer={readFeedback.notice}
+              empty={
+                text ? (
+                  <FeedbackNotice
+                    content={{
+                      tone: "Neutral",
+                      title: emptyTitle,
+                    }}
+                    announcement="None"
+                  />
+                ) : (
+                  <p className={styles.empty}>{emptyTitle}</p>
+                )
+              }
+            />
           </section>
-        ) : null}
-        <section aria-label="Works">
-          <CollectionView
-            returnScope="Author.Works"
-            rows={matches(text)}
-            status={works.status === "loading" ? "loading" : "ready"}
-            ariaLabel="Works"
-            rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
-            collectionBusy={works.running !== null}
-            surface={false}
-            notice={
-              works.status === "ready" &&
-              works.failure !== null &&
-              works.failure.op !== "More" ? (
-                <FeedbackNotice
-                  content={authorError(works.failure.error, "Works couldn’t be loaded")}
-                  announcement="Polite"
-                  actions={[{ label: "Retry", onClick: works.retry, busy: works.running !== null }]}
-                />
-              ) : (
-                <MediaSummaryNotice
-                  error={summaries.error}
-                  retry={summaries.retry}
-                busy={summaries.retrying}
-                />
-              )
-            }
-            footer={<CollectionExhaustionNotice list={works} />}
-            empty={
-              text ? (
-                <FeedbackNotice
-                  content={{
-                    tone: "Neutral",
-                    title: complete
-                      ? "No works match this filter."
-                      : "No matching work found so far.",
-                  }}
-                  announcement="None"
-                />
-              ) : (
-                <p className={styles.empty}>No works yet.</p>
-              )
-            }
-          />
-        </section>
-      </div>
-    </PaneSurface>
+        </div>
+      </PaneSurface>
+    </>
   );
 }

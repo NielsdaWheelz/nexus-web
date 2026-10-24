@@ -63,7 +63,12 @@ export function useAuthForm<Kind extends string>(
         else window.location.assign(success);
         return;
       }
-      const body = (await response.json()) as { kind?: Kind | "Forbidden" };
+      const body = (await response.json()) as { kind?: Kind | "Forbidden" | "Handoff"; handoff_url?: string };
+      if (body.kind === "Handoff") {
+        if (!body.handoff_url || new URL(body.handoff_url).protocol !== "nexus:") throw new Error("Invalid auth handoff destination");
+        window.location.assign(body.handoff_url);
+        return;
+      }
       if (!body.kind) throw new Error(`Auth form answered ${response.status}`);
       settle(body.kind);
     } catch (error) {

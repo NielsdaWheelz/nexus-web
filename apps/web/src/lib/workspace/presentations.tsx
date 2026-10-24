@@ -17,7 +17,9 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { watchWritingResource, type WritingWatch, type WritingVersions } from "@/lib/api/writingReceive";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { useCatalogState } from "@/lib/catalog/provider";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -38,6 +40,10 @@ type Response = ApiJson<"/me/workspace-presentations", "post">;
 type Item = Response["data"]["items"][number];
 type Canonical = NonNullable<Item["presentation"]>;
 type ReadStatus = "Loading" | "Ready" | "Failed";
+interface TitleResult {
+  items: Item[];
+  generations: ReadonlyMap<WritingWatch, { ref: string; generation: number }>;
+}
 
 export type PanePresentation = {
   title: string;
@@ -108,18 +114,22 @@ async function readTitles(locators: readonly PanePresentationLocator[], signal: 
 function TitleRead(props: {
   requestKey: string;
   locators: readonly PanePresentationLocator[];
-  publish(key: string, status: ReadStatus, items: Item[] | null): void;
+  watches: { readonly current: ReadonlyMap<string, WritingWatch> };
+  publish(key: string, status: ReadStatus, result: TitleResult | null): void;
 }) {
   const read = usePaneFreeServerValue({
-    key: props.requestKey,
+    key: `workspace-presentations:${props.requestKey}`,
     stale: "",
-    load: signal => readTitles(props.locators, signal),
+    load: async signal => {
+      const generations = new Map([...props.watches.current].map(([ref, watch]) => [watch, { ref, generation: watch.capture() }]));
+      return { items: await readTitles(props.locators, signal), generations };
+    },
   });
-  const items = read.status === "ready" ? read.data : null;
+  const result = read.status === "ready" ? read.data : null;
   const status = read.status === "failed" || (read.status === "ready" && read.error)
     ? "Failed" : read.status === "ready" ? "Ready" : "Loading";
   const { requestKey, publish } = props;
-  useEffect(() => publish(requestKey, status, items), [requestKey, status, items, publish]);
+  useEffect(() => publish(requestKey, status, result), [requestKey, status, result, publish]);
   return null;
 }
 
@@ -140,13 +150,18 @@ class TitleReadBoundary extends Component<{
 export function WorkspacePresentationsProvider(props: { accountId: string; children: ReactNode }) {
   const { state, dailyPageByPaneId, setVisitTitleHint } = useWorkspaceStore();
   const textRevision = useTextTitleRevision();
-  const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats", "Notes");
+  const catalog = useCatalogState().data;
+  const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
   const { observation } = useImports();
   const foreground = useRefreshStamp(true, 0);
   const [revision, setRevision] = useState(0);
-  const retryTitles = useCallback(() => setRevision(value => value + 1), []);
-  // A contributor can lose its last visible graph edge without a metadata write.
-  useEffect(() => subscribeLinkMutations(retryTitles), [retryTitles]);
+  const latestKey = useRef<string | null>(null);
+  const watches = useRef(new Map<string, WritingWatch>());
+  const retryTitles = useCallback(() => {
+    // invalidate immediately; a reply cannot publish before react commits the rerender.
+    latestKey.current = null;
+    setRevision(value => value + 1);
+  }, []);
   const dailyRefs = useMemo(() => {
     const refs = new Map<string, string>();
     for (const pane of state.panes) {
@@ -169,20 +184,27 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   const locatorSignature = JSON.stringify([...retained]);
   const requestKey = locators.length === 0 ? null
     : JSON.stringify([props.accountId, locatorSignature, changes, observation, foreground, revision]);
-  const latestKey = useRef(requestKey);
   latestKey.current = requestKey;
   const [read, setRead] = useState<{
     key: string | null;
     status: ReadStatus;
     facts: ReadonlyMap<string, Canonical | null>;
   }>(() => ({ key: null, status: "Loading", facts: new Map() }));
-  const publish = useCallback((key: string, status: ReadStatus, items: Item[] | null) => {
+  const publish = useCallback((key: string, status: ReadStatus, result: TitleResult | null) => {
     if (latestKey.current !== key) return;
+    if (status === "Ready" && result) {
+      const facts = new Map(result.items.flatMap(item => item.presentation?.resource_ref ? [[item.presentation.resource_ref, item.presentation] as const] : []));
+      for (const [watch, { ref, generation }] of result.generations) {
+        const fact = facts.get(ref);
+        const lane = ref.startsWith("page:") ? "title_version" : ref.startsWith("note_block:") ? "body_version" : null;
+        if (lane !== null && fact?.text_version != null) watch.adopt({ [lane]: fact.text_version }, generation);
+      }
+    }
     setRead(previous => ({
       key,
       status,
-      facts: status === "Ready" && items
-        ? new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]))
+      facts: status === "Ready" && result
+        ? new Map(result.items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]))
         : previous.facts,
     }));
   }, []);
@@ -194,18 +216,78 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
     });
   }, [retained]);
 
+  const watched = useMemo(() => {
+    const refs = new Map<string, number | null>();
+    for (const locator of locators) {
+      const canonical = read.facts.get(panePresentationLocatorKey(locator));
+      const ref = canonical?.resource_ref ?? (locator.kind === "resource_ref" ? locator.ref : null);
+      if (ref && /^(page|note_block|media|highlight):/.test(ref)) refs.set(ref, canonical?.text_version ?? null);
+    }
+    return refs;
+  }, [locators, read.facts]);
+  useEffect(() => {
+    const owned = watches.current;
+    return () => { for (const current of owned.values()) current.stop(); owned.clear(); };
+  }, [props.accountId]);
+  useEffect(() => {
+    const owned = watches.current;
+    for (const [ref, current] of owned) {
+      if (watched.has(ref)) continue;
+      current.stop(); owned.delete(ref);
+    }
+    for (const [ref, version] of watched) {
+      if (owned.has(ref)) continue;
+      const lane = ref.startsWith("page:") ? "title_version" : ref.startsWith("note_block:") ? "body_version" : null;
+      const current = watchWritingResource({ accountId: props.accountId, ref, lanes: lane === null ? [] : [lane],
+        invalidate: retryTitles,
+        acknowledge(ack) {
+          const versions: WritingVersions = {};
+          const text = readTextTitle(ref);
+          if (lane === "body_version") {
+            const note = ack.notes.find(note => `note_block:${note.id}` === ref);
+            if (note && text?.acknowledged && text.acknowledged.version >= note.body_version)
+              versions.body_version = note.body_version;
+          } else if (lane === "title_version") {
+            const page = ack.pages.find(page => `page:${page.id}` === ref);
+            if (page && text?.acknowledged && text.acknowledged.version >= page.title_version)
+              versions.title_version = page.title_version;
+          }
+          return versions;
+        },
+      });
+      if (lane !== null && version !== null) current.adopt({ [lane]: version }, current.capture());
+      owned.set(ref, current);
+    }
+  }, [props.accountId, watched, retryTitles]);
+  useEffect(() => subscribeLinkMutations(change => {
+    if (change.kind === "resource_deleted" && watches.current.has(change.ref)) retryTitles();
+  }), [retryTitles]);
+
   const status = read.key === requestKey ? read.status : "Loading";
-  const forVisit = (visit: PaneVisit): PanePresentation => {
+  const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
     if (route.labelMode === "static") return { title: route.defaultLabel, detail: null, status: "Ready" };
-    const kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
+    let kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
     if (!route.titleKey) return { title: `unavailable ${kind}`, detail: "unavailable", status: "Unavailable" };
     const current = retained.has(route.titleKey);
     const canonical = current ? read.facts.get(route.titleKey) : undefined;
+    // Saved titles are display evidence only: never canonical facts, versions or
+    // writer acknowledgements. An authoritative missing result still wins.
+    let savedTitle: string | null = null;
+    if (canonical === undefined && catalog !== null && route.titleLocator?.kind === "resource_ref") {
+      const [scheme, id] = route.titleLocator.ref.split(":");
+      if (scheme === "media") {
+        const summary = catalog.media.get(id)?.summary;
+        if (summary) { savedTitle = summary.title; kind = mediaKindLabel(summary.media_kind); }
+      } else if (scheme === "library") savedTitle = catalog.libraries.get(id)?.value.name ?? null;
+      else if (scheme === "podcast") savedTitle = catalog.shows.get(id)?.detail.podcast.title ?? null;
+      else if (scheme === "page") savedTitle = catalog.notes.get(id)?.title ?? null;
+      else if (scheme === "conversation") savedTitle = catalog.chats.get(id)?.title ?? null;
+    }
     const text = textFor(route, canonical, dailyRefs);
     const live = text && !text.gone && text.unsettled ? text : null;
     const settled = settledTitle(canonical, text);
-    const title = live?.title ?? settled ?? visit.title_hint;
+    const title = live?.title ?? settled ?? savedTitle ?? visit.title_hint;
     const named = title === null ? null : title.trim() ? title : `untitled ${kind}`;
     if (live && live.acknowledged === null) {
       return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
@@ -215,6 +297,7 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
         ? { title: named, detail: live ? "unsaved" : kind, status: live ? "Unsaved" : "Ready" }
         : { title: kind, detail: "open to load title", status: "Unresolved" };
     }
+    if (savedTitle !== null) return { title: named ?? `untitled ${kind}`, detail: kind, status: "Ready" };
     if (status === "Failed") return {
       title: named ?? kind,
       detail: named ? "couldn’t refresh title" : "couldn’t load title",
@@ -233,7 +316,15 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
     };
     if (live) return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
     return { title: named ?? `untitled ${kind}`, detail: canonical ? metadata(canonical, kind) : kind, status: "Ready" };
-  };
+  }, [read.facts, retained, dailyRefs, status, catalog]);
+  const resourceRefForVisit = useCallback((visit: PaneVisit): string | null => {
+    const route = resolvePaneRouteModel(visit.href);
+    const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;
+    return canonical?.resource_ref ?? (route.locator?.kind === "resource_ref" ? route.locator.ref : null);
+  }, [read.facts, retained]);
+  // local titles notify consumers directly; context tracks canonical presentation state.
+  const value = useMemo(() => ({ forVisit, resourceRefForVisit, retryTitles }),
+    [forVisit, resourceRefForVisit, retryTitles]);
 
   useEffect(() => {
     for (const pane of state.panes) {
@@ -248,14 +339,10 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   }, [state.panes, read.facts, retained, textRevision, dailyRefs, setVisitTitleHint]);
 
   return (
-    <Context value={{ forVisit, retryTitles, resourceRefForVisit(visit) {
-      const route = resolvePaneRouteModel(visit.href);
-      const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;
-      return canonical?.resource_ref ?? (route.locator?.kind === "resource_ref" ? route.locator.ref : null);
-    } }}>
+    <Context value={value}>
       {requestKey !== null ? (
         <TitleReadBoundary key={requestKey} requestKey={requestKey} failed={failed}>
-          <TitleRead requestKey={requestKey} locators={locators} publish={publish} />
+          <TitleRead requestKey={requestKey} locators={locators} watches={watches} publish={publish} />
         </TitleReadBoundary>
       ) : null}
       {props.children}
@@ -265,6 +352,11 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
 
 export function useWorkspacePresentations(): Presentations {
   const value = useContext(Context);
-  if (!value) throw new Error("workspace presentations require their account provider");
-  return value;
+  const revision = useTextTitleRevision();
+  const presentations = useMemo(() => {
+    void revision;
+    return value === null ? null : { ...value };
+  }, [value, revision]);
+  if (!presentations) throw new Error("workspace presentations require their account provider");
+  return presentations;
 }

@@ -7,9 +7,9 @@
 
 import { useRef, type ReactNode } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
-import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
-import Dialog from "@/components/ui/Dialog";
-import MobileSheet from "@/components/ui/MobileSheet";
+import { formatPublicationDate } from "@/lib/resources/metadata";
+import InformationFrame from "@/components/resources/InformationFrame";
+import { informationFact as fact, informationGroup as group } from "@/components/resources/InformationFacts";
 import { apiFetch } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -42,7 +42,6 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
 import MetadataResearchActions from "./MetadataResearchActions";
@@ -53,28 +52,6 @@ const COMPLETION = {
   InProgress: "in progress",
   Finished: "finished",
 };
-
-/** One fact; an empty value renders nothing. */
-function fact(label: string, value: ReactNode): ReactNode {
-  if (value === null || value === undefined || value === "") return null;
-  return (
-    <div className={styles.fact} key={label}>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-/** A titled group of facts; a group with none renders nothing. */
-function group(title: string, facts: readonly ReactNode[]): ReactNode {
-  if (facts.every((value) => value === null)) return null;
-  return (
-    <section className={styles.group} key={title}>
-      <h3>{title}</h3>
-      <dl>{facts}</dl>
-    </section>
-  );
-}
 
 const link = (href: string | null): ReactNode =>
   href ? (
@@ -87,7 +64,7 @@ const publication = (value: string | null): ReactNode =>
   value === null ? (
     "unknown"
   ) : (
-    <time dateTime={value}>{formatCollectionPublicationDate(value)}</time>
+    <time dateTime={value}>{formatPublicationDate(value)}</time>
   );
 
 function MediaInfo({
@@ -202,19 +179,13 @@ function MediaInfo({
             ? null
             : media.original_published_date === null
               ? "first publication remains unknown"
-              : `first publication unverified; kept ${formatCollectionPublicationDate(media.original_published_date)}`,
+              : `first publication unverified; kept ${formatPublicationDate(media.original_published_date)}`,
         ),
         fact(
           "not established by this run",
           bibliography?.unresolved_fields
             .map((field) => METADATA_FIELD_LABELS[field])
             .join(", "),
-        ),
-        fact(
-          "authors",
-          bibliography?.retained_manual_authors
-            ? "kept manually set authors"
-            : null,
         ),
         fact(
           "explanation",
@@ -334,7 +305,7 @@ function MediaInfo({
       {group("reading/listening", [
         fact("completion", COMPLETION[media.consumption.state]),
         fact(
-          "reading progress",
+          "saved position",
           media.consumption.progress === null
             ? null
             : `${Math.round(media.consumption.progress * 100)}%`,
@@ -386,15 +357,16 @@ export default function MediaInfoOverlay({
   mediaId,
   returnFocusTo,
   returnFocusFallback,
+  skipReturnFocus,
   onClose,
 }: {
   readonly open: boolean;
   readonly mediaId: string;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget;
+  readonly skipReturnFocus?: () => boolean;
   readonly onClose: () => void;
 }) {
-  const isMobile = useIsMobileViewport();
   const contentRoot = useRef<HTMLDivElement>(null);
   const observation = useMediaMetadataOperations(open ? mediaId : null);
   const processing = useMediaProcessingStatus(open ? mediaId : null);
@@ -402,7 +374,7 @@ export default function MediaInfoOverlay({
   const titleJob =
     view?.operation?.purpose === "title" ? view.operation.job_id : "";
   const media = useServerValue({
-    key: open ? mediaId : null,
+    key: open ? `/media/${mediaId}` : null,
     // New source publication admits a title job before naming can succeed or fail.
     stale: `${view?.last_enriched_at ?? ""}:${titleJob}`,
     visit: VISIT,
@@ -435,19 +407,8 @@ export default function MediaInfoOverlay({
         onReread={media.refetch}
       />
     );
-  const frame = { returnFocusTo, returnFocusFallback };
-  return isMobile ? (
-    <MobileSheet
-      active={open}
-      onDismiss={onClose}
-      ariaLabel="metadata"
-      {...frame}
-    >
-      <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
-    </MobileSheet>
-  ) : (
-    <Dialog open={open} onClose={onClose} title="metadata" {...frame}>
-      <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
-    </Dialog>
-  );
+  return <InformationFrame open={open} title="metadata" returnFocusTo={returnFocusTo}
+    returnFocusFallback={returnFocusFallback} skipReturnFocus={skipReturnFocus} onClose={onClose} contentRef={contentRoot}>
+    {content}
+  </InformationFrame>;
 }

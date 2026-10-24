@@ -2,8 +2,12 @@
 
 A write takes the fence and checks the answer's cap before its effect. Its
 ``created_refs`` list exactly the targets it inserted, never one that already
-existed, so undo removes only what the assistant made. Note and highlight ids derive
+existed. Named filing uses frozen library/removal guards. Its entry receipt adds
+the exact final library revision; later reaffirmation invalidates undo. Default
+holdings survive undo; historical null-revision entries confer no undo authority. Note and highlight ids derive
 from the call id. There is no delete, overwrite or rewrite tool.
+Effects and exact source-clock invalidations join the tool receipt's one
+serializable attempt; participants never commit or repeat external calls.
 """
 
 from __future__ import annotations
@@ -18,9 +22,19 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
+from nexus.services import (
+    highlights,
+    libraries,
+    library_entries,
+    note_bodies,
+    notes,
+    text_quote,
+    users,
+    writing,
+)
 from nexus.services.consumption import lectern
 from nexus.services.passage_anchors import normalize_quote_text
+from nexus.services.podcasts import subscriptions
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
@@ -55,8 +69,7 @@ _URIS = ("resource_uri", "page_uri", "media_uri", "source_uri", "target_uri")
 _REFUSALS: dict[str, dict[ApiErrorCode, str]] = {
     "nexus.library.add": {
         ApiErrorCode.E_MEDIA_DELETING: "ResourceUnavailable",
-        ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED: "ResourceUnavailable",
-        ApiErrorCode.E_PODCAST_REPLACES_EPISODES: "TargetAmbiguous",
+        ApiErrorCode.E_RESOURCE_CONFLICT: "Conflict",
     },
     "nexus.queue.add": {
         ApiErrorCode.E_LIMIT: "ResourceUnavailable",
@@ -90,6 +103,7 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
             uri = getattr(value, key, None)
             if uri is not None and uri not in call.run.scope:
                 refuse("ResourceUnavailable")
+        users.lock_viewer(call.db, call.principal)
         call.fence()  # held until the call's row completes with the effect
         live = call.db.execute(
             text(
@@ -107,7 +121,17 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
             if declared is None and exc.code not in _UNAVAILABLE:
                 raise
             refuse(declared or "ResourceUnavailable")
-        owners = {
+        if call.tool_id == "nexus.library.add":
+            projection.refresh_viewer_contributors(
+                call.db,
+                list(
+                    call.db.scalars(
+                        text("SELECT user_id FROM memberships WHERE library_id=:id"),
+                        {"id": value.library_id},
+                    )
+                ),
+            )
+        owners = writing.input_owners(call.db) | {
             uri
             for item in (value, result)
             for key in (*_URIS, "note_uri", "highlight_uri", "library_uri")
@@ -144,62 +168,68 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     db, viewer = call.db, call.principal
     ref = _ref(value.resource_uri, ("media", "podcast"))
     if ref.scheme == "podcast":
+        if value.podcast is None:
+            refuse("InvalidInput")
         assert_ref_visible(db, viewer_id=viewer, ref=ref)
-    library_id = value.library_id or _library_named(db, viewer, value.library_name)
-    if ref.scheme == "media":
-        target = library_entries.media_target(ref.id)
-        inserted = library_entries.ensure_media_in_library_in_current_transaction(
-            db, viewer_id=viewer, library_id=library_id, media_id=ref.id
+        intent = value.podcast
+        existing = db.scalar(
+            text(
+                "SELECT id FROM library_podcast_subscriptions WHERE id=:id"
+                if intent.mode == "follow"
+                else "SELECT id FROM podcast_library_imports WHERE id=:id"
+            ),
+            {"id": intent.id},
         )
-    else:
-        target = library_entries.podcast_target(ref.id)
-        inserted = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
-            db, viewer_id=viewer, library_id=library_id, podcast_id=ref.id, replace_episodes=False
+        admission = subscriptions.admit_in_current_transaction(
+            db,
+            viewer_id=viewer,
+            library_id=value.library_id,
+            podcast_id=ref.id,
+            id=intent.id,
+            import_id=intent.import_id,
+            expected_order_revision=int(value.expected_order_revision),
+            expected_removal_revision=int(value.expected_removal_revision),
         )
-    name = db.execute(
-        text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
-    ).scalar_one()
-    if inserted:
-        viewers = db.scalars(
-            text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id}
-        ).all()
-        projection.refresh_viewer_contributors(db, [viewer, *viewers])
-        entry_id = library_entries.entry_id(db, library_id, target)
+        library = libraries.access(db, viewer, value.library_id, lock=False)
+        return LibraryAddSuccess(
+            podcast=admission,
+            already_present=existing is not None,
+            library_name=library.name,
+            library_uri=f"library:{library.id}",
+            resource_uri=ref.uri,
+        )
+    if value.podcast is not None:
+        refuse("InvalidInput")
+    library_id = value.library_id
+    target = library_entries.media_target(ref.id)
+    placement, inserted_entry_id = library_entries.set_item_in_current_transaction(
+        db,
+        viewer_id=viewer,
+        library_id=library_id,
+        target=target,
+        included=True,
+        expected_order_revision=int(value.expected_order_revision),
+        expected_removal_revision=int(value.expected_removal_revision),
+    )
+    if inserted_entry_id is not None:
         call.created_refs.append(
             {
                 "kind": "entry",
-                "id": str(entry_id),
-                "label": name,
+                "id": str(inserted_entry_id),
+                "label": placement.name,
                 "library_id": str(library_id),
                 "target_scheme": ref.scheme,
                 "target_id": str(ref.id),
+                "order_revision": placement.order_revision,
             }
         )
     return LibraryAddSuccess(
-        already_present=not inserted,
-        library_name=name,
+        podcast=None,
+        already_present=inserted_entry_id is None,
+        library_name=placement.name,
         library_uri=f"library:{library_id}",
         resource_uri=ref.uri,
     )
-
-
-def _library_named(db: Session, viewer_id: UUID, name: str | None) -> UUID:
-    if not name:
-        refuse("InvalidInput")
-    ids = (
-        db.execute(
-            text(
-                "SELECT l.id FROM libraries l JOIN memberships m ON m.library_id = l.id"
-                " AND m.user_id = :viewer WHERE lower(l.name) = lower(:name)"
-            ),
-            {"viewer": viewer_id, "name": name.strip()},
-        )
-        .scalars()
-        .all()
-    )
-    if len(ids) != 1:
-        refuse("TargetAmbiguous" if ids else "ResourceUnavailable")
-    return ids[0]
 
 
 def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
@@ -251,7 +281,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
         )
     assert match.fragment_id is not None and match.raw_start is not None
     assert match.raw_end is not None
-    highlight = highlights.create_fragment_highlight_in_txn(
+    result = highlights.create_fragment_highlight_in_txn(
         db,
         viewer_id=viewer,
         highlight_id=uuid5(call.id, "nexus.highlight.create:highlight"),
@@ -261,6 +291,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
         color=value.color or "yellow",
         expected_reader_generation=generation,
     )
+    highlight = result.highlight
     call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
     note_uri = None
     if value.note and value.note.strip():
@@ -324,10 +355,13 @@ def queue_add(value: QueueAddInput, call: Call) -> QueueAddSuccess:
     )
 
 
-def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> UUID | None:
-    """Remove the exact created target; return a changed library for final undo fanout."""
+def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
+    """Remove one created target if it is still the one the write made; gone is undone."""
 
     kind, target = ref["kind"], UUID(ref["id"])
+    if kind == "entry":
+        _unfile(db, viewer_id, ref)
+        return
     try:
         if kind == "edge":
             delete_edge(db, viewer_id=viewer_id, edge_id=target)
@@ -337,41 +371,24 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> UUID | None:
             note_bodies.delete_note(db, viewer_id=viewer_id, note_id=target)
         elif kind == "queue":
             lectern.remove_item_in_txn(db, viewer_id=viewer_id, item_id=target)
-        else:
-            return _unfile(db, viewer_id, ref)
     except ApiError as exc:
         if exc.code not in _GONE:
             raise
-    return None
 
 
-def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> UUID | None:
-    """Remove the exact library entry the write inserted, not a later filing of the same item.
-
-    The target's row lock (media, as filing takes it; else the podcast) serializes this
-    with the user filing or unfiling it. The last physical reference of a media stays
-    refused (409 ``E_MEDIA_LAST_REFERENCE``): undo never deletes a media.
-    """
-
-    library_id, item_id = UUID(ref["library_id"]), UUID(ref["target_id"])
-    media = ref["target_scheme"] == "media"
-    if media:
-        library_entries.lock_media_rows_in_order(db, [item_id])
-    else:
-        db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": item_id})
-    target = (library_entries.media_target if media else library_entries.podcast_target)(item_id)
-    current = library_entries.entry_id(db, library_id, target)
-    if current != UUID(ref["id"]):
-        return None
-    if media:
-        library_entries.remove_media_from_library_in_current_transaction(
-            db, viewer_id, item_id, library_id, allow_default=True
-        )
-    else:
-        library_entries.undo_podcast_filing_for_viewer_in_current_transaction(
-            db, viewer_id=viewer_id, library_id=library_id, podcast_id=item_id
-        )
-    return library_id
+def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
+    """Undo requires the exact inserted entry and its unchanged named-library revision."""
+    if ref["target_scheme"] != "media":
+        raise ApiError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast actions need scoped review")
+    target = library_entries.media_target(UUID(ref["target_id"]))
+    library_entries.undo_library_entry_in_current_transaction(
+        db,
+        viewer_id=viewer_id,
+        library_id=UUID(ref["library_id"]),
+        target=target,
+        entry_id=UUID(ref["id"]),
+        order_revision=None if ref["order_revision"] is None else int(ref["order_revision"]),
+    )
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {

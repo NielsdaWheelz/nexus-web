@@ -1,10 +1,12 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // One note body editor: a ProseMirror view over one block, its formatting toolbar and
 // link dialog, paste normalised to one block, one dropped or pasted file uploaded into
 // a media embed, shared resource rows, persistent source inspection and, in an
 // outline, the structural keys. Undo is the outline's when `history` is given, else
-// the editor's own. The view lives for one `editorKey` in one visit. Canonical body
+// the editor's own. The view lives for one body occurrence in one visit. Canonical body
 // changes reach peers independent of revision; own echoes are diff no-ops. The diff
 // never runs while composing or enters local history. Embedded
 // atom deletion changes this containing body through its existing versioned save.
@@ -18,13 +20,16 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
+import { readWriting, subscribeWriting } from "@/lib/notes/writes";
+import type { TextEditBase } from "@/lib/notes/texts";
 import { createPortal } from "react-dom";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { resourceDraftOwnerId, useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
-import { usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { usePaneVisitRetained, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import {
@@ -51,6 +56,7 @@ import {
   Selection,
   TextSelection,
   type Transaction,
+  type Command,
 } from "prosemirror-state";
 import { DecorationSet, EditorView } from "prosemirror-view";
 import {
@@ -70,18 +76,20 @@ import {
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
+import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
+import { usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import {
   bodyFromNode,
   docFromBody,
   hrefFromInput,
-  sameBody,
   noteBodySchema as schema,
   inspectionDecorations,
+  sameBody,
   type NoteBody,
 } from "@/lib/notes/noteBody";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/useOutlineSession";
+import type {OutlineSession, OutlineEditorCommands} from "@/lib/notes/useOutlineSession";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteEditor.module.css";
 
@@ -106,11 +114,13 @@ export interface StructuralKeys {
 
 export interface NoteEditorProps {
   reference?: ReferenceInputHost | null;
+  outlineSession?: OutlineSession;
   editorKey: string;
   occurrenceKey?: string;
   /** The acknowledged note identity; drafts supply null. */
   containingNoteRef: string | null;
   body: NoteBody;
+  editBase?: TextEditBase | null;
   revision: number;
   editable: boolean;
   label: string;
@@ -129,6 +139,7 @@ export interface NoteEditorProps {
   keys?: StructuralKeys | null;
   onEdit(edit: NoteEdit): void;
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
+  onAttachmentActiveChange?(active: boolean): void;
   onSave?(): void;
   onNewChat?(): void;
   onContinueChat?(): void;
@@ -160,10 +171,19 @@ interface LinkDialog {
   top: number;
 }
 
+/** The explicit upload risk an enclosing composer consults before abandonment. */
+export const noteEditorAttachmentOwnerId = (visitId: string, editorKey: string) =>
+  resourceDraftOwnerId(visitId, `Notes.Attachment:${editorKey}`);
+
 export default function NoteEditor(props: NoteEditorProps) {
+  const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
   const inheritedBranch = useContext(ResourceBranch);
   const outline = useContext(ResourceOutlineContext);
   const occurrenceKey = props.occurrenceKey ?? props.editorKey;
+  const visitId = usePaneVisitIdentity();
+  // The empty root occurrence changes resource when zooming. Child occurrences
+  // keep their view when a provisional note binds to its retained canonical note.
+  const bodyViewKey = props.occurrenceKey || props.editorKey;
   const branch =
     props.containingNoteRef !== null &&
     !inheritedBranch.ancestors.has(props.containingNoteRef)
@@ -179,19 +199,21 @@ export default function NoteEditor(props: NoteEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const consumedFocus = useRef<number | null>(null);
   const latest = useRef(props);
-  latest.current = props;
+  latest.current = { ...props, editable: props.editable && !paused };
   const busy = useRef(false);
   const guard = useWorkGuard();
   const { ctx } = useActionRuntime();
   const workspace = useLatestWorkspace();
   const subscribeWorkspace = useSubscribeWorkspace();
   const visitScope = usePaneVisitWorkScope();
+  const retainedInput = usePaneVisitRetained();
   const linkDraft = useResourceDraft<LinkDialog | null>(`Notes.LinkInput:${props.editorKey}`, () => null,
     value => ({ changed: value !== null && value.query !== value.baseline, unconfirmed: false, stopsBrowserWork: false }));
   const attachment = useResourceDraft<{
     controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
-    body: NoteBody | null; pending: boolean; file: File; id: string; failure: FeedbackContent | null;
+    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null;
   } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
     value => ({ changed: value !== null, unconfirmed: value !== null && value.body === null, stopsBrowserWork: value?.pending === true }));
   busy.current = attachment.value?.pending === true;
@@ -200,6 +222,16 @@ export default function NoteEditor(props: NoteEditorProps) {
   const setLink = linkDraft.set;
   const readLink = linkDraft.read;
   const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
+  const attachmentActive = attachmentValue !== null;
+  useLayoutEffect(() => { latest.current.onAttachmentActiveChange?.(attachmentActive); }, [attachmentActive]);
+  useLayoutEffect(() => () => {
+    if (!retainedInput) {
+      readAttachment()?.controller.abort();
+      setAttachment(null);
+      latest.current.onAttachmentActiveChange?.(false);
+    }
+  }, [retainedInput, readAttachment, setAttachment]);
+  const discardAttachment = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); };
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
@@ -209,18 +241,22 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [toolbar, setToolbar] = useState(false);
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
   const feedback = useFeedback();
-  const reference = useReferenceInput(props.editorKey, props.reference ?? null);
-  const referenceRef = useRef(reference);
-  referenceRef.current = reference;
-  const referenceId = `reference-${useId().replaceAll(":", "")}`;
-  const suspended = useRef(false);
   const [referenceFocused, setReferenceFocused] = useState(false);
   const [referenceVisible, setReferenceVisible] = useState(true);
+  const reference = useReferenceInput(props.editorKey, props.reference ?? null, referenceFocused && referenceVisible);
+  const referenceReady = reference.isReady();
+  latest.current = { ...props, editable: props.editable && !paused && referenceReady };
+  const referenceRef = useRef(reference);
+  referenceRef.current = reference;
+  const suspended = useRef(false);
   const literalSuppressed = useRef(false);
   const compositionBase = useRef<{
     body: NoteBody;
     selection: { anchor: number; head: number };
+    reference: boolean;
+    editBase: TextEditBase | null;
   } | null>(null);
   const completedReference = useRef({
     key: reference.owner,
@@ -228,7 +264,9 @@ export default function NoteEditor(props: NoteEditorProps) {
   });
   const literal = (view: EditorView) => {
     const intent = referenceRef.current.getState();
-    if (!intent || !referenceRef.current.literal()) return;
+    if (!intent) return;
+    const consumed = referenceRef.current.literal();
+    if (consumed === false) return;
     literalSuppressed.current = true;
     const doc = view.state.doc;
     const selection = {
@@ -256,13 +294,16 @@ export default function NoteEditor(props: NoteEditorProps) {
       selectionBefore: { anchor: 1, head: 1 },
       selectionAfter: selection,
       source: "input",
-      ...(intent.referenceBase ? { referenceBase: intent.referenceBase } : {}),
+      editBase: {
+        value: intent.base,
+        acknowledged: intent.editBase?.acknowledged ?? null,
+      },
     });
   };
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   const warn = useCallback(
     (title: string, message: string) =>
-      feedback.offer({
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
         key: "note-attachment",
         announcement: "Polite",
         content: { tone: "Warning", title, message },
@@ -291,6 +332,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       referenceRef.current.getState() !== null
     )
       return false;
+    syncNativeSelection(view);
     const { from, to, empty, $from } = view.state.selection;
     if ($from.parent.type.spec.code) return false;
     latest.current.history?.boundary();
@@ -319,6 +361,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       referenceRef.current.getState() !== null
     )
       return false;
+    syncNativeSelection(view);
     if (!(view.state.selection instanceof TextSelection)) return false;
     const { from, to } = view.state.selection;
     const caret = view.coordsAtPos(to);
@@ -390,22 +433,17 @@ export default function NoteEditor(props: NoteEditorProps) {
 
   const attach = useCallback(
     async (view: EditorView, files: File[]) => {
-      const refuse = (message: string) =>
-        feedback.offer({
-          key: "note-attachment",
-          announcement: "Polite",
-          content: {
-            tone: "Danger",
-            title: "Attachment wasn’t added",
-            message,
-          },
-        });
-      if (!latest.current.editable || referenceRef.current.getState() !== null)
+      const refuse = (message: string) => setAttachmentFeedback({
+        tone: "Danger", title: message,
+      });
+      if (!latest.current.editable || readWriting().paused || referenceRef.current.getState() !== null)
         return;
+      setAttachmentFeedback(null);
       if (!replaceable(view))
         return refuse(
           "Select the note body or empty it before attaching a file.",
         );
+      if (!navigator.onLine) return refuse("connect to add this attachment.");
       if (files.length > 1) return refuse("Attach one file at a time here.");
       const problem = getFileUploadError(files[0]!);
       if (problem) return refuse(problem);
@@ -423,13 +461,17 @@ export default function NoteEditor(props: NoteEditorProps) {
       const unsubscribe = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
       const task = { controller, base: retained?.base ?? latest.current.body, selection: retained?.selection ?? {
         anchor: view.state.selection.anchor, head: view.state.selection.head,
-      }, body: null, pending: true, file: files[0]!, id: retained?.id ?? crypto.randomUUID(), failure: null };
+      }, body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: null };
       setAttachment(task);
       busy.current = true;
       view.setProps({ editable: () => false });
       try {
-        const upload = await uploadIngestFile({ file: task.file, libraryIds: [], id: task.id, signal: controller.signal });
+        const upload = await uploadIngestFile({ file: task.file, attempt: task.upload, signal: controller.signal });
         if (controller.signal.aborted || signal.aborted || readAttachment()?.controller !== controller) return;
+        if (!upload.available) {
+          setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "this item was saved, then removed" } });
+          return;
+        }
         const embed = schema.nodes.object_embed!.create({ objectType: "media", objectId: upload.mediaId,
           label: files[0]!.name, relationType: "embeds", displayMode: "compact" });
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
@@ -437,33 +479,48 @@ export default function NoteEditor(props: NoteEditorProps) {
         if (controller.signal.aborted || signal.aborted) return;
         setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "attachment unconfirmed", message: "retry the same upload to check its result." } });
         if (handleUnauthenticated(error)) return;
-        try { setAttachment({ ...task, pending: false, failure: captureErrorFeedback(error, "AddAttachment") }); }
-        catch (unmodeled) { setDefect({ error: unmodeled }); }
+        try {
+          setAttachment({ ...task, pending: false, failure: captureErrorFeedback(error, "AddAttachment") });
+        } catch (unmodeled) {
+          setDefect({ error: unmodeled });
+        }
       } finally {
-        unsubscribe(); signal.removeEventListener("abort", abort);
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
         busy.current = false;
         if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable });
       }
     },
-    [feedback, handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, ctx, subscribeWorkspace, visitScope.visitId, visitScope.routeKey, workspace],
+    [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, ctx, subscribeWorkspace, visitScope.visitId, visitScope.routeKey, workspace],
   );
 
   useEffect(() => {
     const task = attachmentValue;
-    if (!task?.body || !props.editable || !sameBody(props.body, task.base)) return;
+    if (!task?.body || !props.editable || paused || !referenceReady || viewRef.current?.composing || !sameBody(props.body, task.base)) return;
     props.onEdit({ before: props.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
     setAttachment(null);
-  }, [attachmentValue, setAttachment, props]);
+  }, [attachmentValue, setAttachment, props, paused, referenceReady]);
+
+  useLayoutEffect(() => {
+    // Fresh reference ownership is installed by the hook's preceding layout
+    // effect. Read it before any view update; the earlier render's false value
+    // would briefly disable and blur this body during canonical binding.
+    latest.current = { ...latest.current, editable: props.editable && !paused && referenceRef.current.isReady() };
+    viewRef.current?.setProps({
+      editable: () => latest.current.editable && !busy.current,
+    });
+    if (!props.editable || paused) setLinkVisible(false);
+  }, [props.editable, paused, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
     if (!element) return;
+    consumedFocus.current = null;
     literalSuppressed.current = false;
     compositionBase.current = null;
     suspended.current = false;
     setReferenceFocused(false);
     setReferenceVisible(true);
-    const outline = latest.current.history;
     const run =
       (action: () => boolean | void) =>
       (_: EditorState, __?: unknown, view?: EditorView) =>
@@ -483,12 +540,52 @@ export default function NoteEditor(props: NoteEditorProps) {
       dispatch?.(tr.scrollIntoView());
       return true;
     };
-    const undoCommand = outline
-      ? run(() => latest.current.history!.undo())
-      : ownUndo;
-    const redoCommand = outline
-      ? run(() => latest.current.history!.redo())
-      : ownRedo;
+    const undoCommand: Command = (state, dispatch, current) =>
+      run(() => latest.current.outlineSession
+        ? latest.current.outlineSession.executeCommand("undo")
+        : latest.current.history ? latest.current.history.undo() : ownUndo(state, dispatch, current))(state, dispatch, current);
+    const redoCommand: Command = (state, dispatch, current) =>
+      run(() => latest.current.outlineSession
+        ? latest.current.outlineSession.executeCommand("redo")
+        : latest.current.history ? latest.current.history.redo() : ownRedo(state, dispatch, current))(state, dispatch, current);
+    const commands: OutlineEditorCommands = {
+      key: latest.current.occurrenceKey ?? "",
+      insertLabel: latest.current.occurrenceKey?.startsWith("insertion:") ? "insert item" : "split note at caret",
+      commandState(command) {
+        const current = viewRef.current;
+        if (!current || !latest.current.editable || busy.current || current.composing)
+          return {enabled: false, reason: "finish the current text operation first"};
+        const query = referenceRef.current.getState();
+        if (query) {
+          if (command === "undo" || command === "redo")
+            return {enabled: (command === "undo" ? ownUndo : ownRedo)(current.state), reason: null};
+          return {enabled: false, reason: "finish linking or return to prose first"};
+        }
+        if (command === "undo" || command === "redo") return latest.current.history
+          ? latest.current.outlineSession!.historyState(command)
+          : {enabled: (command === "undo" ? ownUndo : ownRedo)(current.state), reason: null};
+        if (command === "insert") return {enabled: !!latest.current.keys?.split && current.state.selection.$from.parent.type === schema.nodes.paragraph,
+          reason: "insert requires an editable paragraph"};
+        return latest.current.outlineSession!.occurrenceCommandState(commands.key, command);
+      },
+      executeCommand(command) {
+        if (!commands.commandState(command).enabled) return;
+        const current = viewRef.current!;
+        const query = referenceRef.current.getState();
+        if (command === "undo" || command === "redo") {
+          if (query || !latest.current.history) (command === "undo" ? ownUndo : ownRedo)(current.state, current.dispatch, current);
+          else (command === "undo" ? latest.current.history?.undo : latest.current.history?.redo)?.();
+          return;
+        }
+        if (command === "insert") {
+          syncNativeSelection(current);
+          const state = current.state.selection.empty ? current.state : current.state.apply(current.state.tr.deleteSelection());
+          const body = state.doc.firstChild!;
+          const offset = state.selection.$from.parentOffset;
+          latest.current.keys!.split!(bodyFromNode(body.copy(body.content.cut(0, offset))), bodyFromNode(body.copy(body.content.cut(offset))));
+        } else latest.current.outlineSession!.executeOccurrenceCommand(commands.key, command);
+      },
+    };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
       state: EditorState.create({
@@ -514,9 +611,10 @@ export default function NoteEditor(props: NoteEditorProps) {
             ),
             "Mod-k": run(openLink),
             "Mod-a": (state, dispatch) => {
-              if (state.doc.firstChild?.type !== schema.nodes.object_embed)
-                return false;
-              dispatch?.(state.tr.setSelection(new AllSelection(state.doc)));
+              const selection = state.doc.firstChild?.isTextblock
+                ? TextSelection.create(state.doc, 1, state.doc.content.size - 1)
+                : new AllSelection(state.doc);
+              dispatch?.(state.tr.setSelection(selection));
               return true;
             },
             "Mod-z": undoCommand,
@@ -531,21 +629,15 @@ export default function NoteEditor(props: NoteEditorProps) {
           : styles.view,
         role: referenceRef.current.getState() !== null ? "combobox" : "textbox",
         "aria-readonly": String(
-          !latest.current.editable ||
-            busy.current ||
-            ["submitting", "unknown"].includes(
-              referenceRef.current.getState()?.phase ?? "",
-            ),
+          !latest.current.editable || busy.current,
         ),
         ...(referenceRef.current.getState() !== null
           ? {
-              "aria-expanded": String(!suspended.current),
-              "aria-controls": referenceId,
+              "aria-expanded": String(referenceRef.current.bindings.inputProps["aria-expanded"] ?? false),
+              "aria-controls": referenceRef.current.bindings.inputProps["aria-controls"] ?? "",
               tabindex: "0",
               "aria-autocomplete": "list",
-              "aria-activedescendant": referenceRef.current.selected
-                ? `${referenceId}-${referenceRef.current.selected}`
-                : "",
+              "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
             }
           : {}),
         "aria-label": latest.current.label,
@@ -575,11 +667,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
       },
       editable: () =>
-        latest.current.editable &&
-        !busy.current &&
-        !["submitting", "unknown"].includes(
-          referenceRef.current.getState()?.phase ?? "",
-        ),
+        latest.current.editable && !busy.current,
       transformPasted: (slice, current) =>
         current.state.selection.$from.parent.type.spec.code
           ? slice
@@ -629,25 +717,9 @@ export default function NoteEditor(props: NoteEditorProps) {
           )
             return true;
           const intent = referenceRef.current.getState();
-          if (intent && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) {
+          if (intent && referenceRef.current.bindings.handleKey(event, current.composing)) {
             event.preventDefault();
             event.stopPropagation();
-            if (event.key === "Enter") {
-              if (
-                !event.repeat &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.shiftKey
-              )
-                referenceRef.current.enter();
-            } else if (
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey &&
-              !event.shiftKey
-            )
-              referenceRef.current.move(event.key === "ArrowDown" ? 1 : -1);
             return true;
           }
           if (
@@ -668,11 +740,8 @@ export default function NoteEditor(props: NoteEditorProps) {
             event.key.toLowerCase() === "z"
           ) {
             event.preventDefault();
-            (event.shiftKey ? ownRedo : ownUndo)(
-              current.state,
-              current.dispatch,
-              current,
-            );
+            if (latest.current.outlineSession) latest.current.outlineSession.executeCommand(event.shiftKey ? "redo" : "undo");
+            else (event.shiftKey ? ownRedo : ownUndo)(current.state, current.dispatch, current);
             return true;
           }
           // Without an outline command, Escape belongs to the containing overlay.
@@ -688,14 +757,10 @@ export default function NoteEditor(props: NoteEditorProps) {
           if (!latest.current.editable || busy.current || current.composing)
             return true;
           const intent = referenceRef.current.getState();
-          if (intent !== null)
-            return intent.phase === "search" || intent.phase === "rejected"
-              ? (redo ? ownRedo : ownUndo)(
-                  current.state,
-                  current.dispatch,
-                  current,
-                )
-              : true;
+          if (intent !== null) {
+            if (latest.current.outlineSession) {latest.current.outlineSession.executeCommand(redo ? "redo" : "undo"); return true;}
+            return (redo ? ownRedo : ownUndo)(current.state, current.dispatch, current);
+          }
           return (redo ? redoCommand : undoCommand)(
             current.state,
             current.dispatch,
@@ -704,6 +769,8 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
         focus(current) {
           suspended.current = false;
+          latest.current.outlineSession?.bindEditor(commands);
+          latest.current.onSelectionChange?.({anchor: current.state.selection.anchor, head: current.state.selection.head});
           setReferenceFocused(true);
           setReferenceVisible(true);
           refreshMarks(current.state);
@@ -717,15 +784,12 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
         compositionstart(current) {
           const block = current.state.doc.firstChild;
-          if (
-            latest.current.reference &&
-            !literalSuppressed.current &&
-            referenceRef.current.getState() === null &&
-            block?.type === schema.nodes.paragraph &&
-            block.content.size === 0
-          )
+          if (block && compositionBase.current === null)
             compositionBase.current = {
               body: bodyFromNode(block),
+              editBase: latest.current.editBase ?? null,
+              reference: Boolean(latest.current.reference) && !literalSuppressed.current &&
+                referenceRef.current.getState() === null && block.type === schema.nodes.paragraph && block.content.size === 0,
               selection: {
                 anchor: current.state.selection.anchor,
                 head: current.state.selection.head,
@@ -740,26 +804,37 @@ export default function NoteEditor(props: NoteEditorProps) {
             if (current.isDestroyed || current.composing) return;
             const original = compositionBase.current;
             compositionBase.current = null;
+            if (!latest.current.editable || readWriting().paused) return;
             if (original) {
               const block = current.state.doc.firstChild!;
+              const committed = bodyFromNode(block);
+              if (referenceRef.current.getState() !== null) {
+                const raw = current.state.doc.textBetween(0, current.state.doc.content.size, "\n", "\n");
+                referenceRef.current.edit(raw);
+                if (!raw.startsWith("@")) literal(current);
+                return;
+              }
               if (
+                original.reference &&
                 block.type === schema.nodes.paragraph &&
                 block.textContent === "@" &&
                 block.childCount === 1 &&
                 block.firstChild?.isText
               )
                 referenceRef.current.begin(original.body);
-              else
+              else if (!sameBody(original.body, committed))
                 latest.current.onEdit({
                   before: original.body,
-                  after: bodyFromNode(block),
+                  after: committed,
                   source: "composition",
+                  ...(original.editBase ? { editBase: original.editBase } : {}),
                   selectionBefore: original.selection,
                   selectionAfter: {
                     anchor: current.state.selection.anchor,
                     head: current.state.selection.head,
                   },
                 });
+              else replaceDoc(current, docFromBody(latest.current.body));
               return;
             }
             if (referenceRef.current.getState() !== null) return;
@@ -870,6 +945,9 @@ export default function NoteEditor(props: NoteEditorProps) {
         const { selection } = current.state;
         const at = { anchor: selection.anchor, head: selection.head };
         if (event.key === "Tab") {
+          const command = event.shiftKey ? "outdent" : "indent";
+          if (latest.current.outlineSession) return latest.current.outlineSession.commandState(command).enabled
+            ? act(() => latest.current.outlineSession!.executeCommand(command)) : false;
           const arrange = event.shiftKey ? keys.outdent : keys.indent;
           return arrange ? act(() => arrange(at)) : false;
         }
@@ -899,6 +977,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           event.preventDefault();
           return true;
         }
+        if (latest.current.outlineSession) return act(() => latest.current.outlineSession!.executeCommand("insert"));
         const state = selection.empty
           ? current.state
           : current.state.apply(current.state.tr.deleteSelection());
@@ -909,6 +988,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         return act(() => keys.split!(left, right));
       },
       dispatchTransaction(tr) {
+        if (tr.docChanged && tr.getMeta(SOURCE) !== "external" && readWriting().paused) return;
         const before = view.state;
         const after = before.apply(tr);
         view.updateState(after);
@@ -922,7 +1002,7 @@ export default function NoteEditor(props: NoteEditorProps) {
                 ? "composition"
                 : "input");
           const intent = referenceRef.current.getState();
-          if (intent !== null) {
+          if (intent !== null && compositionBase.current === null) {
             const raw = after.doc.textBetween(
               0,
               after.doc.content.size,
@@ -930,10 +1010,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               "\n",
             );
             referenceRef.current.edit(raw);
-            if (
-              !raw.startsWith("@") &&
-              (intent.phase === "search" || intent.phase === "rejected")
-            )
+            if (!raw.startsWith("@"))
               literal(view);
           } else if (compositionBase.current === null)
             latest.current.onEdit({
@@ -956,30 +1033,41 @@ export default function NoteEditor(props: NoteEditorProps) {
             literalSuppressed.current = false;
         } else if (!before.selection.eq(after.selection))
           latest.current.history?.boundary();
-        if (!before.selection.eq(after.selection))
+        if (compositionBase.current === null && !before.selection.eq(after.selection))
           latest.current.onSelectionChange?.({
             anchor: after.selection.anchor,
             head: after.selection.head,
           });
         refreshMarks(after);
         if (view.hasFocus()) setToolbar(!after.selection.empty);
+        latest.current.outlineSession?.refreshCommands();
       },
     });
     viewRef.current = view;
     return () => {
+      latest.current.outlineSession?.releaseEditor(commands);
       viewRef.current = null;
       view.destroy();
     };
-    // The view belongs to this editor identity and visit; other props use `latest`.
+    // Canonical refs and query branch owners may change within this body view.
+    // All event handlers read the current authority through `latest`/`referenceRef`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.editorKey, reference.owner]);
+  }, [visitId, bodyViewKey]);
 
   useLayoutEffect(() => {
     const view = viewRef.current;
-    if (!view || view.composing || referenceRef.current.getState() !== null)
+    if (!view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
       return;
     replaceDoc(view, docFromBody(props.body));
   }, [props.body, props.revision]);
+
+  useLayoutEffect(() => {
+    const raw = reference.state?.raw;
+    const view = viewRef.current;
+    if (raw === undefined || !view || view.composing) return;
+    const paragraph = schema.nodes.paragraph!.create(null, raw ? schema.text(raw) : null);
+    replaceDoc(view, schema.topNodeType.create(null, paragraph));
+  }, [reference.state?.raw]);
 
   useLayoutEffect(() => {
     if (completedReference.current.key !== reference.owner) {
@@ -1005,29 +1093,11 @@ export default function NoteEditor(props: NoteEditorProps) {
     );
   }, [reference.owner, reference.completion]);
 
-  useLayoutEffect(() => {
-    viewRef.current?.setProps({
-      editable: () =>
-        latest.current.editable &&
-        !busy.current &&
-        !["submitting", "unknown"].includes(
-          referenceRef.current.getState()?.phase ?? "",
-        ),
-    });
-    if (!props.editable) setLinkVisible(false);
-  }, [
-    props.editable,
-    reference.state?.phase,
-    reference.state?.raw,
-    reference.selected,
-    referenceFocused,
-  ]);
-
   const focusSerial = props.focus?.serial;
   useLayoutEffect(() => {
     const view = viewRef.current;
     const focus = latest.current.focus;
-    if (!view || !focus || !view.editable) return;
+    if (!view || !focus || !view.editable || consumedFocus.current === focus.serial) return;
     const size = view.state.doc.content.size;
     const block = view.state.doc.firstChild;
     const end = Math.max(1, size - 1);
@@ -1041,7 +1111,8 @@ export default function NoteEditor(props: NoteEditorProps) {
     const tr = view.state.tr.setSelection(at);
     view.dispatch(focus.preventScroll ? tr : tr.scrollIntoView());
     view.focus();
-  }, [props.editorKey, props.editable, focusSerial]);
+    consumedFocus.current = focus.serial;
+  }, [visitId, bodyViewKey, props.editable, referenceReady, focusSerial]);
 
   const { inspection } = props;
   useEffect(() => {
@@ -1098,9 +1169,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         event.preventDefault();
         event.stopPropagation();
         view.focus();
-        if (intent.phase === "search" || intent.phase === "rejected")
-          literal(view);
-        else setReferenceVisible(false);
+        literal(view);
       }}
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
@@ -1113,10 +1182,15 @@ export default function NoteEditor(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
+      {attachmentFeedback ? <FeedbackNotice content={attachmentFeedback} announcement="Polite" /> : null}
       {attachmentValue && !attachmentValue.pending && !attachmentValue.body ? <FeedbackNotice announcement="Polite"
-        content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={[{
-          label: "retry same upload", onClick: () => { const task = readAttachment(), view = viewRef.current; if (task && view) void attach(view, [task.file]); },
-        }, { label: "discard attachment", onClick: () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); } }]} /> : null}
+        content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={attachmentValue.upload.expired
+          ? [{ label: "discard attachment", onClick: discardAttachment }] : [{
+          label: attachmentValue.upload.review_required ? "review and save" : "check save", onClick: () => {
+            const task = readAttachment(), view = viewRef.current;
+            if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
+          },
+        }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
       {attachmentValue?.body ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
         label: "insert attachment", onClick: () => {
           const task = readAttachment(), view = viewRef.current;
@@ -1124,9 +1198,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           latest.current.onEdit({ before: latest.current.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
           setAttachment(null);
         },
-      }, { label: "discard attachment", onClick: () => {
-        if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null);
-      } }]} /> : null}
+      }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
       {embed
         ? createPortal(
             <EmbeddedResource
@@ -1145,43 +1217,36 @@ export default function NoteEditor(props: NoteEditorProps) {
       {reference.state && referenceFocused && referenceVisible ? (
         <ReferencePicker
           input={reference}
-          id={referenceId}
-          onReviewPosition={() => {
-            reference.reviewPosition();
-            viewRef.current?.focus();
-          }}
+          returnFocus={() => viewRef.current?.dom ?? null}
+          onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
         />
       ) : null}
-      {props.editable && toolbar && !(link && linkVisible) && reference.state === null ? (
+      {props.editable && !paused && toolbar && !(link && linkVisible) && reference.state === null ? (
         <div
           className={styles.toolbar}
           role="toolbar"
           aria-label="Text formatting"
         >
           {FORMATS.map(([name, label, key, Icon]) => (
-            <button
+            <Button
               key={name}
-              type="button"
-              className={styles.button}
+              iconOnly
+              icon={<Icon size={16} aria-hidden="true" />}
               aria-label={label}
               aria-pressed={active.has(name)}
-              title={`${label} (${shortcut(key)})`}
+              tooltip={{text: `${label} (${shortcut(key)})`}}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => format(name)}
-            >
-              <Icon size={16} aria-hidden="true" />
-            </button>
+            />
           ))}
-          <button
-            type="button"
-            className={styles.button}
+          <Button
+            iconOnly
+            icon={<Link2 size={16} aria-hidden="true" />}
             aria-label="Link"
-            title="Link (⌘/Ctrl+K)"
+            tooltip={{text: "Link (⌘/Ctrl+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
-          >
-            <Link2 size={16} aria-hidden="true" />
-          </button>
+          />
         </div>
       ) : null}
       {link && linkVisible ? (
@@ -1223,14 +1288,13 @@ export default function NoteEditor(props: NoteEditorProps) {
                 }
               }}
             />
-            <button
-              type="button"
-              className={styles.linkAdd}
+            <Button
+              emphasis="strong"
               disabled={!hrefFromInput(link.query)}
               onClick={insertLink}
             >
               Add link
-            </button>
+            </Button>
           </div>
           {link.error ? (
             <div role="alert">
@@ -1251,13 +1315,14 @@ function replaceDoc(view: EditorView, doc: PMNode) {
   const start = view.state.doc.content.findDiffStart(doc.content);
   if (start === null) return;
   const end = view.state.doc.content.findDiffEnd(doc.content)!;
+  const overlap = Math.max(0, start - Math.min(end.a, end.b));
   const tr = view.state.tr
     .setMeta(SOURCE, "external")
     .setMeta("addToHistory", false);
-  view.dispatch(tr.replaceWith(start, end.a, doc.content.cut(start, end.b)));
+  view.dispatch(tr.replaceWith(start, end.a + overlap, doc.content.cut(start, end.b + overlap)));
 }
 
-/** Native navigation can move the caret before selectionchange; structural keys use it. */
+/** Native selection can precede selectionchange; commands use the current browser range. */
 function syncNativeSelection(view: EditorView) {
   const native = view.dom.ownerDocument.getSelection();
   const { anchorNode, focusNode } = native ?? {};
@@ -1407,12 +1472,11 @@ function EmbeddedResource({
       {failed ? (
         <>
           couldn’t load embedded resource{" "}
-          <button
-            type="button"
+          <Button
             onClick={() => setAttempt((value) => value + 1)}
           >
             retry
-          </button>
+          </Button>
         </>
       ) : (
         "loading embedded resource…"

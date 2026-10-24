@@ -4,7 +4,7 @@ import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivatio
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "./targetActivation";
 
 export interface ActionTriggerDetail {
-  readonly triggerEl: HTMLButtonElement | null;
+  readonly triggerEl: HTMLElement | null;
 }
 export interface ActionSelectDetail extends ActionTriggerDetail {
   readonly openIntent: OpenIntent;
@@ -13,7 +13,7 @@ export interface ActionSelectDetail extends ActionTriggerDetail {
 /** Command presenters own native activation and pass only frozen intent onward. */
 export function prepareActionSelect(
   event: TargetActivationEvent,
-  triggerEl: HTMLButtonElement | null,
+  triggerEl: HTMLElement | null,
 ): ActionSelectDetail | null {
   const activation = workspaceTargetActivationIntent(event);
   if (activation.kind === "Unowned") return null;
@@ -85,6 +85,8 @@ interface ActionBase {
   readonly icon?: ReactElement;
   readonly indicator?: { readonly kind: "Status" };
   readonly disabled?: boolean;
+  readonly busy?: boolean;
+  readonly hasPopup?: "dialog";
   readonly disabledReason?: string;
   readonly tone?: "default" | "danger";
   readonly separatorBefore?: boolean;
@@ -102,12 +104,11 @@ export type ActionDescriptor =
     })
   | (ActionBase & {
       readonly kind: "link";
-      readonly href: string;
       readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly restoreFocusOnClose?: boolean;
       readonly state?: never;
       readonly render?: never;
-    })
+    } & ({ readonly href: string } | { readonly href: null; readonly disabled: true }))
   | (ActionBase & {
       readonly kind: "custom";
       readonly render: (

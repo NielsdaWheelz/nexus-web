@@ -1,7 +1,9 @@
 "use client";
 
 // The tab's stored-media summaries, keyed by media id (J6). A list retains the summaries
-// it shows, seeded from its own read; a mount reads its rows again, and retained ids are
+// it shows; pane headers and live outline occurrences retain their supplied seeds too.
+// Seeded content renders before the existing batch revalidation; captured evidence
+// never retains a current summary. A list is seeded from its own read; a mount reads its rows again, and retained ids are
 // resolved again when consumption or bibliography changes and when the page returns to
 // the screen (at most once a minute); ids whose resolve failed, also when the network
 // returns. Resolves batch every retain of one commit, up to
@@ -14,6 +16,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -23,6 +26,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
+import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { apiFetch, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { modeledApiError } from "@/lib/api/serverState";
@@ -32,6 +37,7 @@ import type { MediaSummary } from "./mediaSummary";
 
 interface Entry {
   summary: MediaSummary | null;
+  resolved: boolean;
   error: ApiError | null;
   retained: number;
   stale: boolean;
@@ -69,7 +75,7 @@ function createStore() {
   };
 
   const schedule = () => {
-    if (!active || scheduled || running) return;
+    if (!active || !remoteReady() || scheduled || running) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
@@ -78,7 +84,7 @@ function createStore() {
   };
 
   async function resolve() {
-    if (!active) return;
+    if (!active || !remoteReady()) return;
     const ids = [...entries]
       .filter(([, entry]) => entry.stale && entry.retained > 0)
       .map(([id]) => id)
@@ -109,6 +115,7 @@ function createStore() {
         if (orderingFacts(entry.summary) !== orderingFacts(summary))
           queryRevision += 1;
         entry.summary = summary;
+        entry.resolved = true;
         entry.error = null;
       }
     } catch (error) {
@@ -152,7 +159,9 @@ function createStore() {
     attach() {
       active = true;
       schedule();
+      const unsubscribe = subscribeAdmission(() => { if (remoteReady()) invalidate(entries.keys()); });
       return () => {
+        unsubscribe();
         active = false;
         request?.abort();
       };
@@ -163,19 +172,18 @@ function createStore() {
     },
     revision: () => revision,
     queryRevision: () => queryRevision,
-    retain(seeds: readonly MediaSummary[]) {
-      const ids = [...new Set(seeds.map((seed) => seed.media_id))];
-      for (const seed of seeds) {
-        if (!entries.has(seed.media_id))
-          entries.set(seed.media_id, {
-            summary: seed,
-            error: null,
-            retained: 0,
-            stale: true,
-            resolving: false,
-          });
+    retain({ ids, seeds }: { ids: readonly string[]; seeds: readonly MediaSummary[] }) {
+      const supplied = new Map(seeds.map(seed => [seed.media_id, seed]));
+      for (const id of ids) {
+        if (!entries.has(id)) {
+          const summary = supplied.get(id) ?? null;
+          entries.set(id, { summary, resolved: summary !== null, error: null, retained: 0, stale: true, resolving: false });
+        }
+        const entry = entries.get(id)!;
+        const seed = supplied.get(id);
+        if (!entry.resolved && seed !== undefined) { entry.summary = seed; entry.resolved = true; }
+        entry.retained += 1;
       }
-      for (const id of ids) entries.get(id)!.retained += 1;
       invalidate(ids);
       return () => {
         for (const id of ids) {
@@ -184,6 +192,11 @@ function createStore() {
           if (entry.retained === 0) entries.delete(id);
         }
       };
+    },
+    get: (id: string) => entries.get(id)?.summary ?? null,
+    pending: (id: string) => {
+      const entry = entries.get(id);
+      return entry === undefined || !entry.resolved && entry.error === null;
     },
     resolve: (seed: MediaSummary): MediaSummary | null => {
       const entry = entries.get(seed.media_id);
@@ -239,7 +252,7 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
     window.addEventListener("online", store.retryFailed);
     return () => window.removeEventListener("online", store.retryFailed);
   }, [store]);
-  useOnChange(useChangeStamp("Consumption"), store.invalidateAll);
+  useOnChange(useChangeStamp("Consumption", "PodcastEpisodes"), store.invalidateAll);
   useOnChange(
     `${useChangeStamp("Metadata")}:${foreground}`,
     store.invalidateQueries,
@@ -247,28 +260,45 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={store}>{children}</Context.Provider>;
 }
 
-export function useMediaSummaries(seeds: readonly MediaSummary[]) {
+export function useMediaSummaries(seeds: readonly MediaSummary[], source: ReadSource = LIVE_SOURCE) {
+  const captured = source.kind === "catalog";
   const store = useStore();
+  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const revision = useSyncExternalStore(
-    store.subscribe,
-    store.revision,
+    key && !captured ? store.subscribe : () => () => {},
+    key && !captured ? store.revision : () => 0,
     () => 0,
   );
-  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
-  useEffect(() => store.retain(seedsRef.current), [store, key]);
+  useEffect(() => {
+    if (key && !captured) return store.retain({ ids: key.split(","), seeds: seedsRef.current });
+  }, [store, key, captured]);
+  const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");
     return {
-      resolve: store.resolve,
-      error: store.error(ids),
-      retry: () => store.retry(ids),
-      retrying: store.retrying(ids),
+      resolve: captured ? (seed: MediaSummary) => seed : store.resolve,
+      error: captured ? null : store.error(ids),
+      retry: captured ? () => {} : retry,
+      retrying: captured ? false : store.retrying(ids),
       revision,
-      queryRevision: store.queryRevision(),
+      queryRevision: captured ? 0 : store.queryRevision(),
     };
-  }, [store, revision, key]);
+  }, [store, revision, key, retry, captured]);
+}
+
+/** Identity-only consumers retain the same summary owner without inventing seeds. */
+export function useMediaSummaryIds(mediaIds: readonly string[]) {
+  const store = useStore();
+  const key = [...new Set(mediaIds)].sort().join(",");
+  useSyncExternalStore(key ? store.subscribe : () => () => {}, key ? store.revision : () => 0, () => 0);
+  useEffect(() => {
+    if (key) return store.retain({ ids: key.split(","), seeds: [] });
+  }, [store, key]);
+  const ids = key === "" ? [] : key.split(",");
+  return { resolve: store.get, pending: store.pending, error: store.error(ids),
+    retry: () => store.retry(ids), retrying: store.retrying(ids) };
 }
 
 export function useMediaQueryRevision(): number {

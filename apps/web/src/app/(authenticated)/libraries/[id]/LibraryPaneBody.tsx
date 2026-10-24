@@ -1,23 +1,24 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 // One library: its entries under the url's view, drag order for those who manage
 // a named library, the Reading Slate, the inspector's Members and Linked items,
 // and Leave for a member who is not its owner. The url owns sort, type, view and
 // completion and hands them to the server, which validates and combines them;
 // the text filter stays local.
 
-import { useCallback, useId, useMemo, useState } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import { useCallback, useId, useMemo } from "react";
+import { Plus } from "lucide-react";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import CollectionView from "@/components/collections/CollectionView";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
+import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -26,9 +27,16 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
+import { PlaybackSourceContext, captureSavedView, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
+import { paneFilterText } from "@/lib/panes/paneFilterText";
+import { useCatalogRead, useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
+import { oldestRevision, unstamped, type ConsumptionStamp as Stamp, type StampedRead } from "@/lib/consumption/listening";
+import { catalogLibrary, catalogEntries, catalogLibraryShows } from "@/lib/catalog/selectors";
+import { remoteReady } from "@/lib/native/admission";
+import { getLibraryPodcasts, type PodcastSection } from "@/lib/podcasts/api";
+import { ApiError, isApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useServerValue, useThrowLater, type Visit } from "@/lib/api/serverState";
+import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import {
   listRowStatus,
   pageQuery,
@@ -42,12 +50,11 @@ import {
 } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { OrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { renderOrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   entriesPage,
   getLibrary,
-  leaveLibrary,
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
@@ -55,7 +62,7 @@ import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   ENTRY_TYPES,
-  EmptyEntries,
+  emptyEntriesFeedback,
   entrySorts,
   offered,
   projections,
@@ -68,7 +75,7 @@ import {
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { usePaneChrome, type PanePrimaryAction, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
+import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import {
   usePaneIsActive,
   usePaneParam,
@@ -79,21 +86,20 @@ import {
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
   usePaneScrollRetention,
 } from "@/lib/workspace/paneReturnMemento";
-import { useLatestWorkspace } from "@/lib/workspace/store";
 
-const DETAIL = definePaneVisitDataKey<Visit<Library>>("Library.Detail");
-const ENTRIES = definePaneVisitDataKey<ListSnapshot<LibraryEntry>>("Library.Entries");
+const DETAIL = definePaneVisitDataKey<Visit<StampedRead<Library>>>("Library.Detail");
+const SHOWS = definePaneVisitDataKey<Visit<StampedRead<PodcastSection>>>("Library.Podcasts");
+const ENTRIES = definePaneVisitDataKey<ListSnapshot<LibraryEntry, Stamp>>("Library.Entries");
 const UNIT = { singular: "entry", plural: "entries" };
 const VIEW_KEYS = ["sort", "entry_type", "projection", "completion"];
 
 const fields = (entry: LibraryEntry) =>
-  mediaListFilterFields(entry.kind === "media" ? entry.media_summary : entry);
+  mediaListFilterFields(entry.media_summary);
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
@@ -103,11 +109,11 @@ export default function LibraryPaneBody() {
 
 function LibraryPane({ id }: { readonly id: string }) {
   const { addToLibrary } = useLibraryPlacementController();
+  const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
-  const fail = useThrowLater();
   const query = new URLSearchParams(
     VIEW_KEYS.flatMap((key) => {
       const value = params.get(key);
@@ -115,41 +121,98 @@ function LibraryPane({ id }: { readonly id: string }) {
     }),
   ).toString();
 
-  const detail = useServerValue({
+  const catalog = useCatalogState();
+  // Heading, entries and subscriptions are one consumption group.
+  const group = useLiveGroup(`${id}?${query}`);
+  const savedDetail = useCatalogRead(value => {
+    const library = catalogLibrary(value, id);
+    return library === null ? null : { data: library, consumption_revision: value.value.consumption_revision };
+  });
+  const savedEntries = useCatalogRead(value => {
+    const page = catalogEntries(value, id, new URLSearchParams(query));
+    return page === null ? null : { ...page, metadata: { consumption_revision: value.value.consumption_revision } };
+  });
+  const savedShows = useCatalogRead(value => {
+    const shows = catalogLibraryShows(value, id);
+    return shows === null ? null : { data: shows, consumption_revision: value.value.consumption_revision };
+  });
+  const rawDetail = useServerValue({
+    catalog: savedDetail,
     key: `/libraries/${id}`,
-    stale: useChangeStamp("Libraries"),
+    stale: `${useChangeStamp("Libraries")}|${group.stale}`,
     visit: DETAIL,
     load: (signal) => getLibrary(id, signal),
   });
-  // A 404 on the first read or a reread: the library is gone for the viewer.
-  const missing = detail.status !== "loading" && detail.error?.status === 404;
-  const library = !missing && detail.status === "ready" ? detail.data : null;
-  const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
-  const suggestions = useSuggestions(suggestionDestination, active && library !== null);
-  const { refresh: refreshSuggestionFeed } = suggestions;
   const consumption = useChangeStamp("Consumption");
   // Views whose rows or order move with reading and listening reread with it.
   const followsConsumption =
     params.has("projection") ||
     params.has("completion") ||
     (params.get("sort") ?? "").startsWith("remaining");
-  const list = useServerList<LibraryEntry>({
+  const rawList = useServerList<LibraryEntry, Stamp>({
+    catalog: savedEntries,
+    foldMetadata: oldestRevision,
     key: `/libraries/${id}/entries?${query}`,
     stale: [
       useChangeStamp("Entries"),
       followsConsumption ? consumption : "-",
       useMediaQueryRevision(),
-      useRefreshStamp(active, 60_000),
+      useRefreshStamp(active && remoteReady(), 60_000),
+      group.stale,
     ].join("|"),
     pageSize: 100,
-    drain: true,
-    active,
+    active: active && (rawDetail.status === "ready" || catalog.data?.libraries.has(id) === true),
     visit: ENTRIES,
     id: libraryEntryId,
     fetchPage: (cursor, limit, signal) =>
       entriesPage(id, pageQuery(query, cursor, limit), signal),
   });
-  const order = useLibraryOrder(id, list.current ? list.orderRevision : null);
+  const showsStale = `${useChangeStamp("Podcasts", "Entries", "Libraries")}:${useRefreshStamp(active && remoteReady(), 60_000)}`;
+  const rawShows = useServerValue({
+    key: rawDetail.status === "ready" || catalog.data?.libraries.has(id) === true ? `library-podcasts:${ctx.accountId}:${id}` : null,
+    stale: `${showsStale}|${group.stale}`,
+    visit: SHOWS, catalog: savedShows,
+    load: signal => getLibraryPodcasts(id, signal),
+  });
+  // Relevance is the library's unfiltered saved membership, never the shown rows.
+  const relevantMediaIds = useMemo(() => new Set(catalog.raw?.value.library_media.flatMap(row => row.library_id === id ? [row.media_id] : []) ?? []), [catalog.raw, id]);
+  usePromoteLiveGroup(group, rawDetail.status === "ready" && rawDetail.source.kind === "live" && rawDetail.error === null &&
+    rawList.source.kind === "live" && rawList.complete && rawList.failure === null && rawList.metadata !== null &&
+    rawShows.status === "ready" && rawShows.source.kind === "live" && rawShows.error === null
+    ? [rawDetail.data.consumption_revision, rawList.metadata.consumption_revision, rawShows.data.consumption_revision] : null, relevantMediaIds);
+  const saved = useMemo(() => {
+    if (catalog.data === null) return null;
+    try {
+      const library = catalogLibrary(catalog.data, id);
+      const entries = catalogEntries(catalog.data, id, new URLSearchParams(query));
+      const shows = catalogLibraryShows(catalog.data, id);
+      return library === null || entries === null || shows === null ? null : { library, entries, shows,
+        source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
+    } catch (error) { if (isApiError(error)) return null; throw error; }
+  }, [catalog.data, id, query]);
+  const showingSaved = !group.live && saved !== null;
+  const detail: ServerValue<Library> = !showingSaved ? unstamped(rawDetail) : {
+    status: "ready", data: saved.library, source: saved.source, generation: 0,
+    error: rawDetail.status === "loading" ? null : rawDetail.error,
+    refreshing: rawDetail.status === "ready" && rawDetail.refreshing, refetch: rawDetail.refetch,
+  };
+  const list: typeof rawList = !showingSaved ? rawList : {
+    ...rawList, source: saved.source, status: "ready", items: saved.entries.items,
+    fresh: false, metadata: saved.entries.metadata ?? null,
+    current: true, complete: true, orderRevision: saved.entries.order_revision ?? null,
+  };
+  const shows: ServerValue<PodcastSection> = !showingSaved ? unstamped(rawShows) : {
+    status: "ready", data: saved.shows, source: saved.source, generation: 0,
+    error: rawShows.status === "loading" ? null : rawShows.error,
+    refreshing: rawShows.status === "ready" && rawShows.refreshing, refetch: rawShows.refetch,
+  };
+  const missing = detail.status !== "loading" && detail.error?.status === 404;
+  const library = !missing && detail.status === "ready" ? detail.data : null;
+  const live = list.source.kind === "live";
+  const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
+  const suggestions = useSuggestions(suggestionDestination, active && library !== null && live);
+  const { refresh: refreshSuggestionFeed } = suggestions;
+  const order = useLibraryOrder(id, rawList.current && rawList.source.kind === "live" ? rawList.orderRevision : null);
   const invalidView =
     list.failure?.op === "Load" && list.failure.error.code === "E_INVALID_REQUEST";
   usePaneReturnReady(list.current || list.status === "failed" || missing);
@@ -164,11 +227,10 @@ function LibraryPane({ id }: { readonly id: string }) {
   );
 
   const summaries = useMediaSummaries(
-    list.items.flatMap((entry) => (entry.kind === "media" ? [entry.media_summary] : [])),
+    list.items.map(entry => entry.media_summary), list.source,
   );
   // Live summaries; a row whose summary is gone leaves the list.
   const shown = list.items.flatMap((entry): LibraryEntry[] => {
-    if (entry.kind !== "media") return [entry];
     const summary = summaries.resolve(entry.media_summary);
     return summary === null ? [] : [{ ...entry, media_summary: summary }];
   });
@@ -185,10 +247,9 @@ function LibraryPane({ id }: { readonly id: string }) {
   const text = filterRows.query.trim();
   const visible = shown.filter((entry) => matchesPaneFilterQuery(text, fields(entry)));
 
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const isAll = library?.is_default === true;
-  const supportsOrder = library?.can_manage === true && !isAll;
-  const ordered = query === "" && text === "" && !isAll
+  const supportsOrder = live && remoteReady() && library?.can_manage === true && !isAll;
+  const ordered = live && query === "" && text === "" && !isAll
     ? projectOrder(shown, (entry) => entry.entry_id!, order)
     : visible;
   const ordering = supportsOrder ? presentOrder({ order, complete: list.complete,
@@ -196,16 +257,15 @@ function LibraryPane({ id }: { readonly id: string }) {
   const orderingStatus = orderStatus(ordering);
 
   const members = useLibraryMembers(
-    library,
-    active &&
-      runtime?.secondaryPane?.group_id === "resource-inspector" &&
+    live ? library : null,
+    runtime?.secondaryPane?.group_id === "resource-inspector" &&
       runtime.secondaryPane.visibility === "visible" &&
       runtime.secondaryPane.active_surface_id === "resource-members",
     detail.refetch,
   );
   useResourceInspector({
     scheme: "library",
-    handle: library ? id : null,
+    handle: library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
     bodies: {
       members: members ? <LibraryMembers state={members} /> : undefined,
       linkedItems: useMemo(
@@ -249,57 +309,44 @@ function LibraryPane({ id }: { readonly id: string }) {
       ]);
       refetchDetail();
       await refetchEntries().catch(() => {});
-      return suggested === "Requested" ? result : {
-        kind: result.kind === "Complete" ? "Partial" : result.kind,
-        announcement: `${result.announcement}. ${suggested === "Repair" ? "suggestions need repair." : "couldn’t request suggestions."}`,
-      };
+      switch (suggested) {
+        case "Refreshed": case "Finding": case "NotApplicable": return result;
+        case "Repair": case "Failed": return {
+          kind: result.kind === "Complete" ? "Partial" : result.kind,
+          announcement: `${result.announcement}. ${suggested === "Repair" ? "suggestions need repair." : "couldn’t refresh suggestions."}`,
+        };
+        default: return assertNever(suggested);
+      }
     },
     [id, refetchDetail, refetchEntries, refreshSuggestionFeed],
   );
-  // Leaving asks first in the pane; the left library's panes settle like a deleted one's.
-  const workspace = useLatestWorkspace();
-  const [leaving, setLeaving] = useState<"Asked" | "Running" | null>(null);
-  const leave = async () => {
-    if (leaving !== "Asked") return;
-    setLeaving("Running");
-    try {
-      await leaveLibrary(id);
-      settleDeletedResourcePanes({
-        workspace: workspace(),
-        deletedRef: `library:${id}`,
-        fallbackHref: "/libraries",
-      });
-    } catch (error) {
-      setFeedback(libraryErrorFeedback(error, "You didn’t leave the library", fail));
-    }
-    setLeaving(null);
-  };
-  const addContent: PanePrimaryAction | undefined = library?.can_manage
+  const addContent: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
     ? {
       kind: "command",
       id: "ViewAction.Library.AddContent",
       label: "add content",
+      icon: <Plus size={20} aria-hidden="true" />,
       restoreFocusOnClose: false,
-      onSelect: () =>
+      onSelect: ({ triggerEl }) =>
         requestNexusOpen({
           kind: "Add",
-          seed: { kind: "Content", initialDestinations: [{ id, name: library.name }] },
-        }),
+          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name, order_revision: library.order_revision }] },
+        }, triggerEl),
     }
     : undefined;
-  const insertion = useResourceComposer(library ? {kind:"resource",ref:`library:${id}`} : null, `library:${id}`, "add item");
-  const menuActions: ActionDescriptor[] = [...(insertion.action ? [insertion.action] : []), ...(addContent ? [addContent] : [])];
-  if (library?.can_leave) {
-    menuActions.push({
-      kind: "command",
-      id: "ViewAction.Library.Leave",
-      label: "Leave library…",
-      tone: "danger",
-      restoreFocusOnClose: false,
-      onSelect: () => setLeaving("Asked"),
-    });
-  }
+  const emptyFeedback = emptyEntriesFeedback({ params, isAll, change: recover });
+  const emptyTitle = text
+    ? list.complete ? "no entries match this filter." : "no matching entry found so far."
+    : list.complete ? emptyFeedback.content.title : "no entries loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT,
+    waiting: library !== null && !invalidView && list.status === "loading",
+    outcome: ordered.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
+  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   usePaneChrome({
+    displayTitle: library === null ? undefined : libraryDisplayName(library),
     primaryAction: addContent,
     query: invalidView || library === null ? undefined : {
       kind: "Controls",
@@ -324,11 +371,8 @@ function LibraryPane({ id }: { readonly id: string }) {
           status={{
             placement: "Inline",
             id: queryStatusId,
-            visible: paneFilterRowsStatusVisible({
-              status: filterRows.rowStatus,
-              filtering: text !== "" || chips.length > 0,
-            }),
-            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+            visible: false,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
           }}
           actions={orderingStatus ? <span>{orderingStatus}</span> : undefined}
           onReset={canReset ? () => {
@@ -338,7 +382,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         />
       ),
     },
-    refresh: library
+    refresh: live && remoteReady() && library
       ? { kind: "Refreshable", sourceKey: `Library:${id}?${query}`, execute }
       : undefined,
     resourceRef: canonicalResourceRef({ scheme: "library", id }),
@@ -348,6 +392,8 @@ function LibraryPane({ id }: { readonly id: string }) {
 
   if (missing) {
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={{
           tone: "Danger",
@@ -356,12 +402,14 @@ function LibraryPane({ id }: { readonly id: string }) {
         }}
         announcement="Assertive"
       />
+      </>
     );
   }
   if (library === null) {
     const failure = detail.status === "failed" ? detail.error : null;
-    return failure ? (
-      <FeedbackNotice
+    return <>
+      {readFeedback.announcement}
+      {failure ? <FeedbackNotice
         content={
           libraryErrorFeedback(failure, "Library couldn’t be loaded", throwDefect) ?? {
             tone: "Danger",
@@ -370,13 +418,13 @@ function LibraryPane({ id }: { readonly id: string }) {
         }
         announcement="Assertive"
         actions={[{ label: "Retry", onClick: detail.refetch, busy: detail.status === "failed" && detail.retrying }]}
-      />
-    ) : (
-      <PaneLoadingState label="Loading library…" announcement="Polite" />
-    );
+      /> : <PaneLoadingState label="Loading library…" announcement="Polite" />}
+    </>;
   }
   if (invalidView) {
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid library view" }}
         announcement="Assertive"
@@ -391,117 +439,95 @@ function LibraryPane({ id }: { readonly id: string }) {
           },
         ]}
       />
+      </>
     );
   }
 
   const name = libraryDisplayName(library);
-  const added = (params.get("sort") ?? "").startsWith("added")
-    ? isAll
-      ? "Added to Nexus"
-      : "Added"
-    : null;
   const loadFailure =
     list.failure !== null && list.failure.op !== "More" ? list.failure.error : null;
-  const empty = text ? (
-    <FeedbackNotice
-      content={{
-        tone: "Neutral",
-        title: list.complete
-          ? "No entries match this filter."
-          : "No matching entry found so far.",
-      }}
-      announcement="Polite"
-    />
-  ) : list.status !== "ready" ? null : list.complete ? (
-    <EmptyEntries params={params} isAll={isAll} change={recover} />
-  ) : (
-    <CollectionExhaustionNotice list={list} />
-  );
+  const empty = <FeedbackNotice
+    content={{ tone: "Neutral", title: emptyTitle }}
+    announcement="None"
+    actions={!text && list.complete ? emptyFeedback.actions : undefined}
+  />;
   const firstLoad =
     list.status === "failed" && loadFailure !== null
       ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
       : null;
 
+  const capture: PlaybackSource = async selected_media_id => {
+    const sourceSort = (["title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"] as const).find(value => value === sort) ?? null;
+    const entry_type = (["web_article", "epub", "pdf", "video", "podcast_episode"] as const).find(value => value === type) ?? null;
+    const sourceProjection = (["unfiled", "in_progress"] as const).find(value => value === projection) ?? null;
+    const view = { library_id: id, sort: sourceSort, entry_type, projection: sourceProjection, completion: hideFinished ? "unfinished" as const : null };
+    if (list.source.kind === "catalog")
+      return captureSavedView(visible.map(entry => entry.media_summary), selected_media_id, { kind: "Library", label: name, query: paneFilterText(text), ...view });
+    if (!live || !remoteReady() || !list.current || order.state.pending !== null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current library before starting this queue");
+    return capturePlaybackSource({ source: { kind: "Library", query: text, ...view }, selected_media_id });
+  };
+
   return (
-    <> {insertion.content}<PaneSurface
-      state={
-        feedback || leaving || loadFailure || summaries.error || ordering !== undefined ? (
-          <>
-            {ordering !== undefined ? <OrderNotice order={order.state} active={active} paneId={runtime?.paneId ?? null} /> : null}
-            {leaving ? (
+    <>
+      {readFeedback.announcement}
+      <PaneSurface
+        state={<>
+          {ordering !== undefined ? renderOrderNotice({ order: order.state, active, paneId: runtime?.paneId ?? null }) : null}
+          {list.status === "ready" && (loadFailure !== null || summaries.error !== null) ? (
+            <MediaSummaryNotice
+              error={loadFailure ?? summaries.error}
+              busy={summaries.retrying || list.running !== null}
+              retry={() => {
+                if (summaries.error !== null) summaries.retry();
+                if (loadFailure !== null) list.retry();
+              }}
+            />
+          ) : null}
+        </>}
+      >
+        <LibraryPodcastsSection library={library} active={active} source={shows} sourceStale={showsStale} />
+        <PlaybackSourceContext.Provider value={capture}>
+        <CollectionView
+          returnScope="Library.Entries"
+          rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry),
+            id: entry.entry_id ?? libraryEntryId(entry) }))}
+          empty={empty}
+          status={list.status === "failed" ? "error" : list.status}
+          error={
+            firstLoad ? (
               <FeedbackNotice
-                content={{
-                  tone: "Warning",
-                  title: `Leave “${name}”?`,
-                  message: "You lose access to what only it files. An admin can invite you again.",
-                }}
+                content={firstLoad}
                 announcement="Assertive"
-                actions={[
-                  { label: "Leave library", onClick: () => void leave() },
-                  { label: "Cancel", onClick: () => setLeaving(null) },
-                ]}
+                actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
               />
-            ) : null}
-            {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
-            {list.status === "ready" ? (
-              <MediaSummaryNotice
-                error={loadFailure ?? summaries.error}
-                busy={summaries.retrying || list.running !== null}
-                retry={() => {
-                  if (summaries.error !== null) summaries.retry();
-                  if (loadFailure !== null) list.retry();
-                }}
-              />
-            ) : null}
-          </>
-        ) : null
-      }
-    >
-      <CollectionView
-        returnScope="Library.Entries"
-        rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry, added),
-          id: entry.entry_id ?? libraryEntryId(entry) }))}
-        rowControls={Object.fromEntries(ordered.flatMap((entry) => {
-          if (entry.kind !== "media" ||
-            !["web_article", "epub", "pdf"].includes(entry.media_summary.media_kind)) return [];
-          const rowId = entry.entry_id ?? libraryEntryId(entry);
-          return [[rowId, (
-            <LecternAddControl
-              key={rowId}
-              mediaId={entry.media_summary.media_id}
-              title={entry.media_summary.title}
-              returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, rowId)}
-            />
-          )]];
-        }))}
-        empty={empty}
-        status={list.status === "failed" ? "error" : list.status}
-        error={
-          firstLoad ? (
-            <FeedbackNotice
-              content={firstLoad}
-              announcement="Assertive"
-              actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
-            />
-          ) : null
-        }
-        ariaLabel={name}
-        rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
-        rowActionsAvailable={list.current}
-        footer={visible.length > 0 ? <CollectionExhaustionNotice list={list} /> : undefined}
-        collectionBusy={!list.current || !list.complete}
-        surface={false}
-        order={ordering}
-      />
-      <SuggestionsSection
-          destination={suggestionDestination}
-          suggestions={suggestions}
-          returnScope="Library.Suggestions"
-          accept={async (target) => {
-            const accepted = await addToLibrary({ kind: target.kind, id: suggestionTargetId(target) }, id);
-            return accepted ? "Accepted" : "Retained";
-          }}
+            ) : null
+          }
+          ariaLabel={name}
+          rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+          rowActionsAvailable={list.current}
+          notice={text && list.current && !list.complete && list.failure === null && ordered.length > 0
+            ? <p>filter applies to loaded items.</p> : null}
+          footer={readFeedback.notice}
+          collectionBusy={!list.current || !list.complete}
+          surface={false}
+          order={ordering}
         />
-    </PaneSurface></>
+        </PlaybackSourceContext.Provider>
+        {live ? <SuggestionsSection
+            destination={suggestionDestination}
+            suggestions={suggestions}
+            returnScope="Library.Suggestions"
+            accept={async (target) => {
+              if (target.kind === "Podcast") {
+                ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
+                  onAccepted: () => suggestions.acknowledge(target.ref) });
+                return "Retained";
+              }
+              const accepted = await addToLibrary({ kind: "Media", id: suggestionTargetId(target) }, id);
+              return accepted ? "Accepted" : "Retained";
+            }}
+          /> : null}
+      </PaneSurface>
+    </>
   );
 }

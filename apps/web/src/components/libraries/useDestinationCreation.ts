@@ -22,9 +22,9 @@ type Attempt = {
 interface DestinationCreation {
   form: string | null;
   attempts: Map<string, Attempt>;
-  refusal: ChooserError | null;
+  refusals: Map<string, { name: string; error: ChooserError }>;
   subscribe(listener: () => void): () => void;
-  getSnapshot(): { pending: readonly Attempt[]; refusal: ChooserError | null };
+  getSnapshot(): { pending: readonly Attempt[]; refusals: ReadonlyMap<string, { name: string; error: ChooserError }> };
   readUnconfirmed(): boolean;
   publish(): void;
 }
@@ -32,16 +32,16 @@ interface DestinationCreation {
 /** The actual parent task/visit retains these immutable creation attempts. */
 export function createDestinationCreation(): DestinationCreation {
   const listeners = new Set<() => void>();
-  let snapshot: { pending: readonly Attempt[]; refusal: ChooserError | null } = { pending: [], refusal: null };
+  let snapshot: ReturnType<DestinationCreation["getSnapshot"]> = { pending: [], refusals: new Map() };
   const state: DestinationCreation = {
     form: null,
     attempts: new Map<string, Attempt>(),
-    refusal: null,
+    refusals: new Map(),
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getSnapshot: () => snapshot,
     readUnconfirmed: () => state.attempts.size > 0,
     publish() {
-      snapshot = { pending: [...state.attempts.values()], refusal: state.refusal };
+      snapshot = { pending: [...state.attempts.values()], refusals: new Map(state.refusals) };
       for (const listener of listeners) listener();
     },
   };
@@ -54,11 +54,17 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
   useLayoutEffect(() => {
-    if (state.form === form) return;
     state.form = form;
     state.attempts.clear();
-    state.refusal = null;
+    state.refusals.clear();
     state.publish();
+    return () => {
+      if (state.form !== form) return;
+      state.form = null;
+      state.attempts.clear();
+      state.refusals.clear();
+      state.publish();
+    };
   }, [form, state]);
 
   function owns(attempt: Attempt) {
@@ -69,7 +75,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     const wasUnconfirmed = attempt.failure !== null;
     attempt.sending = true;
     state.publish();
-    const outcome = await sendCreation(attempt);
+    const outcome = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
     if (!owns(attempt)) return;
     attempt.sending = false;
     if (outcome.kind === "Unknown" || outcome.kind === "Refused" && wasUnconfirmed) {
@@ -82,28 +88,38 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     state.attempts.delete(attempt.name.toLowerCase());
     if (outcome.kind === "Refused") {
       const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
-      state.refusal = content ? { content, retry: null } : null;
+      if (content !== null) state.refusals.set(attempt.scope, { name: attempt.name, error: { content, retry: null } });
       state.publish();
       return;
     }
     state.publish();
-    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name }); }
+    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name, order_revision: outcome.library.order_revision }); }
     catch (error) { fail({ error }); }
   }
-  const pending = snapshot.pending.filter(attempt => attempt.form === form);
-  const failed = pending.filter(attempt => attempt.failure !== null);
-  const sending = pending.filter(attempt => attempt.sending);
-  const error: ChooserError | null = failed.length === 0 ? snapshot.refusal : failed.length === 1 ? { ...failed[0].failure!, busy: failed[0].sending, commandKey: `library-create:${failed[0].id}` } : {
-    content: { tone: "Warning", title: "some libraries couldn’t be created", message: failed.map(attempt => attempt.name).join(", ") },
-    busy: failed.some(attempt => attempt.sending),
-    commandKey: `library-create:${failed.map(attempt => attempt.id).sort().join(",")}`,
-    retry: failed.some(attempt => attempt.failure?.retry != null) ? () => { for (const attempt of failed) attempt.failure?.retry?.(); } : null,
-  };
+  function project(scope: string | null) {
+    const pending = snapshot.pending.filter(attempt => attempt.form === form && (scope === null || attempt.scope === scope));
+    const failed = pending.filter(attempt => attempt.failure !== null);
+    const sending = pending.filter(attempt => attempt.sending);
+    const errors = [
+      ...failed.map(attempt => ({ name: attempt.name, error: { ...attempt.failure!, busy: attempt.sending, commandKey: `library-create:${attempt.id}` } })),
+      ...[...snapshot.refusals].filter(([key]) => scope === null || key === scope).map(([, refusal]) => refusal),
+    ];
+    const error: ChooserError | null = errors.length === 0 ? null : errors.length === 1 ? errors[0].error : {
+      content: { tone: "Warning", title: "some library creations need attention", message: errors.map(item => item.name).join(", ") },
+      busy: failed.some(attempt => attempt.sending),
+      commandKey: `library-create:${failed.map(attempt => attempt.id).sort().join(",")}`,
+      retry: failed.some(attempt => attempt.failure?.retry != null) ? () => { for (const attempt of failed) attempt.failure?.retry?.(); } : null,
+    };
+    return {
+      pendingNames: snapshot.pending.filter(attempt => attempt.form === form).map(attempt => attempt.name),
+      creating: pending.length > 0,
+      error,
+      status: sending.length > 0 ? `creating ${sending.map(attempt => `“${attempt.name}”`).join(", ")}…` : undefined,
+    };
+  }
   return {
-    pendingNames: pending.map(attempt => attempt.name),
-    creating: pending.length > 0,
-    error,
-    status: sending.length > 0 ? `creating ${sending.map(attempt => `“${attempt.name}”`).join(", ")}…` : undefined,
+    ...project(null),
+    forScope: (scope: string) => project(scope),
     admit({ name, scope, onCreated }: { name: string; scope: string; onCreated: (destination: LibraryDestination) => void }): boolean {
       name = name.trim();
       if (state.form !== form || libraryNameError(name) !== null) return false;
@@ -116,7 +132,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
       }
       const attempt: Attempt = { form, id: crypto.randomUUID(), name, scope, onCreated, sending: false, failure: null };
       state.attempts.set(key, attempt);
-      state.refusal = null;
+      state.refusals.delete(scope);
       void send(attempt);
       return true;
     },

@@ -1,3 +1,4 @@
+import type { ApiError } from "@/lib/api/client";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
 import { openStream } from "@/lib/api/stream";
@@ -26,12 +27,13 @@ export type Link =
 export type MessageAction = Omit<Schema<"TrustToolCallOut">, "id"> & {
   readonly id: Schema<"TrustToolCallOut">["id"] | null;
 };
-type LiveAction = Omit<MessageAction, "id" | "machine_authorships" | "reverted_at">;
+type LiveAction = Omit<MessageAction, "id" | "machine_authorships" | "reverted_at" | "undo_allowed">;
 export type Live = Readonly<{
   runId: string;
   text: string;
   lastSeq: number;
   link: Link;
+  suspension: ApiError | null;
   execution: Execution | null;
   /** by call position; saved reads alone supply ids and undo state. */
   tools: Readonly<Record<number, LiveAction>>;
@@ -52,6 +54,7 @@ export function emptyLive(runId: string): Live {
     text: "",
     lastSeq: 0,
     link: { kind: "Live" },
+    suspension: null,
     execution: null,
     tools: {},
   };
@@ -111,6 +114,7 @@ export function messageActions(
       ...call,
       id: null,
       machine_authorships: [],
+      undo_allowed: false,
       reverted_at: null,
     });
   }
@@ -121,7 +125,7 @@ export function messageActions(
 export function openRunTail(
   runId: string,
   after: number,
-  on: { event(event: ChatEvent): void; end(reason: "done" | "lost"): void },
+  on: { event(event: ChatEvent): void; suspended(error: ApiError): void; end(reason: "done" | "lost"): void },
 ): () => void {
   return openStream<ChatEvent>({
     path: `/api/stream/chat-runs/${encodeURIComponent(runId)}/events`,
@@ -133,6 +137,7 @@ export function openRunTail(
     },
     isTerminal: (event) => event.type === "done",
     onEvent: on.event,
+    onSuspended: on.suspended,
     onError: (error) => {
       console.error("Chat run stream ended without its terminal event:", error);
       on.end("lost");

@@ -66,10 +66,9 @@ Key shapes, all built in `python/nexus/storage/paths.py`:
 
 ## Media teardown
 
-Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1 at `ebd648197`.
-
-Canonical member removal never deletes the final lifetime reference: it returns
-`409 E_MEDIA_LAST_REFERENCE`. Removing a media (`DELETE /media/{id}`: 204, idempotent;
+[libraries](library.md) owns personal retention: unfiling preserves the actor's
+default holding; named-library deletion preserves its owner's eligible media.
+organizational removal cannot remove that personal holding. removing a media (`DELETE /media/{id}`: 204, idempotent;
 `media_deletion.remove_media_for_viewer`) drops it from the viewer's whole workspace at
 once. A document (`web_article`, `epub`, `pdf`) left with no reference (no library entry,
 no grant) gets a `media_teardown_intents` row (one per media; UUIDv7 from

@@ -2,8 +2,7 @@
 
 The input counter records relevance changes. The queue owns execution and failure.
 Only a fenced successful build replaces the latest publication; readers never rank.
-Ranking holds shared expensive-read admission through snapshot cleanup; its
-backend retires before the separate fenced publication transaction.
+Admission retries recheck freshness; existing work retains its job and attempt budget.
 """
 
 from __future__ import annotations
@@ -24,11 +23,9 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.jobs import queue
 from nexus.schemas.suggestions import (
-    SuggestionExplicitRefreshIn,
     SuggestionPublicationMetaOut,
     SuggestionPublicationOut,
     SuggestionRefreshAtOut,
-    SuggestionRefreshIn,
     SuggestionRefreshNowOut,
     SuggestionRefreshStoppedOut,
     SuggestionsOut,
@@ -153,7 +150,7 @@ def reconcile_suggestions_view(
 
 
 def request_suggestions_refresh(
-    db: Session, *, viewer_id: UUID, request: SuggestionRefreshIn, library_id: UUID | None = None
+    db: Session, *, viewer_id: UUID, library_id: UUID | None = None
 ) -> SuggestionStateOut:
     """Authorize and admit on a fresh session; queued/dead work always keeps its budget."""
 
@@ -161,13 +158,7 @@ def request_suggestions_refresh(
         state, publication, observed_at = _read(db, viewer_id=viewer_id, library_id=library_id)
         if state.capability == "NotApplicable" or state.work is not None:
             return state
-        if isinstance(request, SuggestionExplicitRefreshIn):
-            matches = request.observed_publication_id == (
-                None if publication is None else publication.id
-            )
-            if not matches:
-                return state
-        elif publication is not None and (
+        if publication is not None and (
             publication.ranked_revision == state.input_revision
             and observed_at < publication.ranked_at + _MAX_AGE
         ):

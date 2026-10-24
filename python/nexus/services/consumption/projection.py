@@ -22,9 +22,30 @@ from nexus.schemas import consumption as wire
 from nexus.schemas.media_summary import ConsumptionState, MediaDurationOut
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.consumption import reader_cursor
-from nexus.services.playback_source import derive_playback_source
+from nexus.services.playback_source import episode_playback_source
+from nexus.services.reading_time import reading_time_rows_sql
 
 FINISHED_PROGRESSION = 0.95
+
+
+def remaining_time_rows_sql() -> str:
+    """Raw seconds at the stored physical position for library/catalog ordering.
+
+    Text uses its reader owner's estimate; episode duration prefers a stored
+    listening duration. Nonpositive/absent durations yield no sortable value.
+    """
+    duration = _duration_sql("pls", "pe")
+    return f"""
+        SELECT media_id, remaining_seconds FROM ({reading_time_rows_sql()}) reading
+        UNION ALL
+        SELECT pe.media_id,
+               CASE WHEN {duration} > 0
+                    THEN GREATEST(0, {duration} - COALESCE(pls.position_ms, 0))::float8 / 1000
+                    ELSE NULL::float8 END AS remaining_seconds
+        FROM podcast_episodes pe
+        LEFT JOIN podcast_listening_states pls
+          ON pls.media_id = pe.media_id AND pls.user_id = :viewer_id
+    """
 
 
 def _duration_sql(listening_alias: str, episode_alias: str) -> str:
@@ -193,14 +214,14 @@ def player_descriptors(
                         THEN 0 ELSE COALESCE(pls.position_ms, 0) END AS position_ms,
                    co.revision AS override_revision,
                    COALESCE(pls.playback_speed, ps.default_playback_speed, 1.0) AS rate,
-                   ps.podcast_id, ps.pause_shortening_mode
+                   pe.podcast_id, ps.pause_shortening_mode
             FROM media m
             JOIN podcast_episodes pe ON pe.media_id = m.id
             LEFT JOIN podcasts p ON p.id = pe.podcast_id
             LEFT JOIN podcast_listening_states pls
               ON pls.user_id = :viewer_id AND pls.media_id = m.id
             LEFT JOIN consumption_overrides co ON co.user_id = :viewer_id AND co.media_id = m.id
-            LEFT JOIN podcast_subscriptions ps
+            LEFT JOIN podcast_playback_settings ps
               ON ps.user_id = :viewer_id AND ps.podcast_id = pe.podcast_id
             WHERE m.id = ANY(:media_ids) AND m.kind = 'podcast_episode'
         """),
@@ -227,14 +248,15 @@ def player_descriptors(
             )
     descriptors: dict[UUID, wire.PlayerDescriptor] = {}
     for row in rows:
-        source = derive_playback_source(
+        source = episode_playback_source(
             kind="podcast_episode",
+            has_episode=True,
             external_playback_url=row.external_playback_url,
             canonical_source_url=row.canonical_source_url,
             provider=row.provider,
             provider_id=row.provider_id,
         )
-        if source is None or not source.stream_url:
+        if source is None:
             continue
         subtitle = row.podcast_title[:300] if row.podcast_title is not None else None
         descriptors[row.media_id] = wire.PlayerDescriptor(

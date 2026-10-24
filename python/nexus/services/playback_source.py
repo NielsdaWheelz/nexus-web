@@ -8,6 +8,32 @@ from nexus.services.youtube_identity import (
 )
 
 
+def episode_playback_source(
+    *,
+    kind: str,
+    has_episode: bool,
+    external_playback_url: str | None,
+    canonical_source_url: str | None,
+    provider: str | None,
+    provider_id: str | None,
+) -> PlaybackSourceOut | None:
+    """Descriptor eligibility shared with summaries, independent of transcript readiness.
+
+    The episode record and a nonempty application source are required; remote delivery
+    remains the player's concern. Video/raw-url menu capabilities use their own contract.
+    """
+    if kind != MediaKind.podcast_episode.value or not has_episode:
+        return None
+    source = derive_playback_source(
+        kind=kind,
+        external_playback_url=external_playback_url,
+        canonical_source_url=canonical_source_url,
+        provider=provider,
+        provider_id=provider_id,
+    )
+    return source if source is not None and source.stream_url else None
+
+
 def derive_playback_source(
     *,
     kind: str,

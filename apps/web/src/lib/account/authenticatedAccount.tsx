@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -27,6 +28,7 @@ export function AuthenticatedAccountProvider({
   const [calendarTimeZone, setStoredCalendarTimeZone] = useState(
     account.calendarTimeZone,
   );
+  useEffect(() => setStoredCalendarTimeZone(account.calendarTimeZone), [account.calendarTimeZone]);
   const setCalendarTimeZone = useCallback((timeZone: string) => {
     if (timeZone.length === 0) {
       throw new TypeError("calendar time zone must not be empty");
@@ -56,4 +58,8 @@ export function useAuthenticatedAccount(): AuthenticatedAccountContextValue {
     );
   }
   return account;
+}
+
+export function useOptionalAuthenticatedAccount(): AuthenticatedAccountContextValue | null {
+  return useContext(AuthenticatedAccountContext);
 }

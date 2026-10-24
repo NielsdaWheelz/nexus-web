@@ -31,7 +31,6 @@ export type NoteAuthority = "current" | "local" | null;
 export type OutlineLink = {
   noteAuthority?: NoteAuthority;
   link_id: string;
-  has_link_note: boolean;
   target: OutlineNode;
   connection: Schema<"ConnectionOut"> | null;
 };
@@ -49,7 +48,6 @@ export function projectOutline(value: WireOutline): OutlineData {
     complete: value.next_cursor === null,
     links: value.items.map(({ connection, content }) => ({
       link_id: connection.edge_id,
-      has_link_note: connection.link_note !== null,
       target: { item: connection.other, content },
       connection,
     })),
@@ -59,10 +57,10 @@ export type Unlink = Schema<"Unlink">;
 /** A pending predecessor is an exact queued insertion; its version is supplied
  * only by that write's acknowledgement before a dependent request is sealed. */
 export interface PendingPositionProof {
-  requestedEdgeId: string;
-  originSourceRef: string;
-  sourceRef: string;
-  acknowledged: { edgeId: string; linksVersion: number; serial: number } | null;
+  write: import("./writes").WriteHandle;
+  requested_link_id: string;
+  source_ref: string;
+  version: number;
 }
 export type OutlinePosition =
   | Position
@@ -139,8 +137,6 @@ export interface Row {
 }
 export interface View {
   readonly folds: ReadonlyMap<string, boolean>;
-  readonly zoom: readonly string[];
-  readonly focused: string | null;
 }
 export type ClipItem =
   | {
@@ -164,7 +160,6 @@ export const structuralRow = (row: Row) =>
 export const arrangementRow = (row: Row) =>
   row.terminal === null &&
   endpointForResource(row.endpoint)?.kind === "resource" &&
-  !row.link.has_link_note &&
   (row.link.connection === null || row.link.connection.origin === "user") &&
   endpointForResource(row.link.target.item.ref)?.kind === "resource";
 /** Display identity is separate from the edge-only relationship path. */
@@ -173,14 +168,14 @@ export const resourceOccurrenceKey = (prefix: string, ref: string) =>
 export const occurrenceKey = (prefix: string, path: readonly string[]) =>
   path.length ? `${prefix}/${path.join("/")}` : prefix;
 const uuid = () => crypto.randomUUID();
-/** The zoomed endpoint, or null when the zoom path no longer resolves. */
-export function zoomEndpoint(
+/** Resolve an exact edge path; outdent needs the grandparent endpoint. */
+export function pathEndpoint(
   graph: Graph,
   root: string,
-  zoom: readonly string[],
+  path: readonly string[],
 ): string | null {
   let ref: string | null = root;
-  for (const id of zoom) {
+  for (const id of path) {
     ref =
       graph.get(ref)?.links.find((l) => l.link_id === id)?.target.item.ref ??
       null;
@@ -249,10 +244,7 @@ export function placesOf(graph: Graph, node: OutlineNode): number {
           connection.origin === "highlight_note" ||
           connection.origin === "citation"
         );
-      return (
-        connection.source.ref === node.item.ref &&
-        connection.origin === "link_note"
-      );
+      return false;
     }).length ?? 0;
   return Math.max(node.content.places, places);
 }
@@ -378,7 +370,6 @@ export function applyEdit(
       if (!target) throw new Error(`Outline target ${ref} is unknown`);
       const link = {
         link_id: edit.link_id,
-        has_link_note: false,
         target,
         connection: null,
       };
@@ -510,7 +501,7 @@ export function outdentEdits(
   row: Row,
 ): Edit[] | null {
   if (!arrangementRow(row) || row.path.length < 2) return null;
-  const destination = zoomEndpoint(graph, root, row.path.slice(0, -2));
+  const destination = pathEndpoint(graph, root, row.path.slice(0, -2));
   if (destination === null || destination === row.link.target.item.ref)
     return null;
   const outline = graph.get(destination);
@@ -616,50 +607,6 @@ export function joinEdits(
       },
     ],
   };
-}
-/** Move one admitted fact; append nesting requires no destination tail read. */
-export function dropEdits(
-  graph: Graph,
-  row: Row,
-  target: Row,
-  placement: "before" | "after" | "inside",
-): Edit[] | null {
-  if (row.key === target.key || !arrangementRow(row)) return null;
-  const destination =
-    placement === "inside" ? target.link.target.item.ref : target.endpoint;
-  if (
-    endpointForResource(destination)?.kind !== "resource" ||
-    destination === row.link.target.item.ref
-  )
-    return null;
-  const outline = graph.get(destination);
-  if (placement !== "inside" && !outline) return null;
-  const links =
-    outline?.links.filter((link) => link.link_id !== row.link.link_id) ?? [];
-  const index = links.findIndex((link) => link.link_id === target.link.link_id);
-  if (placement !== "inside" && index < 0) return null;
-  const after =
-    placement === "after"
-      ? target.link.link_id
-      : (links[index - 1]?.link_id ?? null);
-  if (destination === row.endpoint && placement !== "inside")
-    return [
-      {
-        kind: "move",
-        endpoint: row.endpoint,
-        link_id: row.link.link_id,
-        after,
-      },
-    ];
-  return [
-    relink(
-      row,
-      destination,
-      placement === "inside"
-        ? null
-        : { after, expected_links_version: outline!.links_version },
-    ),
-  ];
 }
 // the clipboard: own json (version 3), html lists, indented "- " text, a copied
 // resource reference.

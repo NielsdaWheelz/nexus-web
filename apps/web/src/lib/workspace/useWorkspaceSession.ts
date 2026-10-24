@@ -6,6 +6,13 @@
 // a success acknowledges exactly the state sent. Transport failures keep a
 // Retry notice up; a stale build (426) keeps the update notice up and the
 // workspace with it; anything else is a defect for the workspace boundary.
+// Hosted HTTP saves own workspace durability (Write). In the installed app,
+// useDeviceWorkspaceSave owns that durability (Write); this best-effort cloud
+// mirror reports Status and never claims that the current local save completed.
+import { installedApp, remoteReady } from "@/lib/native/admission";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
+import { useDeviceWorkspace } from "@/lib/native/workspaceContext";
+import { useDeviceWorkspaceSave } from "@/lib/native/workspaceSave";
 import { useEffect, useState } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import {
@@ -20,15 +27,12 @@ import type { WorkspaceStore } from "@/lib/workspace/store";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
 const NOTICE = "workspace-session-save";
-const TITLE = "workspace changes not confirmed";
-const TRANSPORT = [
-  "E_NETWORK",
-  "E_UPSTREAM",
-  "E_UPSTREAM_TIMEOUT",
-  "E_AUTH_UNAVAILABLE",
-];
+const TITLE = installedApp ? "workspace cloud copy not confirmed" : "workspace changes not confirmed";
 
 export function useWorkspaceSession(store: WorkspaceStore): void {
+  const local = useDeviceWorkspace();
+  useDeviceWorkspaceSave(store, local);
+  const generation = useRemoteGeneration();
   const [notice, setNotice] = useState<{
     content: FeedbackContent;
     stale: boolean;
@@ -36,11 +40,12 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     retry: () => void;
   } | null>(null);
   useWorkspaceCondition(NOTICE, notice ? {
-    priority: "Write",
+    needsAttention: true,
+    priority: installedApp ? "Status" : "Write",
     content: notice.content,
     announcement: "Polite",
-    actions: [{
-      label: notice.stale ? "reload app" : "retry save",
+    actions: notice.stale && installedApp ? undefined : [{
+      label: notice.stale ? "reload app" : installedApp ? "retry cloud copy" : "retry save",
       busy: notice.busy,
       onClick: notice.stale ? () => window.location.reload() : notice.retry,
     }],
@@ -59,7 +64,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
     let live = true;
     const save = (keepalive = false): void => {
       clearTimeout(timer);
-      if (!live) return;
+      if (!live || !remoteReady()) return;
       const { state } = store.value();
       if (sending) {
         if (state !== sending) again = keepalive || again === true;
@@ -80,14 +85,13 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
         })
         .catch((error: unknown) => {
           if (!live || handleUnauthenticatedApiError(error)) return;
-          // every save is refused until a reload; a background save never
-          // takes the workspace down with text a leave-page prompt kept
-          const update =
-            isStaleBuild(error) && apiTransportFeedback(error, TITLE);
-          if (update) {
-            return setNotice({ content: update, stale: true, busy: false, retry: save });
+          // Common transport/admission failures retain this mirror and its
+          // independent native local save owner.
+          const transport = isApiError(error) && apiTransportFeedback(error, TITLE);
+          if (transport) {
+            return setNotice({ content: transport, stale: isStaleBuild(error), busy: false, retry: save });
           }
-          if (!isApiError(error) || !TRANSPORT.includes(error.code)) {
+          if (!isApiError(error) || error.code !== "E_AUTH_UNAVAILABLE") {
             live = false;
             return setDefect({ error });
           }
@@ -95,7 +99,9 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
             content: {
               tone: "Warning",
               title: TITLE,
-              message: "your changes remain in this tab. retry saves the latest workspace.",
+              message: installedApp
+                ? "retry updates the cloud copy. saving on this device is reported separately."
+                : "your changes remain in this tab. retry saves the latest workspace.",
               requestId: error.requestId,
             },
             stale: false,
@@ -134,6 +140,6 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [store]);
+  }, [store, generation]);
   if (defect) throw defect.error;
 }

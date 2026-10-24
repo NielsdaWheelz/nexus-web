@@ -141,6 +141,36 @@ USER nexus:nexus
 CMD ["python", "-m", "apps.worker.main"]
 
 
+# Checkout workers install dependencies only; all application source and identity
+# are explicit read-only binds. Keep the immutable release runtime above intact.
+FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS worker-checkout
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libpq5 \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" ge 20250419~deb12u2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 nexus \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin nexus \
+    && install --directory --owner=nexus --group=nexus --mode=0700 /var/lib/nexus-codex \
+    && install --directory --owner=nexus --group=nexus --mode=0700 /tmp/codex-daemon-10001 \
+    && mkdir /workspace
+
+WORKDIR /app
+
+COPY docker/codex-requirements.toml /etc/codex/requirements.toml
+COPY --from=worker-python-dependencies /app/.venv /app/.venv
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules
+
+ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app"
+ENV NODE_ENV="production" NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"
+
+USER nexus:nexus
+
+CMD ["python", "-m", "apps.worker.main"]
+
+
 FROM backend-runtime AS worker-runtime
 
 RUN install --directory --owner=nexus --group=nexus --mode=0700 /var/lib/nexus-codex \

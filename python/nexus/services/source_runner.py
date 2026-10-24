@@ -5,15 +5,18 @@ snapshot of it, acquires the source through ``source_adapters`` with no transact
 open, then settles: success mirrors the media's outcome onto the attempt and requests
 the reindex and metadata enrichment; a typed refusal is a terminal failure, published at
 once (I3); any other error re-raises to the queue (3 tries, then dead and the repair
-offer). A run that finds its source is another media's moves the accept's destinations
-to the winner and claims the loser for teardown.
+offer). A run that finds its source is another media's transfers current holdings and
+placements, preserving entry identity/position and earliest time, then claims
+the loser for teardown. Winner removal markers remain; loser suppression carries
+unless the viewer independently reads the winner. Publication takes ordered
+media/library locks and never a viewer lock or old destination payload.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, text
@@ -30,7 +33,7 @@ from nexus.schemas.import_history import (
     SourceSucceeded,
     assume_safe_failure_code,
 )
-from nexus.services import libraries, library_entries
+from nexus.services import library_entries
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.contributor_writes import MediaTarget
@@ -440,25 +443,19 @@ def _fail(db: Session, attempt: MediaSourceAttempt, code: str, message: str) -> 
 def _supersede(
     db: Session, attempt: MediaSourceAttempt, *, loser_id: UUID, winner_id: UUID
 ) -> None:
-    """The accept's destinations the importer still admins move to the winner (one whose
-    right lapsed is skipped, not refused: no retry restores it), and the loser is claimed for
-    teardown. Media rows lock ascending, then libraries: two thread ingests that find
-    each other depend on that order."""
+    """Transfer current references, preserving positions, dates and viewer suppression.
+
+    Publication holds ordered media locks; it never acquires a viewer lock. An
+    admission payload records provenance and is never a future filing command.
+    """
     library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
-    if (owner := attempt.created_by_user_id) is not None:
-        chosen = cast(list[str], (attempt.source_payload or {}).get("library_ids", []))
-        destinations = libraries.writable_destinations(db, owner, [UUID(i) for i in chosen])
-        libraries.lock_library_rows_in_order(
-            db,
-            [
-                *library_entries.library_ids_for_media(db, loser_id),
-                libraries.default_library_id(db, owner),
-                *destinations,
-            ],
-        )
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, owner, winner_id, destinations
-        )
+    kinds = db.scalars(
+        text("SELECT kind FROM media WHERE id=ANY(:ids)"), {"ids": [loser_id, winner_id]}
+    ).all()
+    assert len(kinds) == 2 and all(kind in ("pdf", "epub", "web_article") for kind in kinds)
+    library_entries.transfer_current_media_references(
+        db, loser_media_id=loser_id, winner_media_id=winner_id
+    )
     delete_duplicate_document_media(db, loser_media_id=loser_id, winner_media_id=winner_id)
 
 

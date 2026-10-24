@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from nexus.config import get_settings
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiError, InvalidRequestError
 from nexus.schemas.browse import (
     EpisodePreview,
     EpisodePreviewFacts,
@@ -16,8 +16,7 @@ from nexus.schemas.browse import (
     PodcastFacts,
     PodcastPreview,
     PodcastPreviewEpisode,
-    PodcastPreviewEpisodePage,
-    PodcastPreviewFacts,
+    PodcastPreviewEpisodes,
     PreviewResolution,
 )
 from nexus.services.browse.targets import (
@@ -37,7 +36,6 @@ from nexus.services.browse.targets import (
 from nexus.services.podcasts.provider import PodcastIndexClient, get_podcast_index_client
 from nexus.services.podcasts.shows import validate_and_normalize_feed_url
 from nexus.services.sealed_handles import DiscoveryTargetHandle
-from nexus.services.search.query import decode_cursor, encode_cursor
 
 # What a malformed provider item raises (a non-public feed url is an InvalidRequestError).
 _MALFORMED = (KeyError, TypeError, ValueError, AttributeError, InvalidRequestError)
@@ -91,6 +89,12 @@ def _episode(item: dict[str, Any], podcast: ResolvedPodcast) -> ResolvedEpisode 
         raise ValueError("blank episode title")
     stamp = item.get("datePublished")
     duration = item.get("duration")
+    try:
+        published_at = (
+            datetime.fromtimestamp(stamp, UTC) if type(stamp) is int and stamp > 0 else None
+        )
+    except (OverflowError, OSError) as exc:
+        raise ValueError("invalid episode publication date") from exc
     return ResolvedEpisode(
         podcast_ref=podcast.podcast_ref,
         episode_ref=_ref(item["id"]),
@@ -98,9 +102,7 @@ def _episode(item: dict[str, Any], podcast: ResolvedPodcast) -> ResolvedEpisode 
         description=_text(item.get("description")),
         audio_url=audio,
         guid=_text(item.get("guid")),
-        published_at=datetime.fromtimestamp(stamp, UTC)
-        if type(stamp) is int and stamp > 0
-        else None,
+        published_at=published_at,
         duration_seconds=duration if type(duration) is int and duration > 0 else None,
         podcast=podcast,
     )
@@ -137,8 +139,13 @@ def search(q: str, *, limit: int) -> list[PodcastCandidate]:
         target = seal_target(PodcastIndexPodcastTarget(podcastRef=podcast.podcast_ref))
         items.append(
             PodcastCandidate(
-                resolution=PreviewResolution(target=target),
-                kind_facts=PodcastFacts(podcast_ref=podcast.podcast_ref),
+                target=target,
+                resolution=PreviewResolution(),
+                kind_facts=PodcastFacts(
+                    podcast_ref=podcast.podcast_ref,
+                    feed_href=podcast.feed_url,
+                    website_href=podcast.website_url,
+                ),
                 **_shown(podcast),
             )
         )
@@ -174,57 +181,38 @@ def _key(episode: ResolvedEpisode) -> tuple[int, str]:
 
 
 def preview_podcast(
-    target: PodcastIndexPodcastTarget,
-    handle: DiscoveryTargetHandle,
-    *,
-    limit: int,
-    cursor: str | None,
+    target: PodcastIndexPodcastTarget, handle: DiscoveryTargetHandle
 ) -> PodcastPreview:
-    """The podcast with one page of its episodes, newest first, keyset-paged by the cursor
-    ``{target, published, episode}``; a malformed episode is skipped."""
-    after = None
-    if cursor is not None:
-        position = decode_cursor(cursor)
-        published = position.get("published")
-        episode = position.get("episode")
-        if (
-            position.get("target") != handle
-            or type(published) is not int
-            or type(episode) is not str
-        ):
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
-        after = (published, episode)
+    """One read-only directory snapshot of at most 1,000 raw episodes, newest first.
+
+    Podcast Index documents no history cursor. Eligibility and malformed-row handling
+    apply to the entire returned window; its count does not establish archive size.
+    """
     podcast = resolve_podcast(target.podcast_ref)
-    before = None if after is None else after[0] + 1
-    params: dict[str, Any] = {"id": podcast.podcast_ref, "max": 100}
-    if before is not None:
-        params["before"] = before
-    page = _call(lambda client: client.get("/episodes/byfeedid", params), lookup=True)
+    page = _call(
+        lambda client: client.get("/episodes/byfeedid", {"id": podcast.podcast_ref, "max": 1000}),
+        lookup=True,
+    )
     episodes = []
     for item in page.get("items") or []:
         try:
             episode = _episode(item, podcast)
         except _MALFORMED:
             continue
-        if episode is not None and (after is None or _key(episode) < after):
+        if episode is not None:
             episodes.append(episode)
-    episodes = sorted(episodes, key=_key, reverse=True)[: limit + 1]
-    last = _key(episodes[limit - 1]) if len(episodes) > limit else None
-    position = (
-        None if last is None else {"target": handle, "published": last[0], "episode": last[1]}
-    )
     return PodcastPreview(
         target=handle,
         source_href=podcast.website_url or podcast.feed_url,
-        resolution=PreviewResolution(target=handle),
-        kind_facts=PodcastPreviewFacts(
+        resolution=PreviewResolution(),
+        kind_facts=PodcastFacts(
             podcast_ref=podcast.podcast_ref,
             feed_href=podcast.feed_url,
             website_href=podcast.website_url,
         ),
-        episodes=PodcastPreviewEpisodePage(
-            items=[_episode_item(episode) for episode in episodes[:limit]],
-            next_cursor=None if position is None else encode_cursor(position),
+        episodes=PodcastPreviewEpisodes(
+            items=[_episode_item(episode) for episode in sorted(episodes, key=_key, reverse=True)],
+            source_limit=1000,
         ),
         **_shown(podcast),
     )
@@ -263,6 +251,6 @@ def preview_episode(
     return EpisodePreview(
         target=handle,
         source_href=episode.audio_url,
-        resolution=PreviewResolution(target=handle),
+        resolution=PreviewResolution(),
         **_episode_shown(episode),
     )

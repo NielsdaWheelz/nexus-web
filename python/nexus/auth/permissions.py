@@ -11,7 +11,7 @@ included. ``library_entries.library_media_ids_cte_sql`` layers "My Library" on t
 Highlights: a consistent typed anchor on readable media whose author is the viewer, shares a
 non-system library holding the media with the viewer, or granted it exactly. A system library
 (the Oracle corpus) reaches media, never fellow members' highlights.
-Podcasts: a subscription or a library entry. Contributors: a visible credit or a viewer-owned
+Podcasts: an active member-library rule or a readable episode. Contributors: a visible credit or a viewer-owned
 graph edge (pickers: credits only). Conversations: the owner only.
 """
 
@@ -146,27 +146,23 @@ def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) ->
 
 
 def visible_podcast_ids_cte_sql() -> str:
-    return """
-        SELECT ps.podcast_id
-        FROM podcast_subscriptions ps
-        WHERE ps.user_id = :viewer_id
-
+    """Active rules or readable retained episodes expose their canonical show."""
+    return f"""
+        SELECT ps.podcast_id FROM library_podcast_subscriptions ps
+        JOIN libraries l ON l.id=ps.library_id AND l.system_key IS NULL
+        JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
         UNION
-
-        SELECT le.podcast_id
-        FROM library_entries le
-        JOIN memberships m ON m.library_id = le.library_id
-                          AND m.user_id = :viewer_id
-        WHERE le.podcast_id IS NOT NULL
+        SELECT pe.podcast_id FROM podcast_episodes pe
+        WHERE pe.media_id IN ({visible_media_ids_cte_sql()})
     """
 
 
 def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str:
     return f"""EXISTS (
-        SELECT 1
-        FROM podcast_subscriptions ps
-        WHERE ps.podcast_id = {podcast_id_expr}
-          AND ps.user_id = :viewer_id
+        SELECT 1 FROM library_podcast_subscriptions ps
+        JOIN libraries l ON l.id=ps.library_id AND l.system_key IS NULL
+        JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
+        WHERE ps.podcast_id={podcast_id_expr}
     )"""
 
 

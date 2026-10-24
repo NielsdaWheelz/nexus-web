@@ -4,19 +4,18 @@
 // title_asc, title_desc; absent = custom), a local text filter, drag to move one row (custom
 // order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
 
-import { Play } from "lucide-react";
-import { useCallback, useId, useRef } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
+import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
@@ -26,23 +25,33 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { OrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
+import { catalogLectern } from "@/lib/catalog/selectors";
+import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
+import type { ServerValue } from "@/lib/api/serverState";
+import type { Lectern } from "@/lib/lectern/api";
+import { remoteReady } from "@/lib/native/admission";
+import { renderOrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
   lecternItems,
   useLectern,
   useLecternCommands,
+  useLecternConsumptionRevision,
   useLecternOrder,
 } from "@/lib/lectern/lectern";
-import type { LecternItem } from "@/lib/lectern/api";
+import { filterFields, ordered, selectLectern } from "@/lib/lectern/select";
+import { PlaybackSourceContext, type PlaybackSource } from "@/lib/actions/playbackSource";
+import type { QueueSource } from "@/lib/player/queue";
+import { ApiError } from "@/lib/api/client";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
+import { paneFilterText } from "@/lib/panes/paneFilterText";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -51,7 +60,6 @@ import {
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
@@ -65,79 +73,65 @@ const SORTS = [
   { value: "title_desc", label: "Title Z–A" },
 ];
 
-// Code-unit order, never localeCompare: collation depends on the runtime's ICU data.
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const titleKey = (item: LecternItem) =>
-  item.media_summary.title.trim().normalize("NFC").toLowerCase();
-
-/** The rendered order; the media id breaks remaining ties. */
-function ordered(
-  items: readonly LecternItem[],
-  sort: string,
-): readonly LecternItem[] {
-  if (sort === "") return items;
-  const sign = sort.endsWith("_asc") ? 1 : -1;
-  const id = (a: LecternItem, b: LecternItem) =>
-    compare(a.media_summary.media_id, b.media_summary.media_id);
-  return [...items].sort((a, b) =>
-    sort.startsWith("added")
-      ? sign * (Date.parse(a.added_at) - Date.parse(b.added_at)) || id(a, b)
-      : sign * compare(titleKey(a), titleKey(b)) ||
-        sign * compare(a.media_summary.title, b.media_summary.title) ||
-        id(a, b),
-  );
-}
-
-/** Title, contributors and, for an episode, its show. */
-function filterFields(item: LecternItem): string[] {
-  const fields = [...mediaListFilterFields(item.media_summary)];
-  const { activation } = item;
-  if (
-    activation.kind === "FooterAudio" &&
-    activation.descriptor.subtitle !== null
-  )
-    fields.push(activation.descriptor.subtitle);
-  return fields;
-}
-
-function playbackVerb(item: LecternItem): "Play" | "Resume" | "Replay" {
-  const { state } = item.media_summary.consumption;
-  return state === "InProgress"
-    ? "Resume"
-    : state === "Finished"
-      ? "Replay"
-      : "Play";
-}
-
 /** Modeled failures become notices; anything else is a defect for the boundary. */
 function failure(error: unknown, title: string): FeedbackContent {
   const content =
     isApiError(error) && !isSameSystemApiDefect(error)
-      ? apiTransportFeedback(error, title)
+      ? catalogErrorFeedback(error) ?? apiTransportFeedback(error, title)
       : null;
   if (content === null) throw error;
   return content;
 }
 
 export default function LecternPaneBody() {
-  const lectern = useLectern();
+  const live = useLectern();
+  const liveRevision = useLecternConsumptionRevision();
+  const catalog = useCatalogState();
+  const saved = catalog.data === null ? null : catalogLectern(catalog.data);
+  // Relevance is the saved selection itself; a local natural end hides its row from `saved`.
+  const members = useMemo(() => new Set(catalog.raw?.value.lectern.items.map(item => item.media_summary.media_id) ?? []), [catalog.raw]);
+  const group = useLiveGroup("lectern");
+  usePromoteLiveGroup(group, live.status === "ready" && live.source.kind === "live" && live.error === null && liveRevision !== null ? [liveRevision] : null, members);
+  // The shared lectern read has its own invalidation; a dated group rereads it on receipts.
+  const { refetch: refetchLectern } = live;
+  const datedStale = useRef(group.stale);
+  useEffect(() => {
+    if (group.live || datedStale.current === group.stale) return;
+    datedStale.current = group.stale;
+    refetchLectern();
+  }, [group.live, group.stale, refetchLectern]);
+  const showingSaved = saved !== null && catalog.data !== null && !group.live;
+  const source: ReadSource = !showingSaved || catalog.data === null ? LIVE_SOURCE : {
+    kind: "catalog", snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at,
+  };
+  const lectern: ServerValue<Lectern> = showingSaved ? {
+    status: "ready", data: saved, source, generation: 0, error: null, refreshing: false, refetch: live.refetch,
+  } : live.status === "ready" || saved !== null || remoteReady() || catalog.loading ? live : { status: "failed", retrying: false, refetch: live.refetch,
+    error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") };
+  const liveShown = lectern.status === "ready" && source.kind === "live";
   const { ensure } = useLecternCommands();
   const order = useLecternOrder();
   const runtime = usePaneRuntime();
-  const { playAudio } = usePlayerCommands();
   const isActive = usePaneIsActive();
-  const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
+  const suggestions = useSuggestions({ kind: "Lectern" }, isActive && liveShown);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
     const outcome = await refreshSuggestionFeed(signal);
-    return outcome === "Requested" ? { kind: "Complete", announcement: "refresh requested" } : { kind: "Failed",
-      announcement: outcome === "Repair" ? "suggestions need repair." : "couldn’t request suggestions." };
+    switch (outcome) {
+      case "Refreshed": return { kind: "Complete", announcement: "suggestions refreshed." };
+      case "Finding": return { kind: "Complete", announcement: "finding suggestions…" };
+      case "Repair": return { kind: "Failed", announcement: "suggestions need repair." };
+      case "Failed": return { kind: "Failed", announcement: "couldn’t refresh suggestions." };
+      // justify-defect: the lectern has no authority or applicability gate.
+      case "NotApplicable": throw new Error("lectern suggestions cannot be inapplicable");
+      default: return assertNever(outcome);
+    }
   }, [refreshSuggestionFeed]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();
   const section = useRef<HTMLElement>(null);
   const summaries = useMediaSummaries(
-    lecternItems(lectern).map((item) => item.media_summary),
+    lecternItems(lectern).map((item) => item.media_summary), source,
   );
   const items = lecternItems(lectern).flatMap((item) => {
     const summary = summaries.resolve(item.media_summary);
@@ -170,13 +164,26 @@ export default function LecternPaneBody() {
     },
   });
   const query = filterRows.query.trim();
-  const visible = sort === "" && query === ""
+  const visible = source.kind === "live" && sort === "" && query === ""
     ? projectOrder(shown, (item) => item.media_summary.media_id, order)
-    : shown.filter((item) => matchesPaneFilterQuery(query, filterFields(item)));
-  const ordering = presentOrder({ order,
+    : selectLectern(items, valid ? sort : "", query);
+  // A saved lectern is complete, so offline capture uses its effective rows, never rendered ones.
+  const capture: PlaybackSource = async selected => {
+    if (!valid || lectern.status !== "ready" ||
+        source.kind === "live" && (!remoteReady() || lectern.error !== null || lectern.refreshing || order.state.pending !== null))
+      throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current lectern before starting this queue");
+    const media_ids = visible
+      .filter(item => item.media_summary.media_kind === "podcast_episode" && item.media_summary.can_play)
+      .map(item => item.media_summary.media_id);
+    if (!media_ids.includes(selected)) throw new ApiError(409, "E_RESOURCE_CONFLICT", "no playable episodes in this view");
+    const sourceSort = (["added_asc", "added_desc", "title_asc", "title_desc"] as const).find(value => value === sort) ?? null;
+    const queueSource: QueueSource = { kind: "Lectern", label: "lectern", query: paneFilterText(query), sort: sourceSort };
+    return { media_ids, source: queueSource };
+  };
+  const ordering = source.kind === "live" ? presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
-    complete: lectern.status === "ready" });
-  const orderingStatus = ordering.state.kind === "Refreshing" ? null : orderStatus(ordering);
+    complete: lectern.status === "ready" }) : undefined;
+  const orderingStatus = orderStatus(ordering);
   const change = useCallback(
     (changes: ViewChanges) =>
       router.replace(viewHref("/lectern", params, changes), {
@@ -191,7 +198,7 @@ export default function LecternPaneBody() {
     ? { kind: "Pending" }
     : { kind: "Count", value: items.length, unit: "item" };
   usePaneChrome({
-    refresh: suggestions.state === null ? { kind: "Resolving" } : {
+    refresh: source.kind === "catalog" ? undefined : suggestions.state === null ? { kind: "Resolving" } : {
       kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
     },
     query: valid
@@ -219,12 +226,10 @@ export default function LecternPaneBody() {
               status={{
                 placement: "Inline",
                 id: queryStatusId,
-                visible: paneFilterRowsStatusVisible({
-                  status: filterRows.rowStatus,
-                  filtering: query !== "",
-                }),
+                visible: false,
                 content: (
                   <PaneFilterRowsStatus
+                    announceQueryChanges={lectern.status === "ready" && lectern.error === null}
                     id={queryStatusId}
                     status={filterRows.rowStatus}
                     query={filterRows.query}
@@ -249,7 +254,7 @@ export default function LecternPaneBody() {
 
   return (
     <PaneSurface
-      state={<OrderNotice order={order.state} active={isActive} paneId={runtime?.paneId ?? null} />}
+      state={liveShown ? renderOrderNotice({ order: order.state, active: isActive, paneId: runtime?.paneId ?? null }) : null}
     >
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (
@@ -269,6 +274,7 @@ export default function LecternPaneBody() {
           />
         )}
         {valid ? (
+          <PlaybackSourceContext.Provider value={capture}>
           <CollectionView
             returnScope="Lectern.Items"
             ariaLabel="On the lectern"
@@ -292,6 +298,7 @@ export default function LecternPaneBody() {
                   id: item.media_summary.media_id,
                 }),
                 selected: false,
+                knownDescriptor: source.kind === "live" && item.activation.kind === "FooterAudio" ? item.activation.descriptor : null,
               }),
             )}
             notice={
@@ -317,36 +324,14 @@ export default function LecternPaneBody() {
                   : "Nothing on the lectern yet."}
               </p>
             }
-            rowControls={Object.fromEntries(
-              visible.flatMap((item) => {
-                const { activation } = item;
-                if (activation.kind !== "FooterAudio") return [];
-                const verb = playbackVerb(item);
-                return [
-                  [
-                    item.media_summary.media_id,
-                    <Button
-                      key="play"
-                      variant="secondary"
-                      size="sm"
-                      className={styles.rowAction}
-                      aria-label={`${verb} ${item.media_summary.title}`}
-                      leadingIcon={<Play size={14} aria-hidden="true" />}
-                      onClick={() => playAudio(activation.descriptor)}
-                    >
-                      {verb}
-                    </Button>,
-                  ],
-                ];
-              }),
-            )}
             rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
             order={ordering}
           />
+          </PlaybackSourceContext.Provider>
         ) : null}
       </section>
-      <QuickReadsSection isActive={isActive} />
-      <SuggestionsSection
+      {liveShown ? <QuickReadsSection isActive={isActive} /> : null}
+      {liveShown ? <SuggestionsSection
         destination={{ kind: "Lectern" }}
         suggestions={suggestions}
         returnScope="Lectern.Suggestions"
@@ -361,7 +346,7 @@ export default function LecternPaneBody() {
             ? "Accepted"
             : "Retained"
         }
-      />
+      /> : <FeedbackNotice content={{ tone: "Neutral", title: "suggestions require a connection" }} announcement="None" />}
     </PaneSurface>
   );
 }

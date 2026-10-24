@@ -210,11 +210,16 @@ def project(
         case "nexus.resource.inspect":
             uri = _text(args, "uri")
             subject, target = _resource(uri, items)
-            subject = _text(value, "title") or subject
+            if value:
+                resource = contract.ResourceInspectSuccess.model_validate(value).resource
+                if isinstance(resource, contract.MediaInspectSuccess):
+                    subject = resource.title
+                    count = resource.total_sections
+                    outcome = f"{count} section{'s' if count != 1 else ''}"
+                else:
+                    subject = resource.name
             if uri and uri != subject:
                 detail.append(uri)
-            if (count := _integer(value, "total_sections")) is not None:
-                outcome = f"{count} section{'s' if count != 1 else ''}"
         case "nexus.relations.list":
             uri = _text(args, "uri")
             subject, target = _resource(uri, items)
@@ -242,7 +247,13 @@ def project(
                 library = _named(library_uri, items)
             if library:
                 detail.append(f"library: {library}")
-            if value.get("already_present") is True:
+            podcast = value.get("podcast")
+            if isinstance(podcast, dict):
+                operation = podcast.get("import")
+                if isinstance(operation, dict):
+                    state = _text(operation, "state")
+                    outcome = "import " + state if state else "import accepted"
+            elif value.get("already_present") is True:
                 outcome = "already present"
             elif value.get("already_present") is False:
                 outcome = "added"
@@ -282,7 +293,13 @@ def project(
             subject = _text(value, "title") or subject
             if uri and uri != subject:
                 detail.append(uri)
-            if value.get("already_present") is True:
+            podcast = value.get("podcast")
+            if isinstance(podcast, dict):
+                operation = podcast.get("import")
+                if isinstance(operation, dict):
+                    state = _text(operation, "state")
+                    outcome = "import " + state if state else "import accepted"
+            elif value.get("already_present") is True:
                 outcome = "already present"
             elif value.get("already_present") is False:
                 outcome = "added"

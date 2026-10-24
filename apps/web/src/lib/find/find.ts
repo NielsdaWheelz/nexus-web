@@ -2,6 +2,8 @@ import type { EmphasisSegment } from "@/lib/ui/emphasis";
 
 /** More matches than this is a refusal, not a result; pdf.js obeys it too. */
 export const FIND_LIMIT = 2_000;
+/** The shared pane query cap, measured in codepoints. */
+export const FIND_QUERY_LIMIT = 256;
 const CONTEXT_CODEPOINTS = 64;
 
 export interface FindOptions {
@@ -49,12 +51,14 @@ export type FindReveal =
 /**
  * Everything a surface supplies; useFind owns query state, debounce, staleness,
  * stepping and results.
- * - key names the searched snapshot: a new key re-prepares and re-runs the live query.
+ * - key names the searched body: a new key re-prepares and re-runs the live query.
+ *   A replacement source with the same key refreshes context without moving the reader.
  * - narrowLabel names the available scope before a query captures it.
  * - prepare runs at the first nonempty query. It freezes the reading anchor
  *   and scope, and returns the captured scope's label or null if unavailable.
  * - search returns rows in document order; `initial` is the first at or after the anchor.
  * - reveal distinguishes a shown row, cancelled movement and a refusal.
+ * - href projects a captured locator through its host; standalone sources return null.
  * - paint is declarative: the rows and active index after every change; ([], -1) clears.
  * - returnToOrigin exists only where find owns the way back (no reader owns movement).
  * Methods, not function properties: parameter bivariance lets any FindSource<L>
@@ -64,6 +68,12 @@ export interface FindSource<L> {
   readonly key: string;
   readonly label: string;
   readonly narrowLabel: string | null;
+  /** Source-owned copy when a captured scope no longer applies. */
+  readonly scopeChangeMessage?: string;
+  /** A navigation refresh invalidated the scope captured by prepare. */
+  readonly scopeInvalidated?: boolean;
+  /** Refreshed publisher label for the retained captured chapter, if any. */
+  readonly capturedScopeLabel?: string | null;
   prepare(): string | null;
   search(
     options: FindOptions,
@@ -71,6 +81,7 @@ export interface FindSource<L> {
     signal: AbortSignal,
   ): Promise<FindOutcome<L>> | FindOutcome<L>;
   reveal(at: L, signal: AbortSignal): Promise<FindReveal>;
+  href(at: L): string | null;
   paint(rows: readonly FindRow<L>[], active: number): void;
   returnToOrigin?(): void;
 }

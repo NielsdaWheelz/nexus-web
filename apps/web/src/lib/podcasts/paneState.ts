@@ -11,6 +11,7 @@ import {
   isSameSystemApiDefect,
   type ApiError,
 } from "@/lib/api/client";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
@@ -27,6 +28,8 @@ export function podcastErrorMessage(
   title: string,
 ): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const catalog = catalogErrorFeedback(error);
+  if (catalog !== null) return catalog;
   const transport = apiTransportFeedback(error, title);
   if (transport !== null) return transport;
   const content = (message: string): FeedbackContent => ({
@@ -42,6 +45,7 @@ export function podcastErrorMessage(
       return content("It isn’t available.");
     case "E_FORBIDDEN":
       return content("This account can’t do that.");
+    case "E_RESOURCE_CONFLICT":
     case "E_CONFLICT":
     case "E_SELECTION_CHANGED":
       return content("It changed meanwhile. Review it, then retry.");

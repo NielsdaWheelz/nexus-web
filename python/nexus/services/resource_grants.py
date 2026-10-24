@@ -85,21 +85,84 @@ def count_for_media(db: Session, media_id: UUID) -> int:
     return db.execute(count).scalar_one()
 
 
-def _notify(db: Session, user_ids: set[UUID]) -> None:
-    from nexus.services.dossier.engine import on_visibility_lost
+def annotation_visibility(
+    db: Session, *, user_ids: set[UUID], media_ids: set[UUID]
+) -> set[tuple[UUID, UUID]]:
+    """Capture readable annotation projections before/after a bounded permission change."""
+    from nexus.auth.permissions import highlight_readability_filter
 
-    for user_id in sorted(user_ids):
-        on_visibility_lost(db, user_id=user_id)
+    if not media_ids:
+        return set()
+    return {
+        (user_id, media_id)
+        for user_id in sorted(user_ids)
+        for media_id in db.scalars(
+            select(Highlight.anchor_media_id)
+            .where(Highlight.anchor_media_id.in_(media_ids), highlight_readability_filter(user_id))
+            .distinct()
+        )
+        if media_id is not None
+    }
+
+
+def invalidate_annotation_visibility(db: Session, projections: set[tuple[UUID, UUID]]) -> None:
+    from nexus.services.resource_items.versions import bump_version
+
+    for user_id, media_id in sorted(projections):
+        bump_version(db, viewer_id=user_id, ref=ResourceRef("media", media_id), lane="annotations")
+
+
+def library_annotation_visibility(
+    db: Session, library_id: UUID, *, media_ids: set[UUID] | None = None
+) -> set[tuple[UUID, UUID]]:
+    """Only media with highlights filed in this library can change annotation visibility."""
+    from sqlalchemy import text
+
+    users = set(
+        db.scalars(text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id})
+    )
+    media = (
+        media_ids
+        if media_ids is not None
+        else set(
+            db.scalars(
+                text("""
+        SELECT DISTINCT e.media_id FROM library_entries e
+        JOIN highlights h ON h.anchor_media_id=e.media_id
+        WHERE e.library_id=:id
+    """),
+                {"id": library_id},
+            )
+        )
+    )
+    return annotation_visibility(db, user_ids=users, media_ids=media)
 
 
 def _delete(db: Session, *where: ColumnElement[bool], also: frozenset[UUID] = frozenset()) -> int:
-    """Delete the matching grants and notify their creators and grantees, plus `also`."""
+    """Delete matching grants and invalidate their affected annotation projections."""
+    previous = list(db.scalars(select(ResourceGrant).where(*where)))
+    users = {
+        user
+        for row in previous
+        for user in (row.created_by_user_id, row.grantee_user_id)
+        if user is not None
+    } | set(also)
+    highlight_ids = [row.subject_id for row in previous if row.subject_scheme == "highlight"]
+    media = {row.subject_id for row in previous if row.subject_scheme == "media"}
+    media.update(
+        media_id
+        for media_id in db.scalars(
+            select(Highlight.anchor_media_id).where(Highlight.id.in_(highlight_ids))
+        )
+        if media_id is not None
+    )
+    projections = annotation_visibility(db, user_ids=users, media_ids=media)
     rows = db.execute(
         delete(ResourceGrant)
         .where(*where)
         .returning(ResourceGrant.created_by_user_id, ResourceGrant.grantee_user_id)
     ).all()
-    _notify(db, {user for row in rows for user in row if user is not None} | also)
+    invalidate_annotation_visibility(db, projections)
     return len(rows)
 
 
@@ -141,13 +204,17 @@ def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id
     moved = [row for row in survivors.values() if row.subject_id == loser_media_id]
     changed = [*duplicates, *moved]
     affected = {u for row in changed for u in (row.created_by_user_id, row.grantee_user_id) if u}
+    projections = annotation_visibility(
+        db, user_ids=affected, media_ids={loser_media_id, winner_media_id}
+    )
     for row in duplicates:
         db.delete(row)
     db.flush()  # the unique indexes must see the deletes before a survivor moves
     for row in moved:
         row.subject_id = winner_media_id
     db.flush()
-    _notify(db, affected)
+    projections.update(annotation_visibility(db, user_ids=affected, media_ids={winner_media_id}))
+    invalidate_annotation_visibility(db, projections)
     return len(changed)
 
 
@@ -213,8 +280,14 @@ def insert_grant(
     )
     db.add(grant)
     db.flush()
-    if grantee_id is not None:
-        _notify(db, {grantee_id})
+    invalidate_annotation_visibility(
+        db,
+        annotation_visibility(
+            db,
+            user_ids={creator_id} | ({grantee_id} if grantee_id is not None else set()),
+            media_ids={media_id},
+        ),
+    )
     return grant
 
 

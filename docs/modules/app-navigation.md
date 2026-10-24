@@ -12,7 +12,9 @@ Neither is a directory of every feature.
 destination controls share the [workspace opening contract](workspace.md#target-activation):
 shift-click/shift-enter create and focus a fresh adjacent pane; ordinary activation
 follows the matching pane or navigates its origin. global controls capture the active origin at
-activation; pane controls retain their bound origin. multiline editing keeps newline.
+activation; pane controls retain their bound origin. queue and metadata portal
+hosts bind the same adapter with explicit runtimes. recovery and delayed-result
+openings retain their own fresh gesture. multiline editing keeps newline.
 one-shot launcher urls use `nexus/urlIntent.ts`; workspace entry strips their
 control params from pane visits/history, while the hydrated receiver dispatches
 the incoming command once. restored data never dispatches commands.
@@ -52,11 +54,17 @@ Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
 owns the autofocused query; Choose Create, Choose Browse, Manage Tabs, Add, and
 recovery pages replace one another inside one opaque viewport-fixed dialog.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
-The Nexus control's native button-activation path — tap, click, keyboard, and
-assistive technology — remains unchanged and is the only way that control opens
-the task. Its primary-touch horizontal swipe is only an adjacent-pane
-accelerator over the workspace-store command; it adds no second Nexus ingress,
-navigation event, or full-screen-task gesture.
+the nexus control opens through native button activation: pointer click,
+keyboard and assistive technology. primary button-0 presses are captured so
+input blur restoring the player band cannot retarget their release. mouse, pen
+and touch share the 8 css px movement threshold: reaching it cancels activation,
+even if the pointer returns inside. only a primary-touch horizontal swipe can
+invoke the adjacent-pane workspace command; it adds no second nexus ingress,
+navigation event or full-screen-task gesture. admitted touch presses suppress
+compatibility mouse focus so it cannot move nexus between release and click.
+without a committed swipe, a cancelled touch preserves the existing input focus;
+an accepted click transfers focus into nexus, and a committed swipe uses normal
+destination focus. mouse/pen focus and keyboard activation remain native.
 When task activation occurs during an already-acquired physical contact,
 `SwitchboardTask` rejects the retargeted pointer click unless the same pointer
 began inside the already-active task. That task-local provenance check carries
@@ -129,6 +137,11 @@ content directly or a read-only Preview. They are never silently ingested.
 
 desktop uses a combobox with a one-column grid popup. each candidate cell
 contains its primary region and a native options or close control. the query
+automatically highlights the first eligible existing result, excluding create,
+import, ask and query actions. the focused input exposes the same candidate enter
+accepts in both modes; raw query/scope changes immediately invalidate old actions.
+reconciliation and scoped reveal use the shared collection owners; grid keyboard
+commands stay here. the query
 starts in editing mode; unmodified up/down with rows enters browsing using the
 existing clamped order. text, composition, caret/selection editing and query
 pointerdown restore editing without taking native keys. focus restoration and
@@ -180,8 +193,8 @@ the keyboard layout's `event.key` rather than a physical key position.
 - command/control+shift+left/right moves between visible panes without wrapping.
   it yields while typing or while an overlay owns interaction. the pane strip's
   plain arrow keys only move focus; modified keys reach the shortcut owner.
-- the desktop strip has its own fixed keys: arrows/home/end browse titles,
-  enter opens, down/context-menu/shift-f10 opens actions, delete/backspace closes
+- the desktop strip has its own fixed keys: left/right/home/end browse titles
+  and controls, enter/space activates, delete/backspace closes
   once per press, and shift-m maximizes or restores the named pane. tab leaves
   its single roving stop. these keys never become global letter bindings.
 
@@ -285,10 +298,15 @@ related link gestures still work. The rendered anchor always retains a real
 The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
 the Nexus trigger. workspace creation has no pane-count refusal. the launcher's
-own close/minimize/restore/reorder commands stay in place on root or manage tabs,
+own close/minimize/layout commands stay in place on root or manage tabs,
 including final close; primary open and recently closed restore dismiss it and
 focus the destination. external navigation still dismisses the task. the desktop Account
 menu retains its existing focus contract.
+
+manage-tabs shares direct control content with the desktop strip. there are no
+tab menus or move-earlier/later commands. mobile omits layout controls and
+reorder; its minimized title restores through ordinary activation. see
+[panes and tabs](panes-tabs.md) for the state table and focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the

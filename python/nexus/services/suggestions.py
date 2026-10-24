@@ -146,11 +146,7 @@ def _eligible_media_sql(surface: Surface) -> str:
     if surface == "lectern":
         return f"""COALESCE(e.read_state, 'Unread') <> 'Finished'
             AND m.id NOT IN ({lectern.membership_rows_sql()})"""
-    # An episode a named library holds through its filed show is held (I3).
-    return """m.id NOT IN (SELECT media_id FROM held WHERE media_id IS NOT NULL)
-        AND NOT EXISTS (
-            SELECT 1 FROM podcast_episodes pe JOIN held ON held.podcast_id = pe.podcast_id
-            WHERE pe.media_id = m.id)"""
+    return "m.id NOT IN (SELECT media_id FROM held WHERE media_id IS NOT NULL)"
 
 
 # A followed visible show `s` a named library does not file; needs `held`.

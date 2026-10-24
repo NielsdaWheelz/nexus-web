@@ -43,7 +43,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 
 | lane | kinds |
 |---|---|
-| interactive (in process) | `chat_run`, `dossier_build`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
+| interactive (in process) | `chat_run`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
 | background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `suggestion_shortlist_refresh`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `empty_resource_cleanup` (weekly, resumable in 100-resource batches), `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
 
 A handler is `fn(*, payload, context) -> JobResult` in its owner:
@@ -78,7 +78,7 @@ Hooks (by path in the registry):
 - `on_dead(db, job)` runs in the transaction that makes the job dead:
   `chat.worker.on_dead_letter` (ends the run `interrupted`, or `cancelled` when a
   stop was asked), `generation.ledger.on_dead_letter` (closes the open generation;
-  dossier, metadata, oracle, connection scans),
+  metadata, oracle, connection scans),
   `podcasts.sync.dead_letter` (settles the sync Failed),
   `source_publication.on_dead_letter` (a resource-limited or podcast
   transcript attempt publishes its terminal failure), and the four statements in
@@ -169,48 +169,36 @@ lane's own fresh SERIALIZABLE-retried transaction (`nexus.services.contributors`
 at the moment credits are written, not proposed to a queue and reconciled
 later.
 
-## Podcast Live Sync And Backfill
+## podcast live sync and history
 
-`podcast_sync_subscription_job` is the current-window live path (payload
-`{subscription_id}`, no dedupe key). The subscription row is its
-state: subscribe inserts it Pending with one job, and manual refresh and the due
-sweep flip only terminal rows to Pending and enqueue one job per flipped row
-under the row lock, joining live ones. The queue's single claim runs it; there is
-no epoch, generation or attempt fence. The handler claims the row, fetches
-provider/RSS facts outside any transaction, then commits ingest, auto-queue and
-the settled status in one transaction that locks the row while it is still
-Running (an overlapping stale run finds it settled and writes nothing). Provider
-and feed failures settle Failed with backoff; unexpected defects use ordinary
-queue retries, and exhausted retries invoke its `on_dead` hook (`sync.dead_letter`).
-Results: `{status, inserted, skipped}` or `{status: Failed, error_code}` or
-`{status: Stale}`.
+`podcast_sync_subscription_job` takes `{subscription_id}`. follow, manual refresh
+and the 15-minute due sweep admit one job under the subscription lock and retain
+its id in `sync_job_id`. previous observations survive admission. every worker
+effect first locks its exact queue execution, then matches that owning job under
+the subscription lock. fetches hold no transaction; ingest and terminal settlement
+commit together. settlement clears job ownership. stale executions and old jobs
+write nothing. provider/feed failures settle failed with backoff; unexpected
+failures use ordinary queue retries and the fenced terminal dead-letter reaction.
 
-`podcast_refresh_due_job` is a 15-minute background schedule that admits a
-bounded oldest-due set. it is not a maintenance-only operation.
+manual `POST /podcasts/refresh` answers 202 `{data:{requested_count}}` after
+admission, counting selected subscriptions including already-active checks.
+podcast scope requires following; library scope selects filed shows, with the
+default library selecting all followed shows. lifecycle streams observe active
+work; settled detail panes recheck their head while visible.
 
-manual `POST /podcasts/refresh` returns 202 `{data:{requestedCount}}` after
-admission commits. the count is selected subscriptions, including ones already
-syncing, rather than newly created jobs or completed syncs. Podcast scope
-requires the viewer's subscription; Library requires membership and selects its
-placed shows, with Default selecting all the viewer's subscriptions. an empty
-valid scope returns zero. there is no refresh-run ledger or per-request
-progress/completion protocol. the browser [refresh owner](panes-tabs.md#refresh)
-requests admission and reloads its own view; existing subscription lifecycle
-streams observe later sync/backfill settlement independently.
+`podcast_backfill_subscription` takes `{backfill_id, expected_step_no}`, deduped
+per step. each job fetches one page outside a transaction, then locks its queue
+execution, subscription and expected nonterminal traversal step. ingest, rejection
+evidence, cursor advancement and one successor available after one second commit
+together. rejected items do not stop later safe pages. cycles and unsafe links
+fail explicitly; fetch/parse failures use queue retries and dead-letter handling.
+completion describes the observed chain at the original cutoff; unresolved
+coverage errors are independent of traversal phase. identity-bound retry replaces
+only the captured terminal problem, retaining cutoff and warning until clean
+completion. the [podcast module](podcast.md) owns these domain contracts.
 
-`podcast_backfill_subscription` is a separate durable history traversal seeded
-once by Subscribe. Each payload carries `backfillId` and `expectedStepNo`
-(deduped per step). The handler fetches its page outside the DB transaction,
-then locks the backfill row at the expected, non-terminal step, commits one
-bounded batch, advances counters/cursor, and enqueues at most one successor in
-that transaction. Removed subscriptions and already-applied steps terminate
-without writes (`Stale`). A page that cannot be fetched or parsed raises, so
-exhausted retries reach its `on_dead` reaction (`jobs/dead_letters.podcast_backfill`); the idempotent Retry
-command replaces only a Failed backfill and starts one new step-zero chain.
-
-Live and backlog failure are independent. Both persist episode identities,
-metadata, chapters, playback URLs, and RSS transcript references only; neither
-downloads enclosures or materializes transcripts.
+both paths persist metadata and source references. neither inserts lectern items,
+downloads audio nor requests transcripts.
 
 ## Transaction retries (`db/retries.py`)
 
@@ -221,11 +209,10 @@ serialization failure or deadlock (40001, 40P01), a `TransactionRestart`, or a
 violation of a name in `RETRYABLE_UNIQUE_CONSTRAINTS` (a first-sight race) runs
 `op` again; the last such failure raises `DatabaseRetryExhaustedError`, which
 the edge answers 500. Anything else propagates after the rollback. `op` must
-reload its working rows and commit on each call. explicit row locks in note/page mutations and dossier
-publication coordinate with read-committed retention cleanup; serializable
+reload its working rows and commit on each call. explicit row locks in note/page mutations coordinate with read-committed
+retention cleanup; serializable
 isolation alone does not serialize those writers with the collector. the retry
-owner is used by bootstrap, identity writes, notes and dossier head/build
-mutations.
+owner is used by bootstrap, identity writes and notes.
 
 ## The generation envelope inside the worker
 
@@ -243,7 +230,7 @@ job's open rows `interrupted` (only a dead attempt leaves one), so a retry after
 a dead worker generates again from scratch (repaying the call). The `on_dead`
 hook `generation.ledger.on_dead_letter` closes a dead job's open row
 (`enrich_metadata`, `media_unit_build`, `oracle_reading_generate`,
-`connection_discovery_scan`, `dossier_build`), and `revoke_jobs_by_dedupe_keys`
+`connection_discovery_scan`), and `revoke_jobs_by_dedupe_keys`
 closes a revoked job's. The domain row of a dead background job is not touched by
 that hook, except a media unit's (`dead_letters.media_unit_build` fails its head)
 ([ticket](../issues/dead-background-jobs-leave-domain-rows-pending.md)). A
@@ -261,26 +248,6 @@ metadata research uses an explicit requester and the generation owner's admitted
 codex authority. its research prompt requests four read/search tools. see
 [media metadata](media-metadata.md) for domain acceptance, date ownership and
 source-only maintenance.
-
-`dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
-Contributor, Page, Note, and internal Idea subjects; its payload is the build id.
-One attempt (`services/dossier/run.py`) reads the active build, fails it
-`InputsChanged` if the requester can no longer see the subject, then ensures
-media intelligence (Media and the aggregates reschedule every 5 s while a
-projection is pending), collects inputs (the Idea gathers research and
-reschedules while a page ingests, at most 10 minutes per page), synthesizes, and
-publishes or fails. A build that is no longer active makes the attempt a no-op. A
-document that fails HTML acceptance or citation grounding is a modeled build
-failure (the generation's decode rejection) the user regenerates from.
-
-The synthesis outcome is `Published | Failed | Stopped`. A cancel or purge stops
-the running generation through its stop poll. Stopped fails the build
-`RuntimeUnavailable` unless a cancel or purge settled it first, so no active
-build outlives its job. Idea research keeps its one billed call, the three web
-searches, as `payload.web_picks`, so the build's reschedules never search again;
-a crash before the picks are kept searches again. Nexus search reruns per
-attempt and page acceptance is idempotent by key. Dead `dossier_build` rows are
-never pruned.
 
 `chat_run` runs its run's one generation and the final publication. An attempt
 that finds its run's generation already started knows an earlier attempt died:

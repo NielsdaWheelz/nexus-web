@@ -2,13 +2,13 @@
 
 // Source and cursor ports, source-locator geometry and per-visit reader state.
 // The workspace delivers arrivals; this module never watches a hash or a bus.
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
-import { readerDocument, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
+import { readerDocument, transcriptUnitAtTime, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
 import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -28,10 +28,10 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
   const { target } = destination;
   if (target.kind === "evidence_item") return null;
   if (target.kind === "edge") return target;
-  if (target.kind === "pdf" || target.kind === "quads")
+  if (target.kind === "pdf" || target.kind === "quads" || target.kind === "pdf_find")
     return doc.kind === "pdf" && target.page <= (state.pdf?.pages ?? doc.pages ?? 0) ? target : null;
   if (doc.kind !== "text") return null;
-  if (target.kind === "time") return doc.format === "transcript" && doc.units.some((unit) => unit.time && unit.time.startMs <= target.ms && target.ms < unit.time.endMs) ? target : null;
+  if (target.kind === "time") return doc.format === "transcript" && transcriptUnitAtTime(doc.units, target.ms) !== null ? target : null;
   const unit = doc.units.find((unit) => unit.id === (target.kind === "point" ? target.point.unit : target.unit));
   if (!unit) return null;
   if (target.kind === "point") return target.point.offset <= unit.length ? target : null;
@@ -152,23 +152,35 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
   const write = usePaneVisitDataWriter(VIEW);
   const reader = readerRef.current;
   const previous = useRef(runtime.visitId);
+  const delivery = runtime.paneEntryDelivery?.entry;
+  const opening = useRef({ visitId: runtime.visitId, purpose: delivery?.kind === "InspectSource" ? delivery.purpose : null });
+  if (opening.current.visitId !== runtime.visitId)
+    opening.current = { visitId: runtime.visitId, purpose: delivery?.kind === "InspectSource" ? delivery.purpose : null };
+  const purpose = opening.current.purpose;
+  const sourceIdentity = useSyncExternalStore(reader?.subscribe ?? (() => () => {}), () => {
+    const document = reader?.getState().document;
+    return document?.status === "ready" ? document.doc.identity : null;
+  }, () => null);
   useEffect(() => {
     if (!reader) return;
     return reader.subscribe(() => {
       // Viewport notifications already carry the surface's measured placement.
       const { restored, placement, navigation } = reader.getState();
+      const { mode, origin, originUnavailable } = navigation;
       if (restored && placement)
-        write({ identity: placement.identity, placement, navigation });
+        write({ identity: placement.identity, placement, navigation: { mode, origin, originUnavailable } });
     });
   }, [reader, write]);
   useLayoutEffect(() => {
     if (previous.current === runtime.visitId) return;
-    previous.current = runtime.visitId;
     // A new arrival begins at the live departure; a history return restores its visit.
-    if (!saved || runtime.paneEntryDelivery?.entry.kind === "InspectSource" || !reader) return;
+    if (!saved || !reader || purpose === "Open") { previous.current = runtime.visitId; return; }
+    if (sourceIdentity === null) return;
+    previous.current = runtime.visitId;
+    if (saved.identity !== sourceIdentity) return;
     const controller = new AbortController();
     void reader.restoreView(saved, controller.signal);
     return () => controller.abort();
-  }, [reader, runtime.paneEntryDelivery, runtime.visitId, saved]);
+  }, [purpose, reader, runtime.visitId, saved, sourceIdentity]);
   return saved;
 }

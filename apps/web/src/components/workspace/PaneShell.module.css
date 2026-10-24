@@ -15,7 +15,7 @@
   display: grid;
   container: primaryPane / inline-size;
   flex: 0 0 auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -42,6 +42,12 @@
   pointer-events: none;
 }
 
+.chromeFrame {
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .chrome {
   display: flex;
   flex-direction: column;
@@ -51,6 +57,8 @@
 }
 
 .controlRow {
+  --control-min-size: var(--pane-control-size);
+  --control-font-size: var(--pane-control-font-size);
   --pane-control-size: max(var(--size-md), 2rem);
   --pane-control-font-size: var(--text-sm);
   --pane-control-block-size: auto;
@@ -70,32 +78,8 @@
   display: none;
 }
 
-.taskRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
-
-.primaryTask {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  justify-content: center;
-  min-block-size: var(--pane-control-row-min-height);
-  max-inline-size: 100%;
-}
-
 .queryControls {
-  flex: 1 1 16rem;
   min-inline-size: 0;
-}
-
-.actionReason {
-  max-inline-size: 24ch;
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
 }
 
 @media (any-pointer: coarse) {
@@ -187,6 +171,7 @@
 }
 
 .primaryContentRow {
+  grid-row: 2;
   position: relative;
   display: grid;
   min-width: 0;
@@ -220,24 +205,25 @@
 
 .paneShell[data-mobile="true"] {
   border-right: none;
-  --mobile-pane-chrome-height: 0px;
-  --mobile-pane-content-offset: calc(
-    var(--mobile-pane-chrome-height) + var(--space-2)
-  );
 }
 
 .paneShell[data-mobile="true"] .controlRow {
   padding-inline: var(--space-2);
 }
 
-/* Both top rows move by the same amount above an unchanged reading surface. */
-.paneShell[data-mobile="true"] .chrome {
-  --mobile-chrome-offset: calc(-1 * var(--space-2));
+/* The viewport places a stationary frame; only its painted controls retreat. */
+.paneShell[data-mobile="true"] .chromeFrame {
   position: absolute;
-  top: 0;
+  top: var(--mobile-controls-top);
   left: 0;
   right: 0;
   z-index: 11;
+  pointer-events: none;
+}
+
+.paneShell[data-mobile="true"] .chrome {
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
+  pointer-events: auto;
   padding-right: var(--viewport-safe-right);
   padding-left: var(--viewport-safe-left);
   background: var(--surface-2);
@@ -260,6 +246,7 @@
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"] {
   padding-bottom: var(--mobile-content-bottom-clearance);
+  scroll-padding-top: var(--mobile-pane-content-offset);
   scroll-padding-bottom: var(--mobile-content-bottom-clearance);
 }
 
@@ -304,4 +291,19 @@
   .refreshIndicatorIcon {
     animation: none !important;
   }
+}
+
+.outlineAccessory {
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.paneShell[data-mobile="true"] {
+  padding-top: var(--mobile-header-height);
+}
+
+.paneShell[data-mobile="true"][data-reader-composition="true"] {
+  padding-top: var(--viewport-safe-top);
+  padding-bottom: var(--viewport-safe-bottom);
 }

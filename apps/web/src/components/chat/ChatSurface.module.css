@@ -128,35 +128,14 @@
 }
 
 .kicker {
-  padding: 0;
-  border: 0;
-  background: none;
   color: var(--ink-faint);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
 }
 
-button.kicker:hover:not(:disabled) {
-  color: var(--accent);
-  cursor: pointer;
-}
-
-button.kicker,
-.actionControl {
-  min-inline-size: var(--size-sm);
-  min-block-size: var(--size-sm);
-}
-
 @container primaryPane (min-width: 480px) {
   .transcript { padding: var(--space-4); }
-}
-
-@media (any-pointer: coarse) {
-  button.kicker, .actionControl {
-    min-inline-size: var(--size-xl);
-    min-block-size: var(--size-xl);
-  }
 }
 
 @media (max-width: 768px) {
@@ -170,3 +149,5 @@ button.kicker,
     animation: none;
   }
 }
+
+.detailsLabel { display: inline-flex; align-items: center; gap: var(--space-1); }

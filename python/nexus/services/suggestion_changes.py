@@ -56,6 +56,11 @@ def record_input_change(db: Session, *, owners: Iterable[str]) -> None:
     )
     notify_suggestions(db)
 
+    from nexus.services.writing import effects
+
+    for viewer_id in effects(db).viewer_ids:
+        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
+
 
 def on_suggestion_job_history(db: Session, job: JobRow, execution_id: UUID) -> None:
     """Queue retry/reclaim/dead transitions change observation, never source inputs."""

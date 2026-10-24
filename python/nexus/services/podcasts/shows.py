@@ -12,7 +12,6 @@ from nexus.services.browse.targets import ResolvedPodcast
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import PodcastTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
@@ -87,5 +86,4 @@ def upsert_show(db: Session, show: ResolvedPodcast) -> UUID:
         )
     db.flush()
     projection.refresh(db, "podcast", [podcast_id])
-    projection.refresh_subject_dossiers(db, [ResourceRef("podcast", podcast_id)])
     return podcast_id

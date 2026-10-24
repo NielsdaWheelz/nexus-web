@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import EntryCanvas from "@/components/EntryCanvas";
-import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import { ANDROID_RELEASE_LINKS } from "@/lib/androidReleaseLinks";
 import { PRODUCT_DESCRIPTOR, PRODUCT_NAME } from "@/lib/productIdentity";
 import styles from "./page.module.css";
@@ -47,19 +47,15 @@ export default function AndroidPage() {
             </p>
           </div>
 
-          <Button
-            asChild
-            variant="primary"
-            size="lg"
+          <ButtonLink
+            emphasis="strong"
+            size="comfortable"
             className={styles.download}
+            href={ANDROID_RELEASE_LINKS.apk}
+            aria-describedby="android-release-access"
           >
-            <a
-              href={ANDROID_RELEASE_LINKS.apk}
-              aria-describedby="android-release-access"
-            >
-              Download APK
-            </a>
-          </Button>
+            Download APK
+          </ButtonLink>
 
           <section
             className={styles.verification}

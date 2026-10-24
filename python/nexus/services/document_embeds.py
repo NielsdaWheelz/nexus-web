@@ -170,6 +170,7 @@ def replace_document_embed_artifact(
                     viewer_id=owner_user_id,
                     url=target.canonical_url,
                     library_ids=library_ids,
+                    retaining_media_id=media_id,
                 )
             except InvalidRequestError as exc:
                 resolution_status = "failed"

@@ -1,5 +1,6 @@
 import type { Schema } from "@/lib/api/wire";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
+import type { Publication, WriteHandle } from "@/lib/notes/writes";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import type { NoteEdit } from "@/lib/notes/useOutlineSession";
@@ -8,11 +9,11 @@ import type { Selection } from "@/lib/chat/wire";
 
 export type NoteBase =
   | { kind: "Absent" }
-  | { kind: "Present"; id: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
+  | { kind: "Present"; id: string; linkId: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
 
 export type DraftIssue =
-  | { kind: "Failed"; message: string }
-  | { kind: "Conflict"; message: string; saved: NoteBase };
+  | { kind: "Failed" | "Deleted" | "Source"; message: string }
+  | { kind: "Conflict"; message: string; saved: NoteBase; linksVersion: number | null };
 
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" | "LookupFailed" }
@@ -20,20 +21,27 @@ export type ChatDestination =
       | { kind: "Loading" | "Failed" | "RefreshRequired" }
       | { kind: "Ready"; tree: ConversationTree } };
 
-export type ReaderChatIssue =
+export type ReaderChatIssue = (
   | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: Selection | null }
-  | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string };
+  | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string }
+) & { /** The submitted chat command was definitively refused after its highlight was saved. */ highlightSaved?: true };
 
 type ChatAttempt =
   | { kind: "Preparing"; runId: string }
-  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing" };
+  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing"; input: { revision: number; consumedRevision: number | null } };
 
 export interface ComposerDraft {
   id: string;
+  /** visual anchor only; capture-only fields belong to reference/publication inputs. */
   passage: Passage & { quote: string };
   referenceSource: Schema<"LinkFragmentSelectionSource"> | Schema<"LinkPdfSelectionSource">;
   highlightId: string | null;
   highlight: Schema<"TypedHighlightOut"> | null;
+  noteId: string;
+  linkId: string;
+  linksVersion: number | null;
+  publication: Extract<Publication, { kind: "passage" | "attach_highlight" }> | null;
+  write: WriteHandle | null;
   base: NoteBase;
   body: NoteBody;
   revision: number;
@@ -42,8 +50,8 @@ export interface ComposerDraft {
   load: "Loading" | "Ready" | "Failed";
   operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" | "Delete" } | null;
   issue: DraftIssue | null;
-  status: string | null;
   referenceActive: boolean;
+  attachmentActive: boolean;
   sourceMediaId: string;
   sourceHasChats: boolean | null;
   destination: ChatDestination;
@@ -51,7 +59,7 @@ export interface ComposerDraft {
   chatIssue: ReaderChatIssue | null;
 }
 
-/** Visit-owned rich drafts; popup/body mounts only subscribe to this state. */
+/** One ephemeral working value. Submitted requests belong to their live owners. */
 export function createSelectionDrafts() {
   let drafts: readonly ComposerDraft[] = [];
   const listeners = new Set<() => void>();
@@ -62,11 +70,19 @@ export function createSelectionDrafts() {
       return () => { listeners.delete(listener); };
     },
     put(draft: ComposerDraft) {
-      drafts = [...drafts.filter((entry) => entry.id !== draft.id), draft];
+      drafts = [draft];
+      for (const listener of listeners) listener();
+    },
+    remove(id: string) {
+      drafts = drafts.filter(draft => draft.id !== id);
       for (const listener of listeners) listener();
     },
     update(id: string, change: (draft: ComposerDraft) => ComposerDraft) {
-      drafts = drafts.map((draft) => draft.id === id ? change(draft) : draft);
+      const current = drafts.find(draft => draft.id === id);
+      if (!current) return;
+      const next = change(current);
+      if (next === current) return;
+      drafts = drafts.map(draft => draft.id === id ? next : draft);
       for (const listener of listeners) listener();
     },
   };
@@ -90,7 +106,7 @@ export function noteBase(highlight: Schema<"TypedHighlightOut">): NoteBase {
     throw new Error("A highlight has more than one note for this viewer");
   const note = highlight.linked_note_blocks[0];
   return note
-    ? { kind: "Present", id: note.note_block_id, version: note.body_version,
+    ? { kind: "Present", id: note.note_block_id, linkId: note.link_id, version: note.body_version,
       body: parseBody(note.body_pm_json), embeddedItem: note.embedded_item ?? null }
     : { kind: "Absent" };
 }

@@ -1,10 +1,13 @@
 # FastAPI/Caddy env for the Hetzner VPS. Keys must be globally unique across
 # the shared, backend, and worker files; production config has no override order.
 
-# Caddy
+# Private HTTP origin; Cloudflare owns the public TLS certificate.
 CADDY_IMAGE=<current-production-caddy-image>@sha256:<64-lowercase-hex>
-CADDY_SITE=api.example.com
-CADDY_ACME_EMAIL=you@example.com
+CADDY_SITE=nexus-api.nielseriknandal.com
+CLOUDFLARED_IMAGE=cloudflare/cloudflared@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39
+# Publish the connector token separately with NEXUS_CLOUDFLARED_TOKEN_FILE.
+# Never put the token itself in this application environment.
+# The publisher captures its immutable runtime file path; do not set that key here.
 
 # Hetzner Postgres. The Compose stack injects this same host/DB into API and worker.
 POSTGRES_IMAGE=<current-production-postgres-image>@sha256:<64-lowercase-hex>
@@ -41,6 +44,9 @@ X_API_AUTHOR_THREAD_MAX_POSTS=1000
 
 # OpenAI remains the transcript-embedding credential.
 OPENAI_API_KEY=<openai-api-key>
+# Optional verified provider gateway origins and additional public CA roots.
+# PROVIDER_ENDPOINT_OVERRIDES='{"openai":"https://gateway.example.net"}'
+# PROVIDER_CA_PEM="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 
 # Provider generation is backend-only. The configured provider list is closed
 # and every listed provider must have exactly its dedicated credential.

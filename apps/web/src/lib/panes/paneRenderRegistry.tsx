@@ -11,6 +11,7 @@ type Module = { default: ComponentType };
 // Pane bodies are lazy chunks; the server and the always-loaded shell never
 // import them. Two bodies serve two routes each: chats, and pages/daily pages.
 const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
+  downloads: () => import("@/app/(authenticated)/downloads/DownloadsPaneBody"),
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
   library: () => import("@/app/(authenticated)/libraries/[id]/LibraryPaneBody"),
@@ -18,8 +19,6 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   browsePreview: () =>
     import("@/app/(authenticated)/browse/preview/BrowsePreviewPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
-  artifact: () =>
-    import("@/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody"),
   conversations: () =>
     import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),
@@ -30,7 +29,7 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
-  pageNew: () => import("@/app/(authenticated)/pages/new/NewPagePaneBody"),
+  pageNew: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   page: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   dailyDate: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   note: () => import("@/app/(authenticated)/notes/[blockId]/NotePaneBody"),
@@ -74,6 +73,7 @@ function load(id: PaneRouteId): Promise<Module> {
 }
 
 export function renderPane(id: PaneRouteId): ReactNode {
+  if (id === "pageNew") id = "page";
   let Body = bodies.get(id);
   if (!Body) {
     Body = lazy(() => load(id));

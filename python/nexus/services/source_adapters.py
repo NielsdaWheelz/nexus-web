@@ -51,7 +51,6 @@ from nexus.services.reader_publication import (
     superseded_reader_source_paths,
 )
 from nexus.services.remote_file import RemoteFile, fetch_remote_file
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.source_outcome import (
     SourceDiagnostics,
@@ -436,7 +435,6 @@ def publish_prepared_native_article(
         facts_row.completeness = prepared.completeness
     db.flush()
     projection.refresh(db, "media", [media_id])
-    projection.refresh_subject_dossiers(db, [ResourceRef("media", media_id)])
     observation = byline_observation(metadata.byline)
     if not isinstance(observation, ObservedRoleSlices):
         observation = ObservedRoleSlices(frozenset({"author"}), ())

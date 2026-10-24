@@ -2,6 +2,7 @@
 
 import {
   Fragment,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -10,11 +11,12 @@ import {
   type ButtonHTMLAttributes,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type Ref,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { usePathname } from "next/navigation";
+import { useNavigationIdentity } from "@/lib/host/policy";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
@@ -28,6 +30,7 @@ import { isEditableTarget } from "@/lib/ui/eventTarget";
 import {
   focusableElements,
   getInteractionOwner,
+  getInteractionGeneration,
   handleModalTab,
   restoreFocus,
   useInteractionOwner,
@@ -42,8 +45,12 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import MobileSheet from "./MobileSheet";
 import OverflowMenuButton from "./OverflowMenuButton";
 import styles from "./ActionMenu.module.css";
+import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
+// Moving focus into a sheet can dismiss the IME. Admit after its geometry quiets;
+// there is no portable keyboard-transition completion event.
+const MOBILE_ADMISSION_QUIET_MS = 150;
 const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 const FAILED: FeedbackContent = { tone: "Warning", title: "actions couldn’t load" };
 
@@ -66,6 +73,23 @@ interface ActionMenuTriggerProps extends TriggerAttributes {
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }
 
+/** A native context anchor keeps its own activation, role and accessible name. */
+export interface ActionMenuContextAnchorProps {
+  ref: (node: HTMLElement | null) => void;
+  id: string;
+  "aria-haspopup": "menu" | "dialog";
+  "aria-controls": string | undefined;
+  "aria-expanded": boolean;
+  "aria-busy": boolean;
+  onContextMenu: (event: MouseEvent<HTMLElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerCancel: () => void;
+  onClickCapture: (event: MouseEvent<HTMLElement>) => void;
+}
+
 type Attempt = {
   readonly controller: AbortController;
   readonly expires: number;
@@ -83,7 +107,8 @@ type Invocation = {
   readonly visible: boolean;
   readonly feedback: FeedbackContent | null;
   readonly meaning: string | null;
-  readonly geometry: string | null;
+  readonly geometry: readonly number[] | null;
+  readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
 };
 
 /** Displayed meaning excludes closures and availability; execution reads current descriptors. */
@@ -112,11 +137,20 @@ function viewportGeometry(): string {
 }
 
 /** Scroll is intentional; sheet entry/drag transforms do not change content coordinates. */
-function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): string {
+function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
-  const transform = getComputedStyle(panel).transform;
-  const movement = transform === "none" ? null : new DOMMatrixReadOnly(transform);
+  let panelX = box.x;
+  let panelY = box.y;
+  if (mobile) {
+    // MobileSheet's fixed, untransformed backdrop is its offset parent. Layout
+    // offsets ignore the sheet's translation without mixing compositor samples.
+    const parent = panel.offsetParent;
+    if (!parent) throw new Error("mobile action sheet requires its layout containing block");
+    const origin = parent.getBoundingClientRect();
+    panelX = origin.left + parent.clientLeft + panel.offsetLeft - parent.scrollLeft;
+    panelY = origin.top + parent.clientTop + panel.offsetTop - parent.scrollTop;
+  }
   const position = anchor.getBoundingClientRect();
   const rows = [...body.querySelectorAll<HTMLElement>("[data-menu-row]")].map((row) => {
     const rect = row.getBoundingClientRect();
@@ -129,13 +163,11 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): stri
     }
     return [x, y, rect.width, rect.height];
   });
-  // Compositor rectangles and serialized transform matrices differed by 0.00025px
-  // without layout movement. Canonicalize compensated geometry to 1/64 CSS px.
-  return JSON.stringify([
+  return [
     position.x, position.y, position.width, position.height,
-    box.x - (movement?.m41 ?? 0), box.y - (movement?.m42 ?? 0), box.width, box.height,
+    panelX, panelY, box.width, box.height,
     ...rows.flat(),
-  ].map((value) => Math.round(value * 64) / 64));
+  ];
 }
 
 /**
@@ -152,6 +184,7 @@ export default function ActionMenu({
   placement = "below",
   align = "end",
   renderTrigger,
+  renderContextAnchor,
   triggerAttributes,
   triggerRef,
   triggerDisabled = false,
@@ -166,6 +199,7 @@ export default function ActionMenu({
   readonly placement?: "below" | "above";
   readonly align?: "start" | "center" | "end";
   readonly renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
+  readonly renderContextAnchor?: (props: ActionMenuContextAnchorProps) => ReactNode;
   readonly triggerAttributes?: TriggerAttributes;
   readonly triggerRef?: (node: HTMLButtonElement | null) => void;
   readonly returnFocusTo?: ReturnFocusTarget;
@@ -177,7 +211,11 @@ export default function ActionMenu({
   const latest = useRef(source);
   latest.current = source;
   const [announcement, announce] = useState("");
-  const trigger = useRef<HTMLButtonElement | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => {
+    trigger.current = node;
+    triggerRef?.(node);
+  }, [triggerRef]);
   const root = useRef<HTMLDivElement>(null);
   const sheetBody = useRef<HTMLDivElement>(null);
   const modalLayer = useRef<Layer | null>(null);
@@ -188,7 +226,7 @@ export default function ActionMenu({
   const reasonId = useId();
   const container = useOverlayContainer();
   const mobile = useIsMobileViewport();
-  const pathname = usePathname();
+  const pathname = useNavigationIdentity();
   useInteractionOwner();
   const prepared = source.kind === "Prepared" && invocation?.attempt &&
     !invocation.attempt.controller.signal.aborted &&
@@ -200,7 +238,7 @@ export default function ActionMenu({
   const requested = invocation !== null;
   const candidate = invocation !== null && (content !== null || feedback !== null);
   const sheet = candidate && invocation?.mobile === true;
-  const visible = invocation?.visible ?? false;
+  const visible = invocation?.visible === true && invocation.admission === null;
   const busy = invocation?.attempt?.timer != null;
   useMobileChromeHold(invocation !== null);
   const menu = useAnchoredPosition<HTMLDivElement>(trigger, {
@@ -224,6 +262,7 @@ export default function ActionMenu({
     const active = current.current;
     if (!active) return;
     if (active.attempt?.timer) clearTimeout(active.attempt.timer);
+    if (active.admission?.timer) clearTimeout(active.admission.timer);
     skipReturn.current = true;
     if (returnFocus) restoreFocus(active.mobile && modalLayer.current ? modalLayer.current : layer);
     change(null);
@@ -242,6 +281,7 @@ export default function ActionMenu({
   const begin = (edge: "first" | "last", retry = false) => {
     const previous = current.current;
     if (retry && (!previous || previous.subject !== source.subjectKey || source.kind !== "Prepared")) return;
+    if (previous?.admission?.timer) clearTimeout(previous.admission.timer);
     const now = performance.now();
     const attempt: Attempt | null = source.kind === "Prepared" ? {
       controller: new AbortController(), expires: now + PREPARATION_BUDGET_MS, timer: null,
@@ -253,6 +293,7 @@ export default function ActionMenu({
       touch: retry ? false : wasOverlayInvokedByTouch(),
       attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
       meaning: null, geometry: null,
+      admission: mobile ? { phase: "Focus", timer: null } : null,
     });
     if (attempt && source.kind === "Prepared") {
       attempt.timer = setTimeout(() => fail(attempt, FAILED), Math.max(0, attempt.expires - performance.now()));
@@ -265,10 +306,23 @@ export default function ActionMenu({
     close(true);
     announce("actions changed. reopen to see current options.");
   };
+  const settleMobile = () => {
+    const active = current.current;
+    const admission = active?.admission;
+    if (!active || !admission || admission.phase === "Focus") return;
+    if (admission.timer) clearTimeout(admission.timer);
+    admission.phase = "Settling";
+    admission.timer = setTimeout(() => {
+      admission.timer = null;
+      if (current.current?.admission !== admission) return;
+      admission.phase = "Ready";
+      checks.current.publish();
+    }, MOBILE_ADMISSION_QUIET_MS);
+  };
   const stable = () => {
     const active = current.current;
     const node = surface();
-    if (!active || !trigger.current?.isConnected || !trigger.current.getClientRects().length) return false;
+    if (!active || active.admission !== null || !trigger.current?.isConnected || !trigger.current.getClientRects().length) return false;
     if (active.subject !== latest.current.subjectKey || active.title !== latest.current.title ||
       active.viewport !== viewportGeometry()) return false;
     if (active.meaning === null) return true;
@@ -276,8 +330,14 @@ export default function ActionMenu({
     const ready = value.kind === "Immediate" ? value.content :
       value.state?.kind === "Ready" && value.state.request === active.attempt?.controller.signal
         ? value.state.content : null;
-    return ready !== null && active.meaning === meaning(value.title, ready) &&
-      node !== null && active.geometry === geometry(trigger.current, node, active.mobile);
+    if (ready === null || active.meaning !== meaning(value.title, ready) ||
+      node === null || active.geometry === null) return false;
+    const measured = geometry(trigger.current, node, active.mobile);
+    // Compositor/transform serialization noise can cross rounding boundaries.
+    // Compare at 1/64 CSS px precision against the fixed publication snapshot.
+    return active.geometry.length === measured.length && active.geometry.every(
+      (coordinate, index) => Math.abs(coordinate - measured[index]) <= 1 / 64,
+    );
   };
   // Render-induced changes retire before paint. Readiness alone cannot publish:
   // the complete host must be measured and still inside this attempt's budget.
@@ -288,7 +348,7 @@ export default function ActionMenu({
       closeRef.current(false);
       return;
     }
-    if (active.viewport !== viewportGeometry()) {
+    if (active.admission === null && active.viewport !== viewportGeometry()) {
       if (active.visible) invalidate(); else closeRef.current(false);
       return;
     }
@@ -305,6 +365,7 @@ export default function ActionMenu({
       closeRef.current(false);
       return;
     }
+    if (active.admission !== null && active.admission.phase !== "Ready") return;
     if (active.meaning !== null) {
       if (!stable()) invalidate();
       return;
@@ -324,9 +385,10 @@ export default function ActionMenu({
       clearTimeout(active.attempt.timer);
       active.attempt.timer = null;
     }
-    if (content || !active.visible) {
+    if (content || !active.visible || active.admission !== null) {
       change({
         ...active, visible: true, feedback: content ? null : active.feedback,
+        viewport: viewportGeometry(), admission: null,
         meaning: content ? meaning(source.title, content) : null,
         geometry: content ? geometry(trigger.current, node, active.mobile) : null,
       });
@@ -334,8 +396,8 @@ export default function ActionMenu({
       else if (content) announce("");
     }
   };
-  const checks = useRef({ stable, invalidate, close, surface, publish });
-  checks.current = { stable, invalidate, close, surface, publish };
+  const checks = useRef({ stable, invalidate, close, surface, publish, settleMobile });
+  checks.current = { stable, invalidate, close, surface, publish, settleMobile };
   // Source and invocation are read after every commit; callback identity is not
   // a lifecycle boundary or permission to publish.
   useLayoutEffect(() => { checks.current.publish(); });
@@ -345,7 +407,7 @@ export default function ActionMenu({
     if (!requested) return;
     const press = (event: PointerEvent) => {
       releasePress.current?.();
-      if (!current.current?.visible || checks.current.stable()) return;
+      if (!current.current?.visible || current.current.admission !== null || checks.current.stable()) return;
       const { pointerId, button } = event;
       // A moved menu can leave the old coordinate outside its surface. Consume
       // that press before the kernel, then keep only its delivery listeners
@@ -388,11 +450,17 @@ export default function ActionMenu({
       checks.current.invalidate();
     };
     const departure = (event: FocusEvent) => {
+      const active = current.current;
+      if (active?.admission?.phase === "Focus" && event.target instanceof Node && modalLayer.current?.element?.contains(event.target)) {
+        active.admission.phase = "Settling";
+        checks.current.settleMobile();
+      }
       const node = checks.current.surface();
       if (event.target instanceof Node && !root.current?.contains(event.target) && !node?.contains(event.target)
         && !modalLayer.current?.element?.contains(event.target)) checks.current.close(false);
     };
     const resize = () => {
+      if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (current.current?.visible) checks.current.invalidate(); else checks.current.close(false);
     };
     const retire = () => checks.current.close(false);
@@ -400,9 +468,11 @@ export default function ActionMenu({
       const node = checks.current.surface();
       if (event.target instanceof Node && node?.contains(event.target)) return;
       if (current.current?.mobile && event.target instanceof Node && modalLayer.current?.element?.contains(event.target)) return;
+      if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (!checks.current.stable()) checks.current.invalidate();
     };
     const observer = new ResizeObserver(() => {
+      if (current.current?.admission) { checks.current.settleMobile(); return; }
       if (!checks.current.stable()) checks.current.invalidate();
     });
     if (trigger.current) observer.observe(trigger.current);
@@ -437,6 +507,7 @@ export default function ActionMenu({
     releasePress.current?.();
     const active = current.current;
     if (active?.attempt?.timer) clearTimeout(active.attempt.timer);
+    if (active?.admission?.timer) clearTimeout(active.admission.timer);
     active?.attempt?.controller.abort();
   }, []);
   const report = useRef(onOpenChange);
@@ -446,7 +517,7 @@ export default function ActionMenu({
     report.current?.(true);
     return () => report.current?.(false);
   }, [visible]);
-  const focusKey = invocation?.meaning ?? invocation?.feedback;
+  const focusKey = invocation?.admission ?? invocation?.meaning ?? invocation?.feedback;
   // Ready focus precedes the removed failure notice's deferred return focus.
   // Initial content stays hidden until its measured publication commits.
   useLayoutEffect(() => {
@@ -517,6 +588,7 @@ export default function ActionMenu({
       "data-action-id": option.id,
       "data-menu-row": option.id,
       "data-action-tone": option.tone ?? "default",
+      "data-tone": option.tone ?? "default",
       "data-action-availability": option.disabled ? "Blocked" : "Available",
     } as const;
     if (option.kind === "custom") return <li role={sheet ? undefined : "none"} key={option.id}>
@@ -537,7 +609,7 @@ export default function ActionMenu({
         invalidate();
         return;
       }
-      if (action.disabled) { if (!("key" in event) || ["Enter", " "].includes(event.key)) event.preventDefault(); return; }
+      if (action.disabled || action.busy) { if (!("key" in event) || ["Enter", " "].includes(event.key)) event.preventDefault(); return; }
       if (action.kind === "link") {
         const result = action.onActivate?.(event) ?? "unhandled";
         if (result === "consumed" || (result === "unhandled" && "key" in event)) return;
@@ -553,17 +625,20 @@ export default function ActionMenu({
     const common = {
       ...attributes,
       tabIndex: sheet ? 0 : -1,
-      className: `${styles.menuItem} ${option.tone === "danger" ? styles.menuItemDanger : ""}`,
+      className: collection.row,
+      "data-selected": control.menuChecked === true || undefined,
       "aria-label": sheet ? option.label : control.menuLabel,
       "aria-disabled": option.disabled || undefined,
+      "aria-busy": option.busy || undefined,
+      "aria-haspopup": option.hasPopup,
       "aria-describedby": reason,
       onKeyDown: activate, onClick: activate,
     };
     const body = <>
-      <span className={styles.menuItemIcon} aria-hidden="true">{option.icon}</span>
-      <span className={styles.menuText}>
+      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">{option.icon}</span>
+      <span className={`${collection.content} ${styles.menuText}`}>
         <span>{sheet ? option.label : control.menuLabel}</span>
-        {reason ? <span id={reason} className={styles.disabledReason}>{option.disabledReason}</span> : null}
+        {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
       </span>
     </>;
     return <li role={sheet ? undefined : "none"} key={option.id}>
@@ -590,10 +665,48 @@ export default function ActionMenu({
     content={feedback} announcement="None"
     actions={[{ label: "retry", busy, onClick: () => { if (!busy) begin(current.current?.edge ?? "first", true); } }]}
   /> : null;
+  const hold = useRef<{ pointer: number; x: number; y: number; timer: ReturnType<typeof setTimeout>; owner: Layer | null; generation: number; subject: string } | null>(null);
+  const heldClick = useRef(false);
+  const touchGesture = useRef(false);
+  const cancelHold = () => {
+    if (hold.current) clearTimeout(hold.current.timer);
+    hold.current = null;
+  };
+  const consumeHeldClick = (pointer: number) => {
+    releasePress.current?.();
+    heldClick.current = true;
+    const release = () => {
+      window.removeEventListener("click", consume, true);
+      window.removeEventListener("pointerdown", release, true);
+      window.removeEventListener("pointercancel", release, true);
+      window.removeEventListener("keydown", release, true);
+      releasePress.current = null;
+      heldClick.current = false;
+    };
+    const consume = (event: globalThis.MouseEvent) => {
+      if (event instanceof globalThis.PointerEvent && event.pointerId > 0 && event.pointerId !== pointer) return;
+      release(); event.preventDefault(); event.stopImmediatePropagation();
+    };
+    releasePress.current = release;
+    window.addEventListener("click", consume, true);
+    window.addEventListener("pointerdown", release, true);
+    window.addEventListener("pointercancel", release, true);
+    window.addEventListener("keydown", release, true);
+  };
+  useEffect(() => {
+    window.addEventListener("scroll", cancelHold, true);
+    window.addEventListener("blur", cancelHold);
+    return () => {
+      cancelHold();
+      window.removeEventListener("scroll", cancelHold, true);
+      window.removeEventListener("blur", cancelHold);
+    };
+  }, []);
+  useEffect(() => { cancelHold(); heldClick.current = false; }, [source.subjectKey, pathname]);
   const popup = mobile || (candidate && !hasChoices) ? "dialog" : "menu";
   const triggerProps: ActionMenuTriggerProps = {
     ...triggerAttributes,
-    ref: (node) => { trigger.current = node; triggerRef?.(node); },
+    ref: setTrigger,
     type: "button", id: triggerId, "aria-label": label,
     "aria-describedby": triggerDisabled && triggerDisabledReason ? reasonId : undefined,
     "aria-disabled": triggerDisabled || undefined,
@@ -620,24 +733,73 @@ export default function ActionMenu({
     },
   };
   return <div ref={root} className={[styles.container, className].filter(Boolean).join(" ")} data-open={visible ? "true" : "false"}>
-    {renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
+    {renderContextAnchor ? renderContextAnchor({
+      ref: (node) => { trigger.current = node; },
+      id: triggerId, "aria-haspopup": popup, "aria-controls": visible ? menuId : undefined,
+      "aria-expanded": visible, "aria-busy": busy,
+      onContextMenu: (event) => {
+        event.preventDefault(); event.stopPropagation();
+        const pending = hold.current;
+        if (touchGesture.current || (event.nativeEvent instanceof globalThis.PointerEvent && event.nativeEvent.pointerType === "touch")) {
+          if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== latest.current.subjectKey) { cancelHold(); return; }
+          consumeHeldClick(pending.pointer);
+        }
+        cancelHold();
+        if (!triggerDisabled && !current.current) begin("first");
+      },
+      onKeyDown: (event) => {
+        touchGesture.current = false;
+        if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return;
+        if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+        event.preventDefault(); event.stopPropagation(); cancelHold();
+        if (!triggerDisabled && !current.current) begin("first");
+      },
+      onPointerDown: (event) => {
+        cancelHold(); heldClick.current = false;
+        touchGesture.current = event.pointerType === "touch";
+        if (triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
+        const { pointerId: pointer, clientX: x, clientY: y } = event;
+        const owner = getInteractionOwner();
+        const generation = getInteractionGeneration();
+        hold.current = { pointer, x, y, owner, generation, subject: source.subjectKey, timer: setTimeout(() => {
+          if (!hold.current || hold.current.owner !== getInteractionOwner() || hold.current.generation !== getInteractionGeneration() || hold.current.subject !== latest.current.subjectKey || !trigger.current?.isConnected) { cancelHold(); return; }
+          consumeHeldClick(pointer); cancelHold();
+          if (!current.current) begin("first");
+        }, 500) };
+      },
+      onPointerMove: (event) => {
+        const pending = hold.current;
+        if (pending && (event.pointerId !== pending.pointer || Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > 8)) cancelHold();
+      },
+      onPointerUp: () => cancelHold(), onPointerCancel: cancelHold,
+      onClickCapture: (event) => {
+        if (!heldClick.current) return;
+        heldClick.current = false; event.preventDefault(); event.stopPropagation();
+      },
+    }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
     {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
     <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</span>
-    {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId}
-      className={styles.menu} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
+    {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
+      className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
       tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>, container) : null}
-    <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} onDismiss={() => close(true)}
+    <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} heightLimit="available" onDismiss={() => close(true)}
       interactionLayer={modalLayer} returnFocusTo={() => returnFocusTo?.() ?? trigger.current}
       skipReturnFocus={() => skipReturn.current} focusKey={focusKey}
       initialFocus={(panel) => {
+        const active = current.current;
+        if (active?.admission) {
+          active.admission.phase = "Settling";
+          checks.current.settleMobile();
+          return panel;
+        }
         if (current.current?.touch) return panel;
         if (!hasChoices) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...panel.querySelectorAll<HTMLElement>("[data-menu-row]")];
         const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
       }}>
-      <div ref={sheetBody} className={styles.sheetBody} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
+      <div ref={sheetBody} data-collection-viewport="" className={`${collection.contentViewport} ${styles.sheetBody}`} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
     </MobileSheet>
   </div>;
 }

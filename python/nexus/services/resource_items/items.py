@@ -2,17 +2,19 @@
 
 ``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
 actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
-admits; I2). SQL bounds previews except prefix context, whose tail needs full grapheme context.
-Annotations deliberately
-carry full canonical bodies and their body-lane version from one statement. One query
-per scheme, plus source-credit and annotation batches, avoids recursive reads.
+admits; I2). SQL bounds previews except prefix context, whose tail needs full grapheme context. Annotations deliberately
+carry full canonical bodies and their body-lane version from one statement. Live media
+uses one canonical summary batch; narrow source attribution keeps its own projection.
+One query per scheme, plus summary, source-credit and annotation batches, avoids
+recursive reads. A media that disappears during summary hydration becomes unavailable
+before routing, so neither its old title nor a live activation escapes.
 """
 
 from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, assert_never, cast
 from uuid import UUID
 
 import regex
@@ -22,9 +24,11 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import highlight_readability_sql, visible_media_ids_cte_sql
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
+    MediaResourceBodyOut,
     NamedResourceBodyOut,
     PassageResourceBodyOut,
     ProseResourceBodyOut,
@@ -40,6 +44,7 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     load_contributor_credits_for_podcasts,
 )
+from nexus.services.media import media_summaries
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.routing import resource_activations_for_refs
 
@@ -151,6 +156,14 @@ def resource_items_out(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResourceItemOut]:
     rows = _rows(db, viewer_id, refs)
+    summaries = media_summaries(
+        db,
+        viewer_id=viewer_id,
+        media_ids=[ref.id for ref in refs if ref.scheme == "media" and ref.uri in rows],
+    )
+    for ref in refs:
+        if ref.scheme == "media" and ref.id not in summaries:
+            rows.pop(ref.uri, None)
     missing = {ref.uri for ref in refs if ref.uri not in rows}
     activations = resource_activations_for_refs(
         db,
@@ -164,9 +177,7 @@ def resource_items_out(
     ]
     source_rows = {ref.uri: rows[ref.uri] for ref in owner_refs if ref.uri in rows}
     source_rows.update(_rows(db, viewer_id, [ref for ref in owner_refs if ref.uri not in rows]))
-    named_refs = [
-        ref for ref in refs if ref.scheme in ("media", "podcast") and ref.uri not in missing
-    ]
+    named_refs = [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
     credits = _credits(db, [*named_refs, *(ref for ref in owner_refs if ref.uri in source_rows)])
     source_activations = resource_activations_for_refs(
         db,
@@ -188,6 +199,7 @@ def resource_items_out(
                 ref=ref,
                 row=row,
                 credits=credits.get(ref.uri),
+                media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
                 source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
                 annotation=annotations.get(ref.id),
                 activation=activations[ref.uri],
@@ -201,6 +213,7 @@ def _resource_item_out(
     ref: ResourceRef,
     row: dict[str, Any] | None,
     credits: list[ContributorCreditOut] | None,
+    media_summary: MediaSummaryOut | None,
     source: SourceAttributionOut | None,
     annotation: ResourceAnnotationOut | None,
     activation: ResourceActivationOut,
@@ -208,16 +221,20 @@ def _resource_item_out(
     body: ResourceBodyOut
     if row is None:
         body = NamedResourceBodyOut(
-            title="Resource unavailable", media_kind=None, contributors=None
+            title="Resource unavailable", image_url=None, media_kind=None, contributors=None
         )
         source = None
         label = "Resource unavailable"
         action_ref = ref.uri
     else:
-        body = _body(row, credits)
+        if ref.scheme == "media":
+            assert media_summary is not None
+            body = MediaResourceBodyOut(media_summary=media_summary)
+        else:
+            body = _body(row, credits)
         if source is not None and row.get("location_label"):
             source = source.model_copy(update={"location_label": row["location_label"]})
-        label = row.get("title") or _body_label(body)
+        label = _body_label(body)
         action_ref = (
             (row.get("owner_ref") or ref.uri)
             if ref.scheme
@@ -339,12 +356,17 @@ def _body(
             image_count=0,
         )
     return NamedResourceBodyOut(
-        title=row.get("title") or "Untitled", media_kind=row.get("media_kind"), contributors=credits
+        title=row.get("title") or "Untitled",
+        image_url=row.get("image_url"),
+        media_kind=row.get("media_kind"),
+        contributors=credits,
     )
 
 
 def _body_label(body: ResourceBodyOut) -> str:
     match body.kind:
+        case "media":
+            return body.media_summary.title
         case "named":
             return body.title
         case "passage":
@@ -355,6 +377,8 @@ def _body_label(body: ResourceBodyOut) -> str:
             return "Image" if body.count == 1 else f"{body.count} images"
         case "reference":
             return body.label.text if body.label else "Embedded resource"
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def _annotations(
@@ -399,22 +423,9 @@ def _rows(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
         ids = list({ref.id for ref in refs if ref.scheme == scheme})
-        if scheme in ("artifact", "artifact_revision"):
-            from nexus.services.dossier.subjects import head_visible_sql
-
-            key = "id" if scheme == "artifact" else "revision_id"
-            sql = f"""SELECT a.{key} AS id, 'Dossier — ' || COALESCE(m.title,c.title,CASE WHEN l.is_default THEN 'All' ELSE l.name END,p.title,co.display_name,pg.title,idea.display_title,'Note') AS title
-                FROM artifacts a LEFT JOIN media m ON a.subject_scheme='media' AND m.id=a.subject_id
-                LEFT JOIN conversations c ON a.subject_scheme='conversation' AND c.id=a.subject_id
-                LEFT JOIN libraries l ON a.subject_scheme='library' AND l.id=a.subject_id
-                LEFT JOIN podcasts p ON a.subject_scheme='podcast' AND p.id=a.subject_id
-                LEFT JOIN contributors co ON a.subject_scheme='contributor' AND co.id=a.subject_id
-                LEFT JOIN pages pg ON a.subject_scheme='page' AND pg.id=a.subject_id
-                LEFT JOIN artifact_idea_subjects idea ON a.subject_scheme='idea' AND idea.id=a.subject_id
-                WHERE a.{key} = ANY(:ids) AND {head_visible_sql("a")}"""
-        else:
-            sql = _QUERIES[scheme]
-        for row in db.execute(text(sql), {"ids": ids, "viewer_id": viewer_id}).mappings():
+        for row in db.execute(
+            text(_QUERIES[scheme]), {"ids": ids, "viewer_id": viewer_id}
+        ).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
     return out
 
@@ -460,13 +471,13 @@ _QUERIES = {
     "note_block": _NOTE_SQL,
     "conversation": "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled conversation') AS title FROM conversations WHERE id = ANY(:ids) AND owner_user_id = :viewer_id",
     "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role, 'conversation:' || c.id AS owner_ref FROM messages m JOIN conversations c ON c.id = m.conversation_id AND c.owner_user_id = :viewer_id WHERE m.id = ANY(:ids) AND m.status != 'pending'",
-    "podcast": "SELECT id, title FROM podcasts WHERE id = ANY(:ids)",
+    "podcast": "SELECT id, title, image_url FROM podcasts WHERE id = ANY(:ids)",
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",
     "external_snapshot": "SELECT id, title FROM resource_external_snapshots WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",
-    "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, h.prefix AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
+    "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
     "fragment": f"SELECT id, 'passage' AS body_kind, left(canonical_text,601) AS exact, 'media:' || media_id AS owner_ref FROM fragments WHERE id = ANY(:ids) AND media_id IN {_VISIBLE}",
-    "passage_anchor": "SELECT id, 'passage' AS body_kind, left(selector #>> '{quote,exact}',601) AS exact, selector #>> '{quote,prefix}' AS prefix, left(selector #>> '{quote,suffix}',49) AS suffix, owner_scheme || ':' || owner_id AS owner_ref FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id",
+    "passage_anchor": "SELECT id, 'passage' AS body_kind, left(selector #>> '{quote,exact}',601) AS exact, right(selector #>> '{quote,prefix}',49) AS prefix, left(selector #>> '{quote,suffix}',49) AS suffix, owner_scheme || ':' || owner_id AS owner_ref FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,t.label,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
     "oracle_passage_anchor": "SELECT a.id, 'passage' AS body_kind, left(a.quote,601) AS exact, a.display_label AS location_label, 'media:' || s.media_id AS owner_ref FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id WHERE a.id = ANY(:ids)",
 }
@@ -486,12 +497,18 @@ for _scheme, _table, _body_column in (
 def preview_text(item: ResourceItemOut) -> str:
     """Plain text for narrow consumers such as marker tooltips and tool summaries."""
     body = item.preview.body
-    if body.kind == "passage":
-        return body.exact.text
-    if body.kind == "prose":
-        return body.excerpt.text
-    if body.kind == "named":
-        return body.title
-    if body.kind == "reference":
-        return body.label.text if body.label else ""
-    return " ".join(alt.text for alt in body.alts if alt is not None)
+    match body.kind:
+        case "media":
+            return body.media_summary.title
+        case "passage":
+            return body.exact.text
+        case "prose":
+            return body.excerpt.text
+        case "named":
+            return body.title
+        case "reference":
+            return body.label.text if body.label else ""
+        case "images":
+            return " ".join(alt.text for alt in body.alts if alt is not None)
+        case _ as unreachable:
+            assert_never(unreachable)

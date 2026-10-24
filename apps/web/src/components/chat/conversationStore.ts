@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, isApiError, isRefusal } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isRefusal } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import {
@@ -165,7 +165,14 @@ export function createChatStore(accountId: string, conversationId: string | null
       const stop = openRunTail(runId, live?.lastSeq ?? 0, {
         event: (event) => {
           const current = state.live[message.id];
-          if (current) setLive(message.id, foldLive(current, event));
+          if (current) setLive(message.id, foldLive({ ...current, suspension: null, link: { kind: "Live" } }, event));
+        },
+        suspended: error => {
+          const current = state.live[message.id];
+          if (current) setLive(message.id, { ...current, suspension: error, link: {
+            kind: "Failed", retryable: false,
+            feedback: apiTransportFeedback(error, "live updates paused") ?? { tone: "Warning", title: "sign in to reconnect", requestId: error.requestId },
+          } });
         },
         end: () => {
           tails.delete(message.id);

@@ -95,30 +95,12 @@
 }
 
 .destination {
-  display: grid;
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: 0;
+  flex-direction: column;
   gap: var(--space-3);
-}
-
-.destinationList {
-  max-height: min(52vh, 22rem);
-  overflow-y: auto;
-  padding: var(--space-1);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-}
-
-.destinationOption {
-  display: grid;
-  min-height: 44px;
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-serif);
-  cursor: pointer;
-}
-
-.destinationOption[data-active="true"] {
-  background: var(--accent-muted);
+  padding: var(--space-3);
 }
 
 /* A requested branch choice: a whole row is one native navigation button. */
@@ -144,6 +126,7 @@
 
 .destinationViews {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   gap: var(--space-1);
 }

@@ -150,15 +150,6 @@ class SearchResultConversationOut(SearchResultTitledOut):
     id: UUID
 
 
-class ConversationArtifactSearchOut(SearchResultTitledOut):
-    """A Conversation Dossier claim; the revision ref keeps the exact cited text."""
-
-    type: Literal["artifact"]
-    id: UUID
-    revision_id: UUID
-    subject_ref: str
-
-
 class SearchResultWebOut(SearchResultLocatorBackedOut[Literal["web_result"]]):
     """A persisted public-web result, one per external snapshot (``id`` is the snapshot)."""
 
@@ -191,7 +182,6 @@ RESULT_MODELS: dict[str, type[SearchResultBaseOut]] = {
     "evidence_span": SearchResultEvidenceSpanOut,
     "reader_apparatus_item": SearchResultReaderApparatusItemOut,
     "conversation": SearchResultConversationOut,
-    "artifact": ConversationArtifactSearchOut,
     "web_result": SearchResultWebOut,
 }
 SearchResultOut = Annotated[
@@ -207,7 +197,6 @@ SearchResultOut = Annotated[
     | SearchResultEvidenceSpanOut
     | SearchResultReaderApparatusItemOut
     | SearchResultConversationOut
-    | ConversationArtifactSearchOut
     | SearchResultWebOut,
     Field(discriminator="type"),
 ]

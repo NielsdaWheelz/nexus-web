@@ -32,18 +32,18 @@ from nexus.schemas.conversation import (
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
-from nexus.schemas.dossier import DossierBuildOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 from nexus.schemas.suggestions import SuggestionObservationOut
+from nexus.schemas.writing import WritingState
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.search.query import DiscoveryKind
 
 # Every model whose JSON is an SSE `data:` frame as-is (api/routes/stream.py),
-# split by how the stream dumps it. Tool events use their public projections;
+# Tool events use their public projections;
 # stored audit models never describe the wire.
-SSE_PAYLOADS_BY_NAME = (
+SSE_PAYLOADS = (
+    WritingState,
     MediaProcessingSnapshotOut,
     MetadataEnrichmentView,
     ChatRunToolCallStartEventOut,
@@ -52,10 +52,8 @@ SSE_PAYLOADS_BY_NAME = (
     ChatRunDoneEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
-    DossierBuildOut,
     SuggestionObservationOut,
 )
-SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut,)
 
 
 def wire_schema() -> dict:
@@ -69,7 +67,7 @@ def wire_schema() -> dict:
             name=model.__name__,
             mode="serialization",
         )
-        for model in SSE_PAYLOADS_BY_NAME + SSE_PAYLOADS_BY_ALIAS
+        for model in SSE_PAYLOADS
     )
     flat_models = get_flat_models_from_fields(fields, known_models=set())
     model_name_map = get_model_name_map(flat_models)

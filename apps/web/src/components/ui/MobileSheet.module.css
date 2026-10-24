@@ -1,4 +1,4 @@
-/* All mobile bottom-sheet geometry lives here and only here. */
+/* Sheet layout and height policies; MobileSheet projects the visual viewport. */
 
 .backdrop,
 .softBackdrop {
@@ -12,6 +12,11 @@
 
 .softBackdrop {
   background: var(--overlay-scrim-soft);
+}
+
+.backdrop.available,
+.softBackdrop.available {
+  padding-top: max(var(--space-6), var(--viewport-safe-top));
 }
 
 .panel {
@@ -41,12 +46,35 @@
   animation: sheetIn var(--duration-base) var(--ease-bloom);
 }
 
+.panel.available {
+  bottom: 0;
+  min-block-size: 0;
+  max-height: none;
+  max-block-size: 100%;
+}
+
 .header {
   position: relative;
   flex: 0 0 auto;
   min-height: var(--size-xl);
   padding-top: var(--space-4);
   touch-action: pan-x;
+}
+
+.handleHeader {
+  padding-top: 0;
+}
+
+.handle {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: var(--size-xl);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
 }
 
 .grabber {
@@ -103,7 +131,8 @@
   color: var(--ink);
 }
 
-.close:focus-visible {
+.close:focus-visible,
+.handle:focus-visible {
   outline: var(--focus-ring-width) solid var(--ring);
   outline-offset: calc(-1 * var(--focus-ring-offset));
 }

@@ -1,15 +1,18 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 import {
   createContext,
   useCallback,
   useContext,
-  useMemo,
   useRef,
   useEffect,
-  useLayoutEffect,
   type ReactNode,
 } from "react";
+import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
+import {hasActiveInteractionOwner, useInteractionOwner} from "@/lib/ui/overlay";
+import {usePaneIsActive} from "@/lib/panes/paneRuntime";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type {
   OutlineBranch,
@@ -17,7 +20,6 @@ import type {
 } from "@/lib/resources/outlineProjection";
 import {
   useOutlineSession,
-  type OutlinePlacement,
   type OutlineSession,
 } from "@/lib/notes/useOutlineSession";
 import styles from "./ResourceOutline.module.css";
@@ -52,24 +54,34 @@ function ObservedOutlineSession({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const markInteraction = session.markInteraction;
+  const runtime = usePaneRuntime();
+  const active = usePaneIsActive();
+  const interactionOwner = useInteractionOwner();
+  const latest = useRef(session);
+  latest.current = session;
+  useEffect(() => {if (!active || interactionOwner !== null) latest.current.revokeCommands();}, [active, interactionOwner]);
+  usePaneOutlineCommands(session.commandOwner && active && interactionOwner === null ? {
+    session: session.scope, insertLabel: session.insertLabel,
+    commandState: command => latest.current.commandState(command),
+    executeCommand: command => latest.current.executeCommand(command),
+    done: () => {
+      const focused = document.activeElement;
+      latest.current.revokeCommands();
+      if (focused instanceof HTMLElement && root.current?.contains(focused)) focused.blur();
+    },
+  } : null);
   useEffect(() => {
     const mark = (event: Event) => {
       const target = event.target;
-      const key =
-        event.type === "focusin" &&
-        target instanceof Element &&
-        root.current?.contains(target)
-          ? (target
-              .closest("[data-reference-editor]")
-              ?.closest("[data-outline-occurrence]")
-              ?.getAttribute("data-outline-occurrence") ?? null)
-          : null;
-      if (
-        event.type === "pointerdown" ||
-        event.type === "keydown" ||
-        event.type === "focusin"
-      )
-        markInteraction(key, event.type);
+      if (!(target instanceof Element)) return;
+      const accessory = target.closest("[data-outline-commands]");
+      if (accessory?.getAttribute("data-outline-commands") === latest.current.scope) return;
+      const inside = root.current?.contains(target) ?? false;
+      if (!inside && (event.type === "pointerdown" || event.type === "focusin")) latest.current.revokeCommands();
+      if (inside && (event.type === "pointerdown" || event.type === "keydown" || event.type === "focusin"))
+        markInteraction(target.closest("[data-outline-occurrence]")?.getAttribute("data-outline-occurrence") ?? null,
+          event.type as "pointerdown" | "keydown" | "focusin");
+      if (hasActiveInteractionOwner() && latest.current.commandOwner) latest.current.revokeCommands();
     };
     document.addEventListener("pointerdown", mark, true);
     document.addEventListener("keydown", mark, true);
@@ -79,7 +91,7 @@ function ObservedOutlineSession({
       document.removeEventListener("keydown", mark, true);
       document.removeEventListener("focusin", mark, true);
     };
-  }, [markInteraction]);
+  }, [markInteraction, runtime]);
   return (
     <ObservedSession value={session}>
       <OutlineSessionContext value={session}>
@@ -95,13 +107,13 @@ function ObservedOutlineSession({
                   ))}
                   {intent.problem ? <p>{intent.problem}</p> : null}
                   {index === 0 ? (
-                    <button
+                    <Button
                       type="button"
                       disabled={intent.problem !== null}
                       onClick={session.retryFailed}
                     >
                       retry this change at the reviewed position
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               ))}
@@ -113,17 +125,12 @@ function ObservedOutlineSession({
   );
 }
 
-type View = { folds: ReadonlyMap<string, boolean>; focused: string | null };
 export const ResourceOutlineContext = createContext<{
   scope: string;
-  view: View;
+  view: { folds: ReadonlyMap<string, boolean> };
   viewLocked: boolean;
-  placementDrag: { current: OutlinePlacement | null };
   toggle(key: string, open: boolean): void;
-  focus(key: string): void;
-  showAll(): void;
   reveal(target: OutlineTarget): void;
-  focusedRowRemoved(key: string, row: HTMLElement): void;
 } | null>(null);
 export const ResourceBranch = createContext<OutlineBranch>({
   ancestors: new Map(),
@@ -138,7 +145,6 @@ type Props = {
   ancestorRef?: string;
   branch?: OutlineBranch;
   onRevealRoot?: () => void;
-  onFocusChange?: (focused: string | null) => void;
   busy?: boolean;
   viewLocked?: boolean;
 };
@@ -194,184 +200,41 @@ function StandaloneList(props: Props) {
 }
 
 function SessionList({
-  children,
-  after,
-  ariaLabel,
-  scope,
-  ancestorRef,
-  branch: suppliedBranch,
-  onRevealRoot,
-  onFocusChange,
-  busy,
-  viewLocked = false,
-  session,
+  children, after, ariaLabel, scope, ancestorRef, branch: suppliedBranch,
+  onRevealRoot, busy, viewLocked = false, session,
 }: Props & { session: OutlineSession }) {
   const inherited = useContext(ResourceBranch);
-  const {
-    view,
-    focusBranch,
-    showAll: showSessionItems,
-    toggle: toggleSession,
-  } = session;
-  const placementDrag = useRef<OutlinePlacement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLUListElement | null>(null);
-  const focusedKey = useRef(view.focused);
-  const pendingFocus = useRef<{ key: string; previous: Element | null } | null>(
-    null,
-  );
-  const focusChanged = useRef(onFocusChange);
-  const locked = useRef(viewLocked);
-  locked.current = viewLocked;
-  focusChanged.current = onFocusChange;
-  const reveal = useCallback(
-    (target: OutlineTarget) => {
-      if (target.kind === "root" && view.focused === null && onRevealRoot) {
-        onRevealRoot();
-        return;
-      }
-      const key = target.kind === "occurrence" ? target.key : view.focused;
-      const occurrence =
-        key === null
-          ? list.current
-          : root.current?.querySelector<HTMLElement>(
-              `[data-outline-occurrence="${CSS.escape(key)}"]`,
-            );
-      if (!occurrence) return;
-      const control =
-        key === null || occurrence.matches("[data-row-focusable]")
-          ? occurrence
-          : occurrence.querySelector<HTMLElement>("[data-row-focusable]");
-      control?.focus();
+  const reveal = useCallback((target: OutlineTarget) => {
+    if (target.kind === "root") {
+      if (onRevealRoot) onRevealRoot();
+      else list.current?.focus();
+      return;
+    }
+    root.current?.querySelector<HTMLElement>(
+      `[data-outline-occurrence="${CSS.escape(target.key)}"] [data-row-focusable]`,
+    )?.focus();
+  }, [onRevealRoot]);
+  const context = {
+    scope, view: session.view, viewLocked,
+    toggle(key: string, open: boolean) {
+      if (!viewLocked) session.toggle({key, open});
     },
-    [onRevealRoot, view.focused],
-  );
-  const focus = useCallback(
-    (focused: string) => {
-      if (locked.current) return;
-      pendingFocus.current = { key: focused, previous: document.activeElement };
-      focusBranch(focused);
-    },
-    [focusBranch],
-  );
-  const showAll = useCallback(() => {
-    if (locked.current) return;
-    showSessionItems();
-  }, [showSessionItems]);
-  const focusedRowRemoved = useCallback(
-    (key: string, row: HTMLElement) => {
-      const previous = document.activeElement;
-      const ownedFocus = previous !== null && root.current?.contains(previous);
-      // A committed removal ends focus; an initial lazy restoration or ref reattachment does not.
-      queueMicrotask(() => {
-        const scope = root.current;
-        if (
-          !scope?.isConnected ||
-          focusedKey.current !== key ||
-          row.isConnected ||
-          scope.querySelector(`[data-outline-occurrence="${CSS.escape(key)}"]`)
-        )
-          return;
-        showSessionItems();
-        if (
-          ownedFocus &&
-          (document.activeElement === previous ||
-            (document.activeElement === document.body &&
-              !previous?.isConnected))
-        )
-          list.current?.focus();
-      });
-    },
-    [showSessionItems],
-  );
-  useLayoutEffect(() => {
-    focusedKey.current = view.focused;
-    const pending = pendingFocus.current;
-    pendingFocus.current = null;
-    if (
-      pending &&
-      (document.activeElement === pending.previous ||
-        (document.activeElement === document.body &&
-          !pending.previous?.isConnected))
-    )
-      reveal({ kind: "occurrence", key: pending.key });
-  }, [reveal, view]);
-  useLayoutEffect(() => {
-    focusChanged.current?.(view.focused);
-  }, [view.focused]);
-  const context = useMemo(
-    () => ({
-      scope,
-      view,
-      viewLocked,
-      placementDrag,
-      toggle: (key: string, open: boolean) => {
-        if (!locked.current) toggleSession({ key, open });
-      },
-      focus,
-      showAll,
-      reveal,
-      focusedRowRemoved,
-    }),
-    [
-      scope,
-      focus,
-      focusedRowRemoved,
-      reveal,
-      showAll,
-      view,
-      viewLocked,
-      toggleSession,
-    ],
-  );
-  const branch = useMemo(() => {
-    const base = suppliedBranch ?? inherited;
-    return ancestorRef && !base.ancestors.has(ancestorRef)
-      ? {
-          ...base,
-          ancestors: new Map(base.ancestors).set(ancestorRef, {
-            kind: "root",
-          } as const),
-        }
-      : base;
-  }, [ancestorRef, inherited, suppliedBranch]);
-  return (
-    <ResourceOutlineContext value={context}>
-      <ResourceBranch value={branch}>
-        <div
-          ref={root}
-          className={styles.outline}
-          data-pane-return-scope={scope}
-          data-outline-scope={scope}
-        >
-          {view.focused !== null ? (
-            <button
-              type="button"
-              className={styles.textButton}
-              disabled={viewLocked}
-              onClick={() => {
-                pendingFocus.current = {
-                  key: view.focused!,
-                  previous: document.activeElement,
-                };
-                showAll();
-              }}
-            >
-              back to all items
-            </button>
-          ) : null}
-          <ul
-            ref={list}
-            className={styles.list}
-            aria-label={ariaLabel}
-            aria-busy={busy}
-            tabIndex={-1}
-          >
-            {children}
-          </ul>
-          {after}
-        </div>
-      </ResourceBranch>
-    </ResourceOutlineContext>
-  );
+    reveal,
+  };
+  const base = suppliedBranch ?? inherited;
+  const branch = ancestorRef && !base.ancestors.has(ancestorRef)
+    ? {...base, ancestors: new Map(base.ancestors).set(ancestorRef, {kind: "root"} as const)}
+    : base;
+  return <ResourceOutlineContext value={context}>
+    <ResourceBranch value={branch}>
+      <div ref={root} className={styles.outline} data-pane-return-scope={scope} data-outline-scope={scope}>
+        <ul ref={list} className={styles.list} aria-label={ariaLabel} aria-busy={busy} tabIndex={-1}>
+          {children}
+        </ul>
+        {after}
+      </div>
+    </ResourceBranch>
+  </ResourceOutlineContext>;
 }

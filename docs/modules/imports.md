@@ -11,7 +11,8 @@ owners: `python/nexus/services/imports.py` (the read model), `python/nexus/servi
 - **classification.** needs attention > active > complete over the slots. the **primary** obligation speaks for the import: the earliest by pipeline stage (`STAGES`: Upload, Validate, Extract, Finalize, SourceProcessing, Index, Metadata), then failure or acceptance time, then key; under a stage or reason filter, the one that matched. the server names it; the web reads `obligations[primary]` and derives nothing.
 - **offer / restriction.** the source and search owners' answer for this viewer, as `media_facts` carries it (the same answer the action menu shows): a command naming the exact attempt, job or revision it acts on, or why there is none. an unpublished upload answers for itself: Retry upload (not for a rejected session or a browser capture), or `UploadRejected`.
 - **history event.** an append-only narration of a session's or a media's source and index work, written by its owner in the transaction that commits the fact. its payload names its `kind` and holds only what a reader is told; 0225 baselines are stored once-only facts of that cut. metadata operations are projected at read time from their jobs, never stored. history is narration only: no other owner reads it as an identity (an accepted attempt's surviving media is ingest's `media_source_supersessions`).
-- **observation.** the newest successful summary's `observed_at`: the only token on which the list, the inspector and an open history reread.
+- **observation.** the newest successful summary's `observed_at`, a clock observation. list/history call `revalidate()` on every clock advance, including the first successful summary; periodic reads wait behind traversal and cannot supersede an admitted read. the inspector remains a single observation-bound read.
+- **collection revision.** manual refresh, in-tab `Imports.Invalidated` and `Entries` changes advance the provider's separate strict revision and wake its summary. focus, online, pageshow, pane-open, visibility and polling only observe the summary.
 
 ## contracts
 
@@ -36,6 +37,19 @@ text remains explicit in copy rather than claiming searchable content.
 
 imports sends no write of its own. its commands go to their owners with their retry rules: `POST /media/{id}/retry` and `/repair` (`recoverMedia`, the offer's exact expectation; a stale one is 409 and reads "This import changed"), `POST /media/uploads` with the session's own id and the original file, and `DELETE /media/uploads/{id}` (a session that published meanwhile is done), metadata research and review through `lib/media`.
 
+row shortcuts and overflow share the same open, offered recovery and upload
+commands. at row content widths up to 520px only more remains beside identity;
+status and operation feedback may wrap below. the menu explicitly retains open
+when ready, independently of title selection, which opens the import inspector.
+overflow open is a command with plain/shift intent: close precedes asynchronous
+validation. wide/title anchors retain native browser gestures.
+unpublished upload menus are immediate; media menus retain canonical preparation.
+retry upload synchronously opens the existing file input, then file selection
+uses the session's existing attempt owner. cancellation creates no command.
+metadata retains its canonical menu projectors and direct recovery owner, including
+the existing eager source-remedy read and visible feedback. responsive hosts use
+owner-defined control markers; they do not interpret metadata workflow internals.
+
 the workspace planner owns reuse and creation; pane count never refuses completion.
 
 in process: `append_upload_event` and `append_processing_event` (caller's transaction, nothing returned), `delete_upload_history_in_current_transaction` and `delete_processing_history_in_current_transaction` (history dies with its session or media), `events_of_import_sql`, the queue hooks `on_source_job_outcome` and `on_index_job_outcome` (inside the job transition), `assume_safe_failure_code`, `queue_failure_code`, `parse_import_ref`, `format_import_ref`. web: `publishImportsInvalidation` / `subscribeImportsInvalidations` (the in-tab `Imports.Invalidated` event), `encodeImportsUrl` (Add's "view import"), `ImportsBadge`, the companion group `imports-inspector` with surface `import-detail`, `FAILURE_COPY` (the media banner) and the acquisition copy the add panel, share, Connections and note attachments word their outcomes with.
@@ -44,15 +58,15 @@ url: `/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&befo
 
 ## invariants
 
-- **I1** summary, page and detail read one classification, so a count and a row cannot disagree.
+- **I1** summary, page and detail apply the same classification rules; separate reads can observe different moments.
 - **I2** a view never shows a filter it does not apply, and the web never sends one `GET /imports` refuses (`VIEW_FILTERS` is the one table); of a reason and "no recorded failures", the latest choice wins.
 - **I3** every shown source or search code is catalogued (`SafeFailureCode`, which `FAILURE_COPY` is exhaustive over); a queue code outside it reads as `E_WORKER_HANDLER_FAILED`, and recording history never aborts a queue transition.
 - **I4** history is written only by its owners' transactions through `import_history`, records nothing for a settled attempt or a deleted media, and decodes only the kinds it stores.
 - **I5** a History row carries its matched event only when a newer event follows it; match evidence belongs to one ref under one applied query.
 - **I6** the first view is chosen once from the counts; restoring a url never opens the inspector; explicit activation (a title, the Inspector control, Add's "view import") does.
 - **I7** one command per import and command is in flight on its owner. refresh/research use the account's media-admission entry; other verbs use the action runtime (`media:<id>|<offer>`, `upload:<id>|RetryUpload|RemoveUpload`). the row, inspector and menu read that same busy state. upload refusals stay beside their originating control.
-- **I8** polling runs every 5 s only while the newest summary succeeded, work is unfinished, the tab is visible and an Imports pane is open or a wake is under 15 minutes old; a failed summary stops it until a wake. history reads only while open.
-- **I9** a failed reread keeps the last data beside its error (list prefix, detail, history); a reread never shows one ref or event twice.
+- **I8** list/history use the shared collection owner at 50 rows/page, publish each page and continue to source exhaustion while their pane is active and the document visible. history mounts only while open; a later match never reopens a collapsed history. reopening a restored history requests one coalesced reread when a summary observation exists, since the clock may have advanced while it was shut; a fresh first page does not schedule that extra read. polling runs every 5 s only while the newest summary succeeded, no summary read is running, work is unfinished, the tab is visible and an Imports pane is open or a wake is under 15 minutes old; a failed summary stops it until a wake. history reads only while open.
+- **I9** a failed same-query reread keeps the last data beside its error (list, detail, history); a changed list/history query clears old rows and metadata. collection ids use first-occurrence-wins; refresh replaces the loaded prefix atomically and rereads complete collections to exhaustion. list `matched_count` is metadata from the latest committed page, including an empty page: it is an independent server observation, never a completion signal. the toolbar has no visible loaded/matched counters. qualified matched evidence stays inside the input’s described element and is never live-announced per page. actual import progress and recovery remain visible.
 - **I10** a disappearing list control hands focus to the same row's title, else the next surviving row's, else the query input, only while focus was lost and the pane is active.
 
 ## feedback and uncertain admission
@@ -82,3 +96,15 @@ there is no storage, startup restore, replay or browser-restart recovery. other
 commands keep their existing owners and retry rules.
 
 every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
+
+## acquisition recovery
+
+[ingest](ingest.md) owns guarded admission, upload publication, receipt lifetime
+and current-reference supersession; [libraries](library.md) owns retention and
+placement revisions. import views never infer current saving from a past receipt.
+
+[add content](add-content.md) owns live upload recovery. a guard refusal permits
+review against the same staged generation before expiry; an unknown confirmation
+retains its exact command. losing that owner requires file reselection/recapture.
+imports exposes its existing retry-upload action rather than durable confirmation
+recovery or a second placement command owner.

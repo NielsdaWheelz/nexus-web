@@ -47,10 +47,8 @@ from nexus.schemas.import_history import (
     IndexSucceeded,
     IndexSuperseded,
 )
-from nexus.schemas.imports import RepairSearchOffer
 from nexus.schemas.media_sources import SearchRepairAdmission
 from nexus.services import media_intelligence_lifecycle
-from nexus.services.capabilities import SearchRecoveryAnswer
 from nexus.services.content_chunking import (
     Chunk,
     EnvelopeExceeded,
@@ -790,26 +788,6 @@ def index_phase[T](label: str, operation: Callable[[Session], T]) -> T:
 
 
 # Recovery of a dead reindex execution.
-
-
-@dataclass(frozen=True, slots=True)
-class SearchRecoveryFacts:
-    revision: int
-    dead_job_id: UUID | None  # the current revision's job, when it is dead
-    is_creator: bool
-    ready_for_reading: bool
-
-
-def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
-    """The offer (imports, media): the creator may rerun the current revision's dead job.
-
-    ``repair_dead_media_reindex`` admits exactly this, answering 403 and 409 instead.
-    """
-    if facts.dead_job_id is None or not facts.ready_for_reading:
-        return None
-    if not facts.is_creator:
-        return "NotOwner"
-    return RepairSearchOffer(expected_revision=facts.revision, expected_job_id=facts.dead_job_id)
 
 
 def repair_dead_media_reindex(

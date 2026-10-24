@@ -1,7 +1,7 @@
 import type { ShareOpenOptions } from "@/lib/sharing/types";
 
 export function anchoredShareOpenOptions(
-  triggerEl: HTMLButtonElement | null,
+  triggerEl: HTMLElement | null,
   fallback: () => HTMLElement | null,
 ): ShareOpenOptions {
   return {

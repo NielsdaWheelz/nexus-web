@@ -14,6 +14,9 @@ import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
+import { FeedbackState } from "@/components/feedback/Feedback";
+import { checkSession } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import { paneMountKey, resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { getInteractionGeneration, hasActiveInteractionOwner, useInteractionOwner } from "@/lib/ui/overlay";
@@ -40,16 +43,19 @@ const PaneContent = memo(function PaneContent(props: {
   readonly pathname: string;
   readonly isPresented: boolean;
 }) {
-  const [admitted, setAdmitted] = useState(props.isPresented);
-  if (!admitted && props.isPresented) setAdmitted(true);
+  const admission = useRemoteAdmission();
+  const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings"].includes(props.routeId);
+  // Covered bodies own saved-data and coverage states; mounting grants no remote
+  // capability. Other cold server panes still require credential admission.
+  const catalog = ["libraries", "library", "podcasts", "podcastDetail", "lectern",
+    "notes", "conversations", "media", "page", "conversation", "note"].includes(props.routeId);
+  const canAdmit = local || catalog || admission === "Ready";
+  const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
+  if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
+  if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
   if (props.routeId !== "unsupported") return renderPane(props.routeId);
-  return (
-    <div className={styles.unsupported}>
-      This route is not yet supported in side-by-side pane mode: `
-      {props.pathname}`
-    </div>
-  );
+  return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this destination is unavailable" }} announcement="Polite" /></div>;
 });
 
 /**
@@ -65,8 +71,7 @@ export default function WorkspaceHost() {
   const isMobile = useIsMobileViewport();
   const latestWorkspace = useLatestWorkspace();
   const interactionOwner = useInteractionOwner();
-  const [isMaximized, setIsMaximized] = useState(false);
-  const maximized = isMaximized && !isMobile;
+  const maximized = store.desktopMaximized && !isMobile;
   const panes = useMemo(
     () =>
       state.panes.map((pane) => ({
@@ -178,7 +183,12 @@ export default function WorkspaceHost() {
     const lost =
       document.activeElement === null ||
       document.activeElement === document.body;
-    if (flipped && lost) focusPane(activeId);
+    // A removed control's owner restores its specific successor after commit.
+    // The pane fallback yields to that recovery and to intentional focus.
+    if (flipped && lost) queueMicrotask(() => {
+      if (document.activeElement === null || document.activeElement === document.body)
+        focusPane(activeId);
+    });
   }, [activeId, isMobile, focusPane, latestWorkspace]);
   const { scrollPaneIntoView } = canvas;
   useLayoutEffect(() => {
@@ -228,7 +238,7 @@ export default function WorkspaceHost() {
       {isMobile ? null : (
         <WorkspacePaneStrip
           state={state}
-          isMaximized={isMaximized}
+          isMaximized={store.desktopMaximized}
           items={panes.map(({ pane, label }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
@@ -237,20 +247,15 @@ export default function WorkspaceHost() {
             isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
           }))}
-          onActivate={(paneId) => {
+          onActivate={(paneId, disposition) => {
             contentActivation.current = null;
-            store.activatePane(paneId);
-            scrollPaneIntoView(paneId);
-            requestPaneFocus(paneId);
+            const result = store.activateWorkspacePane({ paneId, disposition });
+            if (result && result.kind !== "Cancelled") scrollPaneIntoView(result.paneId);
+            return result;
           }}
-          onToggleMaximize={(paneId) => {
-            contentActivation.current = null;
-            const restoring = isMaximized && latestWorkspace().state.active_primary_pane_id === paneId;
-            store.activatePane(paneId);
-            setIsMaximized(!restoring);
-          }}
+          onMaximize={store.maximizePane}
+          onRestoreCanvas={store.restoreCanvas}
           onMove={store.movePane}
-          onRestore={store.activatePane}
           onMinimize={store.minimizePane}
           onClose={store.closePane}
         />
@@ -300,8 +305,8 @@ export default function WorkspaceHost() {
                   isActive={pane.id === activeId}
                   resetKey={`${pane.id}:${pane.current_visit.id}:${route.routeKey}`}
                   slotMinWidth={isMobile || maximized ? "100%" : `${slot.widthPx}px`}
-                  onBack={pane.history.back.length ? () => {
-                    if (store.goBackPane(pane.id) === "committed") requestPaneFocus(pane.id);
+                  onBack={pane.history.back.length ? intent => {
+                    store.goBackPane(pane.id, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
                   } : null}
                 >
                   <PaneShell

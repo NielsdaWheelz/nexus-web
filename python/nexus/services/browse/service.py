@@ -2,6 +2,7 @@
 
 Provider calls finish before any database read; the reads share one snapshot. A candidate or
 Preview the viewer already owns resolves to the in-Nexus item instead of a Preview.
+An external candidate retains its sealed target identity across that resolution change.
 """
 
 from __future__ import annotations
@@ -151,10 +152,6 @@ def preview_browse(db: Session, viewer_id: UUID, query: BrowsePreviewQuery) -> B
     """One target's Preview; a target the viewer already owns resolves into Nexus."""
     unsealed = unseal_target(query.target)
     handle = DiscoveryTargetHandle(query.target)
-    if query.cursor is not None and not isinstance(unsealed, PodcastIndexPodcastTarget):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Invalid discovery target"
-        )
     fetched: BrowsePreview | None = None
     match unsealed:
         case BraveWebArticleTarget():
@@ -162,9 +159,7 @@ def preview_browse(db: Session, viewer_id: UUID, query: BrowsePreviewQuery) -> B
         case YouTubeVideoTarget():
             fetched = youtube.preview(unsealed, handle)
         case PodcastIndexPodcastTarget():
-            fetched = podcast_index.preview_podcast(
-                unsealed, handle, limit=query.limit, cursor=query.cursor
-            )
+            fetched = podcast_index.preview_podcast(unsealed, handle)
         case PodcastIndexEpisodeTarget():
             fetched = podcast_index.preview_episode(unsealed, handle)
 
@@ -199,14 +194,14 @@ def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str 
     owned = {}
     for item in items:
         if isinstance(item.resolution, PreviewResolution):
-            found = _owned(db, viewer_id, unseal_target(item.resolution.target), url)
+            found = _owned(db, viewer_id, unseal_target(item.target), url)
             if found is not None:
-                owned[item.resolution.target] = found
+                owned[item.target] = found
     media = [resource_id for scheme, resource_id in owned.values() if scheme == "media"]
     summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media)
     out = []
     for item in items:
-        found = owned.get(getattr(item.resolution, "target", None))
+        found = owned.get(getattr(item, "target", None))
         if found is not None:
             scheme, resource_id = found
             resolution = (

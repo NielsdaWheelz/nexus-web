@@ -25,7 +25,7 @@ import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
 import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
-import { createTextFind } from "./find";
+import { createTextFind, type TextFind } from "./find";
 import { createTextGeometry, type TextGeometry } from "./geometry";
 import { createPainter, type Painter } from "./paint";
 import { readerLinkTarget } from "./linkTarget";
@@ -39,14 +39,19 @@ export default function TextSurface({
   structure,
   view,
   scrollIndicator,
+  feedback,
 }: {
   readonly runtime: ReaderRuntime;
   readonly doc: TextDocument;
   readonly structure: Structure;
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
+  readonly feedback: RefObject<HTMLDivElement | null>;
 }) {
-  const { identity, format, units, sections, length, ranges } = doc;
+  const { identity, format, units, length, ranges } = doc;
+  const inputs = useRef({ doc, structure });
+  inputs.current = { doc, structure };
+  const finder = useRef<TextFind | null>(null);
   const scrollport = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
@@ -69,11 +74,12 @@ export default function TextSurface({
   const density =
     (profile.font_size_px * profile.line_height) / profile.column_width_ch;
 
-  const measure = useCallback(() => {
+  const measure = useCallback((cause: "Observation" | "Geometry") => {
     const capture = geometry.current?.capture();
     if (!capture) return;
     placement.current = { ...capture.placement, identity: doc.identity };
-    runtime.viewport(capture.viewport, capture.placement);
+    runtime.viewport(capture.viewport, capture.placement, cause, null);
+    if (finder.current) runtime.updateFind(finder.current.update(inputs.current.doc, inputs.current.structure));
     const { primary } = capture.viewport;
     painter.current?.focus(
       viewRef.current.profile.focus_mode,
@@ -81,8 +87,8 @@ export default function TextSurface({
       selecting.current || viewRef.current.activePassage?.identity === doc.identity,
     );
   }, [doc.identity, runtime]);
-  useScrollport(scrollport, runtime, measure, scrollIndicator);
-  const selectionInput = useReaderSelection(scrollport, {
+  const { geometryChanged, retireReflow } = useScrollport(scrollport, runtime, measure, { placement, change: () => measure("Geometry") }, scrollIndicator, feedback);
+  const { input: selectionInput, captureSelection } = useReaderSelection(scrollport, {
     identity,
     textSelector: "[data-reader-text]",
     capture(selection) {
@@ -92,7 +98,7 @@ export default function TextSurface({
     onSelecting(inside) {
       if (inside === selecting.current) return;
       selecting.current = inside;
-      measure();
+      measure("Geometry");
     },
   });
 
@@ -103,11 +109,12 @@ export default function TextSurface({
     geometry.current = text;
     painter.current = paint;
     paint.paint(viewRef.current.decorations, viewRef.current.activePassage, viewRef.current.inspection);
+    const find = createTextFind(inputs.current.doc, inputs.current.structure, text, paint, runtime);
+    finder.current = find;
     const handle: SurfaceHandle = {
       identity,
-      find: createTextFind(
-        { identity, format, sections, units, length, ranges }, structure, text, paint, runtime,
-      ),
+      retireReflow,
+      find: find.source,
       measurePassage(passage) {
         return passage.identity === identity && passage.anchor.kind === "text"
           ? text.measurePassage(passage.anchor)
@@ -116,6 +123,7 @@ export default function TextSurface({
       measureBounds() {
         return measureScrollport(port);
       },
+      captureSelection,
       focusSource() {
         port.focus({ preventScroll: true });
       },
@@ -158,13 +166,11 @@ export default function TextSurface({
     // Width, typography, images, realised units and host chrome all change
     // geometry. The same navigator fence owns every resulting adjustment;
     // an active jump retains its target and later genuine input cancels it.
-    const observer = new ResizeObserver(() => {
-      void runtime.reflow({ placement: placement.current, change: measure });
-    });
+    const observer = new ResizeObserver(() => geometryChanged("Layout"));
     observer.observe(port);
     observer.observe(column.current!);
     if (lead.current) observer.observe(lead.current);
-    measure();
+    measure("Geometry");
     return () => {
       detach();
       observer.disconnect();
@@ -172,11 +178,16 @@ export default function TextSurface({
       placement.current = null;
       geometry.current = null;
       painter.current = null;
+      finder.current = null;
     };
-  }, [identity, format, sections, units, length, ranges, measure, runtime, structure, embeds]);
+  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged, retireReflow, captureSelection]);
+
+  useLayoutEffect(() => {
+    if (finder.current) runtime.updateFind(finder.current.update(doc, structure));
+  }, [doc, structure, runtime]);
 
   useLayoutEffect(() => painter.current?.paint(decorations, activePassage, view.inspection), [decorations, activePassage, view.inspection]);
-  useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
+  useLayoutEffect(() => measure("Geometry"), [measure, profile.focus_mode, activePassage]);
 
   // Per-unit dom work once a unit nears the viewport (public: token-authorised images).
   useEffect(() => {
@@ -333,6 +344,7 @@ export default function TextSurface({
           <section
             key={unit.id}
             data-reader-unit={unit.id}
+            data-playback-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "true" : undefined}
             className={styles.unit}
             style={{
               containIntrinsicSize: `auto ${Math.ceil(24 + unit.length * density)}px`,
@@ -353,6 +365,8 @@ export default function TextSurface({
               <p className={styles.time}>
                 {view.onSeekTime ? (
                   <ReaderLink reader={runtime} target={{ kind: "time", ms: unit.time.startMs }}
+                    aria-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "time" : undefined}
+                    aria-label={view.playback?.identity === identity && view.playback.unit === unit.id ? "playback position" : undefined}
                     onDefault={() => {
                       // Choosing a segment's time reads from there and seeks the player.
                       runtime.readFrom({ kind: "text", unit: unit.id, offset: 0 });
@@ -362,7 +376,8 @@ export default function TextSurface({
                     {clock(unit.time.startMs)}
                   </ReaderLink>
                 ) : (
-                  clock(unit.time.startMs)
+                  <span aria-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "time" : undefined}
+                    aria-label={view.playback?.identity === identity && view.playback.unit === unit.id ? "playback position" : undefined}>{clock(unit.time.startMs)}</span>
                 )}
                 {unit.speaker ? ` · ${unit.speaker}` : null}
               </p>

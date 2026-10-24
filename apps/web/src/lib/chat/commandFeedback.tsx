@@ -52,6 +52,7 @@ function Condition({ observation, remove, fail }: {
     if (!current) remove(id);
   }, [current, id, remove]);
   useWorkspaceCondition(`chat-command:${id}`, current ? {
+    needsAttention: current.feedback !== null,
     priority: "Write",
     announcement: "Polite",
     content: current.feedback

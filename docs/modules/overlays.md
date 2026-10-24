@@ -11,7 +11,10 @@ losing their place. owners, under `apps/web/src/`:
 - `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
   rect, synchronous source-owned measurement or text-selection lines; element
   placement above/below/right, cross-axis alignment, flip, clamp and re-measure
-  on scroll, resize, visual viewport and source layout notifications). hosted
+  on scroll, resize, visual viewport and source layout notifications). it needs
+  no app provider; content-aware callers supply `subscribeContentClearance`.
+  it publishes available height/width as css constraints before measurement;
+  each actual root composes those with its preferred size. hosted
   reader composers use live source geometry; chat-answer selection rectangles
   remain a [separate issue](../issues/selection-dock-does-not-follow-scroll.md).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
@@ -131,9 +134,23 @@ destination). the last modal's restore runs again after its history traversal
 if focus fell to the body. an inert-uncover retry retires when another control
 claims focus, even if that control later detaches. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
-opener. nexus supplies its search input as invocation context. escape returns
+opener. a menu that skips returning focus passes its stable trigger through
+`requestNexusOpen` metadata, including queued and guarded requests.
+nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
-and clicked-highlight composition belong to `FloatingActionSurface`.
+and clicked-highlight composition use `FloatingActionSurface` on desktop;
+mobile composition explicitly opens the shared body in `MobileSheet`.
+
+return candidates must be connected, visible and enabled; a css-hidden opener
+cannot suppress its surviving fallback. visible but temporarily inert modal
+targets retain the existing uncover retry. closing a presenter retains its last
+active destination callbacks even if that render clears the session; its current
+close policy and focus-return veto remain live. modal tab candidates apply the same
+visibility rule. `useActionFocusRecovery` captures only a focused shortcut inside
+its host and observes that element while owned. when responsive css removes it,
+focus moves without scrolling to the host's surviving more control, then its
+existing row/pane target. another actual focus owner relinquishes the capture;
+widening alone never moves focus. media and import shortcuts share this hook.
 
 ## history
 
@@ -148,6 +165,11 @@ entry is left behind. a modal opening during that traversal gets a fresh entry,
 and a modal closing as another opens in the same commit keeps the entry (one
 sync per commit). with no modal open there is no entry: page menus, floating
 surfaces and previews never own Back.
+
+`overlayOwnsHistoryTraversal` exposes ownership without exposing marker state.
+the workspace checks it during capture-phase popstate and intermediate
+hashchange; internal modal cleanup must not become pane navigation. ownership
+ends after the destination address is restored.
 
 menu preparation and desktop menus opt into retirement on real browser
 navigation. the kernel classifies that traversal and closes them without
@@ -166,8 +188,10 @@ frames render in `document.body` and stack at `calc(var(--z-modal) + depth)`,
 depth being the frame's index among open modals: activation order alone decides
 which is on top. transients and tooltips render in their containing modal's panel
 (`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
-chrome (`--z-overlay`), below every modal. workspace feedback stays in flow
-and is suppressed while a modal owns interaction. the quick-note handoff input
+chrome (`--z-overlay`), below every modal. workspace receipts use a passive portal
+above chrome and below popovers; they own no overlay interaction and retire when
+a menu, picker or modal opens. explicit activity uses the existing dialog/sheet
+frames. the quick-note handoff input
 (`--z-nexus`) stays above every frame. a page's own fixed shell (the `/share` card) takes no z-index, or it
 buries them. the app's body never scrolls (panes do); where a bundle lets it
 scroll (the android shelf), css locks it while any frame is open
@@ -215,24 +239,39 @@ suppresses command/control+k. its corridor is the 8px inline-start padding.
 ## surfaces
 
 **PickerSurface**: a desktop transient anchored above or below its trigger,
-with flip/clamp, or the existing mobile sheet. the default desktop shell is a
+with flip/clamp while preserving its trigger and gap, or the existing mobile sheet.
+the requested side wins when content fits; otherwise the side with more space
+wins (below on a tie). the default desktop shell is a
 named dialog; a listbox consumer supplies its own named root and sets
 `desktopRole={null}`. `initialFocus(panel)` chooses the focus target after
 placement. the caller owns choice semantics and content; the surface owns
 dismissal, tab continuation and return focus through the existing kernel.
 `--picker-surface-width` sets desktop width (380px by default); mobile geometry
-belongs to `MobileSheet`. inline presentation is a named region with an explicit
-close action and no outside-press dismissal.
+belongs to `MobileSheet`. `heightLimit="available"` removes the desktop preferred
+envelope and forwards the policy to the sheet; content remains intrinsic within
+the available bounds. omission retains preferred sizing. inline presentation is
+a named region with an explicit close action and no outside-press dismissal.
+
+collection bodies use the [shared viewport recipes](visual-system.md#collections-and-searchable-pickers).
+search, scope and recovery stay above the result scrollport. when they cannot
+leave one usable result row, the body becomes the sole scrollport and the list
+stops scrolling independently. the sheet header/close remains reachable.
 
 **MobileSheet**: fixed visible title and close x above an independently scrolling
 body; the full title names the dialog and close control. `renderHeader` replaces
 the standard header and receives the frame's guarded `requestDismiss`; specialized
-headers must retain a visible exit. noninteractive header space is a drag target
+headers retain an explicit guarded exit. the compact passage composer places
+`close composer` in its always-available overflow; its primary row has no x.
+noninteractive header space is a drag target
 at least 44px high, with a 36×4px grabber. a drag of 96px asks the same guard as
 x, scrim, escape and back; cancellation restores position. reduced motion removes
 animated travel while retaining dismissal. scrim is `"default"`, or `"soft"` for
 in-context companion sheets. keyboard lift uses `--keyboard-inset` and safe-area
-padding. geometry lives only in `MobileSheet.module.css`.
+padding. `heightLimit="available"` instead projects the backdrop onto the visual
+viewport using `useKeyboardInset`, with a top gap of the larger of `--space-6`
+and the safe top inset. its intrinsic panel clears the keyboard once and keeps
+safe-bottom padding inside its available height. sheet layout and height policies
+live in `MobileSheet.module.css`; the component projects the viewport snapshot.
 
 **MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
 follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
@@ -252,6 +291,13 @@ named transient dialog. retry retains the failure surface, owner, focus and hist
 while taking a fresh signal and budget. mobile uses a titled `MobileSheet` with
 ordinary buttons/links and modal tab order. touch focuses the panel, keyboard the
 requested command edge. `aria-haspopup` matches the displayed role.
+both presentations use natural content height with available-space ceilings;
+mobile selects the sheet's available-height policy. mobile admission focuses the
+panel with choices hidden, then requires 150ms without viewport/row geometry
+changes before publishing one snapshot. its own keyboard closure can settle
+there; this quiet interval does not assert portable keyboard completion. close,
+replacement and unmount cancel admission; prepared actions retain their original
+five-second deadline. published geometry and resize retirement remain strict.
 
 Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
 wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
@@ -271,22 +317,23 @@ sections, labels, targets, reasons, controls or unsolicited layout close with on
 announcement; a fresh activation is required. same-geometry availability and
 handlers remain live. capture checks precede custom/native activation, including
 shifted and auxiliary links. list scrolling and header drag are deliberate movement.
-compensated target geometry is compared at 1/64 css px precision so compositor
-rounding during sheet entry/drag does not count as layout change. viewport facts
+mobile sheets measure layout position within their fixed backdrop, independently
+of entry/drag translation. fractional dimensions and row geometry retain their
+1/64 css px comparison; compositor position samples are not subtracted. viewport facts
 remain exact and are checked at publication and activation, before deferred resize
-delivery can permit a stale press. viewport changes retire pending or published
-invocations. `onOpenChange` reports
+delivery can permit a stale press. viewport changes restart quiet mobile
+admission; they retire other pending or published invocations. `onOpenChange` reports
 actual visibility only; preparation never starts there. `ActionMenu` owns mobile
 chrome hold. `returnFocusTo` can name the invocation context independently of the trigger;
-absent it, the trigger owns return. canonical main's passage-composer reader
-cutover retires the old directly anchored mode before its shared-menu removal.
+absent it, the trigger owns return.
 
-**FloatingActionSurface**: the text-selection toolbar (above the first visible
-line, below the last on phones, beside the selection, else pinned to the
-nearest edge, with a caret at the selection), clicked-highlight choosers,
-composers and action-bar popovers. Escape, an outside press and, inside a
-modal, Back dismiss it; `preservePointerSelection` keeps a live selection when
-pressed.
+**FloatingActionSurface**: nonmodal selection actions, desktop passage composers,
+clicked-highlight choosers and action-bar popovers. ordinary text-selection
+placement keeps its first/last visible line and edge policy; mobile reader
+actions explicitly select `mobile-selection-actions`. escape, an outside press
+and, inside a modal, back dismiss it. opted-in `preservePointerSelection` keeps
+a live range when pressed; mobile reader actions instead freeze their subject
+before focus transfer and retain native button activation.
 
 **useHoverPreview**: mouse or pen hover, or keyboard focus while focus is
 visible, opens a card above the citation after 150 ms; leaving the citation
@@ -296,10 +343,15 @@ hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
 
 **Tooltip**: plain-text help for native buttons and links. callers spread its
-callback ref, handlers and description onto the actual control (the inner anchor
-for `Button asChild`), preserving the control's name and activation semantics.
+callback ref, handlers and description onto the actual control, preserving the
+control's name and activation semantics. `triggerRef` composes its native ref
+without dropping react callback cleanup; callers combine existing description
+ids and handlers. shared controls own that composition for their native roots.
 it sits below the trigger, aligned to its end and flipped when it must, or to
-its right, centred (`placement`). mouse/pen hover opens after `openDelayMs`
+its right, centred (`placement`). viewport-only positioning requires no app
+provider; content-aware selection surfaces pass the existing viewport service's
+`subscribeContentBottomClearance` as `subscribeContentClearance`. presence selects
+content-clearance bounds; absence uses viewport/safe-area bounds. mouse/pen hover opens after `openDelayMs`
 (500ms by default); leaving during that delay cancels it. `disabled` never
 opens and closes a visible caption. focus-visible opens at once,
 including in the mobile layout; touch never opens help. while visible, pointer
@@ -330,17 +382,16 @@ z-indices.
 
 ## browser floor
 
-chromium 110+, firefox 121+ (esr 128), safari 16+ and the android system
-webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
-`:focus-visible` and `visualViewport`.
+chromium 110+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
+`findLast`/`toReversed`, `:focus-visible` and `visualViewport`. the native android
+shell requires system webview 144+ for its edge-to-edge safe-area and keyboard
+viewport contract; the android os version alone does not establish that floor.
 
 ## verification
 
 verification follows the [repository contract](../local-rules/testing-standards.md).
 real browser probes drive back as history traversal; device and spoken
-assistive-technology claims require their actual platform. pending action-menu
-handset qualification is [tracked separately](../issues/action-menus-physical-handset-qualification.md).
-the [soft keyboard](../issues/mobile-keyboard-inset-has-no-browser-proof.md), ime
+assistive-technology claims require their actual platform. the soft keyboard, ime
 composition and touch preview of a real available source require device checks.
 
 ## rejected hacks
@@ -362,19 +413,47 @@ shelf readers mount only the existing mobile geometry provider.
 
 ## reader action placement
 
-`FloatingActionSurface` accepts a measured anchor callback plus an optional
-source subscription. measurements include the reader bounds and selected line
-boxes; null geometry with live bounds pins an unavailable draft without a
-caret. placement intersects those bounds with the usable visual viewport.
-`data-anchor-state` distinguishes visible, offscreen and unavailable. children
-may render from `(placed, anchorState)` so editor focus waits for actual visible
-placement, with no timer or duplicate host state. ordinary element/rect anchors
-remain for their existing consumers.
+`FloatingActionSurface` accepts a source-owned measurement callback and optional
+subscription. the reader supplies live bounds, passage rect and source-ordered
+line boxes before clipping or visual sorting. ordinary composer placement keeps
+its existing policy: null passage geometry with live bounds pins an unavailable
+draft without a caret. `data-anchor-state` distinguishes visible, offscreen and
+unavailable. `(placed, anchorState)` lets desktop editor focus wait for visible
+placement without a timer or duplicate host state. other element/rect and chat
+strategies retain their contracts.
 
-the hosted composer is a nonmodal group with normal tab order. its rich editor
-consumes escape only for its own nested controls; otherwise the overlay kernel
-receives it. navigation deactivates the source overlay before the destination
-can own escape/focus.
+`mobile-selection-actions` is explicit opt-in with a stable `selectionSession`.
+it intersects live reader bounds, visual viewport, safe areas and the existing
+player/keyboard clearance. first/last source rectangles define endpoint
+neighborhoods expanded by 24 css px before clipping; the first visible line never
+substitutes for an offscreen endpoint. the measured compact group is constrained
+to the usable bounds, with one internal scrollport when oversized.
+
+candidate order is below selection, above selection, centered over its visible
+body, viewport bottom, viewport top and viewport center. within one session the
+previous candidate kind is recomputed and retained while inside bounds and clear
+of endpoint neighborhoods. otherwise use the first clear candidate; if none is
+clear, minimize endpoint overlap, maximize endpoint distance, then retain listed
+order. selected-body overlap is allowed, so lack of empty space never suppresses
+a valid action group. compact actions fade without transforming their geometry,
+so an immediate more activation keeps a stationary trigger.
+source scrolling/reflow measures current geometry; opening
+or hiding these actions never reflows, resizes or scrolls the source.
+
+the annotation controller owns its provisional candidate and quiet timer under
+the [reader selection contract](reader-implementation.md).
+hidden controls have no hit targets or focus stops. owned controls are inside the
+overlay; focus collapse cannot remove a pressed control, and the more owner
+outlives the passive row. native handle hit regions remain unavailable to the
+page; endpoint clearance and quiet time are approximations, not a release signal.
+
+mobile note/ask and saved-mark entry use the existing `MobileSheet` with its
+close, back, focus and existing scrolling body behavior. the shared composer body
+keeps note history, destinations and recovery controls. closing retains authored
+work and never reconstructs a native selection. desktop composition remains a
+nonmodal anchored group with normal tab order; its rich editor consumes escape
+only for nested controls. explicit navigation retires the source interaction
+before its destination can own focus or escape.
 
 destination presenters close without return focus after handled new-pane
 navigation. `FloatingActionSurface.skipReturnFocus` carries that decision through

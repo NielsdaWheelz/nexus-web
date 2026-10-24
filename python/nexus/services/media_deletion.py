@@ -9,6 +9,8 @@ orphan sweep reclaims it (I7). Actual x containment propagates retention from
 library/grant/annotation/evidence roots; incidental cycles do not. Teardown locks
 contained candidates in media-id order and claims newly unrooted children through
 the same jobs. Retry rule: removal is idempotent; teardown acts on its exact intent.
+normal episode removal retains media and aliases, and always records the viewer's
+removal marker so automatic acquisition cannot restore the episode.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from nexus.services import (
     passage_anchors,
     resource_grants,
     source_attempts,
+    users,
 )
 from nexus.services.consumption import state as consumption_state
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -117,6 +120,9 @@ def _claim_teardown(db: Session, media_id: UUID) -> None:
     # The reference writer may already have its serializable snapshot while
     # waiting on this row. Touch the tuple so it restarts and sees the intent.
     db.execute(text("UPDATE media SET updated_at = updated_at WHERE id = :m"), {"m": media_id})
+    db.execute(
+        text("UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m"), {"m": media_id}
+    )
     intent_id = db.scalar(
         text("""
             INSERT INTO media_teardown_intents (id, media_id) VALUES (:id, :m)
@@ -142,12 +148,38 @@ def claim_document_teardown_if_unreferenced_locked(db: Session, media_id: UUID) 
 
 
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:
-    removed = db.execute(
-        text("DELETE FROM user_media_deletions WHERE user_id=:u AND media_id=:m RETURNING user_id"),
-        {"u": viewer_id, "m": media_id},
-    ).first()
-    if removed is not None:
-        projection.refresh_viewer_contributors(db, [viewer_id])
+    _run(
+        db,
+        "DELETE FROM user_media_deletions WHERE user_id = :u AND media_id = :m",
+        u=viewer_id,
+        m=media_id,
+    )
+
+
+def remove_podcast_workspace_access_locked(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+) -> None:
+    """Scoped podcast removal hides access while preserving authored work and history.
+
+    caller has the actor, complete media and destination locks. grants remain;
+    viewer markers hide their paths until an explicit fresh acquisition clears them.
+    """
+    from nexus.services.consumption import lectern
+
+    projections = resource_grants.annotation_visibility(
+        db, user_ids={viewer_id}, media_ids=set(media_ids)
+    )
+    for media_id in media_ids:
+        db.execute(
+            text("""INSERT INTO user_media_deletions(user_id,media_id) VALUES (:u,:m)
+                           ON CONFLICT DO NOTHING"""),
+            {"u": viewer_id, "m": media_id},
+        )
+        lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+    resource_grants.invalidate_annotation_visibility(db, projections)
 
 
 def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -158,15 +190,30 @@ def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> Non
 
 def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     from nexus.services import highlights
-    from nexus.services.consumption import lectern, lock_viewer
+    from nexus.services.consumption import lectern
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
         reconcile_document_embed_parent_edges_for_viewer,
     )
-    from nexus.services.dossier import engine as dossier_engine
 
     # The lectern's lock order, as teardown takes it: the viewer before the media.
-    lock_viewer(db, viewer_id)
+    users.lock_viewer(db, viewer_id)
+    users.advance_removal_revision(db, viewer_id)
+    from nexus.services.podcasts import imports
+
+    parent = library_entries.lock_parent_podcast(db, media_id)
+    if parent is not None:
+        managed = list(
+            db.scalars(
+                text("""
+            SELECT l.id FROM libraries l JOIN memberships m ON m.library_id=l.id
+            WHERE m.user_id=:viewer AND l.system_key IS NULL
+              AND ((l.is_default AND l.owner_user_id=:viewer) OR (NOT l.is_default AND m.role='admin'))
+        """),
+                {"viewer": viewer_id},
+            )
+        )
+        imports.mark_processed(db, library_ids=managed, media_id=media_id)
     kind = _lock_kind(db, media_id)
     if kind is None or not can_read_media(db, viewer_id, media_id):
         return
@@ -192,6 +239,10 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     if default_id is not None:
         library_ids.append(default_id)
     library_ids.sort()
+    affected_viewers = db.scalars(
+        text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+        {"ids": library_ids},
+    ).all()
     libraries.lock_library_rows_in_order(db, library_ids)
     for library_id in library_ids:
         library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
@@ -224,8 +275,9 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
     if kind in _DOCUMENT_KINDS and not _references(db, media_id):
         _claim_teardown(db, media_id)
-    elif can_read_media(db, viewer_id, media_id):
-        # A system-library membership is a path the viewer cannot remove: hide it.
+    elif kind == "podcast_episode" or can_read_media(db, viewer_id, media_id):
+        # Episodes retain removal intent even after their last readable path goes.
+        # Other retained media need hiding when a path the viewer cannot remove stays.
         _run(
             db,
             """
@@ -240,7 +292,7 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         db, viewer_id=viewer_id, target_media_id=media_id
     )
     reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
-    dossier_engine.on_visibility_lost(db, user_id=viewer_id)
+    projection.refresh_viewer_contributors(db, [viewer_id, *affected_viewers])
     record_input_change(db, owners=(f"media:{media_id}",))
 
 
@@ -291,12 +343,11 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     hooks before the rows they own, the content index before the media (claims cite its
     spans), highlight children before their roots. Returns the objects it leaves unowned."""
     from nexus.services import media_upload_sessions
-    from nexus.services.dossier import engine as dossier_engine
     from nexus.services.reader_publication import delete_reader_publication
 
     paths = _storage_paths(db, media_id)
+    _run(db, "UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m", m=media_id)
     metadata_operations.delete_media_reviews(db, media_id=media_id)
-    dossier_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
     _run(db, "DELETE FROM document_embeds WHERE media_id = :m", m=media_id)
     _run(db, "DELETE FROM document_embed_artifact_states WHERE media_id = :m", m=media_id)
@@ -313,7 +364,10 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         m=media_id,
     )
     # One graph cleanup per destroyed ref; cited edges sourced elsewhere keep their snapshots.
-    highlight_ids = db.scalars(text(_HIGHLIGHTS_OF_MEDIA), {"m": media_id}).all()
+    highlight_owners = db.execute(
+        select(Highlight.id, Highlight.user_id).where(Highlight.anchor_media_id == media_id)
+    ).all()
+    highlight_ids = [id for id, _ in highlight_owners]
     fragment_ids = db.scalars(
         text("SELECT id FROM fragments WHERE media_id = :m"), {"m": media_id}
     ).all()
@@ -323,6 +377,10 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         *(ResourceRef(scheme="fragment", id=fragment_id) for fragment_id in fragment_ids),
     ):
         cleanup.delete_edges_for_deleted_resource(db, ref=ref)
+    for highlight_id, owner_id in highlight_owners:
+        cleanup.delete_resource_protocol_state(
+            db, viewer_id=owner_id, ref=ResourceRef("highlight", highlight_id)
+        )
     _run(db, "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :m", m=media_id)
     passage_anchors.delete_for_owner(db, owner_scheme="media", owner_id=media_id)
     _run(
@@ -387,9 +445,8 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     delete_reader_publication(db, media_id=media_id)
     _run(db, "DELETE FROM media WHERE id = :m", m=media_id)
     projection.refresh(db, "media", [media_id])
-    projection.refresh(db, "fragment", list(fragment_ids))
-    projection.refresh(db, "highlight", list(highlight_ids))
-    projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+    projection.refresh(db, "fragment", fragment_ids)
+    projection.refresh(db, "highlight", highlight_ids)
     return paths
 
 

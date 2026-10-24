@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import ContributorFilter, {
   useContributorFilterLabels,
 } from "@/components/contributors/ContributorFilter";
@@ -50,6 +51,8 @@ export default function SearchControls(props: {
   const { query, commit, inputRef, status } = props;
   const [draft, setDraft] = useState(query.text);
   const [composing, setComposing] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const paneActive = usePaneIsActive();
   const written = useRef(query.text);
   const statusId = useId();
   const { labels, remember } = useContributorFilterLabels(query.authors);
@@ -181,6 +184,7 @@ export default function SearchControls(props: {
       options={{
         label: "Filters",
         activeCount: chips.length,
+        onExpandedChange: setOptionsOpen,
         onClear: () => write({ ...emptySearchQuery(), text: query.text, view: query.view }),
         content: (
           <>
@@ -223,6 +227,7 @@ export default function SearchControls(props: {
               </div>
             </fieldset>
             <ContributorFilter
+              active={paneActive && optionsOpen}
               selectedHandles={query.authors}
               onAdd={(item) => {
                 remember(item);
@@ -258,7 +263,7 @@ export default function SearchControls(props: {
             >
               <span>{status.text}</span>{status.detail ? ` ${status.detail}` : null}
             </span>
-            {status.action ? <Button variant="ghost" size="sm" onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
+            {status.action ? <Button onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
           </>
         ),
       }}

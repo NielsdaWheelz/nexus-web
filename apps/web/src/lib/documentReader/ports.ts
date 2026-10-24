@@ -51,11 +51,16 @@ export interface ReaderProgressPort {
 
 export interface ReaderHost {
   readonly navigation: ReaderNavigationPort | null;
-  /** The mounted reader element; the host binds mobile chrome input. */
-  scrollport?(element: HTMLElement): (() => void) | undefined;
+  /** The host binds input and reports shell geometry after publishing local insets. */
+  readonly scrollport: ((element: HTMLElement,
+    geometryChanged: (reason: "Occlusion" | "Layout") => void) => () => void) | null;
+  readonly onIntent?: (intent:
+    | { readonly kind: "Navigate"; readonly signal: AbortSignal | null }
+    | { readonly kind: "Read" }) => void;
 }
 
 export interface ReaderNavigationPort {
   href(destination: ReaderDestination): string | null;
-  activate(destination: ReaderDestination, intent: OpenIntent, onDefault: () => void): void;
+  /** Synchronous host admission; local asynchronous inspection keeps its own outcome. */
+  activate(destination: ReaderDestination, intent: OpenIntent, onDefault: () => void): "Accepted" | "Refused";
 }

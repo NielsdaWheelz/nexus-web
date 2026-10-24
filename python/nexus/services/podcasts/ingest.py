@@ -4,11 +4,12 @@ Identity is a set of aliases per show: at most one PodcastIndex ref, at most one
 and any number of canonical enclosure urls. Title, date and random values are never
 identity. An item whose identity is ambiguous is skipped and counted, never guessed.
 
-lock order inside each serializable attempt: the caller's own row (subscription or
-backfill), then the batch's alias advisory locks in canonical order, then the show row,
-then media rows, library rows and the user row (lectern). Two writers of one show (two
-syncs, a sync and a backfill, an add) therefore serialize per alias, and a repeated batch
-converges on the same rows.
+Caller lock order is queue claim (when applicable), actor (when applicable), sorted
+aliases, show and owning run; this writer locks the complete existing media set.
+It writes catalog facts only. The imports owner processes finite observations and
+fans out canonical insertions after the complete page has been resolved. Repeated
+observations are harmless; conflicting strong identifiers are rejected, never guessed.
+No automatic model enrichment, download or transcript work is admitted.
 """
 
 import hashlib
@@ -20,11 +21,9 @@ from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.db.retries import TransactionRestart, integrity_constraint_name
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
@@ -33,12 +32,11 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
-from nexus.services.metadata_operations import enqueue_metadata_enrichment
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 from nexus.services.url_normalize import normalize_url_for_display
 
+from . import chapters
 from .feed import EpisodeFacts, is_safe_url
 from .provider import PROVIDER
 
@@ -68,9 +66,8 @@ class Alias:
 @dataclass(frozen=True, slots=True)
 class IngestResult:
     media_ids: list[UUID | None]  # aligned with the input; None = skipped
-    inserted: int
-    added_to_all: int
     changed: bool
+    inserted_media_ids: list[UUID]
 
     @property
     def skipped(self) -> int:
@@ -110,32 +107,47 @@ def lock_aliases(db: Session, show_identity: str, aliases: Iterable[Alias]) -> N
 
 
 def ingest_episodes(
-    db: Session, *, viewer_id: UUID, podcast_id: UUID, feed_url: str, episodes: list[EpisodeFacts]
+    db: Session,
+    *,
+    podcast_id: UUID,
+    feed_url: str,
+    episodes: list[EpisodeFacts],
+    viewer_id: UUID | None = None,
 ) -> IngestResult:
-    """Upsert a batch newest first (undated last); every written episode lands in the
-    viewer's All. An item without an alias, one claiming a strong alias a newer item of the
-    batch claimed, or one whose aliases name two stored episodes is skipped. A batch that
-    inserted or changed an episode moves its show audience's collections."""
+    """Upsert catalog observations newest first, with aligned canonical ids and insertions.
+
+    The caller holds every alias and the show before entering. A skipped observation
+    has no id; an existing identity still belongs to this import's processed set.
+    """
     order = sorted(
         range(len(episodes)),
         key=lambda i: episodes[i].published_at or datetime.min.replace(tzinfo=UTC),
         reverse=True,
     )
     aliases = [aliases_of(episode) for episode in episodes]
-    show = db.execute(
-        text("SELECT provider, provider_podcast_id FROM podcasts WHERE id = :id"),
-        {"id": podcast_id},
-    ).one()
-    lock_aliases(db, f"{show.provider}:{show.provider_podcast_id}", (a for x in aliases for a in x))
-    db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": podcast_id})
+    flat_aliases = [alias for item in aliases for alias in item]
+    existing_ids = db.scalars(
+        text("""
+        SELECT DISTINCT episode_media_id FROM podcast_episode_identities
+        WHERE podcast_id=:p AND (scheme,value) IN (
+            SELECT * FROM unnest(CAST(:schemes AS text[]),CAST(:values AS text[]))
+        )
+    """),
+        {
+            "p": podcast_id,
+            "schemes": [a.scheme for a in flat_aliases],
+            "values": [a.value for a in flat_aliases],
+        },
+    ).all()
+    library_entries.lock_media_rows_in_order(db, existing_ids)
     show_authors = [
         credit.credited_name
         for credit in load_contributor_credits_for_podcasts(db, [podcast_id]).get(podcast_id, [])
         if credit.role == "author" and credit.credited_name
     ]
     media_ids: list[UUID | None] = [None] * len(episodes)
-    claimed: set[Alias] = set()
-    inserted = added = 0
+    inserted_media_ids: list[UUID] = []
+    written_media_ids: list[UUID] = []
     changed = False
     for i in order:
         episode = episodes[i]
@@ -143,9 +155,6 @@ def ingest_episodes(
         try:
             if not item:
                 raise _Skipped("no_identity")
-            if any(alias in claimed for alias in item):
-                raise _Skipped("alias_claimed_in_batch")
-            claimed.update(alias for alias in item if alias.scheme != "RssEnclosure")
             media_id, stored = _resolve(db, podcast_id, item)
         except _Skipped as skip:
             logger.warning(
@@ -159,37 +168,33 @@ def ingest_episodes(
         if media_id is None:
             media_id = new_uuid7()
             _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
-            inserted += 1
+            inserted_media_ids.append(media_id)
             dirty = True
+            updated = True
             changed = True
         else:
             dirty, updated = _update(db, media_id, row, _display_alias({*stored, *item}))
             changed = changed or updated
         unbound = [alias for alias in item if alias not in stored]
         if unbound:
-            try:
-                db.execute(
-                    text("""
-                        INSERT INTO podcast_episode_identities (
-                            id, podcast_id, scheme, value, episode_media_id
-                        )
-                        VALUES (:id, :podcast_id, :scheme, :value, :media_id)
-                    """),
-                    [
-                        {
-                            "id": new_uuid7(),
-                            "podcast_id": podcast_id,
-                            "scheme": alias.scheme,
-                            "value": alias.value,
-                            "media_id": media_id,
-                        }
-                        for alias in unbound
-                    ],
-                )
-            except IntegrityError as exc:
-                if integrity_constraint_name(exc) != "uq_podcast_episode_identities_alias":
-                    raise
-                raise TransactionRestart from exc
+            db.execute(
+                text("""
+                    INSERT INTO podcast_episode_identities (
+                        id, podcast_id, scheme, value, episode_media_id
+                    )
+                    VALUES (:id, :podcast_id, :scheme, :value, :media_id)
+                """),
+                [
+                    {
+                        "id": new_uuid7(),
+                        "podcast_id": podcast_id,
+                        "scheme": alias.scheme,
+                        "value": alias.value,
+                        "media_id": media_id,
+                    }
+                    for alias in unbound
+                ],
+            )
         if dirty:
             entries = [RawCreditEntry(credited_name=name) for name in row["author_names"]]
             apply_observed_role_slices_in_current_transaction(
@@ -198,21 +203,14 @@ def ingest_episodes(
                 observation=build_observation({"author": entries})[0],
                 source="rss",
             )
-            enqueue_metadata_enrichment(
-                db, media_id=media_id, requester_user_id=viewer_id, request_id=None
-            )
-        added += library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
-        _replace_chapters(db, media_id, episode.chapters)
+        if updated:
+            written_media_ids.append(media_id)
+        chapters.observe(
+            db, media_id=media_id, inline=episode.chapters, source_url=episode.chapters_source_url
+        )
         media_ids[i] = media_id
-    written = [identity for identity in media_ids if identity is not None]
-    db.flush()
-    projection.refresh(db, "media", written)
-    projection.refresh_subject_dossiers(
-        db, [ResourceRef("media", identity) for identity in written]
-    )
-    return IngestResult(
-        media_ids=media_ids, inserted=inserted, added_to_all=added, changed=changed or added > 0
-    )
+    projection.refresh(db, "media", written_media_ids)
+    return IngestResult(media_ids=media_ids, changed=changed, inserted_media_ids=inserted_media_ids)
 
 
 def _resolve(
@@ -245,11 +243,6 @@ def _resolve(
     for scheme in ("PodcastIndex", "RssGuid"):
         if len({a.value for a in merged if a.scheme == scheme}) > 1:
             raise _Skipped("ambiguous_identity")
-    new_enclosure = any(a.scheme == "RssEnclosure" and a not in stored for a in item)
-    known_guid = any(a.scheme == "RssGuid" and a in stored for a in item)
-    known_ref = any(a.scheme == "PodcastIndex" and a in stored for a in item)
-    if new_enclosure and known_guid and not known_ref:  # a reused guid, re-hosted
-        raise _Skipped("ambiguous_identity")
     return owners.pop(), stored
 
 
@@ -262,7 +255,7 @@ def _row(episode: EpisodeFacts, feed_url: str, show_authors: list[str]) -> dict[
     return {
         "title": episode.title,
         "canonical_source_url": feed_url,
-        "external_playback_url": episode.audio_url,
+        "external_playback_url": episode.audio_url if is_safe_url(episode.audio_url) else None,
         "description": episode.description_text[:2000] if episode.description_text else None,
         "description_html": episode.description_html,
         "description_text": episode.description_text,
@@ -283,7 +276,7 @@ def _fingerprint(row: dict[str, Any]) -> str:
 
 def _insert(
     db: Session,
-    viewer_id: UUID,
+    viewer_id: UUID | None,
     podcast_id: UUID,
     media_id: UUID,
     row: dict[str, Any],
@@ -351,7 +344,7 @@ def _update(
             UPDATE media
             SET title = :title,
                 canonical_source_url = :canonical_source_url,
-                external_playback_url = :external_playback_url,
+                external_playback_url = COALESCE(:external_playback_url, external_playback_url),
                 description = COALESCE(:description, description),
                 edition_published_date = COALESCE(:edition_published_date, edition_published_date),
                 language = COALESCE(:language, language),
@@ -386,28 +379,6 @@ def _update(
         for key in ("published_at", "duration_seconds")
     )
     return dirty, changed
-
-
-def _replace_chapters(db: Session, media_id: UUID, chapters: list[dict] | None) -> None:
-    """None means the feed said nothing about chapters; a list replaces them."""
-    if chapters is None:
-        return
-    db.execute(text("DELETE FROM podcast_episode_chapters WHERE media_id = :id"), {"id": media_id})
-    unique: dict[tuple[int, str], dict] = {}
-    for chapter in chapters:
-        unique.setdefault((chapter["t_start_ms"], chapter["title"].lower()), chapter)
-    if unique:
-        db.execute(
-            text("""
-                INSERT INTO podcast_episode_chapters (
-                    media_id, chapter_idx, title, t_start_ms, t_end_ms, url, image_url, source
-                )
-                VALUES (
-                    :media_id, :idx, :title, :t_start_ms, :t_end_ms, :url, :image_url, :source
-                )
-            """),
-            [c | {"media_id": media_id, "idx": i} for i, c in enumerate(unique.values())],
-        )
 
 
 def select_visible_episode_media_id_by_podcast_index_ref(

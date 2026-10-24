@@ -18,6 +18,8 @@ import {
   wasOverlayInvokedByTouch,
   type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
+import { useCollectionLayout } from "@/lib/ui/collection";
+import collection from "./Collection.module.css";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./PickerSurface.module.css";
@@ -35,6 +37,7 @@ export default function PickerSurface({
   placement = "below",
   initialFocus,
   desktopRole = "dialog",
+  heightLimit,
   className,
   children,
 }: {
@@ -56,6 +59,8 @@ export default function PickerSurface({
   readonly initialFocus?: (panel: HTMLElement) => HTMLElement | null;
   /** A listbox supplies its own named root inside a neutral desktop shell. */
   readonly desktopRole?: "dialog" | null;
+  /** Omit the preferred height ceiling; still fit beside the trigger. */
+  readonly heightLimit?: "available";
   /** Desktop panel appearance; the mobile sheet keeps its own geometry. */
   readonly className?: string;
   readonly children: ReactNode;
@@ -71,7 +76,10 @@ export default function PickerSurface({
     placement,
     align: "start",
     flip: true,
+    keepAnchorVisible: true,
   });
+  useCollectionLayout(regionRef, region);
+  useCollectionLayout(panel.ref, desktop);
   const select = useRef(initialFocus);
   select.current = initialFocus;
   const container = useOverlayContainer();
@@ -111,19 +119,17 @@ export default function PickerSurface({
         role="region"
         aria-label={title}
         tabIndex={-1}
-        className={styles.inline}
+        className={`${collection.surface} ${styles.inline}`}
       >
         <div className={styles.header}>
           <h3 className={styles.title}>{title}</h3>
           <Button
-            variant="ghost"
             iconOnly
+            icon={<X />}
             className={styles.close}
             aria-label={`close ${title}`}
             onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </Button>
+          />
         </div>
         {children}
       </div>
@@ -139,7 +145,7 @@ export default function PickerSurface({
               role={desktopRole ?? undefined}
               aria-label={desktopRole ? title : undefined}
               tabIndex={desktopRole ? -1 : undefined}
-              className={[styles.surface, className].filter(Boolean).join(" ")}
+              className={[collection.surface, styles.surface, heightLimit === "available" && styles.available, className].filter(Boolean).join(" ")}
               style={panel.style}
             >
               {children}
@@ -157,6 +163,7 @@ export default function PickerSurface({
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}
+        heightLimit={heightLimit}
       >
         {children}
       </MobileSheet>

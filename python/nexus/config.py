@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     nexus_internal_secret: str | None = None
     nexus_handle_key: _Secret = None  # the sealed-handle HMAC root: base64 of 32+ bytes
     nexus_runtime_identity_file: Path | None = None  # local/test; deployed images bake theirs
-    app_public_url: str = "http://localhost:3000"
+    app_public_url: str = "https://127.0.0.1:3000"
     supabase_jwks_url: str | None = None
     supabase_issuer: str | None = None
     supabase_audiences: Annotated[tuple[str, ...], NoDecode] = ()
@@ -216,6 +216,13 @@ class Settings(BaseSettings):
     @classmethod
     def _issuer(cls, value: str | None) -> str | None:
         return value.rstrip("/") if value else value
+
+    @field_validator("app_public_url")
+    @classmethod
+    def _app_public_url(cls, value: str) -> str:
+        if urlparse(value).scheme != "https":
+            raise ValueError("APP_PUBLIC_URL must use https")
+        return value
 
     @model_validator(mode="after")
     def _validate(self) -> "Settings":

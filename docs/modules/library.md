@@ -1,225 +1,131 @@
-# Libraries
+# libraries
 
-Libraries are how a reader keeps and shares things: named collections of media
-and podcast shows that are also the access group for what they file
-(membership is what lets a co-member read a library's media). Every account owns
-one default library, presented as **All**, read as a live union of everything
-the viewer can reach plus their followed shows. A **system library** (the Oracle
-Corpus, `system_key`) reads like any other and is never user-mutable. Libraries
-do not own ingestion or asset delivery.
+libraries separate personal retention, organization and reading authority.
+`services/libraries.py` owns rows, membership capabilities and library lifecycle;
+`library_entries.py` is the sole physical entry writer and canonical membership
+owner. system libraries are readable and never user mutable.
 
-## Concepts
+## membership and retention
 
-- **Entry**: one media or one show in one library, at a position.
-- **Placement**: an item's relation to each library the viewer can see
-  (`Direct`, `Inherited` through a filed show, `Absent`) and why it cannot
-  change (`RequiresAdmin`, `RequiresSubscription`, `SystemManaged`).
-- **Destination**: a named, non-system library the viewer admins; new items
-  (Add, share, browse, the extension) are filed into destinations.
-- **Collection order**: a library's positions (or the Lectern's, see
-  [player](player.md)), fenced by an **order revision** drawn from one global
-  sequence (`collection_order_revision_seq`). A **move** names its item, its
-  successor and the revision it expects.
+an account has one stable default library, presented as all. its physical media
+entries retain personal access. all lists distinct physical media reached through
+current non-system memberships, excluding removal markers and teardown intents.
+its added date comes from the default holding, otherwise the earliest qualifying
+entry. named libraries organize and share direct media. grants and reads acquire
+no holdings. unfiled means default-held media without a direct named placement.
 
-## Owners
+entries contain only media. podcast subscriptions are independent rules, read in
+a separate section above contents; they never fold episodes or enter media sort,
+counts, order or paging. [podcasts](podcast.md) owns their admission and scoped stop.
 
-- `services/libraries.py`: the `libraries` table and the viewer's authority
-  over one. `access(db, viewer, library, lock=)` returns a `LibraryAccess` with
-  `require_*` and `.out(viewer)`, the one capability rule (action snapshots read
-  it too). Create, rename, delete, the index, destinations, `default_library_id`
-  and system libraries.
-- `services/library_entries.py`: the sole writer of `library_entries`: filing,
-  unfiling, show placement, the move, the placement read, and the relations
-  other modules compose (`library_media_ids_cte_sql`,
-  `destination_membership_rows_sql`, `library_anchor_facts`).
-- `services/library_listing.py`: entry view lenses and the one keyset page and
-  order read; writes nothing.
-- `services/library_members.py`: memberships, invitations, roles, leaving and
-  transfer, authorized through `access`; losing admin deletes the member's
-  suggestion feed. Web: `LibraryMembers` (the inspector's Members tab),
-  `LibraryInvitations` (the inbox above the index); each command is request,
-  then reread.
-- Web: `lib/libraries/api.ts` (typed calls; a committed write publishes its
-  change topics), `views.tsx` (url view options, the name rule
-  `libraryNameError`), `create.ts` (what a create's answer means), `errors.ts`
-  (the one failure-copy map), `placementController.tsx` ("Libraries…"),
-  `lib/collections/order.tsx` (collection order and library moves), the index
-  and library panes, `LibrarySettingsDialog`, and the chooser stack
-  (`LibraryChooser`, used directly by the extension; `DestinationChooser` and
-  `DestinationField` on forms; `PlacementOverlay`).
+explicit media capture/filing retains the actor's default holding and clears that
+actor's removal marker. named unfiling preserves the actor's eligible holding
+first; an absent no-op acquires nothing. library deletion preserves the owner's
+eligible direct media. incidental retention respects suppression and teardown.
+background named podcast delivery belongs to its library and acquires no former
+initiator's personal holding. global podcast removal bypasses ordinary unfile
+preservation to remove every selected placement without recreating holdings.
 
-## Contract (`/api` via the BFF; `{data}`; pages are `{items, next_cursor}`)
+`LibraryAccess` owns capabilities: `can_manage` requires named non-system admin;
+`can_add_content` also admits the viewer's own default. owners delete/transfer;
+other members may leave. nonmembers receive a masked 404. default libraries never
+appear among organizational destinations.
 
-| route | contract | retry rule |
-|---|---|---|
-| `GET /libraries?sort=created_desc\|name_asc\|name_desc` | absent sort is oldest created (All first); names sort as shown | read |
-| `POST /libraries {id, name}` → 201 `LibraryOut` | name trimmed, 1–100 characters, never All (any case): 400 `E_NAME_INVALID` | same id and owner → that row (even renamed); another owner's id → 409 `E_RESOURCE_CONFLICT` |
-| `GET /libraries/{id}` | members only; anyone else 404 `E_LIBRARY_NOT_FOUND` | read |
-| `PATCH /libraries/{id} {name, expected_name}` → `LibraryOut` | admin of a mutable library | already that name → ok; renamed meanwhile → 409 `{current_name}` |
-| `DELETE /libraries/{id}` → 204 | owner; media held nowhere else move to the owner's All; its suggestion feeds go | absent or invisible → 204 |
-| `GET /libraries/{id}/entries?sort&entry_type&projection&completion` | every combination composes; `unfiled` only on All; pages carry nullable `order_revision` | read |
-| `GET /libraries/{id}/order` | member of a mutable library; complete visible `{entry_ids, order_revision}` | repeatable-read snapshot |
-| `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id\|null, expected_order_revision}` → `{entry_ids, order_revision}` | admin; stale revision, or an invisible or missing actor or successor → 409 `E_RESOURCE_CONFLICT`; self-anchor → 400 | the exact original precondition; never rebased, so a resend after landing conflicts |
-| `GET /libraries/placements/{media:<id>\|podcast:<id>}` | `[{library_id, name, is_default, relation, blocked}]`, All first for media, then by name | read |
-| `PUT /libraries/{id}/items/{ref} {replace_episodes}` → 204 | a media into any admin library (All = Saved in Nexus), a followed show into a named one | keyed by (library, item): a no-op when present |
-| `DELETE /libraries/{id}/items/{ref}` → 204 | a media's last entry anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
-| `GET /libraries/destinations`, `GET /extension/library-destinations` | the complete `[{id, name}]` of destinations, `lower(name), name, id`; any parameter 400 | read |
-| `GET\|POST /libraries/{id}/suggestions…` | [suggestions](suggestions.md) | |
-| `GET /libraries/{id}/members?cursor&limit` | admin; `{user_id, role, is_owner, email, display_name, created_at}` by user id | read |
-| `PATCH /libraries/{id}/members/{user_id} {role, expected_role}` → 204 | admin of a mutable library; the owner's role is fixed (403 `E_OWNER_EXIT_FORBIDDEN`); a demotion deletes that member's suggestion feed | already that role → ok; changed meanwhile → 409 `{current_role}` |
-| `DELETE /libraries/{id}/members/{user_id}` → 204 | admin, or the viewer themself; never the owner; deletes that member's suggestion feed | absent, or a library the viewer cannot see → 204 |
-| `DELETE /libraries/{id}/membership` → 204 | the viewer leaves; the owner transfers first | as above |
-| `POST /libraries/{id}/transfer-ownership {user_id}` → 204 | owner; the target must be a member and becomes admin; the old owner stays admin | already that owner → ok |
-| `POST /libraries/{id}/invites {id, invitee_user_id, invitee_email\|null, role}` → 201 `LibraryInvitationOut` | admin of a mutable library; `invitee_email` is stored as the admin typed it (one that is not the invitee's, ignoring case, is 400); a member 409 `E_INVITE_MEMBER_EXISTS`; one pending per invitee 409 `E_INVITE_ALREADY_EXISTS` | same id → that invitation; an id naming another one → 409 `E_RESOURCE_CONFLICT` |
-| `GET /libraries/{id}/invites?cursor&limit` | admin; pending, newest first | read |
-| `GET /libraries/invites?cursor&limit` | the viewer's pending invitations, with the inviter | read |
-| `POST /libraries/invites/{id}/accept\|decline` → 204 | the invitee; accept inserts the membership in the same transaction | the same answer again → ok; any other state → 409 `E_INVITE_NOT_PENDING` |
-| `DELETE /libraries/invites/{id}` → 204 | admin of its library | revoked, absent or invisible → 204 |
+inspection uses `GET /libraries/{id}/metadata`: the native kind, viewer role,
+record timestamps and full visible physical media count. personal consumption and
+[collection lectern actions](collection-actions.md) require reading authority,
+not administration. libraries never nest through these actions. leaving uses the
+existing membership owner and appears in the shared resource menu when eligible.
 
-`LibraryOut`: `{id, name, is_default, role, can_manage, can_delete,
-can_transfer_ownership, can_leave}`. A library is mutable when it is neither
-the default nor a system library; `can_manage` (rename, file, reorder, manage
-members) is an admin of a mutable library; delete and transfer need its owner;
-every other member may leave. Entry rows are `{kind: "media", entry_id|null,
-added_at, media_summary}` or `{kind: "podcast", entry_id|null, added_at,
-podcast_id, title, contributors, unplayed_count, published_date|null,
-sync_status|null}`; `entry_id` is null on All, whose rows are not stored
-entries.
+## writes and locks
 
-Placing a show where a named library files some of its episodes directly is
-refused with 409 `E_PODCAST_REPLACES_EPISODES {conflicts[{library_id,
-library_name, episode_count}]}` unless `replace_episodes`: the show takes the
-earliest displaced episode's position, those episode rows go, and the episodes
-stay in the viewer's All. A library the caller cannot see is a 404 before
-anything about the show.
+writes acquire viewer serialization when needed, then admission identity, sorted
+podcast aliases, shows/runs, media in uuid order and the complete library set in
+uuid order. the viewer lock is `FOR NO KEY UPDATE`. physical reference acquisition
+uses the existing media tuple barrier before library locks. no provider/storage
+io occurs in these transactions; low-level physical writers never take viewer locks.
 
-## Invariants
+`libraries.order_revision` comes from `collection_order_revision_seq`; every
+physical change and accepted named intent advances it, including present/absent
+no-ops. wire revisions are exact decimal strings. commands validate authority and
+captured revision BEFORE desired-state equality. stale intent is 409 without
+effects. frozen retries may conflict after landing; fresh review is explicit.
 
-1. Non-members get the masked 404 on every library route. One default library
-   per user; the owner is an admin member and cannot leave or be demoted
-   (transfer first); default and system libraries take no rename, delete,
-   invitation, member change or user entry write. At most one pending
-   invitation per (library, invitee), never to oneself; an invitation shows the
-   invitee's email only as the inviter typed it, or once the invitee is a
-   member.
-2. An entry files one media or one show, once per library; in a named library a
-   show and direct entries for its episodes exclude each other. Positions are
-   unique per library (`DEFERRABLE INITIALLY DEFERRED`); gaps are legal; appends
-   take `MAX(position)+1` under the library row lock. Only
-   `library_entries.py` writes the table; its readers only SELECT:
-   `auth/permissions.py`, `atlas.py`, `dossier/inputs.py`,
-   `library_listing.py`, `media_deletion.py`, `podcasts/sync.py`,
-   `search/scope.py` (and the `db/models.py` mapping).
-3. Lock order, every writer: podcast row, then media rows (uuid order), then
-   library rows (uuid order). The media lock is also the teardown barrier: a
-   filing and a teardown claim never both commit.
-4. Unfiling never removes a media's last entry; deleting a library re-files the
-   media it alone held into the owner's All; a document no durable reference
-   retains is torn down (media deletion).
-5. All is the union of the media reachable through the viewer's non-system
-   memberships (the direct All row if any, else the earliest shared one, whose
-   creation is when it was added) and the followed shows; Unfiled is what is
-   filed nowhere but All. Losing a membership removes that library's media on
-   the next read.
-6. Every structural write and every accepted move advances the library's
-   `order_revision` under its lock; a move applies only at the exact expected
-   revision with a visible actor and successor, rewrites every position and
-   answers the visible ids from the same transaction. Revisions cross the wire
-   as decimal strings, compared with `BigInt`.
-7. Only the unfiltered custom order of a mutable library carries
-   `order_revision`, and its cursor binds it: a moved order rejects the cursor
-   (400 `E_INVALID_CURSOR`) and the browser discards the incomplete walk.
-8. Web, order: one pending move per (account, collection), held in memory for
-   the tab's life and shared by every pane of that collection. A move is
-   admitted only on the complete, unfiltered custom view of a library the viewer
-   manages, at the revision its rows are current at. A lost answer is never
-   replayed blindly: "check order" reads the current revision and resends at the
-   original one only while nothing moved; any read past it settles the move
-   ("order check complete"). A 409 asks the reader to review the current order.
-   Nothing is written to browser storage; after a reload the reread shows the
-   server's order.
-9. Web, placement: edits per target run in admission order, one request at a
-   time, and every outcome is followed by a reread; a lost answer is reread,
-   never replayed. Closing a chooser never cancels accepted work.
-10. Web, creation: an attempt freezes one `{id, name}`. A refusal (a modeled
-    4xx other than 401) ends the attempt and the name can be fixed; any other
-    outcome may only resend the same id. The server's echoed row is trusted.
+`users.removal_revision` fences acquisition. workspace removal, library deletion,
+podcast stop and import cancellation advance it; acquisition/sync do not. ordinary
+`validate_acquisition_destinations` locks default plus all selected named libraries
+and checks every fence; default remains ineligible as an organizational target.
+podcast admission narrowly permits its actor's default through the same owner.
 
-## Views and panes
+| command | contract |
+| --- | --- |
+| `PUT /libraries/{id}/items/media:{id}` | absolute `included`, exact `expected_order_revision`; inclusion requires `expected_removal_revision`, exclusion requires null |
+| `POST /libraries` | client id, name, `initial_items`, removal fence; empty create uses `[]` and null. create-and-file is atomic; replay never reapplies initial items |
+| `GET /libraries/destinations` | one snapshot `{removal_revision,destinations}`; complete named admin destinations |
+| `GET /libraries/placements/media:{id}` | one snapshot `{removal_revision,placements}`; named direct/absent relations and capabilities |
+| `GET /libraries/{id}/entries` | intersected media sort/type/projection/completion, then keyset paging; structural revision only for unfiltered named manual order |
+| `GET /libraries/{id}/order` | complete visible entry ids and revision |
+| `PUT /libraries/{id}/entries/{entry_id}/position` | exact revision, nullable successor; preserves entry identity/date |
+| `PATCH /libraries/{id}` | name plus expected predecessor; already desired succeeds |
+| `DELETE /libraries/{id}` | owner only; idempotent. retain eligible media, fence acquisition and clear podcast rules/imports/runs explicitly |
 
-The url owns `sort`, `entry_type`, `projection` (`unfiled`, `in_progress`) and
-`completion=unfinished`; the server validates and ANDs them, and the panes never
-re-apply a lens to live summaries (the `Consumption` stamp rereads the views
-that move with reading). An unknown url value is offered under a label of at
-most 24 characters until the server's 400 shows the invalid-view notice with
-Reset view. Local text filtering is a visit-local view of the shown rows; the
-pane query toolbar ([workspace](workspace.md)) holds the filter and sort, with
-Type, View and Hide finished as removable chips.
+create retry returns the same owner's extant row; another owner's id conflicts.
+deleted libraries cannot be recreated by stale create-and-file. empty-create
+receipts last only while their row exists. no generic replay ledger exists.
 
-reorder: drag the row's title, metadata, padding or existing primary target to
-the insertion line. opening targets keep their behavior; disclosure, independent
-controls and expanded contents do not drag. mouse requires 8px movement; touch
-requires one finger held 250ms within 8px. quick swipes retain scrolling and
-pull-to-refresh. there are no grips, movement menus or keyboard movement
-commands; this private-prototype limit provides no non-drag alternative.
+assistant media filing shares this guarded command; undo requires the exact new
+entry id and receipt revision plus current authority. reaffirmation invalidates
+undo; default retention survives it. historical show receipts carry provenance
+without mutation authority. assistant podcast admission requires explicit mode and
+uses the podcast owner, with no generic filing undo.
 
-movement requires at least two rows, a complete unfiltered custom view,
-management permission and ready order. rows stay stationary with one insertion
-boundary and an inert title preview. snapshot changes cancel; an activated drag's
-release cannot open, invoke a control or refresh, even after cancellation.
-the toolbar explains unavailable movement ("choose custom order to reorder.",
-"clear filters to reorder.", "reordering is available when all items finish
-loading.", "updating order…", "saving order…", "order not confirmed"). an
-acknowledged order shows until rows catch up; "check order" retains the original
-command and revision while recovering an unknown outcome. a library the viewer
-cannot see says "Library not found" in place, on the first read or a reread.
+## composition
 
-## Creation
+web `lib/libraries/api.ts` owns calls/change publication; `placementController`
+owns account-scoped per-library queues, frozen commands and unknown recovery.
+only acknowledged local predecessors may supply dependent revisions. external
+changes require a new choice. closing presentation preserves accepted work.
 
-Three owners keep their lifetimes and share `sendCreation` (30 s deadline) and
-`libraryNameError` ("enter a library name.", "use 100 characters or fewer.",
-"All is reserved for the All view."):
+canonical media/show relations feed search scopes, atlas and suggestions.
+`library_listing` owns media lenses and paging. `library_members` owns invitations,
+leaving/transfer; passive membership changes acquire nothing. resource grants,
+consumption and suggestions retain their own owners.
 
-- The index's "new library" dialog belongs to the pane visit. Submitting
-  freezes the attempt; closing hides the sending work but never cancels it and
-  gives up automatic navigation. A create acknowledged while the dialog is open
-  and the pane keeps its visit and attention (`lib/panes/openResult.ts`) opens
-  the library in that pane, or in a new pane when the submit or "new library"
-  was shifted; otherwise it offers "library created" with "open library". An
-  unknown outcome reads "creation not confirmed" and "retry creation" resends
-  the same id; the attempt survives pane switches (`Libraries.Creation` visit
-  data).
-- Form destinations (Add, share, browse) create inline from the chooser; an
-  unknown outcome keeps the attempt with "retry" under the same id.
-- "Libraries…" creates and files in one step: the dependent placements are
-  queued behind the create and sent only once it lands.
+## publication presentation and order
 
-The launcher's "New library" keeps its own path
-([issues](../issues/nexus-library-retry-whitespace-changes-identity.md)).
+index publication means `original_published_date`, displayed as its four-digit
+year with the complete partial calendar value retained in `time`. full metadata
+retains precision, edition dates and complete role-grouped credits. external
+discovery does not assert first publication; its observed instant appears only in
+preview details, labelled `source published` in the viewer's render environment.
+the [index shell](resource-references.md#presentation-contract) owns density.
 
-## Chooser and placement
+`published_asc`/`published_desc` order by the complete supported original calendar
+value, nulls last in either direction, then title/id. partial values retain their
+existing deterministic ordering without asserting invented days. feed timestamps
+never substitute. fresh library playback snapshots share this query; durable
+queues keep their recorded order. publication keyset plans name the original-date
+columns, so prior publication-plan cursors are invalid and require a fresh list
+read. public sort names and wire shapes remain unchanged. explicit episode/source
+release views retain release chronology.
 
-`LibraryChooser` is one combobox over the complete catalog (no paging), matched
-locally: type, arrow, enter, type again. A row shows its membership ("in 2 of 3
-items"), why it is blocked, or "included through its show". Saved in Nexus is
-All. Creating offers the typed name unless it is invalid, already a row, or
-pending. Placing a show over filed episodes asks "replace filed episodes?".
-Failures behind a closed chooser raise "library changes need attention" with a
-review. The extension popup uses the same chooser over
-`/extension/library-destinations` and creates nothing.
+## chooser presentation
 
-## Reading Slate
+`LibraryChooser` shares the [collection and search contract](visual-system.md#collections-and-searchable-pickers).
+first available existing results highlight automatically; creation requires
+deliberate selection. matching filters every row, including current memberships.
+accepted actions retain the query, focus and valid active identity.
 
-Each library the viewer admins (All included) shows "suggested for this
-library" from the [shortlist owner](suggestions.md); member-only and system
-libraries show none. Entry pagination never gates suggestions.
+normal placement rows show the exact name and confirmed membership mark. draft
+destination marks mean chosen for that request. mixed counts, read-only
+reasons, progress and recovery remain explicit; highlight never means membership.
+all and system libraries are absent from the named organizational projection.
+the revision-fenced placement owner retains accepted work and recovery across
+view closure; collection primitives own neither commands nor settlement.
 
-## Membership, sharing and dossiers
-
-A library is shared only through membership and invitations (the inspector's
-Members tab); it never has a grant or a public link. Placement ("Libraries…") is
-a resource action of media and shows, separate from Share
-([resource sharing](resource-sharing.md)). The Library Dossier is one binding of
-the Universal Dossier engine keyed by the library subject; membership is its
-read and generation boundary. A system library's membership never makes
-co-members' highlights visible to each other.
+podcast libraries reuses this search/create presentation and creation transport,
+with an account-owned creation helper scoped by the frozen show target. pending
+names are shared across scopes; status, refusals and uncertainty remain scoped.
+the manager creates an empty library before a separate subscription review.
+creation is never rolled back when that review is cancelled. media placement's
+late-acquisition continuation does not participate.

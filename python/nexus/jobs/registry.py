@@ -69,14 +69,6 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_dead="nexus.services.chat.worker:on_dead_letter",
         ),
-        # Paid: a retry after a worker death reruns the synthesis from scratch.
-        "dossier_build": JobDefinition(
-            "interactive",
-            "nexus.services.dossier.run:run_job",
-            retry_delays=(30, 120, 300),
-            keep_dead=True,
-            on_dead=_GENERATION_DEAD,
-        ),
         "enrich_metadata": JobDefinition(
             "interactive",
             "nexus.tasks.enrich_metadata:run_job",
@@ -91,11 +83,6 @@ def registry() -> dict[str, JobDefinition]:
             "nexus.services.oracle.readings:run_job",
             retry_delays=(0,),
             on_dead=_GENERATION_DEAD,
-        ),
-        "podcast_sync_subscription_job": JobDefinition(
-            "interactive",
-            "nexus.services.podcasts.sync:run_job",
-            on_dead="nexus.services.podcasts.sync:dead_letter",
         ),
         # Background lane: one fresh, memory-bounded child per job.
         "suggestion_shortlist_refresh": JobDefinition(
@@ -139,11 +126,16 @@ def registry() -> dict[str, JobDefinition]:
             "nexus.services.connection_discovery:connection_discovery_scan_job",
             on_dead=_GENERATION_DEAD,
         ),
-        "podcast_backfill_subscription": JobDefinition(
+        "podcast_feed_page": JobDefinition(
             "background",
-            "nexus.services.podcasts.backfill:run_job",
+            "nexus.services.podcasts.traversal:run_job",
             keep_dead=True,
-            on_dead="nexus.jobs.dead_letters:podcast_backfill",
+            on_dead="nexus.jobs.dead_letters:podcast_feed_run",
+        ),
+        "podcast_chapters": JobDefinition(
+            "background",
+            "nexus.services.podcasts.chapters:run_job",
+            on_dead="nexus.jobs.dead_letters:podcast_chapters",
         ),
         "media_teardown": JobDefinition(
             "background",

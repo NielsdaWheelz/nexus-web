@@ -32,7 +32,7 @@ schema. wire schemas are generated; see [typed wire](../local-rules/typed-wire.m
 `{phase, resources, saved, passages, semantic_status}`: at most four directly matched
 primary resources, two saved occurrences, and two passages with distinct owners.
 direct searches literal canonical titles/names and contributor aliases across media,
-podcasts, contributors, pages, conversations, libraries, readings and dossiers.
+podcasts, contributors, pages, conversations, libraries and readings.
 it returns only primary resources: saved/passages are empty and children are null.
 unicode casefold matching orders exact, prefix, then substring; canonical display
 label and ref break ties. choose each ref's best witness before the four-result
@@ -96,10 +96,10 @@ retries and claim/revision fences. projection replacement withdraws old identiti
 and inserts current canonical values in that same transaction. dependency discovery
 belongs to a fresh serializable attempt before canonical reads or locks; providers
 stay outside it. source replacement withdraws old identities as well as publishing new
-ones. title, credit and alias writers refresh their dependent works and dossier
-names; filing, membership and grant changes refresh viewer-specific contributor
-text. the existing visibility-loss callback owns both personal dossier cleanup
-and that viewer's contributor refresh. existing source/identity/claim locks remain;
+ones. title, credit and alias writers refresh their dependent works; filing,
+membership and grant changes refresh viewer-specific contributor text. the
+visibility-loss callback owns that viewer's contributor refresh. existing
+source/identity/claim locks remain;
 postgres tracks shared predicate dependencies and conflicting transactions retry
 their entire database operation. the retry owner alone commits; participants flush
 and materialize results. unrelated owners have no global publication mutex.
@@ -111,9 +111,8 @@ independent source publication. operational qualification remains
 required by [release-search](../issues/release-search.md).
 
 the browser kinds are documents, notes, highlights, conversations, people, web,
-libraries, readings, dossiers and saved passages. highlights does not implicitly
-add annotation notes. dossier discovery uses the visible artifact head, not a
-second artifact result. libraries/readings/dossiers are global-only. web snapshots
+libraries, readings and saved passages. highlights does not implicitly
+add annotation notes. libraries/readings are global-only. web snapshots
 are external resources; links and citations are relationships, not extra results.
 
 scopes are all, media, library and conversation, not generic ancestry. each row
@@ -142,7 +141,7 @@ indexed pdf evidence uses its existing page target without requiring geometry.
 
 ## transactions, semantic capability and pages
 
-expensive browser, strict, picker, connection-discovery, dossier, oracle and
+expensive browser, strict, picker, connection-discovery, oracle and
 suggestion refresh reads share one database-wide advisory session lock. each read
 owns an external physical connection: admission's transaction rolls back while retaining the lock, then a
 fresh read-only repeatable snapshot materializes authorization, ranking and results.
@@ -289,9 +288,10 @@ composition/repeat guards, shift opening and the two-cell keyboard grid remain.
 
 urls own query, kinds, filters, scope and view. omit the default resources view
 and all-kinds selection; `kinds=` means none. switching views preserves criteria,
-resets paging and hides old-view rows. clear filters preserves query/view; reset
+resets paging and clears preceding-query rows and metadata. clear filters preserves query/view; reset
 returns empty resources. unsupported passage kinds stay unsupported, with controls
-to return to resources or clear kinds. counts describe loaded rows only.
+to return to resources or clear kinds. automatic pagination exposes no rolling
+count or completion receipt; initial query waiting and failures remain explicit.
 
 two `useServerList` instances own independent lexical/hybrid metadata and cursors;
 only the selected one pages. a hidden candidate loads page one and restarts its

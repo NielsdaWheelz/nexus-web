@@ -6,7 +6,7 @@ import NoteEditor, {
   type NoteInspection,
   type StructuralKeys,
 } from "./NoteEditor";
-import { NoteConflict } from "./NoteNotices";
+import { NoteConflict, WritingRefreshNotice, WritingStatus } from "./NoteNotices";
 import { useText } from "@/lib/notes/texts";
 import type {
   BodyOccurrence,
@@ -48,16 +48,19 @@ export default function CanonicalNoteEditor({
       : null;
   const canEdit =
     editable &&
+    text.ready &&
     !text.gone &&
     (session.activeReference === null ||
       session.activeReference === occurrence.key);
   return (
     <>
       <NoteEditor
+        outlineSession={session}
         editorKey={`${occurrence.noteRef}@${occurrence.key}`}
         occurrenceKey={occurrence.key}
         containingNoteRef={text.acked === null ? null : occurrence.noteRef}
         body={body}
+        editBase={{ value: body, acknowledged: text.acked }}
         revision={text.revision}
         editable={canEdit}
         label={label}
@@ -81,14 +84,13 @@ export default function CanonicalNoteEditor({
                 source: text.acked === null ? null : continuation.source,
                 textRef: occurrence.noteRef,
                 label,
-                position:
-                  continuation.position?.expected_links_version === null
-                    ? null
-                    : continuation.position,
-                onSelected: (target) => {
+                position: continuation.position,
+                onSelected: (target, targetItem, authored) => {
                   void session.insertReference({
                     destination: continuation,
                     target,
+                    targetItem,
+                    authored,
                     ...(publication ? { publication } : {}),
                     ...(text.acked === null
                       ? { creator: { noteRef: occurrence.noteRef, base: body } }
@@ -103,6 +105,10 @@ export default function CanonicalNoteEditor({
         keys={
           canEdit
             ? {
+                selectBlock: () => {
+                  if (occurrence.key === "") session.revokeCommands();
+                  else session.selectOccurrence(occurrence.key);
+                },
                 ...structuralKeys,
                 ...(continuation
                   ? ({
@@ -120,8 +126,11 @@ export default function CanonicalNoteEditor({
               }
             : null
         }
+        onSelectionChange={selection => session.setTextSelection(occurrence.key, selection)}
         onEdit={(edit) => session.editBody({ occurrence, edit })}
       />
+      {occurrence.key === "" || text.writingState !== "synced" ? <WritingStatus textRef={occurrence.noteRef} /> : null}
+      <WritingRefreshNotice textRef={occurrence.noteRef} kind="note" />
       <NoteConflict textRef={occurrence.noteRef} />
     </>
   );

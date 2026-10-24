@@ -1,7 +1,7 @@
 """Reader content publication and generation fencing; titles are mutable metadata.
 
 callers enter a fresh serializable publication attempt before canonical reads.
-source and title writes flush and refresh media plus subject dossiers in that transaction.
+source and title writes flush and refresh their media projection in that transaction.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
@@ -200,7 +199,6 @@ def replace_reader_publication[T](
     db.flush()
     db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     projection.refresh(db, "media", [media_id])
-    projection.refresh_subject_dossiers(db, [ResourceRef("media", media_id)])
     return result
 
 
@@ -219,7 +217,6 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
     media.title = title
     db.flush()
     projection.refresh(db, "media", [media.id])
-    projection.refresh_subject_dossiers(db, [ResourceRef("media", media.id)])
     return True
 
 

@@ -1,6 +1,9 @@
 // The cursor: where the reader intends to resume. Revision is authority (the
 // port compares and sets). Movement saves after 500ms idle, at most 5s after
 // the first unsaved move, one request in flight, latest locator only.
+// Command preparation holds acknowledged progress only; refusal releases its hold
+// while preserving the local locator and the owner’s save/conflict recovery.
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import type { CursorSnapshot, Locator } from "./model";
 import type { ProgressView, ReaderProgressPort } from "./ports";
 
@@ -316,7 +319,7 @@ export function createProgressSync(
 
   async function reconcileFence() {
     // A cancelled source binding requires a source reload, not a cursor-only retry.
-    if (needsSourceBinding()) return;
+    if (needsSourceBinding() || !fenced || unsaved !== null) return;
     const mine = ++generation;
     if (state.kind === "LoadFailed") {
       state = { ...state, retrying: true };
@@ -334,8 +337,9 @@ export function createProgressSync(
       if (next.kind === "Canonical") hooks.remote(next.snapshot, true);
     } catch (error) {
       if (mine === generation) {
+        // Reconciliation reads own load failures; the fence keeps saves paused.
         failed = true;
-        if (state.kind === "LoadFailed") state = { ...state, retrying: false, error };
+        state = { kind: "LoadFailed", recovery: "RetryPosition", retrying: false, error };
       }
       throw error;
     } finally {
@@ -414,8 +418,13 @@ export function createProgressSync(
       window.clearTimeout(timer);
       await inFlight;
       if (handoff?.kind !== "Newer") await save(false);
-      unsaved = null;
-      if (state.kind !== "LoadFailed") failed = false;
+      if (needsSourceBinding() || unsaved !== null || view?.kind !== "Canonical" || handoff !== null) {
+        // Unloaded progress and source reloads retain their recovery fence.
+        if (!needsSourceBinding() && view !== null) fenced = false;
+        publish();
+        throw new ProgressPreparationError();
+      }
+      failed = false;
       publish();
     },
     reconcileFence,

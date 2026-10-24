@@ -1,238 +1,133 @@
 "use client";
 
-import {
-  Fragment,
-  useState,
-  useContext,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
-import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
+import { useCallback, useRef, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import ResourceActions from "@/components/resources/ResourceActions";
+import ConversationMetadata from "@/components/chat/ConversationMetadata";
+import PodcastMenu from "@/components/podcasts/PodcastMenu";
+import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
+import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
+import IndexBibliography from "@/components/resources/IndexBibliography";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import { ChevronRight } from "lucide-react";
-import Pill from "@/components/ui/Pill";
-import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
-import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceRow from "@/components/ui/ResourceRow";
-import ContextualActionMenu, {
-  type ContextActionSection,
-} from "@/components/resources/ContextualActionMenu";
-import type {
-  CollectionContext,
-  CollectionRowView,
-  ExceptionalStatus,
-} from "@/lib/collections/types";
-import {
-  collectionActivityText,
-  collectionConsumptionText,
-  collectionPublicationYear,
-  formatCollectionPublicationDate,
-} from "./collectionRowFormatting";
+import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
+import ContextualActionMenu, { type ContextActionSection } from "@/components/resources/ContextualActionMenu";
+import type { CollectionContext, CollectionRowView } from "@/lib/collections/types";
+import { collectionActivityText } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
-import outlineStyles from "@/components/resources/ResourceOutline.module.css";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import styles from "./CollectionRow.module.css";
 
 function renderContext(context: CollectionContext): ReactNode {
   switch (context.kind) {
-    case "Snippet":
-      return (
-        <EmphasisSegments
-          segments={context.segments}
-          emphasisClassName={styles.mark}
-        />
-      );
-    case "Text":
-      return context.text;
-    default:
-      return assertNever(context, "Unsupported collection context");
+    case "Snippet": return <EmphasisSegments segments={context.segments} emphasisClassName={styles.mark} />;
+    case "Text": return context.text;
+    case "Conversation": return <ConversationMetadata metadata={context.metadata} />;
+    default: return assertNever(context, "Unsupported collection context");
   }
 }
 
-function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
-  switch (status.kind) {
-    case "MediaProcessing":
-      return <span>processing failed</span>;
-    case "PodcastSync":
-      const podcastSyncStatus = status.status;
-      switch (podcastSyncStatus) {
-        case "Failed":
-          return <Pill tone="danger">Update failed</Pill>;
-        default:
-          return assertNever(
-            podcastSyncStatus,
-            "Unsupported podcast update status",
-          );
-      }
-    default:
-      return assertNever(status, "Unsupported exceptional status");
-  }
-}
-
-/** Canonical semantic renderer for every media-like collection row. */
+/**
+ * Collection semantics compose the shared bounded shell. Occurrence commands
+ * retain their authority; only explicitly menu-owned shortcuts demote. Attention
+ * names the existing details/recovery destination on the surviving more control.
+ */
 export default function CollectionRow({
-  row,
-  as = "li",
-  panel,
-  primaryControl,
-  rowActionsAvailable = true,
-  viewTransitionName,
+  row, as = "li", primaryControl, occurrenceActions, actionFocus: suppliedActionFocus, afterRemoval,
+  compactPrimaryControl = false, rowActionsAvailable = true, viewTransitionName, attention: suppliedAttention,
 }: {
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
-  readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
+  readonly occurrenceActions?: readonly ActionDescriptor[];
+  readonly actionFocus?: PodcastActionFocus;
+  readonly afterRemoval: () => HTMLElement | null;
+  readonly compactPrimaryControl?: boolean;
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
+  readonly attention?: string;
 }) {
-  const mediaLayout = row.mediaIdentity !== undefined;
-  const outline = useContext(ResourceOutlineContext);
-  const [localOpen,setLocalOpen] = useState(false);
-  const occurrenceKey=`${outline?.scope ?? "collection"}/${row.id}`;
-  const disclosed = outline?.view.folds.get(row.id) ?? localOpen;
-  const setDisclosed = (open:boolean) => outline ? outline.toggle(row.id,open) : setLocalOpen(open);
-
+  const media = row.resourceActions?.kind === "Media" ? row.resourceActions : null;
+  const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
+  const paneId = usePaneRuntime()?.paneId;
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const primaryControlRef = useRef<HTMLSpanElement>(null);
+  const setMore = useCallback((node: HTMLButtonElement | null) => { moreRef.current = node; }, []);
+  const returnFocus = () => moreRef.current?.isConnected && moreRef.current.getClientRects().length
+    ? moreRef.current : findPaneCollectionRowFocusTarget(paneId, row.id);
+  const successFocus = podcast?.target.kind === "Discovery" ? () => null : afterRemoval;
+  const actionFocus = { get trigger() { return moreRef.current; }, returnFocus,
+    get afterRemoval() { return suppliedActionFocus?.afterRemoval ?? successFocus; },
+  };
+  useActionFocusRecovery(primaryControlRef, returnFocus);
   const title = row.title.segments
-    ? (
-        <EmphasisSegments
-          segments={row.title.segments}
-          emphasisClassName={styles.mark}
-        />
-      )
-    : row.title.text;
-
-  const supportParts: ReactNode[] = [];
-  const remainingTime =
-    row.activity !== null && row.activity.kind === "RemainingTime"
-      ? collectionActivityText(row.activity)
-      : null;
-  const date = row.publicationDate !== null ? (
-    <time key="date" className={styles.year} dateTime={row.publicationDate}>
-      {mediaLayout
-        ? collectionPublicationYear(row.publicationDate)
-        : formatCollectionPublicationDate(row.publicationDate)}
-    </time>
-  ) : null;
-  const contributors = row.contributors.length > 0 ? (
-    <ContributorCreditList
-      key="contributors"
-      className={styles.contributorList}
-      credits={row.contributors}
-      maxVisible={row.mediaIdentity === "External" ? row.contributors.length : 2}
-      overflowNoun={mediaLayout ? "authors" : "contributors"}
-    />
-  ) : null;
-  if (contributors) supportParts.push(contributors);
-  if (date) supportParts.push(date);
-  if (row.context !== null && !mediaLayout) {
-    supportParts.push(
-      <span key="context" className={styles.context}>
-        {renderContext(row.context)}
-      </span>,
-    );
-  }
-  const bibliography = supportParts.length > 0 ? (
-      <span className={mediaLayout ? styles.bibliography : styles.supportLine}>
-        {supportParts.map((part, index) => (
-          <Fragment key={index}>
-            {index > 0 ? (
-              <span className={styles.supportSeparator}>
-                <span aria-hidden="true">·</span>
-                <span className="sr-only">, </span>
-              </span>
-            ) : null}
-            <span className={styles.supportItem}>{part}</span>
-          </Fragment>
-        ))}
-      </span>
-    ) : undefined;
-  const supporting = mediaLayout && (bibliography !== undefined || row.mediaIdentity === "Stored") ? (
-    <span className={styles.mediaSupportLine}>
-      {bibliography}
-      {row.mediaIdentity === "Stored" ? (
-        <span className={styles.readingFacts}>
-          <span>{collectionConsumptionText(row.consumption)}</span>
-          {remainingTime ? (
-            <>
-              <span className={styles.supportSeparator} aria-hidden="true">·</span>
-              <span>
-                <span aria-hidden="true" dir="auto">{remainingTime.visible}</span>
-                <span className="sr-only">, {remainingTime.accessible}</span>
-              </span>
-            </>
-          ) : null}
-        </span>
-      ) : null}
-    </span>
-  ) : bibliography;
-  const evidence =
-    mediaLayout && row.context !== null
-      ? <span className={styles.context}>{renderContext(row.context)}</span>
-      : undefined;
-
-  const activity =
-    row.activity !== null && row.activity.kind !== "RemainingTime"
-      ? collectionActivityText(row.activity)
-      : null;
-  const exceptionalStatus =
-    row.exceptionalStatus !== null
-      ? renderExceptionalStatus(row.exceptionalStatus)
-      : undefined;
-  const failed = mediaLayout && Boolean(exceptionalStatus);
-  const status = exceptionalStatus || activity ? (
-    <span className={failed ? `${styles.status} ${styles.failed}` : styles.status}>
-      {exceptionalStatus}
-      {activity ? (
-        <span className={styles.activity}>
-          <span aria-hidden="true">{activity.visible}</span>
-          <span className="sr-only">{activity.accessible}</span>
-        </span>
-      ) : null}
-    </span>
-  ) : undefined;
-
-  const menuLabel = `more actions for ${row.title.text}`;
+    ? <EmphasisSegments segments={row.title.segments} emphasisClassName={styles.mark} /> : row.title.text;
+  const activity = row.activity !== null ? collectionActivityText(row.activity) : null;
+  const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
+    ? "processing failed; open metadata for details and recovery"
+    : row.exceptionalStatus !== null ? "last episode check incomplete; open show details to check again"
+    : row.activity?.kind === "PodcastSync" ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
   const sections: readonly ContextActionSection[] = [
-    {
-      id: "View",
-      actions: rowActionsAvailable && row.insertionSource ? [{kind: "command",id:"Resource.AddItem",label:"add item",onSelect:()=>{setDisclosed(true);}}] : rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
-    },
+    { id: "Occurrence", actions: rowActionsAvailable ? (occurrenceActions ?? []) : [] },
+    { id: "View", actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [] },
   ];
-  const actions = rowActionsAvailable &&
-    (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
-    <ContextualActionMenu
-      title={row.title.text} subjectKey={occurrenceKey}
-      sections={sections}
-      resourceRef={row.resourceRef ?? undefined}
-      label={menuLabel}
-      triggerAttributes={{ "data-row-actions-control": "" }}
-    />
-  ) : undefined;
-
-  const rootStyle: CSSProperties | undefined = viewTransitionName
-    ? { viewTransitionName }
-    : undefined;
-
-  return (
-    <ResourceRow
-      as={as}
-      primary={row.insertionSource ? {kind:"static"} : row.primary}
-      selected={row.selected}
-      rootProps={{
-        "aria-current": row.selected ? "true" : undefined,
-        "data-collection-row-id": row.id,
-        "data-collection-item-kind": row.kind,
-        "data-media-identity": mediaLayout ? "true" : undefined,
-        style: rootStyle,
-      }}
-      title={row.insertionSource && row.primary.kind === "link" ? <><a href={row.primary.href} data-row-focusable="" aria-label={`open ${row.title.text}`}>•</a> {title}</> : title}
-      supporting={supporting}
-      status={status}
-      wrapped={mediaLayout}
-      evidence={evidence}
-      leadingControl={row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : undefined}
-      primaryControl={primaryControl}
-      actions={actions}
-      expanded={<>{panel}{disclosed && row.insertionSource?.kind === "resource" ? <ResourceDisclosure resourceRef={row.insertionSource.ref} occurrencePrefix={occurrenceKey} /> : null}</>}
-    />
-  );
+  const menuAvailable = rowActionsAvailable && Boolean(row.resourceRef || podcast !== null || sections.some((section) => section.actions.length > 0));
+  const menuLabel = `more actions for ${row.title.text}${attention ? `: ${attention}` : ""}`;
+  const more = rowActionsAvailable && media?.subject.kind === "External" ? <ExternalMediaMenu
+    subject={media.subject} subjectKey={`collection:${row.id}`}
+    viewActions={row.resourceRef ? [] : row.flatActions ?? []} triggerRef={moreRef} returnFocus={returnFocus}
+  /> : rowActionsAvailable && podcast !== null && row.resourceRef === null ? <PodcastMenu
+    subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
+    actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
+    label={menuLabel}
+    renderTrigger={(props) => <span className={styles.attentionTrigger}>
+      <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
+      {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
+    </span>}
+  /> : menuAvailable ? <ContextualActionMenu
+    title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
+    resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
+    displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
+    label={menuLabel} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
+    renderTrigger={(props) => <span className={styles.attentionTrigger}>
+      <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
+      {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
+    </span>}
+  /> : null;
+  const metadata = <span className={styles.supportLine}>
+    {attention && !menuAvailable ? <span className={styles.reason}>{attention.split(";", 1)[0]}</span> : null}
+    {media ? <MediaIdentity subject={media.subject} returnFocus={returnFocus} /> : <IndexBibliography
+      contributors={row.contributors} originalPublishedDate={row.publicationDate} returnFocus={returnFocus}
+    />}
+    {row.context !== null ? <span className={styles.context}>{renderContext(row.context)}</span> : null}
+    {activity && row.activity?.kind !== "PodcastSync" ? <span className={styles.activity}>
+      <span aria-hidden="true">{activity.visible}</span><span className="sr-only">{activity.accessible}</span>
+    </span> : null}
+  </span>;
+  let content: ComponentProps<typeof ResourceRow>["content"];
+  switch (row.presentation) {
+    case "Index": content = { kind: "Index", metadata }; break;
+    case "Details": content = { kind: "Details", body: row.context ? renderContext(row.context) : null }; break;
+    default: assertNever(row.presentation);
+  }
+  const rootStyle: CSSProperties | undefined = viewTransitionName ? { viewTransitionName } : undefined;
+  return <ResourceRow
+    as={as} primary={row.primary} selected={row.selected}
+    rootProps={{ "aria-current": row.selected ? "true" : undefined,
+      "data-collection-row-id": row.id, "data-collection-item-kind": row.kind,
+      style: rootStyle }}
+    title={media ? <MediaTitle subject={media.subject} /> : title}
+    content={content}
+    leadingVisual={row.artwork !== undefined ? <PodcastRowArtwork key={row.artwork.imageUrl} title={row.title.text} imageUrl={row.artwork.imageUrl} /> : undefined}
+    controls={<>
+      {primaryControl ? <span ref={primaryControlRef} className={compactPrimaryControl ? styles.compactPrimaryControl : undefined}
+        data-row-primary-control="" data-row-compact-primary-control={compactPrimaryControl ? "" : undefined}>{primaryControl}</span> : null}
+      {row.resourceActions && rowActionsAvailable ? <ResourceActions subject={row.resourceActions} density="Row" returnFocus={returnFocus} afterRemoval={successFocus} /> : null}
+      {more}
+    </>}
+  />;
 }

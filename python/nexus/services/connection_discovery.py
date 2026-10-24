@@ -6,6 +6,8 @@ successful scan owns the whole set, even when it empties it; every other
 outcome leaves it untouched. Exclusion is at work grain (a passage, highlight
 or anchor counts as its media): the source's own work and works it already
 relates to. Removing an edge does not prevent a later scan from proposing it.
+Only publication retries, as one fresh serializable database attempt with its
+claim fence and source clock; generation stays outside that retry boundary.
 """
 
 from __future__ import annotations
@@ -205,12 +207,12 @@ async def _scan(
     """Build the input fresh, generate once; only ``ok`` touches the edges."""
     if not get_settings().connection_discovery_enabled:
         return "skipped", None
-    dossier = _dossier(db, user_id=user_id, ref=ref)
-    excluded = set() if dossier is None else _excluded(db, user_id=user_id, ref=ref)
-    db.commit()  # source reads end before search embeds and opens its own admitted session
-    if dossier is None:
+    source = _source_context(db, user_id=user_id, ref=ref)
+    excluded = set() if source is None else _excluded(db, user_id=user_id, ref=ref)
+    db.commit()  # search() embeds first: it needs a session without a transaction
+    if source is None:
         return "skipped", None
-    source_text, kin = dossier
+    source_text, kin = source
     response = search(
         user_id,
         SearchQuery(
@@ -291,13 +293,13 @@ def _publish(
                 if not item.missing and _work(db, target) not in excluded
             ],
         )
-        record_input_change(db, owners=(ref.uri,))
+        record_input_change(db, owners=[ref.uri])
         return "ok", None
 
     return retry_serializable(db, "connection_discovery.publish", attempt)
 
 
-def _dossier(
+def _source_context(
     db: Session, *, user_id: UUID, ref: ResourceRef
 ) -> tuple[str, frozenset[ResourceRef]] | None:
     """Source text, plus kin that may never be a candidate; None skips. Only
@@ -342,7 +344,7 @@ def _excluded(db: Session, *, user_id: UUID, ref: ResourceRef) -> set[ResourceRe
             WITH pairs AS (
                 SELECT source_scheme, source_id, target_scheme, target_id
                 FROM resource_edges
-                WHERE user_id = :user_id AND origin <> 'link_note'
+                WHERE user_id = :user_id
                   AND ((source_scheme = :scheme AND source_id = :id)
                        OR (target_scheme = :scheme AND target_id = :id))
                   AND NOT (origin = 'discovery' AND source_scheme = :scheme AND source_id = :id)

@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_content_credit_rows_sql, visible_media_ids_cte_sql
+from nexus.auth.permissions import visible_content_credit_rows_sql
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.services.contributor_taxonomy import ContributorRole
 
@@ -169,37 +169,6 @@ def media_author_names_agg_sql() -> str:
 def media_author_credits_join_sql() -> str:
     """The ``LEFT JOIN`` for :func:`media_author_names_agg_sql`; the outer media row is ``m``."""
     return "LEFT JOIN contributor_credits cc ON cc.media_id = m.id AND cc.role = 'author'"
-
-
-def load_visible_contributor_media_ids(
-    db: Session, *, contributor_id: UUID, viewer_id: UUID
-) -> list[UUID]:
-    """Visible media credited directly or through their podcast, newest first.
-
-    Catalogue-only credits have no media identity and are absent.
-    """
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()}),
-            credited_media AS (
-                SELECT cc.media_id FROM contributor_credits cc
-                WHERE cc.contributor_id = :contributor_id AND cc.media_id IS NOT NULL
-                UNION
-                SELECT pe.media_id FROM contributor_credits cc
-                JOIN podcast_episodes pe ON pe.podcast_id = cc.podcast_id
-                WHERE cc.contributor_id = :contributor_id AND cc.podcast_id IS NOT NULL
-            )
-            SELECT DISTINCT cm.media_id, m.original_published_date, m.title
-            FROM credited_media cm
-            JOIN visible_media vm ON vm.media_id = cm.media_id
-            JOIN media m ON m.id = cm.media_id
-            ORDER BY m.original_published_date DESC NULLS LAST, m.title, cm.media_id
-            """
-        ),
-        {"viewer_id": viewer_id, "contributor_id": contributor_id},
-    )
-    return [row[0] for row in rows]
 
 
 def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[str]:

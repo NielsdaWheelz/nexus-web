@@ -127,8 +127,7 @@ def publish_fetched_article(
             source_html=page["source_html"],
             base_url=page["base_url"],
             document_url=page["final_url"],
-            extract_embeds=(attempt.source_payload or {}).get("ingest_purpose")
-            != "artifact_research",
+            extract_embeds=True,
             metadata=metadata,
         ),
     )

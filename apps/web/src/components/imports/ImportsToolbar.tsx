@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type RefObject } from "react";
+import { useState, type ReactNode, type RefObject } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -83,7 +83,7 @@ export default function ImportsToolbar({
   inputRef,
   chips,
   resultStatus,
-  announce,
+  statusId,
   resetAvailable,
   onChange,
   onReset,
@@ -93,15 +93,13 @@ export default function ImportsToolbar({
   readonly state: ImportsUrlState;
   readonly inputRef: RefObject<HTMLInputElement | null>;
   readonly chips: readonly { id: ImportsFilter; label: string }[];
-  readonly resultStatus: string;
-  /** The status states facts, so it is a polite live region. */
-  readonly announce: boolean;
+  readonly resultStatus: ReactNode;
+  readonly statusId: string;
   readonly resetAvailable: boolean;
   readonly onChange: (next: ImportsUrlState) => void;
   readonly onReset: () => void;
   readonly onRefresh: () => void;
 }) {
-  const statusId = useId();
   const committed = state.q ?? "";
   const [draft, setDraft] = useState(committed);
   const [synced, setSynced] = useState(committed);
@@ -197,21 +195,11 @@ export default function ImportsToolbar({
       status={{
         placement: "Details",
         id: statusId,
-        visible: true,
-        content: (
-          <span
-            id={statusId}
-            className={styles.resultStatus}
-            role={announce ? "status" : undefined}
-            aria-live={announce ? "polite" : undefined}
-            aria-atomic={announce ? true : undefined}
-          >
-            {resultStatus}
-          </span>
-        ),
+        visible: false,
+        content: resultStatus,
       }}
       actions={
-        <Button variant="ghost" size="sm" onClick={onRefresh}>
+        <Button onClick={onRefresh}>
           Refresh
         </Button>
       }

@@ -13,11 +13,17 @@ human-triggered release. Do not mutate production Compose services, the host
 | Product database | Hetzner Postgres with pgvector |
 | Object storage, database backups | Cloudflare R2 |
 | Authentication | Supabase Auth only |
-| API TLS | Caddy on the Hetzner host |
+| api tls and public ingress | cloudflare edge and named outbound tunnel; private caddy http |
 
 Public hosts are `nexus.nielseriknandal.com` (frontend) and
-`api.nexus.nielseriknandal.com` (API). The VPS is `nexus-api-worker` at
-`5.78.194.235`.
+`nexus-api.nielseriknandal.com` (api). the vps is `nexus-api-worker`, administered
+as `nexus@nexus-prod` over tailscale. its public address is transport only;
+provider and host firewalls admit only tailscale's encrypted udp transport.
+
+`deploy/cloudflare/tunnel-config.json` owns the public route and
+`deploy/cloudflare/api-rules.json` owns api-only waf/cache behavior. visitors use
+the public website normally. the shared fleet grants policy belongs to
+`dev-server`; production receives operator ssh but no peer application access.
 
 The release identity is one full lowercase Git `source_sha`. It binds the Vercel
 deployment, the API and worker image digests, and the expected Alembic revision.
@@ -36,6 +42,8 @@ deployment, the API and worker image digests, and the expected Alembic revision.
   push for that exact SHA. `backend-images.yml` publishes only under `github.run_attempt == 1`,
   and the release refuses a run whose `run_attempt` is not 1. A rerun therefore
   cannot produce a deployable candidate: merge a new commit instead.
+- a push that changes only `docs/**` or the top-level markdown files builds no
+  images, so that commit cannot be released: release the newest commit that has them.
 - Production pulls GHCR digests named by the candidate manifest. It never
   builds an application image.
 - Config publication (`sync-env.sh`) and the Oracle corpus seed are explicit,
@@ -57,10 +65,10 @@ and the locked vercel cli under `apps/web/node_modules`. the controller uses
 export VERCEL_TOKEN=<vercel-token>
 ```
 
-`gh` supplies GitHub credentials; SSH to `nexus@5.78.194.235` must be
+`gh` supplies GitHub credentials; ssh to `nexus@nexus-prod` must be
 non-interactive with passwordless `sudo` on the host.
 
-Production coordinates are committed, not ambient: SSH `nexus@5.78.194.235`,
+production coordinates are committed, not ambient: ssh `nexus@nexus-prod`,
 web `nexus.nielseriknandal.com`, Vercel project `nexus-web` /
 `prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs`, team `niels-erik-nandals-projects` /
 `team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing a coordinate is a reviewed
@@ -76,28 +84,28 @@ The host contract is cgroup v2 with the memory controller, Docker Engine 28 or
 newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
 1900 MiB of physical memory, 1 GiB of swap, 256 MiB of available memory and
 2 GiB free under `/`.
-preflight measures each of these; after both candidate image pulls, the release
+preflight measures each of these; after application and connector image pulls, the release
 requires the same 2 gib disk reserve again before stopping writers.
 Vercel custom-domain auto-assignment must stay
 disabled and Vercel Authentication must protect previews only, so the staged
 production-target deployment is publicly probeable before promotion.
 
-the api has a 384 MiB memory ceiling with container swap disabled. the seven
-service ceilings total 2224 MiB; these are independent limits, not reserved
+the api has a 384 MiB memory ceiling with container swap disabled. the eight
+service ceilings total 2352 MiB; these are independent limits, not reserved
 host ram. the 2 GiB host must be qualified against the actual concurrent working
 set, cache reclaim, memory pressure and request completion. summing separate
 historical peaks does not establish that workload's demand; a passing preflight
 does not establish its capacity. swap does not count toward physical memory or
 the available-memory floor.
 
-the seven long-lived services belong to `system-nexus.slice` under
+the eight long-lived services belong to `system-nexus.slice` under
 `system.slice`. its persistent `MemorySwapMax=0` enforces no-swap for their
 whole subtree, including when a runtime reload resets a container's leaf limit
 to `max`. each container keeps its own declared memory ceiling; the slice adds
 no aggregate memory cap or cpu/i/o weight. grouping them creates one sibling
 in the host's resource hierarchy, so capacity qualification still uses the
 actual workload. backup and migration one-offs retain their separate compose
-limits and are outside this seven-service proof.
+limits and are outside this eight-service proof.
 
 postgres has a 512 MiB ceiling with container swap disabled. its startup command
 sets `shared_buffers=64MB`, budgeting 64 MiB of shared database cache within that
@@ -116,17 +124,22 @@ agree with the source SHA, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
 the two image digests and the expected Alembic revision.
 
+backend publication uses a fresh github-hosted `ubuntu-24.04` linux/x64 vm
+per job. devbox labs, rehearsal data and retained images cannot consume its
+build capacity. hosted-runner availability and quota govern scheduling; local
+build cache does not survive the job. pr static checks remain self-hosted.
+
 before creating a builder, publication requires at
 least 8 gib free at the actual docker data root and runner temp directory. this
 budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
 roughly 3 gb of additional scratch and runner output; the build-state measurement
-is a lower bound, so this is an admission floor, not a guaranteed peak under
-concurrent host writes. after both builds, the workflow removes only its own
+is a lower bound, so this is an admission floor, not a guaranteed peak.
+after both builds, the workflow removes only its own
 builder and cache before pulling the published images. build summaries and
 local build-record export are disabled; image provenance and sboms remain.
-insufficient space refuses publication without pruning other workloads. recover
-capacity deliberately, then publish a fresh source commit under the same
-first-attempt rule. qualify the budget against the actual successor publication.
+insufficient space refuses publication without host-wide pruning. qualify hosted
+capacity against the actual publication; a failed run still requires a fresh
+source commit under the same first-attempt rule.
 
 The release resolves that artifact through `gh`, requires exactly one unexpired
 copy, and requires its workflow run to be a `push` to `main` or a `release/`
@@ -136,9 +149,9 @@ label and runtime identity of each pulled digest on the host. The manifest, the
 digest and the image content are therefore bound to one another and to one CI
 run that was never re-run.
 
-Compose, the Caddyfile, the resource slice and the boot-guard unit come from
-the checkout, which preflight pins to `HEAD == source-sha` and proves is in
-`origin/main` history.
+Compose, the Caddyfile, the resource slice, the boot-guard unit and the nightly
+backup units come from the checkout, which preflight pins to
+`HEAD == source-sha` and proves is in `origin/main` history.
 
 the universal-memory source repository is public. dependency installation in
 ci and backend images fetches its locked revision over https without credentials.
@@ -184,16 +197,22 @@ Vercel deployment CI built for that exact SHA, and proves its staged
 promotes that exact deployment, assigns the custom domain, polls the alias until
 it binds, and re-proves the public `/version`.
 
-`deploy/hetzner/release.py` is the backend release, top to bottom:
+`deploy/hetzner/release.py` is the backend release, top to bottom. it holds the
+host backup lock from before preflight until it exits (see
+[database backups](#database-backups)):
 
 1. **preflight** — ssh reachable; clean checkout at the requested commit in `origin/main` history; candidate
    manifest resolved from one first-attempt push; Docker Engine, memory, swap and
    disk within the envelope; config pointers readable; Codex state mounted.
 2. **inputs** — install `docker-compose.yml`, `system-nexus.slice`, the boot-guard
-   script, its systemd unit and the `docker.service` drop-in; reload systemd,
-   enable the boot guard and start the resource slice.
-3. **images** — pull both digests; prove the OCI revision label and the baked
-   runtime identity against the manifest; require 2 gib free under `/` again.
+   script, its systemd unit, the `docker.service` drop-in and the nightly backup
+   script, service and timer; give the backup one-off (uid 10001) the receipt
+   root `/var/backups/nexus/r2`; reload systemd, enable the boot guard, enable
+   and start the nightly timer and start the resource slice.
+3. **images** — pull both application digests; prove the oci revision label and
+   baked runtime identity against the manifest. pull the pinned connector, prove
+   its non-root credential access, and require 2 gib free under `/` again.
+   validate/install private caddy configuration before service recreation.
 4. **backup** — read the current Alembic revision, prove it descends from the
    candidate head, stop `api`, `worker-interactive` and `worker-background`,
    then stop the codex host with at least 45 seconds of grace and require exit 0
@@ -206,20 +225,70 @@ it binds, and re-proves the public `/version`.
 5. **migrate** — `alembic upgrade head`, then re-read the revision.
 6. **up** — `docker compose up --detach --wait`, then require every service
    healthy. prove the persistent parent unit/property and kernel swap max/current
-   are zero, all seven actual process cgroups descend from it, and each actual
+   are zero, all eight actual process cgroups descend from it, and each actual
    memory cap matches compose with zero swap usage. report the leaf swap limit
    separately; a leaf `max` does not override the parent's zero.
-7. **caddy** — adapt the candidate Caddyfile through the running proxy, write
-   it in place (the bind mount keeps its inode), `caddy reload`, and require
-   the loaded config to equal the adapted candidate.
+7. **caddy** — reload the already installed candidate and require the loaded
+   config to equal the adapted candidate.
 8. **health** — the API's private `/version` and `/readyz`; every application
    container running the manifest digest; one public `https://<api-host>/version`
    fetch that must serve the SHA with `Cache-Control: no-store`.
 9. **isolation** — see below.
-10. **current pointer** — write the SHA to `/var/lib/nexus/releases/current`.
+10. **current pointer** — write the SHA to `/var/lib/nexus/releases/current`,
+    then, if step 4 took a backup, prune expired archives. a failed release
+    prunes nothing; a failed prune is reported and leaves the release standing.
 
 Steps 4 and 5 are the ordered guarantee: writers stop, the dump is verified and
 off-host, and only then does the schema move.
+
+## Database backups
+
+an archive is any `<prefix>/database.dump` in the private backup bucket, with
+its `database.json` recovery manifest beside it: `releases/<sha>/` from step 4,
+`nightly/<utc date>/` from the nightly job, `maintenance/...` from an operator.
+all take `nexus.release_backup create`'s one path (stream, read back, publish
+the manifest). loss on host failure is bounded by a day, not by the last release.
+
+**nightly.** `nexus-nightly-backup.timer` fires at 11:00 utc, the owner's night (`Persistent=true`
+catches up after downtime) and runs `deploy/hetzner/nightly-backup.sh` as
+`/usr/local/sbin/nexus-nightly-backup`. it requires the running api image's
+revision label to equal `/var/lib/nexus/releases/current`, then runs that
+image's `backup` one-off as `nexus.release_backup nightly` with writers up:
+`pg_dump` reads one snapshot. the key is the utc date, so a same-day rerun
+resumes or verifies the recorded archive. it refuses while a failed release
+leaves another image running; finish that release.
+
+**lock.** a `pg_dump` during a migration blocks its ddl or fails, so the
+nightly and the release share `/run/lock/nexus-backup.lock`. the release holds
+it in one ssh session for its whole run, waiting up to 45 minutes for a
+nightly (systemd bounds one at 40). a nightly that finds it held logs
+`a release holds ...; skipping this backup` and exits 0. an operator
+maintenance backup should hold it too.
+
+**retention.** age is r2's `LastModified` of the `.dump`. after its own backup
+verifies, each caller keeps every archive younger than seven days plus the
+newest one at least seven days old, and deletes the rest: receipt, then
+manifest, then `.dump`, so an interrupted prune finishes next time. a stray
+`database.json` stays; maintenance archives age out like any other. keeping
+the young archives is what refreshes the aged one, so nightly backups hold it
+at seven to eight days with about eight archives (~10 gb). a count rule would
+let a burst of releases evict the week-old copy that catches late-noticed
+damage; this one spends a week of storage instead. the backup credentials
+cannot manage r2 lifecycle rules, so retention is code.
+
+**receipts.** under `/var/backups/nexus/r2`, owned by the backup one-off:
+`<sha>/` for `releases/<sha>`, `nightly/<date>/` for `nightly/<date>`. a rerun
+resumes from its receipt, so a prune removes only the receipts of archives it
+deletes. maintenance receipts, and receipts of archives deleted by hand, stay.
+
+**freshness.** `release.py --check` reports the newest archive's key and age;
+once the timer is enabled it fails past 36 hours. nothing else monitors backups.
+
+```bash
+systemctl list-timers nexus-nightly-backup.timer
+journalctl -u nexus-nightly-backup.service --since -2days
+sudo systemctl start nexus-nightly-backup.service   # run now
+```
 
 ## Codex agent host isolation
 
@@ -265,7 +334,8 @@ every problem before it reports. Pass a SHA to additionally require that the
 host records it.
 
 It mutates nothing, but it is not passive: it `docker exec`s into `api`, `caddy`
-and the Codex agent host, and it resolves that SHA's CI artifact through `gh`.
+and the Codex agent host, runs one `backup` one-off that lists the backup
+bucket, and it resolves that SHA's CI artifact through `gh`.
 Once GitHub expires the artifact ninety days after the release, `--check`
 stops working for it.
 
@@ -291,11 +361,12 @@ adjacent `database.json`; the existing evidence key identifies the backup.
 its candidate sha, including for a pre-migration backup of an older runtime.
 this maintenance snapshot uses the accepted deployed sha.
 
-a new snapshot requires both a new archive key and a fresh local state
-directory. reusing a receipt resumes/verifies its original archive, even after
-database changes. a different key with that receipt, or a completed archive
-without its receipt, refuses. keep the existing release objects intact; do not
-invent a source sha or repeat the release controller to take a later backup.
+a new snapshot requires both a new archive key under `maintenance/` and a fresh
+local state directory. reusing a receipt resumes/verifies its original archive,
+even after database changes. a different key with that receipt, or a completed
+archive without its receipt, refuses. never write a release or nightly key; do
+not invent a source sha or repeat the release controller to take a later backup.
+retention prunes maintenance archives by the same rule as the others.
 
 use the existing backup container capability and resource limits. a reviewed
 operator-only correction can run as `python /maintenance/release_backup.py`
@@ -378,7 +449,7 @@ run the seed once inside the running background worker, with the production
 owner's user id:
 
 ```bash
-ssh nexus@5.78.194.235 'sudo docker exec "$(sudo docker ps --quiet \
+ssh nexus@nexus-prod 'sudo docker exec "$(sudo docker ps --quiet \
   --filter label=com.docker.compose.project=nexus \
   --filter label=com.docker.compose.service=worker-background \
   --filter label=com.docker.compose.oneoff=False)" \
@@ -397,7 +468,7 @@ Run it in a one-off `migration` container (the API image, 512 MiB, its own
 cgroup), not inside `worker-background`, whose 448 MiB belongs to its job child:
 
 ```bash
-ssh nexus@5.78.194.235 'sudo env API_IMAGE=<deployed api digest> \
+ssh nexus@nexus-prod 'sudo env API_IMAGE=<deployed api digest> \
   WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
   docker compose --project-name nexus --env-file /etc/nexus/current.env \
   --file /etc/nexus/docker-compose.yml --profile release \
@@ -420,8 +491,8 @@ Supabase Auth configuration (hosted refresh rotation and its reuse interval) is
 no longer verified by the release. Review it in the Supabase dashboard when auth
 settings change.
 
-Retain verified R2 archives according to an explicit operator retention
-decision. Garbage collection is not part of the release.
+R2 archive retention is the rule in [database backups](#database-backups);
+deleting archives outside it is a reviewed operator decision.
 
 ## Owned files
 
@@ -435,10 +506,12 @@ decision. Garbage collection is not part of the release.
 | Release entrypoint and frontend binding | `deploy/hetzner/deploy.sh` |
 | Production topology and isolation | `deploy/hetzner/docker-compose.yml` |
 | Codex credential-state boot guard | `deploy/hetzner/codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
-| API TLS and routing | `deploy/hetzner/Caddyfile` |
+| Nightly backup | `deploy/hetzner/nightly-backup.sh`, `nexus-nightly-backup.service`, `nexus-nightly-backup.timer` |
+| api public tls, routing and waf/cache | `deploy/cloudflare/tunnel-config.json`, `deploy/cloudflare/api-rules.json` |
+| private api proxy | `deploy/hetzner/Caddyfile` |
 | Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
-| Streamed database backup | `python/nexus/release_backup.py` |
+| Streamed database backup and retention | `python/nexus/release_backup.py` |
 | Vercel config publication | `deploy/vercel/sync-env.sh` |
 | Oracle corpus seed | `python/nexus/services/oracle/corpus.py` (`seed`) |
 | Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |

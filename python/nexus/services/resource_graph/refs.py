@@ -22,8 +22,6 @@ ResourceScheme = Literal[
     "message",
     "oracle_reading",
     "oracle_passage_anchor",
-    "artifact",
-    "artifact_revision",
     "external_snapshot",
     "contributor",
     "podcast",

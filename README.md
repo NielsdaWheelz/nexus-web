@@ -60,10 +60,11 @@ make worker-interactive
 make worker-background
 ```
 
-open `http://localhost:3000`. `WEB_PORT` selects both the listener and public
-origin. `make web` refreshes storage cors for that port before starting next,
-including localhost, loopback and android-emulator origins. `make down` stops
-services and preserves data.
+provide a trusted pem chain and key through `NEXUS_WEB_TLS_CERT_FILE` and
+`NEXUS_WEB_TLS_KEY_FILE`, then open `https://127.0.0.1:3000`. `WEB_PORT` selects
+the public listener; `APP_PUBLIC_URL` names its exact https origin. `make web`
+builds and serves the canonical http2 package and refreshes storage cors for
+that origin. changes use build/restart. `make down` stops services and preserves data.
 
 ## disposable verification
 
@@ -87,17 +88,52 @@ while it runs; exit and rerun after edits. one invocation per checkout. no ordin
 web server or static gate concurrently there.
 
 core needs no model credentials. `--live-config FILE` accepts only the documented
-provider settings; no ambient application configuration enters core.
-`--codex-socket /absolute/existing/app-server.sock` explicitly connects api and a
-host interactive worker to an already authenticated native host, qualified through
-its ordinary health probe. its host/account remain caller-owned; the runtime
-neither copies credentials nor stops that host. the interactive worker's temporary
-directory and heartbeat belong to the run. the background worker stays in linux.
-model success is a separate qualification. startup, image caches and retained
-diagnostics cost local disk and startup time. credentials and sessions are removed
+provider settings as string/null values; no ambient application configuration
+enters core. `provider_endpoint_overrides` is a json-encoded origin map string;
+`provider_ca_pem` contains actual pem certificates, added to normal trust roots.
+`--live-codex` attaches the dedicated shared host after one-time
+`./scripts/lab-codex enroll`. it starts a compatible enrolled stopped host; both
+worker lanes stay in linux with separate run/session directories. use
+`./scripts/lab-codex status`, `up` and `down` for explicit administration.
+ordinary `--live-config` and `--live-codex` may be combined. see the
+[host runbook](docs/runbooks/codex-personal-agent-host.md#shared-live-labs).
+
+`--fake-providers` instead starts owned verified https provider wires and real
+pinned codex hosts for the host api and linux workers, with fresh synthetic
+account state. it cannot combine with either live option. responses use fixed
+text over sse/websocket and deterministic 256-dimensional embeddings; this
+qualifies transport/composition, not tools, structured output or model quality.
+`fake_providers` in the context is normally null, or `{origin, ca_file}` in this
+mode; `/health` publishes only fake identity and request counts. see
+[provider composition](docs/local-rules/testing-standards.md#provider-composition).
+
+model success is a separate qualification. dependency-hash checkout worker images,
+builder caches, the completed web package, its marker, a checkout public auth
+key and private diagnostics remain on disk; runs create no per-run images.
+clean web source reuses the package at the same sha, slot and public key; each
+run gets fresh data and a private writable standalone tree. credentials and sessions are removed
 after successful cleanup. caller cases survive until their author deletes them
 after red/green/refactor and final qualification.
 hard interruption may require exact scoped recovery from the private recovery note.
+
+campaigns use this same runtime in dedicated checkouts and playwright's
+`--repeat-each`, with temporary cases and seeds. import `test` from
+`apps/web/scripts/lab/test.ts`; its default page and awaited `newPage(context)`
+factory prepare each page before app navigation.
+
+`./scripts/lab --client-throttle N -- COMMAND [ARG ...]` accepts an integer
+`N >= 1` and reserves both host slots. the context publishes
+`client_cpu_throttle: N`, or null ordinarily. the fixture rejects uncontrolled
+popups under throttling. default test/expect/action/navigation deadlines scale
+with `N`; deliberate choreography pauses do not. see
+[client throttling](docs/local-rules/testing-standards.md#client-throttling).
+
+artifacts hold reports, logs, screenshots and history; copied harness
+implementations are retired. docker desktop is the sole lab engine (dev-server
+`docs/macbook-capacity-plan.md`, d1); d2 fixes the budget at 8 gib and 8 cpus and
+requires two concurrent ordinary labs to complete end to end. host cpu burners
+and load-average thresholds are retired. calibration and 20-run repeats require
+explicit owner approval.
 
 ordinary development remains persistent. this command deliberately creates fresh
 stores each time. it uses host api/web toolchains and, without an explicit native
@@ -167,7 +203,7 @@ login before manually creating the `android-v*` GitHub release and attaching
 stable and versioned asset names. There is no automated Android release gate.
 
 the release operator owns compatibility between the hosted app and the
-published apk. neither bridge has a version: the object names `nexusPlayback`
+published apk. neither bridge has a version: the object names `nexusQueueSession`
 (player) and `nexusDownloads` (offline) are their identities, and an
 incompatible change renames one (the hosted app then shows "Update Nexus for
 Android" or "not supported on this device"). verify an offline shelf-to-online reconnect on
@@ -176,7 +212,7 @@ deployment does not update the apk behind `/android`.
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Building it runs `bun run build:shelf` in `apps/web` to regenerate the git-ignored packaged shelf (Downloads, see `docs/modules/offline.md`). Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require an explicit hosted origin, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> android shell. building regenerates the ignored packaged ui. debug defaults to `https://127.0.0.1:3000` with `adb reverse tcp:3000 tcp:3000`; a private issuer needs `-PnexusAndroidDebugCaFile=/absolute/ca.pem` and separate browser trust for custom-tab login. release uses system trust and requires its explicit hosted origin, version and signing inputs. see [device startup](docs/modules/device-startup.md).
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> Firefox capture extension (manifest, icons; bundles built into the git-ignored `dist/` by `bun run build:extension` from `apps/web/src/extension/`): saves the current article or a linked PDF/EPUB into chosen libraries. See `docs/modules/ingest.md`.
 - `python/` -> backend package: see `python/README.md`

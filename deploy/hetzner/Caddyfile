@@ -1,5 +1,4 @@
 {
-	email {$CADDY_ACME_EMAIL}
 	log default {
 		format filter {
 			request>headers>Authorization delete
@@ -9,7 +8,7 @@
 	}
 }
 
-{$CADDY_SITE} {
+http://{$CADDY_SITE} {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"

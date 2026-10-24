@@ -4,20 +4,24 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useId,
   useMemo,
   useRef,
 } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { usePagePrefix } from "@/lib/api/pagePrefix";
+import { listRowStatus, useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import {
   fetchImportPage,
   type ImportItem,
+  type ImportPageMetadata,
   type ImportsView,
 } from "@/lib/imports/api";
 import {
@@ -52,6 +56,9 @@ export interface MatchedImportEvidence {
   readonly event: ImportItem["matched_event"];
 }
 
+const VISIT = definePaneVisitDataKey<ListSnapshot<ImportItem, ImportPageMetadata>>("Imports.List");
+const UNIT = { singular: "import", plural: "imports" };
+
 const ROW = "[data-import-ref]";
 const FOCUSABLE = "[data-row-focusable]:not([disabled])";
 
@@ -64,8 +71,8 @@ function refsAfter(root: Element, row: HTMLElement): string[] {
 }
 
 /**
- * The view's server-ordered prefix; an observation rereads the pages already
- * loaded. A list control that disappears under focus hands it to the same
+ * The view's progressively loaded server order; observations wait for traversal.
+ * A list control that disappears under focus hands it to the same
  * row's title, else the next surviving row's, else the query input, while this
  * pane is active and focus was lost.
  */
@@ -86,42 +93,41 @@ export default function ImportsList({
   readonly onSelect: (ref: string, triggerElement: HTMLButtonElement) => void;
   readonly onSettled: (settled: boolean) => void;
 }) {
-  const { summary, observation, refresh } = useImports();
+  const { summary, observation, revision, refresh } = useImports();
   const display = useRenderEnvironment();
   const active = usePaneIsActive();
   const query = apiQuery(view, state);
-  const {
-    prefix: rows,
-    short,
-    loadMore,
-  } = usePagePrefix(query, observation, (cursor, signal) =>
-    fetchImportPage(query, cursor, signal),
-  );
-  const data = rows.status === "ready" ? rows.data : null;
-  const error = rows.status === "ready" ? rows.error : null;
-  // A reread fetches its pages one by one, so a row whose sort key moved
-  // between them can arrive twice; it shows once.
-  const items = [
-    ...new Map(
-      (data?.pages.flatMap((page) => page.items) ?? []).map((item) => [
-        item.ref,
-        item,
-      ]),
-    ).values(),
-  ];
-  const moreFailed = error !== null && short;
+  const rows = useServerList<ImportItem, ImportPageMetadata>({
+    key: `/imports?${query}`,
+    stale: revision,
+    pageSize: 50,
+    active,
+    visit: VISIT,
+    id: (item) => item.ref,
+    fetchPage: (cursor, limit, signal) => fetchImportPage(query, cursor, limit, signal),
+  });
+  const { revalidate } = rows;
+  const observed = useRef(observation);
+  useEffect(() => {
+    const previous = observed.current;
+    observed.current = observation;
+    if (previous !== observation) revalidate();
+  }, [observation, revalidate]);
+  const items = rows.items;
+  const error = rows.failure?.error ?? null;
   const counts = summary.status === "ready" ? summary.data : null;
   const summaryFailed =
     summary.status === "failed" ||
     (summary.status === "ready" && summary.error !== null);
   const stale =
-    (error !== null && !short) || (summaryFailed && counts !== null);
+    (rows.status === "ready" && rows.failure !== null && rows.failure.op !== "More") ||
+    (summaryFailed && counts !== null);
   const settled = rows.status !== "loading";
   useEffect(() => onSettled(settled), [onSettled, settled]);
 
   const selected = state.selected ?? null;
   const matched =
-    items.find((item) => item.ref === selected)?.matched_event ?? null;
+    rows.current ? items.find((item) => item.ref === selected)?.matched_event ?? null : null;
   useEffect(
     () => onMatched({ importRef: selected, apiQuery: query, event: matched }),
     [matched, onMatched, query, selected],
@@ -186,25 +192,9 @@ export default function ImportsList({
     () => appliedFilters(view, state, display.displayLocale),
     [display.displayLocale, state, view],
   );
-  const matchedCount = data?.pages[0].matched_count ?? 0;
-  const noun = `${state.q === undefined ? "" : "matching "}${matchedCount === 1 ? "import" : "imports"}`;
-  const loaded =
-    items.length === matchedCount
-      ? `${items.length} ${noun}`
-      : `${items.length} of ${matchedCount} ${noun}`;
-  const resultStatus =
-    rows.status === "loading"
-      ? "Loading imports"
-      : rows.status === "failed"
-        ? "Results unavailable"
-        : moreFailed
-          ? `${loaded}; loading failed`
-          : stale
-            ? `Update failed; showing previous results · ${loaded}`
-            : short
-              ? `${loaded}; loading more`
-              : loaded;
-  const announce = data !== null && error === null && !summaryFailed;
+  const statusId = useId();
+  const rowStatus = listRowStatus(rows, items.length, items.length, UNIT);
+  const matchedCount = rows.current ? rows.metadata?.matched_count ?? null : null;
   const resetAvailable = !isDefaultView(state, view, today());
   const onReset = useCallback(
     () => setState(resetView(state, view, today())),
@@ -217,8 +207,10 @@ export default function ImportsList({
         state={state}
         inputRef={inputRef}
         chips={chips}
-        resultStatus={resultStatus}
-        announce={announce}
+        resultStatus={<PaneFilterRowsStatus status={rowStatus} query={state.q ?? ""} id={statusId} announceQueryChanges={false}>
+          {matchedCount === null ? null : ` ${matchedCount} ${matchedCount === 1 ? "import" : "imports"} matched at last update.`}
+        </PaneFilterRowsStatus>}
+        statusId={statusId}
         resetAvailable={resetAvailable}
         onChange={setState}
         onReset={onReset}
@@ -226,13 +218,14 @@ export default function ImportsList({
       />
     ),
     [
-      announce,
       chips,
       inputRef,
       onReset,
       refresh,
       resetAvailable,
-      resultStatus,
+      rowStatus,
+      matchedCount,
+      statusId,
       setState,
       state,
       view,
@@ -251,8 +244,6 @@ export default function ImportsList({
           return (
             <Button
               key={candidate}
-              variant="ghost"
-              size="sm"
               aria-current={candidate === view ? "page" : undefined}
               aria-label={
                 count === null
@@ -292,6 +283,13 @@ export default function ImportsList({
 
   const filtered = chips.some((chip) => chip.id !== "q");
   const empty = emptyCopy(view, state.q !== undefined, filtered);
+  const emptyTitle = rows.complete ? empty.title
+    : state.q !== undefined || filtered ? "no matching import found so far." : "no imports loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list: rows, unit: UNIT, waiting: rows.status === "loading",
+    outcome: items.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   return (
     <div
       ref={listRef}
@@ -318,6 +316,7 @@ export default function ImportsList({
           owned.current = null;
       }}
     >
+      {readFeedback.announcement}
       <PaneSurface
         state={
           <>
@@ -330,9 +329,9 @@ export default function ImportsList({
             ) : null}
             {rows.status === "failed" ? (
               <FeedbackState
-                content={loadFailure(rows.error)}
+                content={loadFailure(error)}
                 announcement="Assertive"
-                actions={[{ label: "try again", onClick: rows.refetch, busy: rows.retrying }]}
+                actions={[{ label: "try again", onClick: rows.retry, busy: rows.running !== null }]}
               />
             ) : null}
             {stale ? (
@@ -340,7 +339,7 @@ export default function ImportsList({
                 content={STALE_NOTICE}
                 announcement="Polite"
                 actions={[{ label: "try again", onClick: refresh,
-                  busy: (rows.status === "ready" && rows.refreshing) ||
+                  busy: (rows.status === "ready" && rows.running !== null) ||
                     (summary.status === "ready" && summary.refreshing) }]}
               />
             ) : null}
@@ -350,11 +349,11 @@ export default function ImportsList({
           </>
         }
         empty={
-          data === null ? undefined : (
+          !rows.current ? undefined : (
             <FeedbackState
-              content={{ tone: "Neutral", title: empty.title, message: empty.body }}
+              content={{ tone: "Neutral", title: emptyTitle, message: rows.complete ? empty.body : undefined }}
               announcement="None"
-              actions={filtered || state.q !== undefined ? [{
+              actions={rows.complete && (filtered || state.q !== undefined) ? [{
                   label: filtered
                     ? state.q === undefined ? "clear filters" : "clear search and filters"
                     : "clear search",
@@ -366,28 +365,7 @@ export default function ImportsList({
             />
           )
         }
-        footer={
-          moreFailed ? (
-            <FeedbackNotice
-              content={{
-                ...loadFailure(error), title: "more imports couldn’t be loaded",
-                message: error.code === "E_INVALID_CURSOR"
-                  ? "refresh this view to start loading again."
-                  : "the imports already loaded are still here.",
-              }}
-              announcement="Polite"
-              actions={[error.code === "E_INVALID_CURSOR"
-                ? { label: "refresh", onClick: refresh, busy: rows.status === "ready" && rows.refreshing }
-                : { label: "try again", onClick: rows.refetch, busy: rows.status === "ready" && rows.refreshing }]}
-            />
-          ) : data !== null && data.more ? (
-            <LoadMoreFooter
-              hasMore
-              loading={short && error === null}
-              onLoadMore={loadMore}
-            />
-          ) : null
-        }
+        footer={readFeedback.notice}
       >
         {items.length > 0 ? (
           <ResourceList ariaLabel={`${VIEW_LABEL[view]} imports`}>

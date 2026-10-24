@@ -8,24 +8,26 @@ import { Paperclip } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
-import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
+import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { createLink } from "@/lib/resourceGraph/links";
+import { admitWriting, canRetryWriting, isWriteRejection, type WriteHandle, type WritingAck } from "@/lib/notes/writes";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 
 interface Task {
-  readonly files: readonly { file: File; uploadId: string; linkId: string }[];
+  readonly files: readonly { file: File; upload: UploadAttempt; linkId: string }[];
   index: number;
   mediaId: string | null;
   running: boolean;
   unconfirmed: boolean;
   failure: FeedbackContent | null;
+  link: WriteHandle | null;
 }
 
 export function useConnectionAttachments(selfRef: string) {
@@ -53,6 +55,8 @@ export function useConnectionAttachments(selfRef: string) {
     const owned = () => workspace().state.panes.some(pane => [pane.current_visit, ...pane.history.back, ...pane.history.forward]
       .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
     const stop = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
+    let linkNotice: ReturnType<typeof feedback.retainCondition> | null = null;
+    const withdrawLinkNotice = () => { linkNotice?.withdraw(); linkNotice = null; };
     task.running = true;
     task.failure = null;
     publish();
@@ -62,15 +66,57 @@ export function useConnectionAttachments(selfRef: string) {
         if (task.mediaId === null) {
           task.unconfirmed = true;
           publish();
-          const uploaded = await uploadIngestFile({ file: item.file, libraryIds: [], id: item.uploadId, signal: controller.signal });
+          const uploaded = await uploadIngestFile({ file: item.file, attempt: item.upload, signal: controller.signal });
           if (controller.signal.aborted || owner.read().task !== task) return;
+          if (!uploaded.available) {
+            task.unconfirmed = false;
+            task.failure = { tone: "Warning", title: "this item was saved, then removed" };
+            publish();
+            return;
+          }
           task.mediaId = uploaded.mediaId;
           task.unconfirmed = false;
           publish();
         }
-        // Once queued, this exact link belongs to the tab's write owner.
-        const result = await createLink({ link_id: item.linkId, source: { kind: "resource", ref: selfRef },
-          target: { kind: "resource", ref: `media:${task.mediaId}` }, position: null });
+        // Admission transfers the exact link to the live writer, even if this visit closes.
+        task.link ??= admitWriting({ kind: "outline", commands: [{ kind: "insert_link", link_id: item.linkId,
+          source: { kind: "resource", ref: selfRef }, target: { kind: "resource", ref: `media:${task.mediaId}` },
+          position: null, require_created: false }] });
+        let linkFailure: FeedbackContent | null = null;
+        let retryable = false;
+        const showLinkState = () => {
+          if (account.aborted || owner.read().task !== task) { withdrawLinkNotice(); return; }
+          const state = task.link!.read();
+          task.failure = state.kind === "unconfirmed"
+            ? { tone: "Warning", title: "link not confirmed", message: !canRetryWriting(task.link!)
+              ? "the file is saved. reload to check its link. other unsaved changes will be lost."
+              : "the file is saved. its link may also have succeeded." }
+            : null;
+          if (state.kind === "unconfirmed") { linkFailure = task.failure; retryable = canRetryWriting(task.link!); }
+          if (state.kind === "accepted" || state.kind === "refused" || state.kind === "abandoned") withdrawLinkNotice();
+          else if (linkFailure !== null && (controller.signal.aborted || linkNotice !== null)) {
+            const link = task.link!;
+            const condition = { priority: "Write" as const, announcement: "Polite" as const, content: linkFailure, needsAttention: true,
+              actions: retryable ? [{ label: "retry same link", commandKey: `attachment-link:${link.id}:retry`, busy: state.kind === "queued" || state.kind === "sending",
+                onClick: () => { if (!account.aborted) link.retry(); } }] as const
+                : [{ label: "reload", onClick: () => { if (!account.aborted) window.location.reload(); } }] as const };
+            if (linkNotice) linkNotice.update(condition); else linkNotice = feedback.retainCondition({ key: `attachment-link:${link.id}`, ...condition });
+          }
+          publish();
+        };
+        const unsubscribe = task.link.subscribe(showLinkState);
+        controller.signal.addEventListener("abort", showLinkState, { once: true });
+        showLinkState();
+        let result: WritingAck["insertions"][number] | undefined;
+        try {
+          const ack = await task.link.settled;
+          result = ack.insertions.find(insertion => insertion.requested_link_id === item.linkId);
+          if (!result) throw new Error("attachment link acknowledgement is missing its insertion");
+        } finally {
+          unsubscribe(); controller.signal.removeEventListener("abort", showLinkState);
+          withdrawLinkNotice();
+        }
+        task.link = null;
         if (account.aborted) return;
         feedback.receipt({ tone: result.created ? "Success" : "Info", title: result.created ? "linked" : "already linked" });
         if (controller.signal.aborted || owner.read().task !== task) return;
@@ -80,10 +126,22 @@ export function useConnectionAttachments(selfRef: string) {
       }
       if (!controller.signal.aborted && owner.read().task === task) owner.set({ task: null, defect: null });
     } catch (error) {
-      if (controller.signal.aborted || owner.read().task !== task) return;
+      if (account.aborted || owner.read().task !== task) return;
+      if (controller.signal.aborted) {
+        if (task.link?.read().kind === "refused") feedback.offer({ key: `attachment-link:${task.link.id}`, announcement: "Polite",
+          needsAttention: true, undo: null, onDismiss: null,
+          content: { tone: "Warning", title: "file saved; link refused", message: isApiError(error) ? error.message : "review its destination before linking again." },
+          actions: task.mediaId === null ? undefined : [{ label: "open saved file", href: `/media/${task.mediaId}` }] });
+        return;
+      }
       if (error instanceof UploadSessionError && error.outcome.kind !== "Unresolved") task.unconfirmed = false;
       if (handleUnauthenticatedApiError(error)) return;
-      try { task.failure = captureErrorFeedback(error, "AddAttachment"); }
+      if (task.link !== null) {
+        if (task.link.read().kind === "abandoned") return;
+        if (isWriteRejection(error)) task.failure = { tone: "Warning", title: "file saved; link refused",
+          message: isApiError(error) ? error.message : "review the destination before linking this file again." };
+        else owner.set(value => ({ ...value, defect: { error } }));
+      } else try { task.failure = captureErrorFeedback(error, "AddAttachment"); }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {
       stop();
@@ -100,17 +158,19 @@ export function useConnectionAttachments(selfRef: string) {
     const accepted: Task["files"][number][] = [];
     for (const file of files) {
       const invalid = getFileUploadError(file);
-      if (invalid) feedback.offer({ key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
-      else accepted.push({ file, uploadId: crypto.randomUUID(), linkId: crypto.randomUUID() });
+      if (invalid) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
+      else accepted.push({ file, upload: createUploadAttempt(), linkId: crypto.randomUUID() });
     }
     if (!accepted.length) return;
     if (prior !== null && !guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] })) return;
-    const task: Task = { files: accepted, index: 0, mediaId: null, running: false, unconfirmed: false, failure: null };
+    const task: Task = { files: accepted, index: 0, mediaId: null, running: false, unconfirmed: false, failure: null, link: null };
     owner.set({ task, defect: null });
     void run(task);
   }
   if (owner.value.defect !== null) throw owner.value.defect.error;
   const { task } = owner.value;
+  const linkState = task?.link?.read();
+  const reloadLink = linkState?.kind === "unconfirmed" && task?.link != null && !canRetryWriting(task.link);
   return {
     attaching: task?.running ?? false,
     dropProps: {
@@ -118,9 +178,16 @@ export function useConnectionAttachments(selfRef: string) {
       onDrop: (event: React.DragEvent<HTMLElement>) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); event.stopPropagation(); attachFiles(files); } },
     },
     control: <>
-      <Button type="button" variant="ghost" size="sm" iconOnly loading={task?.running} aria-label="Upload and link file" title="Upload and link file" onClick={() => fileInputRef.current?.click()}><Paperclip size={14} aria-hidden="true" /></Button>
+      <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running} aria-busy={task?.running} icon={<Paperclip size={14} aria-hidden="true" />} />
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
-      {task?.failure ? <FeedbackNotice content={task.failure} announcement="Polite" actions={[{ label: "retry same upload", onClick: () => void run(task) }]} /> : null}
+      {task?.failure ? <FeedbackNotice content={task.failure} announcement="Polite" actions={linkState?.kind === "refused" ? (task.mediaId === null ? undefined : [{ label: "open saved file", href: `/media/${task.mediaId}` }]) : [{ label: reloadLink ? "reload" : task.link?.read().kind === "unconfirmed" ? "retry same link" : task.files[task.index]?.upload.expired ? "choose the file again" : task.files[task.index]?.upload.review_required ? "review and save" : "check save", onClick: () => {
+        if (reloadLink) { window.location.reload(); return; }
+        if (task.link?.read().kind === "unconfirmed") { task.link.retry(); return; }
+        const upload = task.files[task.index]?.upload;
+        if (upload?.expired) { fileInputRef.current?.click(); return; }
+        if (upload !== undefined) reviewUploadAttempt(upload);
+        void run(task);
+      } }]} /> : null}
     </>,
   };
 }

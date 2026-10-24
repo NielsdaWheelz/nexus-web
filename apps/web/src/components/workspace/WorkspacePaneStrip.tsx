@@ -16,7 +16,6 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Ellipsis, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -27,15 +26,16 @@ import {
   type KeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import ActionMenu from "@/components/ui/ActionMenu";
-import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
+import Button from "@/components/ui/Button";
+import { assertNever } from "@/lib/assertNever";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { WorkspaceState } from "@/lib/workspace/model";
-import { paneActions } from "@/lib/workspace/paneActions";
+import { paneControls, type PaneControl } from "@/lib/workspace/paneControls";
+import type { WorkspaceTargetActivationResult, WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useLatestWorkspace, type WorkspaceSelection } from "@/lib/workspace/store";
 import styles from "./WorkspacePaneStrip.module.css";
 
@@ -48,13 +48,12 @@ interface StripItem {
   readonly minimized: boolean;
 }
 
-type Control = "activate" | "menu";
+type Control = "activate" | PaneControl["slot"];
 type FocusTarget = { paneId: string; control: Control };
 type Move = { paneId: string; beforePaneId: string | null };
 type ButtonKey = KeyboardEvent<HTMLButtonElement>;
 
-// Menu and drag moves share the strip's completion announcement. There is no
-// keyboard pickup mode: the reachable move commands also work by click/tap.
+// Reorder completion has one announcement; drag movement itself stays silent.
 const SILENT_DRAG = {
   onDragStart: () => undefined,
   onDragOver: () => undefined,
@@ -75,7 +74,8 @@ function TabIdentity({ item }: { readonly item: StripItem }) {
 /** A sortable chip; its title alone starts a drag. */
 function StripTab(props: {
   readonly item: StripItem;
-  readonly options: readonly ActionDescriptor[];
+  readonly controls: readonly PaneControl[];
+  readonly maximized: boolean;
   readonly focusable: Control | null;
   readonly descriptionId: string;
   readonly cancelled: boolean;
@@ -84,10 +84,9 @@ function StripTab(props: {
   readonly onKeyDown: (
     event: ButtonKey,
     control: Control,
-    menuDefault?: (event: ButtonKey) => void,
   ) => void;
-  readonly onActivate: () => void;
-  readonly onClose: () => void;
+  readonly onActivate: (event: TargetActivationEvent) => void;
+  readonly onCommand: (command: PaneControl["command"]) => void;
 }) {
   const { item } = props;
   const sortable = useSortable({ id: item.paneId, transition: null });
@@ -112,8 +111,8 @@ function StripTab(props: {
         tabIndex={props.focusable === "activate" ? 0 : -1}
         aria-current={item.isActive ? "page" : undefined}
         aria-describedby={props.descriptionId}
-        aria-keyshortcuts="ArrowLeft ArrowRight Home End ArrowDown Delete Backspace Shift+M Shift+F10"
-        title={item.label}
+        aria-keyshortcuts="ArrowLeft ArrowRight Home End Delete Backspace Shift+M"
+        title={`${item.label}. shift-click or shift-enter opens in a new pane`}
         onMouseDown={(event) => {
           if (!hasActiveInteractionOwner()) sortable.listeners?.onMouseDown?.(event);
         }}
@@ -126,38 +125,33 @@ function StripTab(props: {
       >
         <TabIdentity item={item} />
         {item.isActive ? <span className="sr-only"> Active pane.</span> : null}
-        {item.minimized ? <span className="sr-only"> Minimized. Restore.</span> : null}
+        {item.minimized ? <span className="sr-only"> Minimized.</span> : null}
+        {props.maximized ? <span className="sr-only"> Maximized.</span> : null}
       </button>
       <div className={styles.actions}>
-        <ActionMenu
-          source={{ kind: "Immediate", subjectKey: `pane-strip:${item.paneId}`, title: item.label, content: { sections: [{ id: "Pane", label: null, options: props.options }] } }}
-          label={`more actions for ${item.label}`}
-          triggerAttributes={{ tabIndex: props.focusable === "menu" ? 0 : -1 }}
-          triggerRef={(node) => props.register("menu", node)}
-          renderTrigger={(trigger) => (
-            <OverflowMenuButton
-              {...trigger}
-              onFocus={() => props.onFocus("menu")}
-              onClick={(event) => {
-                // Safari does not focus a pointer-clicked button. More must be
-                // the roving stop before the menu captures its return target.
-                event.currentTarget.focus({ preventScroll: true });
-                props.onFocus("menu");
-                trigger.onClick(event);
-              }}
-              onKeyDown={(event) => props.onKeyDown(event, "menu", trigger.onKeyDown)}
-            />
-          )}
-        />
-        <button
-          type="button"
-          tabIndex={-1}
-          className={styles.action}
-          aria-label={`Close ${item.label}`}
-          onClick={props.onClose}
-        >
-          <X aria-hidden size={16} strokeWidth={1.75} />
-        </button>
+        {props.controls.map((control) => {
+          const Icon = control.icon;
+          return <Button
+            key={control.slot}
+            ref={(node) => props.register(control.slot, node)}
+            iconOnly
+            icon={<Icon aria-hidden size={16} strokeWidth={1.75} />}
+            className={styles.action}
+            tabIndex={props.focusable === control.slot ? 0 : -1}
+            aria-label={control.label}
+            aria-disabled={control.disabledReason !== null || undefined}
+            tooltip={{ text: control.disabledReason ?? control.tooltip }}
+            aria-describedby={props.descriptionId}
+            onPointerDown={(event) => event.currentTarget.focus({ preventScroll: true })}
+            onFocus={() => props.onFocus(control.slot)}
+            onKeyDown={(event) => props.onKeyDown(event, control.slot)}
+            onClick={(event) => {
+              // Safari does not focus pointer-clicked buttons by default.
+              event.currentTarget.focus({ preventScroll: true });
+              props.onCommand(control.command);
+            }}
+          />;
+        })}
       </div>
     </div>
   );
@@ -168,18 +162,17 @@ export default function WorkspacePaneStrip(props: {
   readonly state: WorkspaceState;
   readonly items: readonly StripItem[];
   readonly isMaximized: boolean;
-  readonly onActivate: (paneId: string) => void;
-  readonly onRestore: (paneId: string) => void;
+  readonly onActivate: (paneId: string, disposition: WorkspaceTargetDisposition) => WorkspaceTargetActivationResult | null;
+  readonly onRestoreCanvas: (paneId: string) => WorkspaceSelection | null;
   readonly onMinimize: (paneId: string) => void;
   readonly onClose: (paneId: string) => WorkspaceSelection | null;
-  readonly onToggleMaximize: (paneId: string) => void;
+  readonly onMaximize: (paneId: string) => WorkspaceSelection | null;
   readonly onMove: (input: Move) => boolean;
 }) {
   const { items } = props;
   const latestWorkspace = useLatestWorkspace();
   const strip = useRef<HTMLDivElement>(null);
-  const activators = useRef(new Map<string, HTMLButtonElement>());
-  const menus = useRef(new Map<string, HTMLButtonElement>());
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
   const [roving, setRoving] = useState<FocusTarget | null>(null);
   const [focusAfter, setFocusAfter] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState<string | null>(null);
@@ -188,8 +181,16 @@ export default function WorkspacePaneStrip(props: {
   const heldPointer = useRef<number | null>(null);
   const descriptionId = useId();
   const ids = items.map((item) => item.paneId);
+  const tabs = items.map((item) => ({ item, controls: paneControls({
+    state: props.state, paneId: item.paneId, title: item.label,
+    desktopMaximized: props.isMaximized, isMobile: false,
+  }) }));
+  const targets: FocusTarget[] = tabs.flatMap(({ item, controls }) => [
+    { paneId: item.paneId, control: "activate" },
+    ...controls.map((control) => ({ paneId: item.paneId, control: control.slot })),
+  ]);
   const activeId = items.find((item) => item.isActive)?.paneId ?? items[0]?.paneId;
-  const focusable: FocusTarget | null = roving && ids.includes(roving.paneId)
+  const focusable: FocusTarget | null = roving && targets.some((target) => target.paneId === roving.paneId && target.control === roving.control)
     ? roving
     : activeId ? { paneId: activeId, control: "activate" } : null;
   // A changed order makes an in-flight insertion preview obsolete. Do not
@@ -220,7 +221,7 @@ export default function WorkspacePaneStrip(props: {
 
   const reveal = useCallback((paneId: string) => {
     const viewport = strip.current;
-    const tab = activators.current.get(paneId)?.parentElement;
+    const tab = buttons.current.get(`${paneId}:activate`)?.parentElement;
     if (!viewport || !tab) return;
     const frame = viewport.getBoundingClientRect();
     const rect = tab.getBoundingClientRect();
@@ -231,8 +232,7 @@ export default function WorkspacePaneStrip(props: {
   }, []);
   const focus = (target: FocusTarget) => {
     setRoving(target);
-    const nodes = target.control === "activate" ? activators.current : menus.current;
-    nodes.get(target.paneId)?.focus({ preventScroll: true });
+    buttons.current.get(`${target.paneId}:${target.control}`)?.focus({ preventScroll: true });
     reveal(target.paneId);
   };
 
@@ -249,11 +249,12 @@ export default function WorkspacePaneStrip(props: {
     const paneId = items.find((item) => item.paneId === focusAfter)?.paneId ?? activeId;
     if (!paneId) return;
     setRoving({ paneId, control: "activate" });
-    activators.current.get(paneId)?.focus({ preventScroll: true });
+    buttons.current.get(`${paneId}:activate`)?.focus({ preventScroll: true });
     reveal(paneId);
   }, [focusAfter, items, activeId, reveal]);
 
   const close = (paneId: string) => {
+    if (!latestWorkspace().state.panes.some((pane) => pane.id === paneId)) return;
     const index = items.findIndex((item) => item.paneId === paneId);
     if (index < 0) return;
     const next = items[index + 1]?.paneId ?? items[index - 1]?.paneId;
@@ -267,34 +268,46 @@ export default function WorkspacePaneStrip(props: {
     const label = items.find((item) => item.paneId === input.paneId)!.label;
     setAnnouncement(`Moved ${label} to position ${panes.findIndex((pane) => pane.id === input.paneId) + 1} of ${panes.length}.`);
   };
-  const openMenu = (paneId: string) => {
-    focus({ paneId, control: "menu" });
-    menus.current.get(paneId)?.click();
+  const activate = (paneId: string, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume" || hasActiveInteractionOwner()) return;
+    const result = props.onActivate(paneId, { kind: activation.intent === "new_pane" ? "Fork" : "Follow" });
+    if (result && result.kind !== "Cancelled" && result.kind !== "CreatedPane") reveal(result.paneId);
   };
   const onKeyDown = (
     event: ButtonKey,
-    index: number,
+    paneId: string,
     control: Control,
-    menuDefault?: (event: ButtonKey) => void,
   ) => {
+    if (event.defaultPrevented) return;
+    if (control === "activate" && event.key === "Enter") {
+      activate(paneId, event);
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (!event.repeat && !event.nativeEvent.isComposing && !event.metaKey &&
+        !event.ctrlKey && !event.altKey && !hasActiveInteractionOwner()) event.currentTarget.click();
+      return;
+    }
     if (
-      event.defaultPrevented || event.nativeEvent.isComposing ||
+      event.nativeEvent.isComposing ||
       event.metaKey || event.ctrlKey || event.altKey || hasActiveInteractionOwner() ||
       !(event.target instanceof Node) || !strip.current?.contains(event.target)
     ) return;
-    const paneId = items[index]!.paneId;
     if (event.shiftKey && event.key.toLowerCase() === "m") {
       event.preventDefault();
-      if (!event.repeat) props.onToggleMaximize(paneId);
-      return;
-    }
-    if ((event.shiftKey && event.key === "F10") || (!event.shiftKey && event.key === "ContextMenu")) {
-      event.preventDefault();
-      openMenu(paneId);
+      if (!event.repeat) {
+        if (props.isMaximized && paneId === activeId) props.onRestoreCanvas(paneId);
+        else props.onMaximize(paneId);
+      }
       return;
     }
     if (event.shiftKey) return;
-    const last = items.length - 1;
+    const index = targets.findIndex((target) => target.paneId === paneId && target.control === control);
+    const last = targets.length - 1;
     const byKey: Partial<Record<string, number>> = {
       ArrowRight: index === last ? 0 : index + 1,
       ArrowLeft: index === 0 ? last : index - 1,
@@ -304,15 +317,10 @@ export default function WorkspacePaneStrip(props: {
     const target = byKey[event.key];
     if (target !== undefined) {
       event.preventDefault();
-      focus({ paneId: items[target]!.paneId, control: "activate" });
+      focus(targets[target]!);
     } else if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       if (!event.repeat) close(paneId);
-    } else if (control === "activate" && event.key === "ArrowDown") {
-      event.preventDefault();
-      openMenu(paneId);
-    } else {
-      menuDefault?.(event);
     }
   };
   const finishDrag = (paneId: string) => {
@@ -378,53 +386,39 @@ export default function WorkspacePaneStrip(props: {
           }}
         >
           <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
-            {items.map((item, index) => {
-              const actions = paneActions({
-                state: props.state,
-                paneId: item.paneId,
-                onMinimize: props.onMinimize,
-                onRestore: props.onRestore,
-                onMove: move,
-                onClose: close,
-              });
-              const options: ActionDescriptor[] = [
-                ...actions.slice(0, 1),
-                {
-                  id: "pane-maximize",
-                  kind: "command",
-                  label: props.isMaximized && item.isActive ? "Restore layout" : "Maximize pane",
-                  onSelect: () => props.onToggleMaximize(item.paneId),
-                },
-                ...actions.slice(1),
-              ];
-              return (
-                <StripTab
-                  key={item.paneId}
-                  item={item}
-                  options={options}
-                  focusable={focusable?.paneId === item.paneId ? focusable.control : null}
-                  descriptionId={descriptionId}
-                  cancelled={draggedId !== null && !dragValid}
-                  register={(control, node) => {
-                    const nodes = control === "activate" ? activators.current : menus.current;
-                    if (node) nodes.set(item.paneId, node);
-                    else nodes.delete(item.paneId);
-                  }}
-                  onFocus={(control) => {
-                    setRoving({ paneId: item.paneId, control });
-                    // Native pointer focus happens before release. Moving a
-                    // clipped chip now could put More/Close under the pointer.
-                    if (heldPointer.current === null) reveal(item.paneId);
-                  }}
-                  onKeyDown={(event, control, menuDefault) => onKeyDown(event, index, control, menuDefault)}
-                  onActivate={() => {
-                    reveal(item.paneId);
-                    props.onActivate(item.paneId);
-                  }}
-                  onClose={() => close(item.paneId)}
-                />
-              );
-            })}
+            {tabs.map(({ item, controls }) => (
+              <StripTab
+                key={item.paneId}
+                item={item}
+                controls={controls}
+                maximized={props.isMaximized && item.isActive}
+                focusable={focusable?.paneId === item.paneId ? focusable.control : null}
+                descriptionId={descriptionId}
+                cancelled={draggedId !== null && !dragValid}
+                register={(control, node) => {
+                  const key = `${item.paneId}:${control}`;
+                  if (node) buttons.current.set(key, node);
+                  else buttons.current.delete(key);
+                }}
+                onFocus={(control) => {
+                  setRoving({ paneId: item.paneId, control });
+                  // Native pointer focus happens before release. Moving a
+                  // clipped chip now could put another control under the pointer.
+                  if (heldPointer.current === null) reveal(item.paneId);
+                }}
+                onKeyDown={(event, control) => onKeyDown(event, item.paneId, control)}
+                onActivate={event => activate(item.paneId, event)}
+                onCommand={(command) => {
+                  switch (command) {
+                    case "minimize": props.onMinimize(item.paneId); return;
+                    case "maximize": props.onMaximize(item.paneId); return;
+                    case "restore_canvas": props.onRestoreCanvas(item.paneId); return;
+                    case "close": close(item.paneId); return;
+                    default: assertNever(command);
+                  }
+                }}
+              />
+            ))}
           </SortableContext>
         </div>
         <span id={descriptionId} className="sr-only">{PANE_STRIP_DESCRIPTION}</span>
@@ -435,8 +429,10 @@ export default function WorkspacePaneStrip(props: {
           <div className={`${styles.tab} ${styles.dragOverlay}`} data-active={draggedItem.isActive || undefined} aria-hidden inert>
             <span className={styles.activator}><TabIdentity item={draggedItem} /></span>
             <span className={styles.actions}>
-              <span className={styles.action}><Ellipsis size={16} strokeWidth={1.5} aria-hidden /></span>
-              <span className={styles.action}><X size={16} aria-hidden /></span>
+              {paneControls({ state: props.state, paneId: draggedItem.paneId, title: draggedItem.label, desktopMaximized: props.isMaximized, isMobile: false }).map((control) => {
+                const Icon = control.icon;
+                return <span key={control.slot} className={styles.action}><Icon size={16} strokeWidth={1.75} aria-hidden /></span>;
+              })}
             </span>
           </div>
         </DragOverlay>,

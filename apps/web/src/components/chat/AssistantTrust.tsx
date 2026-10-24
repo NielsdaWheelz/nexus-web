@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 import { useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
@@ -55,7 +57,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
     /> : null}
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
-      const authorship = tool.machine_authorships[0];
+      const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
       const kicker = ref ? KICKERS[ref.kind] : tool.activity.verb;
       const target = ref?.label ?? tool.activity.subject;
       const reverted = tool.reverted_at !== null || (tool.id !== null && undone.has(tool.id));
@@ -66,10 +68,10 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
           {tool.activity.outcome ? <span>{target ? " · " : ""}{tool.activity.outcome}</span> : null}
         </span> : null}
         {reverted ? <span className={styles.kicker}>Undone</span>
-          : authorship && tool.id !== null ? <button type="button" className={styles.kicker}
+          : tool.undo_allowed && tool.id !== null ? <Button
             disabled={busy}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
-            aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</button> : null}
+            aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</Button> : historicalFiling ? <span className={styles.kicker}>undo unavailable for this older filing</span> : null}
       </div>;
     })}
   </div>;

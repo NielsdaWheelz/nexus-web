@@ -56,10 +56,39 @@ class ListeningIn(Closed):
     expected_reset_epoch: _Int32
 
 
-class ListeningPositionOut(Closed):
-    position_ms: _Int32
+class EpisodeConsumptionState(Closed):
+    """Raw stored listening facts; source duration belongs to the saved rendition/catalog."""
+
     reset_epoch: _Int32
     consumption_override_revision: _Int32 | None
+    consumption_override_status: Literal["finished", "unread"] | None
+    position_ms: _Int32 | None
+    duration_ms: _Int32 | None
+    lectern_member: bool
+
+
+class EpisodeConsumptionObservation(Closed):
+    media_id: UUID
+    consumption_revision: OrderRevision
+    state: EpisodeConsumptionState
+
+
+class EpisodeConsumptionEntry(Closed):
+    media_id: UUID
+    state: EpisodeConsumptionState
+
+
+class ConsumptionData[T](Closed):
+    """A collection's data and episode observations from the same read snapshot."""
+
+    data: T
+    consumption_revision: OrderRevision
+    episode_consumption: list[EpisodeConsumptionEntry]
+
+
+class PlayerActivationOut(Closed):
+    descriptor: PlayerDescriptor
+    observation: EpisodeConsumptionObservation
 
 
 class PreviewPositionIn(Closed):
@@ -158,6 +187,12 @@ class Finish(Closed):
     prior_status: Literal["finished", "unread"] | None
     completion_id: UUID | None
     removed: RemovedItem | None
+
+
+class ConsumptionOverrideOut(Closed):
+    """The register revision acknowledged by a single state write or exact finish inverse."""
+
+    override_revision: int = Field(strict=True, ge=1)
 
 
 class NaturalEndIn(Closed):

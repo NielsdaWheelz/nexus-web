@@ -2,8 +2,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { mintHandoffCode } from "@/lib/auth/internal";
 import { abandoned, finish, redirectTo } from "@/lib/auth/session";
-import { handoffDeepLink, loginPath, parseReturnTarget } from "@/lib/auth/urls";
-import { exchangeCode } from "@/lib/supabase/auth";
+import { handoffDeepLink, loginPath, parseHandoffContext, parseReturnTarget } from "@/lib/auth/urls";
+import { AuthUnavailable, exchangeCode, verify } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
@@ -17,8 +17,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   const params = new URL(request.url).searchParams;
   const target = parseReturnTarget(params.get("next"));
   const flow = params.get("flow");
+  const handoff = parseHandoffContext(flow, params.get("hc"));
   const deepLink = (outcome: { code: string } | { error: string }) =>
-    NextResponse.redirect(handoffDeepLink(outcome, target), 307);
+    handoff ? NextResponse.redirect(handoffDeepLink(outcome, target, handoff), 307) : redirectTo(loginPath(target, "sign_in_failed"));
   const failed = (handoffError: string, cancelled = false) =>
     flow === "handoff"
       ? deepLink({ error: cancelled ? "oauth_user_cancelled" : handoffError })
@@ -36,7 +37,13 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!code) return finish(failed("oauth_callback_missing_code"));
 
   const presented = (await cookies()).getAll();
-  const { tokens, writes } = await exchangeCode(presented, code);
+  let exchanged;
+  try { exchanged = await exchangeCode(presented, code); }
+  catch (error) {
+    if (!(error instanceof AuthUnavailable)) throw error;
+    return finish(failed("handoff_exchange_failed"));
+  }
+  const { tokens, writes } = exchanged;
   if (!tokens) {
     // the provider applies an email change before it redirects here; a
     // browser without this flow's pkce verifier just goes on to the target
@@ -45,17 +52,28 @@ export async function GET(request: Request): Promise<NextResponse> {
       flow === "email" ? redirectTo(target) : failed("handoff_exchange_failed");
     return finish(outcome, { kind: "Write", writes });
   }
+  const expected = params.get("expected_account_id");
+  if (tokens && expected) {
+    try {
+      const viewer = await verify(tokens.accessToken);
+      if (viewer === "Rejected" || viewer.userId !== expected) return finish(redirectTo(target));
+    } catch (error) {
+      if (!(error instanceof AuthUnavailable)) throw error;
+      return finish(redirectTo(target));
+    }
+  }
   if (flow !== "handoff") {
     return finish(redirectTo(target), { kind: "Write", writes });
   }
   // the custom tab keeps no session: the webview installs it from the code.
   try {
-    const minted = await mintHandoffCode(tokens, params.get("hc") ?? "");
+    const minted = handoff && await mintHandoffCode(tokens, handoff.challenge);
     return finish(
       deepLink(minted ? { code: minted } : { error: "handoff_mint_failed" }),
       abandoned(presented, writes),
     );
   } catch (error) {
+    if (error instanceof AuthUnavailable) return finish(deepLink({ error: "handoff_mint_failed" }), abandoned(presented, writes));
     console.error("auth_handoff_mint_defect", error);
     return finish(
       new NextResponse(null, { status: 500 }),

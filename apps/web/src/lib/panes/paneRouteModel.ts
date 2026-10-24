@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChartColumn,
   Compass,
+  Download,
   FileText,
   Globe,
   Keyboard,
@@ -40,13 +41,13 @@ import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // path, default label, icon. The first match wins.
 const ROUTES = {
+  downloads: ["downloads", "Downloads", Download],
   lectern: ["lectern", "Lectern", ListMusic],
   libraries: ["libraries", "Libraries", Library],
   library: ["libraries/:id", "Library", Library],
   browse: ["browse", "Browse", Compass],
   browsePreview: ["browse/preview", "Preview", Compass],
   media: ["media/:id", "Media", FileText],
-  artifact: ["artifacts/:artifactRef", "Dossier", BookOpen],
   conversations: ["conversations", "Chats", MessageSquare],
   conversationNew: ["conversations/new", "New chat", MessageSquare],
   conversation: ["conversations/:id", "Chat", MessageSquare],
@@ -79,7 +80,6 @@ type Traits<T> = Partial<Record<PaneRouteId, T>>;
 const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   library: ["library", "id"],
   media: ["media", "id"],
-  artifact: ["artifact", "artifactRef"],
   conversation: ["conversation", "id"],
   podcastDetail: ["podcast", "podcastId"],
   author: ["contributor_handle", "handle"],
@@ -104,11 +104,10 @@ const IN_PLACE = new Set<PaneRouteId>([
 ]);
 // Not shareable by pathname: private or transient routes (resource panes
 // share their resource instead).
-const UNSHARED = new Set<PaneRouteId>(["conversationNew", "pageNew", "search", "dailyDate"]);
+const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate"]);
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
-  artifact: "libraries",
   conversations: "chats",
   conversationNew: "chats",
   conversation: "chats",
@@ -120,7 +119,6 @@ const SECTION: Traits<DestinationId> = {
 const PENDING_LABEL: Traits<string> = {
   browsePreview: "Loading preview…",
   media: "Loading media…",
-  artifact: "Loading dossier…",
 };
 export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
 const RETURN_KIND: Traits<PaneReturnKind> = {
@@ -191,7 +189,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
 const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
-  const section = SECTION[id] ?? (pattern[0] as DestinationId);
+  const section = id === "downloads" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
   const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
@@ -206,7 +204,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
       ? { kind: "Resource", pendingLabel }
       : pattern.length === 1
         ? { kind: "Section", context: "None" }
-        : { kind: "Section", context: "Destination", destinationId: section },
+        : { kind: "Section", context: "Destination", destinationId: section! },
     returnKind,
     bodyMode: BODY_MODE[returnKind],
     queryNavigation: IN_PLACE.has(id) ? "in-place" : null,
@@ -270,9 +268,7 @@ function locatorFor(
     const handle = value;
     return isContributorHandle(handle) ? { kind: "contributor_handle", handle } : null;
   }
-  // artifact refs arrive namespaced; every other param is a bare id.
-  const ref =
-    scheme === "artifact" ? value : formatResourceRef({ scheme, id: value });
+  const ref = formatResourceRef({ scheme, id: value });
   return parseResourceRef(ref)?.scheme === scheme
     ? { kind: "resource_ref", ref }
     : null;
@@ -309,6 +305,7 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     if (id === "conversation") {
       const query = new URLSearchParams(search);
       query.delete("leaf");
+      query.delete("loc");
       viewSearch = query.size ? `?${query}` : "";
     }
     const routeKey = `${id}:${pathname}${viewSearch}`;
@@ -355,7 +352,7 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
   const arrival = route.id === "media"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post"]
-    : route.id === "conversation" ? ["message"] : [];
+    : route.id === "conversation" ? ["message", "loc"] : [];
   for (const key of arrival) query.delete(key);
   query.sort();
   return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
@@ -378,6 +375,7 @@ export function matchWorkspaceTargetHref(currentHref: string, targetHref: string
   if (url.search || url.hash) return targetHref;
   const retained = parseWorkspaceHref(currentHref)!;
   retained.searchParams.delete("message");
+  retained.searchParams.delete("loc");
   retained.hash = "";
   return `${retained.pathname}${retained.search}${retained.hash}`;
 }
@@ -391,6 +389,7 @@ export function paneMountKey(
   route: ResolvedPaneRouteModel,
   visitId: string,
 ): string {
+  if (route.id === "pageNew" || route.id === "page") return `${visitId}:page-authoring`;
   if (route.queryNavigation) return `${visitId}:${route.id}:${route.pathname}`;
   if (route.returnKind === "ShellScroll") return `${visitId}:${route.routeKey}`;
   return route.resourceKey ? `${route.id}:${route.resourceKey}` : route.routeKey;

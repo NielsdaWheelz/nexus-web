@@ -4,12 +4,11 @@
  * subscribers (outlines, panes) after success only. Unlink retries the selected
  * uuid through the write queue; context detachment retains its version fence.
  */
-import { ApiError, apiFetch, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { ApiError, apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { enqueueWrite, wakeCancelledWrite } from "@/lib/notes/writes";
-import { publishChange } from "@/lib/api/changes";
+import { admitWriting, captureLane, type WritingAck, type WritingCommand } from "@/lib/notes/writes";
 import { parseResourceRef } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 
@@ -21,7 +20,13 @@ export type ConnectionCommand =
 export type InsertionSource = Schema<"InsertLink">["source"];
 export type LinkTarget = Schema<"InsertLink">["target"];
 export type Position = Schema<"Position">;
-export type InsertionOut = Schema<"InsertionOut">;
+export type WritingInsertion = WritingAck["insertions"][number];
+/** Resolve a result by requested identity; array ordering is never causal evidence. */
+export function insertionTarget(ack: WritingAck, insertion: WritingInsertion): string {
+  const link = ack.links.find(item => item.link_id === insertion.canonical_link_id);
+  if (!link) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "the saved link is no longer available");
+  return link.source_ref === insertion.source_ref ? link.target_ref : link.source_ref;
+}
 /** Capability belongs to this resource's canonical identity, not its action owner. */
 export function endpointForResource(ref: string): LinkTarget | null {
   const parsed = parseResourceRef(ref);
@@ -62,7 +67,6 @@ export function announceResourceDeletion(ref: string): void {
   if (deletedResources.has(ref)) return;
   deletedResources.add(ref);
   announce({ kind: "resource_deleted", ref });
-  wakeCancelledWrite();
 }
 
 export async function queryConnections(
@@ -79,48 +83,44 @@ export async function queryConnections(
   return data;
 }
 
-/** Known deletion fences every queued graph creator, including a daily proposal. */
-export function commandsReferToDeletedResource(commands: Schema<"OutlineCommandsRequest">["commands"]): boolean {
-  return commands.some(command => {
-    if ("endpoint" in command && isDeletedResource(command.endpoint)) return true;
-    if ("destination" in command && typeof command.destination === "string" && isDeletedResource(command.destination)) return true;
-    if ("note_id" in command && isDeletedResource(`note_block:${command.note_id}`)) return true;
-    if ("page_id" in command && isDeletedResource(`page:${command.page_id}`)) return true;
-    const endpoints = [...("source" in command ? [command.source] : []), ...("target" in command ? [command.target] : [])];
-    return endpoints.some(endpoint => endpoint.kind === "resource" ? isDeletedResource(endpoint.ref) : endpoint.kind === "daily_page" ? isDeletedResource(`page:${endpoint.page_id}`) : false);
-  });
+/** Absolute commands are immutable after admission; a retry reuses its sealed bytes. */
+export async function graphCommands(commands: WritingCommand[]): Promise<WritingAck> {
+  return admitWriting({ kind: "outline", commands }).settled;
 }
 
-/** Only the shared queue sends graph writes; insertion ids remain immutable. */
-export function graphCommands(commands: Schema<"OutlineCommandsRequest">["commands"], retrying?: (error: unknown) => void): Promise<Schema<"OutlineCommandsOut">> {
-  return new Promise((resolve, reject) => enqueueWrite<Schema<"OutlineCommandsOut">>({
-    cancelled: () => commandsReferToDeletedResource(commands),
-    cancel: () => reject(new ApiError(404, "E_NOT_FOUND", "a resource used by this change is no longer available")),
-    build: () => ({ path: "/api/resource-graph/commands", method: "POST", body: { commands } }),
-    settle(reply) { resolve(reply); acknowledgeGraphCommands(reply); },
-    fail: reject,
-    retrying,
-  }));
+/** Called once by the account's committed acknowledgement receiver. */
+export function acknowledgeGraphCommands(reply: WritingAck): void {
+  for (const ref of reply.deleted_refs) announceResourceDeletion(ref);
+  announceLinkDeletions({ linkIds: reply.removed_link_ids, origin: null });
+  for (const link of reply.links)
+    announce({ kind: "created", sourceRef: link.source_ref, targetRef: link.target_ref });
 }
-
-export function acknowledgeGraphCommands(reply: Schema<"OutlineCommandsOut">): void {
-  publishChange("Notes");
-  for (const result of reply.insertions) {
-    const { source, target } = result.connection;
-    announce({ kind: "created", sourceRef: source.ref, targetRef: target.ref });
-  }
+export async function createLink(input: Omit<Schema<"InsertLink">, "kind" | "require_created">): Promise<WritingInsertion> {
+  const ref = input.source.kind === "resource" ? input.source.ref : input.source.kind === "daily_page" ? `page:${input.source.page_id}` : null;
+  if (input.position !== null && ref === null)
+    throw new ApiError(409, "E_RESOURCE_CONFLICT", "the captured destination cannot supply a placement version");
+  const position = input.position === null ? null : {
+    after: input.position.after,
+    expected_links_version: captureLane(ref!, "links", input.position.expected_links_version),
+  };
+  const result = await graphCommands([{ kind: "insert_link", ...input, position, require_created: false }]);
+  const insertion = result.insertions.find(item => item.requested_link_id === input.link_id);
+  if (!insertion) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "this link is no longer available");
+  return insertion;
 }
-export async function createLink(input: Omit<Schema<"InsertLink">, "kind" | "require_created">): Promise<InsertionOut> {
-  const result = await graphCommands([{ kind: "insert_link", ...input, require_created: false }]);
-  return result.insertions[0]!;
+export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Promise<WritingInsertion> {
+  const ref = input.source.kind === "resource" ? input.source.ref : input.source.kind === "daily_page" ? `page:${input.source.page_id}` : null;
+  if (input.position !== null && ref === null)
+    throw new ApiError(409, "E_RESOURCE_CONFLICT", "the captured destination cannot supply a placement version");
+  const result = await graphCommands([{ kind: "insert_note", ...input, position: input.position === null ? null : {
+    after: input.position.after, expected_links_version: captureLane(ref!, "links", input.position.expected_links_version),
+  } }]);
+  const insertion = result.insertions.find(item => item.requested_link_id === input.link_id);
+  if (!insertion) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "this note is no longer available");
+  return insertion;
 }
-export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Promise<InsertionOut> {
-  const result = await graphCommands([{ kind: "insert_note", ...input }]);
-  return result.insertions[0]!;
-}
-export async function deleteLink({ linkId, requireUnannotated }: { linkId: string; requireUnannotated: boolean }, retrying?: (error: unknown) => void): Promise<void> {
-  await graphCommands([{ kind: "unlink", link_id: linkId, require_unannotated: requireUnannotated }], retrying);
-  announceLinkDeletions({ linkIds: [linkId], origin: null });
+export async function deleteLink({ linkId }: { linkId: string }): Promise<void> {
+  await graphCommands([{ kind: "unlink", link_id: linkId, expected: null }]);
 }
 
 /** The origin has already finalized its own local state before notifying observers. */
@@ -131,11 +131,10 @@ export function announceLinkDeletions(input: { linkIds: readonly string[]; origi
 /** The server names the owning command; provenance alone never authorizes removal. */
 export async function mutateConnection(
   command: ConnectionCommand,
-  retrying?: (error: unknown) => void,
 ): Promise<void> {
   switch (command.kind) {
     case "unlink":
-      return deleteLink({ linkId: command.link_id, requireUnannotated: false }, retrying);
+      return deleteLink({ linkId: command.link_id });
     case "detach_context":
       await apiFetch(
         `/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`,
@@ -168,6 +167,8 @@ export function connectionMutationErrorMessage(
       requestId,
     };
   }
+  const transport = apiTransportFeedback(error, "couldn’t remove connection");
+  if (transport !== null) return transport;
   if (GONE.has(code)) {
     return {
       tone: "Warning",

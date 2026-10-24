@@ -4,6 +4,8 @@ A write's created targets live on its one row. The author of a target is the
 successful write whose ``created_refs`` name it; the history is the principal's
 finished writes; undo reverts the targets and stamps the row in one transaction.
 Each outlives the conversation (its link is set null) and the target itself.
+Undo replays the whole database attempt under the central serializable commit
+owner; a reverted receipt is already complete and changes nothing.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from nexus.schemas.assistant_writes import (
     TargetKind,
 )
 from nexus.schemas.resource_graph import ConnectionCreationOut
+from nexus.services import library_entries, users, writing
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
@@ -163,13 +166,51 @@ def history(
             created_refs=[CreatedRefOut.model_validate(ref) for ref in row.created_refs],
             error_type=row.result["error"]["type"] if row.result["type"] == "Failure" else None,
             reverted_at=row.reverted_at,
-            undo_allowed=row.result["type"] == "Success"
-            and bool(row.created_refs)
-            and row.reverted_at is None,
+            undo_allowed=undo_eligible(
+                db,
+                viewer_id=viewer_id,
+                result=row.result,
+                created_refs=row.created_refs,
+                reverted_at=row.reverted_at,
+            ),
         )
         for row in rows[:30]
     ]
     return AssistantWritePage(items=items, next_cursor=rows[29].id if len(rows) > 30 else None)
+
+
+def undo_eligible(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result: dict[str, Any] | None,
+    created_refs: list[dict[str, Any]],
+    reverted_at: object,
+) -> bool:
+    """Account and chat history share execution's exact entry-receipt predicate."""
+    return (
+        result is not None
+        and result["type"] == "Success"
+        and bool(created_refs)
+        and reverted_at is None
+        and all(_undo_eligible(db, viewer_id, ref) for ref in created_refs)
+    )
+
+
+def _undo_eligible(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> bool:
+    if ref["kind"] != "entry":
+        return True
+    if ref["target_scheme"] != "media":
+        return False
+    target = library_entries.media_target(UUID(ref["target_id"]))
+    return library_entries.library_entry_undo_eligible(
+        db,
+        viewer_id=viewer_id,
+        library_id=UUID(ref["library_id"]),
+        target=target,
+        entry_id=UUID(ref["id"]),
+        order_revision=None if ref["order_revision"] is None else int(ref["order_revision"]),
+    )
 
 
 def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
@@ -179,6 +220,7 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
     """
 
     def attempt() -> None:
+        users.lock_viewer(db, viewer_id)
         row = db.execute(
             text(
                 "SELECT result, created_refs, reverted_at FROM tool_calls WHERE id = :id"
@@ -194,28 +236,27 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "This write created nothing to undo"
             )
-        changed_libraries: set[UUID] = set()
-        changed_owners: set[str] = set()
+        owners: set[str] = set()
+        libraries: set[UUID] = set()
         for ref in row.created_refs:
-            library_id = writes.revert(db, viewer_id, ref)
+            writes.revert(db, viewer_id, ref)
             if ref["kind"] == "entry":
-                changed_owners.update(
+                libraries.add(UUID(ref["library_id"]))
+                owners.update(
                     (f"library:{ref['library_id']}", f"{ref['target_scheme']}:{ref['target_id']}")
                 )
             else:
-                changed_owners.add(f"{ref['kind']}:{ref['id']}")
-            if library_id is not None:
-                changed_libraries.add(library_id)
-        if changed_libraries:
+                owners.add(f"{ref['kind']}:{ref['id']}")
+        if libraries:
             viewers = db.scalars(
                 text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
-                {"ids": list(changed_libraries)},
+                {"ids": list(libraries)},
             ).all()
             projection.refresh_viewer_contributors(db, [viewer_id, *viewers])
         db.execute(
             text("UPDATE tool_calls SET reverted_at = clock_timestamp() WHERE id = :id"),
             {"id": tool_call_id},
         )
-        record_input_change(db, owners=changed_owners)
+        record_input_change(db, owners=owners | writing.input_owners(db))
 
     retry_serializable(db, "undo_assistant_write", attempt)

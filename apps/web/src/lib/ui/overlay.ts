@@ -103,7 +103,7 @@ function topmost(layer: Layer): boolean {
   const options = layer.options.current;
   if (options.kind !== "tooltip") return true;
   const trigger = options.trigger();
-  if (!trigger?.isConnected || trigger.closest("[hidden], [inert]")) return false;
+  if (!trigger || !visible(trigger) || trigger.closest("[inert]")) return false;
   const interaction = owner();
   if (!interaction) return true;
   if (isModal(interaction)) return interaction.element?.contains(trigger) ?? false;
@@ -183,9 +183,18 @@ export function useInteractionBlocked(scope: string): boolean {
 const FOCUSABLE =
   "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, iframe, [contenteditable], [tabindex]";
 
+// Inertness can be temporary while a covered modal becomes exposed again.
+function visible(element: HTMLElement): boolean {
+  if (!element.isConnected || element.closest("[hidden]") || !element.getClientRects().length)
+    return false;
+  const visibility = getComputedStyle(element).visibility;
+  return visibility !== "hidden" && visibility !== "collapse";
+}
+
 export function focusableElements(root: Element): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => element.tabIndex >= 0 && !element.closest("[hidden], [inert]"),
+    (element) => element.tabIndex >= 0 && visible(element)
+      && !element.closest("[inert]") && !element.matches(":disabled"),
   );
 }
 
@@ -222,24 +231,29 @@ const unfocused = () => {
   return (
     active === null ||
     active === document.body ||
-    active.closest("[hidden], [inert]") !== null
+    active.closest("[hidden], [inert]") !== null ||
+    active instanceof HTMLElement && !visible(active)
   );
 };
 
 function focus(target: ReturnType<ReturnFocusTarget>): boolean {
   const element = target instanceof HTMLElement ? target : target?.element;
-  if (!element?.isConnected) return false;
+  if (!element || !visible(element) || element.matches(":disabled")) return false;
   const attempt = () => {
-    if (element.isConnected && !element.closest("[inert]")) {
+    if (visible(element) && !element.closest("[inert]") && !element.matches(":disabled")) {
       element.focus({ preventScroll: !(target instanceof HTMLElement) });
     }
+    return document.activeElement === element;
   };
   let superseded = false;
   const claimedFocus = (event: FocusEvent) => {
     if (event.target !== element) superseded = true;
   };
   document.addEventListener("focusin", claimedFocus, true);
-  attempt();
+  if (!attempt() && !element.closest("[inert]")) {
+    document.removeEventListener("focusin", claimedFocus, true);
+    return false;
+  }
   // An exposed modal stays inert until it re-renders. A new focus owner cancels
   // this return, even if that owner's later detachment leaves focus on the body.
   requestAnimationFrame(() => {
@@ -262,6 +276,11 @@ let marked = false; // our entry is the current one
 let popping: string | null = null; // the address to keep while traversing it off
 let settlements: Array<() => void> = [];
 const here = () => location.pathname + location.search + location.hash;
+
+/** Modal history belongs to this owner, including its intermediate hashchange. */
+export function overlayOwnsHistoryTraversal(): boolean {
+  return marked || popping !== null;
+}
 
 // One entry while any modal is open. After the last closes, traverse it off;
 // if the address moved meanwhile (a navigating close), the landed entry keeps it.
@@ -288,12 +307,13 @@ function syncHistory(): void {
 function onPopState(): void {
   if (popping !== null) {
     const address = popping;
-    popping = null;
-    if (here() !== address) {
-      // After the router has seen the traversal.
-      requestAnimationFrame(() => history.replaceState(null, "", address));
-    }
-    syncHistory();
+    // Keep ownership through popstate/hashchange and restore after the router
+    // has seen the traversal. Neither intermediate address navigates a pane.
+    requestAnimationFrame(() => {
+      if (here() !== address) history.replaceState(null, "", address);
+      popping = null;
+      syncHistory();
+    });
     return;
   }
   interactionGeneration += 1;
@@ -348,8 +368,8 @@ function onKeyDown(event: KeyboardEvent): void {
         layer.options.current.returnFocusTo?.(), layer.opener,
         layer.options.current.returnFocusFallback?.(), modal?.element,
       ].map((target) => target instanceof HTMLElement ? target : target?.element)
-        .find((element) => element?.isConnected && element.getClientRects().length > 0
-          && !element.closest("[hidden], [inert]") && !element.matches(":disabled"));
+        .find((element) => element && visible(element)
+          && !element.closest("[inert]") && !element.matches(":disabled"));
       const outside = focusableElements(modal?.element ?? document.body)
         .filter((element) => !boundary.contains(element));
       const index = anchor ? outside.indexOf(anchor) : -1;
@@ -507,7 +527,13 @@ export function useOverlay(
   readonly depth: number;
 } {
   const optionsRef = useRef(options);
-  optionsRef.current = options;
+  const previous = optionsRef.current;
+  // Closing presenters may clear their session before cleanup restores focus.
+  // Keep its last live targets; close policy and veto still come from this render.
+  optionsRef.current = !open && options.kind !== "tooltip" && previous.kind !== "tooltip"
+    ? { ...options, returnFocusTo: previous.returnFocusTo,
+        returnFocusFallback: previous.returnFocusFallback }
+    : options;
   const parent = useContext(OverlayContext);
   const [layer] = useState<Layer>(() => ({
     parent,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useId } from "react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
@@ -26,6 +27,7 @@ const FOCUS_MODES: readonly {
 /** The reader profile's seven fields; ReaderProvider owns and saves them. */
 export default function SettingsReaderPaneBody() {
   const reader = useReaderContext();
+  const ready = useRemoteAdmission() === "Ready";
   const p = reader.profile;
   // one radio group per pane: two reader settings panes may be open
   const group = useId();
@@ -34,7 +36,7 @@ export default function SettingsReaderPaneBody() {
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
-        <div className={styles.form}>
+        <fieldset className={styles.form} aria-label="reader settings" disabled={!ready}>
           <div className={styles.pair}>
             <label className={styles.field}>
               <span className={styles.label}>Theme</span>
@@ -122,7 +124,7 @@ export default function SettingsReaderPaneBody() {
           {reader.persistence.state === "Pending" ? (
             <FeedbackStatus content={{ tone: "Neutral", title: "saving reader settings…" }} announcement="Polite" />
           ) : null}
-        </div>
+        </fieldset>
       </PaneSection>
     </PaneSurface>
   );

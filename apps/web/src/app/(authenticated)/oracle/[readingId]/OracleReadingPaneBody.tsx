@@ -1,7 +1,5 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceComposer";
-
 import { useEffect, useRef, useState } from "react";
 import {
   FeedbackNotice,
@@ -13,7 +11,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -132,12 +130,12 @@ export default function OracleReadingPaneBody() {
   const [loads, setLoads] = useState(0);
   // Stream frames replace the loaded reading; each frame is the whole reading.
   const [streamed, setStreamed] = useState<OracleReading | null>(null);
-  const [lost, setLost] = useState(false);
+  const [lost, setLost] = useState<Error | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const detail = usePaneFreeServerValue<OracleReading>({
-    key: readingId,
+    key: `/oracle/readings/${readingId}`,
     stale: "",
     load: async (signal) =>
       (
@@ -165,9 +163,9 @@ export default function OracleReadingPaneBody() {
       (next) => {
         if (!live) return;
         setStreamed(next);
-        setLost(false);
+        setLost(null);
       },
-      () => live && setLost(true),
+      error => { if (live) setLost(error); },
     );
     return () => {
       live = false;
@@ -189,15 +187,13 @@ export default function OracleReadingPaneBody() {
     detail.status === "failed"
       ? failureCopy(detail.error, "The reading was interrupted")
       : lost
-        ? {
+        ? isApiError(lost) ? failureCopy(lost, "reading updates paused") : {
             tone: "Danger",
             title: "The reading stream could not reconnect. Please retry.",
           }
         : null;
   usePaneReturnReady(reading !== null || loadError !== null);
-  const insertion = useResourceComposer(reading ? {kind:"resource",ref:`oracle_reading:${readingId}`} : null, `oracle:${readingId}`, "add item");
   usePaneChrome({
-    menuActions: insertion.action ? [insertion.action] : [],
     resourceRef:
       reading === null
         ? undefined
@@ -241,7 +237,6 @@ export default function OracleReadingPaneBody() {
   return (
     <OracleTheme>
       <div className={styles.surface}>
-        {insertion.content}
         <article className={styles.reading}>
           <BorderFrame />
           <header className={styles.readingHeader}>

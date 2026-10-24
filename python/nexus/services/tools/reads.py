@@ -25,8 +25,9 @@ from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
-from nexus.schemas.reader_document import ReaderTextDocumentOut
+from nexus.schemas.reader_document import ReaderTextBodyOut
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
+from nexus.services import libraries
 from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
@@ -67,6 +68,8 @@ from nexus.services.tools.contract import (
     DocumentSearchInput,
     DocumentSearchMatch,
     DocumentSearchSuccess,
+    LibraryInspectSuccess,
+    MediaInspectSuccess,
     NexusEvidence,
     NexusSearchInput,
     NexusSearchMatch,
@@ -171,7 +174,7 @@ def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
                     raise
                 # justify-ignore-error: an unreadable parent cannot derive a source capability.
                 continue
-            if isinstance(document, ReaderTextDocumentOut) and any(
+            if isinstance(document, ReaderTextBodyOut) and any(
                 unit.x_post is not None
                 and unit.x_post.owner is not None
                 and unit.x_post.owner.media_id == media
@@ -464,12 +467,8 @@ def _read(
         return "quote", loaded.quote.exact, citation, None
     if ref.scheme == "passage_anchor":
         return "quote", loaded.body or "", citation, None
-    kind = {
-        "artifact_revision": "artifact",
-        "artifact": "artifact",
-        "oracle_reading": "oracle_reading",
-    }
-    return kind.get(ref.scheme, "section"), loaded.body or "", citation, None
+    kind = "oracle_reading" if ref.scheme == "oracle_reading" else "section"
+    return kind, loaded.body or "", citation, None
 
 
 def inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
@@ -482,6 +481,32 @@ def inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
 
 def _inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
     ref = admitted(call, value.uri)
+    if ref.scheme == "library":
+        try:
+            library = libraries.access(call.db, call.principal, ref.id, lock=False)
+        except ApiError as exc:
+            _collapse(exc, ApiErrorCode.E_LIBRARY_NOT_FOUND, ApiErrorCode.E_NOT_FOUND)
+        removal_revision = call.db.scalar(
+            text("SELECT removal_revision FROM users WHERE id=:id"), {"id": call.principal}
+        )
+        assert removal_revision is not None
+        material = {
+            "name": library.name,
+            "order_revision": str(library.order_revision),
+            "removal_revision": str(removal_revision),
+            "can_manage": library.mutable and library.role == "admin",
+        }
+        return ResourceInspectSuccess(
+            resource=LibraryInspectSuccess(
+                evidence=_evidence(call, value.uri, material, None),
+                uri=value.uri,
+                library_id=library.id,
+                name=library.name,
+                order_revision=str(library.order_revision),
+                removal_revision=str(removal_revision),
+                can_manage=library.mutable and library.role == "admin",
+            )
+        )
     if capability(ref.scheme).readable != "media":
         refuse("Uninspectable")
     document = get_media_read_map_for_viewer(call.db, call.principal, ref.id)
@@ -512,12 +537,14 @@ def _inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
         "total_sections": document.total_sections,
     }
     return ResourceInspectSuccess(
-        evidence=_evidence(call, value.uri, material, citation),
-        media_kind=MediaKind(document.kind),
-        sections=sections,
-        title=document.title,
-        total_sections=document.total_sections,
-        uri=value.uri,
+        resource=MediaInspectSuccess(
+            evidence=_evidence(call, value.uri, material, citation),
+            media_kind=MediaKind(document.kind),
+            sections=sections,
+            title=document.title,
+            total_sections=document.total_sections,
+            uri=value.uri,
+        )
     )
 
 

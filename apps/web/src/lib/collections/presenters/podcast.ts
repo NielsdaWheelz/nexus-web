@@ -1,45 +1,44 @@
-/** One followed-podcast row, shared by the podcasts and library panes. */
+/** One podcast row. Null facts publish metadata only; the containing section owns its scoped controls. */
 
+import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import type { Schema } from "@/lib/api/wire";
 import type { CollectionRowView, PositiveCount } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export interface PodcastPresenterItem {
+  readonly facts: PodcastActionSubject["facts"] | null;
   readonly id: string;
   readonly title: string;
+  readonly imageUrl: string | null;
   readonly contributors: readonly ContributorCredit[];
   readonly unplayedCount: PositiveCount | null;
-  readonly syncStatus: Schema<"PodcastSyncStatus"> | null;
-  readonly publicationDate: string | null;
+  readonly recurring: Schema<"PodcastRecurringOut"> | null;
 }
 
 export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
-  const sync = item.syncStatus;
+  const sync = item.recurring;
   return {
+    presentation: "Index",
     id: item.id,
     kind: "podcast",
+    ...(item.facts === null ? {} : { resourceActions: { kind: "Podcast" as const, subject: { target: { kind: "Canonical" as const, podcast_id: item.id }, title: item.title, facts: item.facts } } }),
     primary: {
       kind: "link",
       href: `/podcasts/${item.id}`,
       paneLabelHint: item.title,
     },
     title: { text: item.title },
+    artwork: { imageUrl: item.imageUrl },
     contributors: item.contributors,
-    publicationDate: item.publicationDate,
+    publicationDate: null,
     context: null,
-    activity:
-      sync === "Pending" || sync === "Running"
-        ? { kind: "PodcastSync", status: sync }
-        : item.unplayedCount !== null
-          ? { kind: "Unplayed", count: item.unplayedCount }
-          : null,
-    exceptionalStatus:
-      sync === "Failed"
-        ? { kind: "PodcastSync", status: "Failed" }
-        : null,
+    activity: sync?.state === "pending" || sync?.state === "running"
+      ? { kind: "PodcastSync", status: sync.state }
+      : item.unplayedCount !== null ? { kind: "Unplayed", count: item.unplayedCount } : null,
+    exceptionalStatus: sync?.error_code !== null && sync?.error_code !== undefined
+      ? { kind: "PodcastSync", status: "failed" } : null,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: item.id }),
-    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "podcast", id: item.id })},
     selected: false,
   };
 }

@@ -26,7 +26,7 @@ R2_REGION ?= us-east-1
 
 WEB_PORT ?= 3000
 API_PORT ?= 8000
-APP_PUBLIC_URL ?= http://localhost:$(WEB_PORT)
+APP_PUBLIC_URL ?= https://127.0.0.1:$(WEB_PORT)
 help:
 	@echo "Nexus Development Commands"
 	@echo ""
@@ -35,7 +35,7 @@ help:
 	@echo "  make dev                - Start persistent postgres, seaweedfs and supabase auth"
 	@echo "  make down               - Stop local dev services"
 	@echo "  make api                - Start FastAPI on API_PORT (default 8000)"
-	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
+	@echo "  make web                - Build and serve TLS/HTTP2 on WEB_PORT (default 3000)"
 	@echo "  make worker-interactive - Start the interactive linux queue lane"
 	@echo "  make worker-background  - Start the background linux queue lane"
 	@echo ""
@@ -90,8 +90,7 @@ dev:
 
 local-storage:
 	PYTHONPATH=python python/.venv/bin/python python/scripts/local_storage.py \
-		--origin http://localhost:$(WEB_PORT) --origin http://127.0.0.1:$(WEB_PORT) \
-		--origin http://10.0.2.2:$(WEB_PORT)
+		--origin $(APP_PUBLIC_URL)
 
 down:
 	@echo "Stopping local dev services..."
@@ -120,10 +119,11 @@ web: local-storage
 		VERCEL_GIT_COMMIT_SHA="$$(git -C ../.. rev-parse HEAD)" \
 		FASTAPI_BASE_URL=http://localhost:$(API_PORT) \
 		NEXUS_ENV=$${NEXUS_ENV:-local} \
+		PORT=$(WEB_PORT) HOSTNAME=127.0.0.1 \
 		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
 		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
-		APP_PUBLIC_URL=$${APP_PUBLIC_URL:-http://localhost:$(WEB_PORT)} \
-		bun run dev --port $(WEB_PORT)
+		APP_PUBLIC_URL=$(APP_PUBLIC_URL) \
+		bun run dev
 
 worker-interactive worker-background: local-runtime-identity
 	NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$(LOCAL_RUNTIME_IDENTITY)" \

@@ -1,7 +1,7 @@
 "use client";
 
 // One binding for reader destination controls, including hosts without panes.
-import type { HTMLAttributes } from "react";
+import type { HTMLAttributes, KeyboardEvent, MouseEvent, Ref } from "react";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useReaderState } from "./DocumentReader";
 import type { ReaderDestination } from "./location";
@@ -17,27 +17,45 @@ export function activateReaderDestination(reader: Reader, destination: ReaderDes
     if (destination.target.kind === "evidence_item") throw new Error("evidence destination requires a host activation");
     void reader.inspect({ target: destination.target });
   });
-  if (reader.navigation) reader.navigation.activate(destination, activation.intent, local);
+  if (reader.navigation) {
+    if (reader.navigation.activate(destination, activation.intent, local) === "Refused") return "consumed" as const;
+  }
   else local();
   return activation.intent === "new_pane" && reader.navigation ? "handled-new-pane" as const : "handled-default" as const;
 }
 
-export function ReaderLink({ reader, target, onDefault, disabled = false, children, ...attributes }: HTMLAttributes<HTMLElement> & {
+/**
+ * Binds one reader destination to its host's native control: a link where the
+ * host has hrefs, else a button. A disabled link stays mounted and named but
+ * drops its href; its click, auxiliary click and activation keys stop here, so
+ * neither a native gesture nor an ancestor can act on it. It stays focusable
+ * unless the caller sets another tab policy.
+ */
+export function ReaderLink({ reader, target, onDefault, disabled = false, ref, children, ...attributes }: HTMLAttributes<HTMLElement> & {
   readonly reader: Reader;
   readonly target: ReaderDestination["target"];
   readonly onDefault?: () => void;
   readonly disabled?: boolean;
+  readonly ref?: Ref<HTMLAnchorElement | HTMLButtonElement>;
 }) {
   const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
   const destination = identity === null ? null : { source_identity: identity, target };
   const href = destination && reader.navigation?.href(destination);
-  const activate = (event: TargetActivationEvent) => {
+  const activate = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
     if (disabled || !destination) {
-      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
+      if ("key" in event && event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
     activateReaderDestination(reader, destination, event, onDefault);
   };
-  return href ? <a {...attributes} href={href} data-workspace-rich-target="true" aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : attributes.tabIndex} onClick={activate} onKeyDown={activate}>{children}</a>
-    : <button {...attributes} type="button" disabled={disabled || identity === null} onClick={activate} onKeyDown={activate}>{children}</button>;
+  const blockAuxiliary = (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  // justify-type-assertion: react writes only the mounted host into the ref, and either host is a member of its declared union.
+  return href ? <a {...attributes} ref={ref as Ref<HTMLAnchorElement>} href={disabled ? undefined : href} role={disabled ? "link" : attributes.role} data-workspace-rich-target="true" aria-disabled={disabled || undefined} tabIndex={attributes.tabIndex ?? (disabled ? 0 : undefined)} onClick={activate} onAuxClick={disabled ? blockAuxiliary : attributes.onAuxClick} onKeyDown={activate}>{children}</a>
+    // justify-type-assertion: as above, for the button host.
+    : <button {...attributes} ref={ref as Ref<HTMLButtonElement>} type="button" disabled={disabled || identity === null} onClick={activate} onKeyDown={activate}>{children}</button>;
 }

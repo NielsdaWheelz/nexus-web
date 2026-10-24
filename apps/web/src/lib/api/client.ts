@@ -1,7 +1,10 @@
 // The browser's one door to the api (docs/modules/api-edge.md): every call goes
 // to a same-origin /api path, carries this build's wire revision, bypasses the
-// browser http cache, and answers the parsed json or throws ApiError. A 426
-// means this tab was built for another wire: the tab reloads once per build.
+// browser http cache, and answers the parsed json or throws ApiError. A request
+// sealed under another revision is refused here, never rewritten. A 426 means
+// this tab was built for another wire: it reloads unless writing holds it.
+import { installedApp, remoteReady, remoteAdmission, observeRemoteFailure } from "@/lib/native/admission";
+import { androidShellDocument } from "@/lib/androidShell";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
@@ -19,6 +22,7 @@ export class ApiError extends Error {
     message: string,
     readonly requestId?: string,
     readonly details?: Record<string, unknown>,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -95,11 +99,11 @@ export function isRefusal(error: unknown): error is ApiError {
   );
 }
 
-/** A write whose answer was lost: it may have landed, so a retry resends the same intent. */
-export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" } {
+/** A lost answer or lapsed session keeps the same write intent for an explicit retry. */
+export function outcomeUnknown(error: unknown): error is ApiError & { readonly code: "E_NETWORK" | "E_UPSTREAM" | "E_UPSTREAM_TIMEOUT" | "E_UNAUTHENTICATED" } {
   return (
     isApiError(error) &&
-    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT")
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT" || isUnauthenticatedApiError(error))
   );
 }
 
@@ -121,11 +125,11 @@ export function isStaleBuild(error: unknown): error is ApiError & { readonly cod
   return isApiError(error) && error.code === "E_WIRE_MISMATCH";
 }
 
-/** The update is the whole fact, whatever failed; its only action reloads the page. */
+/** Hosted delivery reloads; installed delivery requires an APK update and retains work. */
 export const STALE_BUILD_FEEDBACK: FeedbackContent = {
   tone: "Warning",
-  title: "Nexus was updated. Reload this page to continue.",
-  reload: true,
+  title: installedApp || androidShellDocument ? "update nexus to reconnect" : "Nexus was updated. Reload this page to continue.",
+  ...(installedApp || androidShellDocument ? { message: "install the current nexus apk, then reopen the app." } : { reload: true }),
 };
 
 /** Copy for the transport failures every command answers alike; null for domain codes. */
@@ -135,6 +139,13 @@ export function apiTransportFeedback(
 ): FeedbackContent | null {
   const { requestId } = error;
   switch (error.code) {
+    case "E_UNAUTHENTICATED":
+      return {
+        tone: "Warning",
+        title,
+        message: "sign in to reconnect, then retry this request.",
+        requestId,
+      };
     case "E_NETWORK":
       return {
         tone: "Danger",
@@ -158,8 +169,20 @@ export function apiTransportFeedback(
   }
 }
 
+let reloadHeld: () => boolean = () => false;
+
+/** The document guard holds automatic updates while live work remains. One holder;
+ * the stale-build feedback still offers a deliberate reload. */
+export function holdWireReload(held: () => boolean): () => void {
+  reloadHeld = held;
+  return () => {
+    if (reloadHeld === held) reloadHeld = () => false;
+  };
+}
+
 /** Reload once per (tab, build); a beforeunload guard may keep the page. */
 function reloadForNewBuild(): void {
+  if (reloadHeld()) return;
   try {
     if (sessionStorage.getItem(RELOADED_FOR) === String(WIRE_REVISION)) return;
     sessionStorage.setItem(RELOADED_FOR, String(WIRE_REVISION));
@@ -168,6 +191,14 @@ function reloadForNewBuild(): void {
     // per page life; the reloaded page is the new build or refuses again.
   }
   window.location.reload();
+}
+
+/** `Retry-After` is delay-seconds or an http-date (rfc 9110 §10.2.3). */
+function retryAfterMs(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  if (/^\d+$/.test(value.trim())) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
 /** The one reader of an api answer: its json, or the envelope's ApiError. */
@@ -180,6 +211,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
   } catch (error) {
     if (isAbortError(error)) throw error;
     // an incomplete body is transport, whatever the status (#604)
+    observeRemoteFailure(0);
     throw new ApiError(0, "E_NETWORK", "Network request failed", answerId);
   }
   if (ok) {
@@ -206,20 +238,30 @@ export async function readResponse<T>(response: Response): Promise<T> {
       : `Request failed with status ${status}`,
     typeof error.request_id === "string" ? error.request_id : answerId,
     isRecord(error.details) ? error.details : undefined,
+    retryAfterMs(response.headers.get("retry-after")),
   );
-  if (status === 426 && typeof window !== "undefined") reloadForNewBuild();
+  observeRemoteFailure(status);
+  if (status === 426 && typeof window !== "undefined" && !installedApp && !androidShellDocument) reloadForNewBuild();
   throw failure;
 }
 
 /**
  * One api call. A string body is json; status 0 E_NETWORK is a transport
  * failure. `keepalive: true` lets a write outlive the page (64 KB in flight).
+ * A caller naming another wire revision (a sealed write) is refused unsent.
  */
 export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
 ): Promise<T> {
+  if (installedApp && !remoteReady()) {
+    const admission = remoteAdmission();
+    throw new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0, admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK", "remote work is unavailable");
+  }
   const headers = new Headers(init.headers);
+  const sealed = headers.get(WIRE_HEADER);
+  if (sealed !== null && sealed !== String(WIRE_REVISION))
+    throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision");
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
   if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", createRandomId());
   if (typeof init.body === "string") {
@@ -257,6 +299,7 @@ export async function apiFetch<T>(
     });
     if (response !== undefined) throw error;
     if (isAbortError(error)) throw error;
+    observeRemoteFailure(0);
     throw new ApiError(0, "E_NETWORK", "Network request failed");
   }
 }

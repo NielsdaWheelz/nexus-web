@@ -49,6 +49,8 @@ def confirm_upload(
             origin_kind="LocalFile",
             session_id=session_id,
             generation=body.generation,
+            expected_removal_revision=int(body.expected_removal_revision),
+            destinations=body.destinations,
             request_id=get_request_id(),
         )
     )

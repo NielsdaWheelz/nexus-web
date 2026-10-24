@@ -1,7 +1,8 @@
 "use client";
 
-// Target admission owns bounded search. Results are selectable only for the exact
+// Target admission owns ten-row pages. Results are selectable only for the exact
 // settled query; active identity belongs to the input, never to presentation.
+import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
 import { useSettled } from "@/lib/api/serverState";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
@@ -16,20 +17,23 @@ export function useLinkTargets(
   raw: string,
   sourceRef: string | null,
   enabled: boolean,
+  active: boolean,
   excludeRef: string | null = sourceRef,
 ) {
   const query = raw.slice(1).trim();
-  const settled = useSettled(query, 200);
+  const settled = useSettled(raw, 200);
+  const settledQuery = settled.slice(1).trim();
+  const stale = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const admitted = enabled && query.length >= 2;
   const list = usePaneFreeServerList<LinkTargetResult>({
     key:
-      admitted && settled.length >= 2
-        ? JSON.stringify([settled, sourceRef, excludeRef])
+      admitted && settledQuery.length >= 2
+        ? `/resource-items/targets/search?${new URLSearchParams({ q: settledQuery, source_ref: JSON.stringify(sourceRef), exclude_refs: JSON.stringify(excludeRef ? [excludeRef] : []) })}`
         : null,
-    stale: "",
+    stale,
+    // The endpoint fixes its page size; no limit parameter is supported.
     pageSize: 10,
-    drain: false,
-    active: enabled,
+    active: active && raw === settled,
     id: targetKey,
     fetchPage: async (cursor, _limit, signal) => {
       const { data } = await apiFetch<
@@ -38,7 +42,7 @@ export function useLinkTargets(
         method: "POST",
         signal,
         body: JSON.stringify({
-          q: settled,
+          q: settledQuery,
           source_ref: sourceRef,
           exclude_refs: excludeRef ? [excludeRef] : [],
           cursor,
@@ -47,15 +51,14 @@ export function useLinkTargets(
       return { items: data.targets, next_cursor: data.next_cursor };
     },
   });
-  const current = admitted && query === settled && list.current;
+  const current = admitted && raw === settled && list.current;
   return {
-    items: current && list.failure === null ? list.items : EMPTY,
+    items: current ? list.items : EMPTY,
+    querySettled: raw === settled,
     minimum: query.length < 2,
-    loading: admitted && !current && list.failure === null,
-    error: admitted ? (list.failure?.error ?? null) : null,
-    hasMore: current && !list.complete,
-    loadingMore: list.running === "More",
-    more: list.more,
+    loading: admitted && (raw !== settled || (!list.current && list.failure === null)),
+    error: admitted && raw === settled && list.failure?.op !== "More" ? (list.failure?.error ?? null) : null,
+    list,
     retry: list.retry,
   };
 }

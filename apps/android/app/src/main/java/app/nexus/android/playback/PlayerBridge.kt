@@ -15,12 +15,13 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
+import java.util.UUID
 
 /**
- * `window.nexusPlayback` on the hosted origin: the web's json request frames go to
+ * `window.nexusPlayer` on the hosted origin: the web's json request frames go to
  * the playback service as one custom command, its replies come back with the
  * request's id, and its snapshot pushes reach the document that said hello. The
- * object name is the compatibility identity; frames are trusted and parsed by
+ * frames are bounded and parsed by
  * the service, which owns every decision.
  */
 @SuppressLint("RequiresFeature") // reply proxies exist only after install() found WEB_MESSAGE_LISTENER
@@ -28,15 +29,18 @@ internal class PlayerBridge(
     private val webView: WebView,
     private val controller: () -> MediaController?,
 ) {
-    private val framing = OwnedOriginWebMessage(webView, "nexusPlayback", BuildConfig.NEXUS_BASE_URL, ::onMessage)
+    private val framing = OwnedOriginWebMessage(webView, "nexusPlayer", BuildConfig.NEXUS_BASE_URL, ::onMessage)
     private var subscriber: JavaScriptReplyProxy? = null
     private var hello: String? = null // the document's hello frame, re-sent to a restarted service
     private var latest: String? = null
     private var foreground = true
+    private var documentId = UUID.randomUUID().toString()
 
     fun install(): Boolean = framing.install()
 
     fun onPageStarted() {
+        request(JSONObject().put("op", "document_detach").put("document_id", documentId).toString()) { }
+        documentId = UUID.randomUUID().toString()
         framing.onDocumentStarted()
         subscriber = null
         hello = null
@@ -55,14 +59,23 @@ internal class PlayerBridge(
         if (foreground) subscriber?.postMessage("{\"snapshot\":$snapshot}")
     }
 
-    /** A (re)connected service: bind it to the document's account again and push what it now holds. */
+    /** A (re)connected service: subscribe again after a service restart and push what it now holds. */
     fun onControllerConnected() {
         val frame = hello ?: return
+        val connected = controller() ?: return
+        val observedSnapshot = latest
         val generation = framing.currentDocumentGeneration()
         request(frame) { reply ->
             val snapshot = reply.optJSONObject("snapshot")
-            if (snapshot != null && generation == framing.currentDocumentGeneration()) onEvent(snapshot.toString())
+            // Any intervening push already supplies authority, even within this controller.
+            if (snapshot != null && controller() === connected && latest === observedSnapshot &&
+                generation == framing.currentDocumentGeneration()) onEvent(snapshot.toString())
         }
+    }
+
+    fun onControllerUnavailable() {
+        latest = null
+        subscriber?.postMessage("{\"unavailable\":true}")
     }
 
     fun close() {
@@ -84,15 +97,23 @@ internal class PlayerBridge(
                 message.replyProxy.postMessage(reply.put("id", frame?.opt("id") ?: JSONObject.NULL).toString())
             }
         }
+        if (frame != null) frame.put("document_id", documentId)
         when {
+            message.data.toByteArray(Charsets.UTF_8).size > 64 * 1024 -> answer(failure("Limit"))
+            frame != null && frame.optString("op").startsWith("queue_") && message.data.toByteArray(Charsets.UTF_8).size > PlaybackStore.MESSAGE_BYTES -> answer(failure("Limit"))
             frame == null || !frame.has("op") -> answer(failure("Invalid"))
             frame.getString("op") == "hello" -> {
                 subscriber = message.replyProxy
-                hello = message.data
-                request(message.data, answer)
+                hello = frame.toString()
+                request(frame.toString(), answer)
             }
             subscriber == null -> answer(failure("NotConnected"))
-            else -> request(message.data, answer)
+            frame.getString("op") == "unbind" -> {
+                // A stopped account must not be resurrected by controller reconnection.
+                hello = null
+                request(frame.toString(), answer)
+            }
+            else -> request(frame.toString(), answer)
         }
     }
 

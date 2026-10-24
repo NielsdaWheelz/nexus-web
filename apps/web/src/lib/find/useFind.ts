@@ -41,7 +41,8 @@ export interface FindController {
   setWholeWord(value: boolean): void;
   setNarrowed(value: boolean): void;
   step(direction: 1 | -1): void;
-  activate(index: number): Promise<boolean>;
+  activate(row: FindRow<unknown>): Promise<boolean>;
+  targetHref(row: FindRow<unknown>): string | null;
   retry(): void;
   goBack(): void;
 }
@@ -52,6 +53,8 @@ const NO_ROWS: readonly FindRow<unknown>[] = [];
 interface Session {
   readonly ownerKey: string;
   readonly sourceKey: string | null;
+  readonly source: FindSource<unknown> | null;
+  readonly scopeLabel: string | null;
   readonly query: string;
   readonly matchCase: boolean;
   readonly wholeWord: boolean;
@@ -64,23 +67,35 @@ interface Session {
 }
 
 /**
- * A new pane owner starts fresh. A new publication keeps text and preferences,
- * but recaptures geometry after the replacement source is ready. `presentation`
- * changes repaint text that was rerendered without changing its publication.
+ * A new pane owner starts fresh. A new publication retains an unscoped query
+ * and preferences; a captured scoped query clears instead of recapturing scope.
+ * `presentation` changes repaint text without changing its publication.
  */
 export function useFind({
   ownerKey,
   source,
   presentation,
+  onSearchIntent,
 }: {
   readonly ownerKey: string;
   readonly source: FindSource<unknown> | null;
   readonly presentation?: unknown;
+  /** An authored query/options command, never an automatic source recomputation. */
+  readonly onSearchIntent?: () => void;
 }): FindController | null {
+  const searchIntent = useRef(onSearchIntent);
+  searchIntent.current = onSearchIntent;
+  const computed = useRef<{
+    readonly source: FindSource<unknown>;
+    readonly rows: readonly FindRow<unknown>[];
+    readonly signal: AbortSignal;
+  } | null>(null);
   const key = source?.key ?? null;
   const initial: Session = {
     ownerKey,
     sourceKey: key,
+    source,
+    scopeLabel: null,
     query: "",
     matchCase: false,
     wholeWord: false,
@@ -94,15 +109,23 @@ export function useFind({
   const [session, setSession] = useState(initial);
   // Adjust before publishing: replacement panes must never render old results.
   if (session.ownerKey !== ownerKey) setSession(initial);
-  else if (session.sourceKey !== key)
+  else if (session.sourceKey !== key) {
+    const invalidated = session.query !== "" && session.narrowed;
     setSession({
       ...session,
       sourceKey: key,
+      source,
+      scopeLabel: null,
       narrow: null,
-      result: IDLE,
+      query: invalidated ? "" : session.query,
+      narrowed: invalidated ? false : session.narrowed,
+      // Keep the clear reason through the unavailable-source gap while restoring.
+      result: invalidated ? { kind: "Failed", message: session.source?.scopeChangeMessage ?? "search scope changed; search cleared" }
+        : session.query ? IDLE : session.result,
       returnable: false,
       defect: null,
     });
+  }
   const latest = useRef(session);
   latest.current = session;
   const [lifetime, setLifetime] = useState<{
@@ -129,6 +152,22 @@ export function useFind({
       autoRevealAllowed: true,
       prepared: false,
     });
+  if (session.ownerKey === ownerKey && session.sourceKey === key && session.source !== source) {
+    lifetime.computation?.abort();
+    lifetime.movement?.abort();
+    lifetime.autoRevealAllowed = false;
+    const invalidated = source?.scopeInvalidated === true;
+    if (invalidated && session.narrowed) lifetime.prepared = false;
+    setSession({
+      ...session, source,
+      ...(source?.capturedScopeLabel !== undefined && source.capturedScopeLabel !== null ? { narrow: source.capturedScopeLabel } : {}),
+      ...(invalidated ? { narrow: null, scopeLabel: null } : {}),
+      ...(invalidated && session.query !== "" && session.narrowed ? {
+        query: "", narrowed: false,
+        result: { kind: "Failed", message: source?.scopeChangeMessage ?? "search scope changed; search cleared" },
+      } : {}),
+    });
+  }
   useLayoutEffect(
     () => () => {
       lifetime.computation?.abort();
@@ -139,11 +178,11 @@ export function useFind({
   const update = useCallback(
     (patch: Partial<Session>) =>
       setSession((current) =>
-        current.ownerKey === lifetime.ownerKey && current.sourceKey === lifetime.sourceKey
+        current.ownerKey === lifetime.ownerKey && current.sourceKey === lifetime.sourceKey && current.source === source
           ? { ...current, ...patch }
           : current,
       ),
-    [lifetime],
+    [lifetime, source],
   );
   const beginMovement = useCallback(() => {
     lifetime.movement?.abort();
@@ -154,7 +193,7 @@ export function useFind({
   const prepare = useCallback(() => {
     if (!source || lifetime.prepared) return;
     lifetime.prepared = true;
-    update({ narrow: source.prepare() });
+    update({ narrow: source.prepare(), scopeLabel: source.narrowLabel });
   }, [lifetime, source, update]);
   const fail = useCallback(
     (error: unknown, signal: AbortSignal) => {
@@ -190,28 +229,24 @@ export function useFind({
     const computation = new AbortController();
     lifetime.computation = computation;
     const { signal } = computation;
-    update({ result: source && query ? { kind: "Searching" } : IDLE });
     if (!source || !query) return () => computation.abort();
+    const previous = latest.current.result;
+    if (lifetime.autoRevealAllowed || previous.kind !== "Rows") update({ result: { kind: "Searching" } });
     prepare();
     let automaticMovement: AbortController | null = null;
     const timer = window.setTimeout(async () => {
       if (signal.aborted) return;
       try {
-        const outcome =
-          narrowed && source.narrowLabel === null
-            ? {
-                kind: "Failed" as const,
-                message:
-                  "Selected scope is unavailable. Turn off the scope option to search all content.",
-              }
-            : await source.search({ query, matchCase, wholeWord }, narrowed, signal);
+        const outcome = await source.search({ query, matchCase, wholeWord }, narrowed, signal);
         if (signal.aborted) return;
         if (outcome.kind !== "Rows") return update({ result: outcome });
+        computed.current = { source, rows: outcome.rows, signal };
         update({
           result: {
             kind: "Rows",
             rows: outcome.rows,
-            active: outcome.initial,
+            active: !lifetime.autoRevealAllowed && previous.kind === "Rows"
+              ? Math.max(0, Math.min(previous.active, outcome.rows.length - 1)) : outcome.initial,
             partial: outcome.partial,
             wrapped: null,
           },
@@ -260,10 +295,19 @@ export function useFind({
     lifetime.movement?.abort();
     lifetime.prepared = false;
     source?.paint(NO_ROWS, -1);
-    update({ query: "", narrow: null, result: IDLE });
+    update({ query: "", narrow: null, scopeLabel: null, result: IDLE });
   }, [lifetime, source, update]);
   const controller = useMemo<FindController | null>(() => {
     if (!source) return null;
+    const currentIndex = (row: FindRow<unknown>): number | null => {
+      const current = latest.current;
+      const publication = computed.current;
+      if (current.source !== source || current.result.kind !== "Rows" ||
+        publication?.source !== source || publication.signal.aborted ||
+        publication.rows !== current.result.rows) return null;
+      const index = current.result.rows.indexOf(row);
+      return index < 0 ? null : index;
+    };
     const restart = () => {
       lifetime.computation?.abort();
       lifetime.movement?.abort();
@@ -271,6 +315,7 @@ export function useFind({
     };
     const option = (name: "matchCase" | "wholeWord" | "narrowed", value: boolean) => {
       if (latest.current[name] === value) return;
+      if (latest.current.query) searchIntent.current?.();
       restart();
       update({ [name]: value, result: latest.current.query ? { kind: "Searching" } : IDLE });
     };
@@ -279,7 +324,7 @@ export function useFind({
       query,
       matchCase,
       wholeWord,
-      narrowLabel: source.narrowLabel,
+      narrowLabel: query ? session.scopeLabel : source.narrowLabel,
       narrow: session.narrow,
       narrowed,
       result,
@@ -289,6 +334,7 @@ export function useFind({
         const next = truncatePaneSearchQuery(value);
         if (!next) return clear();
         if (next === latest.current.query) return;
+        searchIntent.current?.();
         restart();
         prepare();
         update({ query: next, result: { kind: "Searching" } });
@@ -296,7 +342,13 @@ export function useFind({
       setMatchCase: (value) => option("matchCase", value),
       setWholeWord: (value) => option("wholeWord", value),
       setNarrowed: (value) => option("narrowed", value),
-      activate: (index) => show(index, null),
+      activate(row) {
+        const index = currentIndex(row);
+        return index === null ? Promise.resolve(false) : show(index, null);
+      },
+      targetHref(row) {
+        return currentIndex(row) === null ? null : source.href(row.at);
+      },
       step(direction) {
         const current = latest.current.result;
         if (current.kind !== "Rows" || current.rows.length === 0) return;
@@ -308,6 +360,7 @@ export function useFind({
         );
       },
       retry() {
+        if (latest.current.query) searchIntent.current?.();
         restart();
         update({
           attempt: latest.current.attempt + 1,
@@ -321,7 +374,7 @@ export function useFind({
         update({ returnable: false });
       },
     };
-  }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.returnable, show, source, update, wholeWord]);
+  }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.scopeLabel, session.returnable, show, source, update, wholeWord]);
 
   if (session.defect) throw session.defect.error;
   return controller;

@@ -1,22 +1,30 @@
-// The notes requests outside the outline: pages (create, delete, the index), quick
-// capture into a day, one note's row, and which day a locator names. Writers of pages
-// publish "Notes".
+// Notes reads and the two small live actions outside the outline.
+// Page deletion is idempotent. Capture retries retain the client note/link ids
+// and frozen local date; its accepted insertion alone resolves the daily page.
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { announceResourceDeletion } from "@/lib/resourceGraph/links";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
+import { admitWriting, type WriteHandle } from "./writes";
 
 export type NotePageSummary = Schema<"NotePageSummaryOut">;
 
+const pageDeletions = new Map<string, WriteHandle>();
+/** A live page removal remains hidden while its exact outcome is unknown. */
+export function isDeletingPage(pageId: string): boolean {
+  const state = pageDeletions.get(pageId)?.read();
+  return state?.kind === "queued" || state?.kind === "sending" || state?.kind === "unconfirmed";
+}
+
 /** Deletes the page (a missing one too); its notes are kept. */
-export async function deletePage(pageId: string): Promise<void> {
-  await apiFetch(`/api/notes/pages/${encodeURIComponent(pageId)}` as ApiPath, {
-    method: "DELETE",
-  });
-  announceResourceDeletion(`page:${pageId}`);
-  publishChange("Notes");
+export function deletePage(pageId: string): WriteHandle {
+  const pending = pageDeletions.get(pageId);
+  if (pending && isDeletingPage(pageId)) return pending;
+  const write = admitWriting({ kind: "resource_delete", resource_kind: "page", resource_id: pageId });
+  pageDeletions.set(pageId, write);
+  const release = () => { if (pageDeletions.get(pageId) === write) pageDeletions.delete(pageId); };
+  void write.settled.then(release, release);
+  return write;
 }
 
 /** One keyset page of the viewer's pages; `query` holds the view's keys, `limit` and `cursor`. */
@@ -33,18 +41,20 @@ export async function fetchNotePages(
 
 /** Appends `text` as one note last on the day's page; a retry with the same note id
  * has landed. Resolves the page's id. */
-export async function captureToday(
+export function captureToday(
   localDate: string,
   noteId: string,
   text: string,
-): Promise<string> {
-  const path = `/api/notes/daily/${localDate}/captures` as ApiPath;
-  const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}/captures", "post">>(path, {
-    method: "POST",
-    body: JSON.stringify({ note_id: noteId, text }),
+): { write: WriteHandle; settled: Promise<string> } {
+  const linkId = crypto.randomUUID();
+  const write = admitWriting({ kind: "capture", local_date: localDate, request: { note_id: noteId, link_id: linkId, text } });
+  const settled = write.settled.then(ack => {
+    const inserted = ack.insertions.find(item => item.requested_link_id === linkId);
+    // justify-defect: the capture endpoint must acknowledge its requested insertion.
+    if (!inserted?.source_ref.startsWith("page:")) throw new Error("the accepted capture has no daily page");
+    return inserted.source_ref.slice("page:".length);
   });
-  publishChange("Notes");
-  return data.page_id;
+  return { write, settled };
 }
 
 export async function fetchNote(noteId: string, signal?: AbortSignal): Promise<Schema<"NoteBlockOut">> {

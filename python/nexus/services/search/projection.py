@@ -20,7 +20,6 @@ from nexus.services.contributor_credits import (
     contributor_credits_rollup_cte_sql,
     contributor_fts_text_sql,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 
 TABLE = "keyword_occurrences"
 _BATCH = 256
@@ -69,7 +68,6 @@ _FAMILIES = (
     "web_result",
     "library",
     "oracle_reading",
-    "dossier",
     "passage_anchor",
 )
 _SOURCE_IDS: dict[str, str] = {}
@@ -91,7 +89,7 @@ def _source(
     """The shared twelve-column shape hides only repetitive nullable SQL slots."""
     assert fields.keys() <= set(TEXT_FIELDS)
     _SOURCE_IDS[family] = identity
-    scheme = {"dossier": "artifact", "web_result": "external_snapshot"}.get(family, family)
+    scheme = {"web_result": "external_snapshot"}.get(family, family)
     ref = f"'{scheme}:' || ({identity})::text"
     key = (
         f"'contributor:' || CAST(:projection_viewer_id AS text) || ':' || ({identity})::text"
@@ -233,23 +231,6 @@ _SOURCES = {
             "interpretation": "r.interpretation_text",
         },
     ),
-    "dossier": _source(
-        "dossier",
-        """artifacts a
-            LEFT JOIN media sm ON a.subject_scheme='media' AND sm.id=a.subject_id
-            LEFT JOIN conversations sc ON a.subject_scheme='conversation' AND sc.id=a.subject_id
-            LEFT JOIN libraries sl ON a.subject_scheme='library' AND sl.id=a.subject_id
-            LEFT JOIN podcasts sp ON a.subject_scheme='podcast' AND sp.id=a.subject_id
-            LEFT JOIN contributors so ON a.subject_scheme='contributor' AND so.id=a.subject_id
-            LEFT JOIN pages sg ON a.subject_scheme='page' AND sg.id=a.subject_id
-            LEFT JOIN note_blocks sn ON a.subject_scheme='note_block' AND sn.id=a.subject_id
-            LEFT JOIN artifact_idea_subjects si ON a.subject_scheme='idea' AND si.id=a.subject_id
-            CROSS JOIN LATERAL (SELECT COALESCE(sm.title,sc.title,CASE WHEN sl.is_default THEN 'All' ELSE sl.name END,sp.title,so.display_name,sg.title,sn.body_text,si.display_title,'Dossier') AS title) subject""",
-        identity="a.id",
-        name="subject.title",
-        discovery_name="'Dossier — ' || COALESCE(sm.title,sc.title,CASE WHEN sl.is_default THEN 'All' ELSE sl.name END,sp.title,so.display_name,sg.title,si.display_title)",
-        fields={"subject_title": "subject.title", "body": "a.content_text"},
-    ),
     "passage_anchor": _source(
         "passage_anchor",
         "passage_anchors p",
@@ -263,7 +244,7 @@ _SOURCES = {
 def _withdraw_batch(
     db: Session, family: str, identities: Sequence[UUID], *, viewer_id: UUID | None
 ) -> None:
-    scheme = {"dossier": "artifact", "web_result": "external_snapshot"}.get(family, family)
+    scheme = {"web_result": "external_snapshot"}.get(family, family)
     refs = [f"{scheme}:{identity}" for identity in identities]
     keys = (
         [f"contributor:{viewer_id}:{identity}" for identity in identities]
@@ -338,24 +319,6 @@ def refresh_contributors(db: Session, contributor_ids: Sequence[UUID]) -> None:
         return
     for viewer_id in db.scalars(text("SELECT id FROM users ORDER BY id")):
         refresh(db, "contributor", contributor_ids, viewer_id=viewer_id)
-
-
-def refresh_subject_dossiers(db: Session, refs: Sequence[ResourceRef]) -> None:
-    """Refresh dossiers after their subjects' canonical names or bodies change.
-
-    The caller owns the serializable attempt and has flushed its mutation. Dossier
-    deletion owns removed artifact identities; this discovers surviving heads.
-    """
-    if not refs:
-        return
-    identities = db.scalars(
-        text(
-            "SELECT id FROM artifacts WHERE (subject_scheme, subject_id) IN "
-            "(SELECT * FROM unnest(CAST(:schemes AS text[]), CAST(:ids AS uuid[]))) ORDER BY id"
-        ),
-        {"schemes": [ref.scheme for ref in refs], "ids": [ref.id for ref in refs]},
-    ).all()
-    refresh(db, "dossier", identities)
 
 
 def refresh_viewer_contributors(db: Session, viewer_ids: Sequence[UUID]) -> None:

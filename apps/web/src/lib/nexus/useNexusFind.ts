@@ -2,6 +2,7 @@
 
 // Launcher phases settle independently; interaction holds a later complete response.
 // Exact refs use the existing resource resolver and never enter textual discovery.
+import { remoteReady } from "@/lib/native/admission";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -40,6 +41,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const [historySave, setHistorySave] = useState<{ content: FeedbackContent; send: () => Promise<void>; commandKey: string; busy: boolean } | null>(null);
   const latestSelection = useRef<(() => Promise<void>) | null>(null);
   useWorkspaceCondition(HISTORY_FEEDBACK_KEY, historySave ? {
+    needsAttention: true,
     priority: "Write", announcement: "Polite", content: historySave.content,
     actions: [{ label: "retry save", commandKey: historySave.commandKey, onClick: () => void historySave.send(), busy: historySave.busy }],
   } : null);
@@ -87,15 +89,15 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const lexicalKey = wantsLexical && lexicalAsked === identityKey ? `${identityKey}:lexical:${attempts.lexical}` : null;
   const hybridKey = wantsHybrid && hybridAsked === identityKey ? `${identityKey}:hybrid:${attempts.hybrid}` : null;
   const direct = usePaneFreeServerValue({
-    key: directKey, stale: "", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.direct,
+    key: directKey, stale: "", readPolicy: "search:direct", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.direct,
     load: signal => fetchSearchPreview(query.searchQuery, { phase: "direct", signal }),
   });
   const lexical = usePaneFreeServerValue({
-    key: lexicalKey, stale: "", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.lexical,
+    key: lexicalKey, stale: "", readPolicy: "search:lexical", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.lexical,
     load: signal => fetchSearchPreview(query.searchQuery, { phase: "lexical", signal }),
   });
   const hybrid = usePaneFreeServerValue({
-    key: hybridKey, stale: "", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.hybrid,
+    key: hybridKey, stale: "", readPolicy: "search:hybrid", retry: "manual", timeoutMs: SEARCH_READ_TIMEOUT_MS.hybrid,
     load: signal => fetchSearchPreview(query.searchQuery, { phase: "hybrid", signal }),
   });
   type Accepted = { identity: string | null; phase: PreviewPhase; data: Schema<"SearchPreviewResponse"> };
@@ -166,7 +168,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
 
   /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
-    if (!live.current) return;
+    if (!live.current || !remoteReady()) return;
     const body = JSON.stringify(selection);
     const commandKey = crypto.randomUUID();
     let sending: Promise<void> | null = null;

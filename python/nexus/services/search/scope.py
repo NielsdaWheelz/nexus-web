@@ -22,7 +22,7 @@ from nexus.auth.permissions import (
     media_containment_edges_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services.library_entries import library_media_ids_cte_sql
+from nexus.services.library_entries import library_media_ids_cte_sql, library_podcast_rows_sql
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.query import SearchScope
@@ -72,8 +72,9 @@ def reading_media_ids_sql(roots_sql: str) -> str:
 _MEDIA = reading_media_ids_sql("SELECT CAST(:{s} AS uuid) AS media_id")
 _LIBRARY_MEDIA = reading_media_ids_sql(library_media_ids_cte_sql(library_param=":{s}"))
 _LIBRARY_PODCASTS = (
-    "SELECT podcast_id FROM library_entries WHERE library_id = :{s} AND podcast_id IS NOT NULL"
+    f"SELECT podcast_id FROM ({library_podcast_rows_sql(library_param=':{s}')}) shows"
 )
+
 _CONTEXT_PODCASTS = (
     f"SELECT pe.podcast_id FROM podcast_episodes pe WHERE {_context('media', 'pe.media_id')}"
 )
@@ -132,9 +133,6 @@ def _cells(library_media: str) -> dict[str, dict[str, str]]:
             OR {_context("conversation", "ms.conversation_id")})"""
         },
         "conversation": {"conversation": f"(c.id = :{{s}} OR {_context('conversation', 'c.id')})"},
-        "artifact": {
-            "conversation": f"(a.subject_id = :{{s}} OR {_context('conversation', 'a.subject_id')})"
-        },
         "web_result": {"conversation": "msg.conversation_id = :{s}"},
         "passage_anchor": {
             kind: f"""((pa.owner_scheme = 'media' AND pa.owner_id IN ({media}))
@@ -165,7 +163,6 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
         ("conversation", "ms.conversation_id"),
     ),
     "conversation": (("conversation", "c.id"),),
-    "artifact": (("artifact", "a.id"), ("conversation", "a.subject_id")),
     "web_result": (("conversation", "msg.conversation_id"),),
 }
 

@@ -3,6 +3,8 @@
 One fetch of the Codex catalog per 60 s per process gives both its rows and its
 readiness; a failed fetch keeps the last rows, marks the route unavailable and is
 retried after 10 s, so a Codex host restart does not fail a minute of work.
+Before the first successful fetch, Codex has no model rows or seed presentation;
+its route readiness still explains why the exact developer seed cannot run.
 Provider rows are static and ready: settings refuse to boot without their keys,
 and no paid probe proves the next call will succeed.
 """
@@ -47,6 +49,7 @@ from nexus.schemas.llm import (
     GenerationSelection,
     Ineligible,
     MeteredApiBilling,
+    NonSelectableState,
     OperatorActionRequired,
     PrivacyDisclosure,
     ProcessorChain,
@@ -113,10 +116,6 @@ class CatalogSnapshot:
     rows: Mapping[GenerationSelection, Row]
 
 
-class CatalogUnavailable(RuntimeError):
-    """No Codex catalog has loaded in this process yet."""
-
-
 class CodexUnavailable(RuntimeError):
     """The authenticated Codex host is not reachable now."""
 
@@ -130,11 +129,12 @@ class InvalidSelection(ValueError):
 
 
 class SelectionUnavailable(ValueError):
-    """The selection names a row chat cannot run now."""
+    """The exact selection cannot run with the current route or chat state."""
 
-    def __init__(self, row: Row) -> None:
+    def __init__(self, selection: GenerationSelection, state: NonSelectableState) -> None:
         super().__init__("generation selection is not selectable")
-        self.row = row
+        self.selection = selection
+        self.state = state
 
 
 # One entry per endpoint: the last good catalog, the route's readiness, when observed.
@@ -158,8 +158,6 @@ class Catalog:
             cached = await _refresh(self._endpoint, None if cached is None else cached[0])
             _CODEX[self._endpoint] = cached
         codex, readiness, _ = cached
-        if codex is None:
-            raise CatalogUnavailable("the Codex generation catalog has not loaded")
         return _compose(codex, readiness, self._providers, self._tools)
 
 
@@ -188,12 +186,25 @@ async def _refresh(
     return previous, readiness, time.monotonic()
 
 
-def chat_row(snapshot: CatalogSnapshot, selection: GenerationSelection) -> Row:
+def selection_row(snapshot: CatalogSnapshot, selection: GenerationSelection) -> Row:
+    """Resolve exact source facts; an unread Codex route is unavailable, not invalid."""
+
     row = snapshot.rows.get(selection)
-    if row is None:
-        raise InvalidSelection("selection is not in the configured catalog")
+    if row is not None:
+        return row
+    if isinstance(selection, CodexPersonalSelection):
+        route = next(
+            route for route in snapshot.wire.routes if isinstance(route.route, CodexPersonalRoute)
+        )
+        if not isinstance(route.readiness, Ready):
+            raise SelectionUnavailable(selection, route.readiness)
+    raise InvalidSelection("selection is not in the configured catalog")
+
+
+def chat_row(snapshot: CatalogSnapshot, selection: GenerationSelection) -> Row:
+    row = selection_row(snapshot, selection)
     if not isinstance(row.chat_state, Selectable):
-        raise SelectionUnavailable(row)
+        raise SelectionUnavailable(selection, row.chat_state)
     return row
 
 
@@ -254,7 +265,7 @@ class _Model:
 
 
 def _compose(
-    codex: AgentModelCatalog,
+    codex: AgentModelCatalog | None,
     codex_readiness: Readiness,
     providers: tuple[GenerationApiProvider, ...],
     tools: Toolbox,
@@ -273,7 +284,11 @@ def _compose(
     )
     api = api_model_catalog()
     sources: list[tuple[GenerationApiProvider | None, Readiness, list[_Model]]] = [
-        (None, codex_readiness, [_codex_model(codex, row) for row in codex.models]),
+        (
+            None,
+            codex_readiness,
+            [] if codex is None else [_codex_model(codex, row) for row in codex.models],
+        ),
         *(
             (provider, Ready(last_checked=now), [_api_model(row) for row in api.models])
             for provider in providers
@@ -361,13 +376,24 @@ def _compose(
                 models=tuple(model_rows),
             )
         )
-    seed = rows.get(policy("chat").selection)
-    if seed is None:
-        raise ValueError("the developer chat seed is absent from the catalog")
+    seed_selection = policy("chat").selection
+    seed = rows.get(seed_selection)
+    seed_state: SelectionState
+    if seed is not None:
+        seed_state = seed.chat_state
+    elif not isinstance(codex_readiness, Ready):
+        seed_state = codex_readiness
+    else:
+        seed_state = Ineligible(
+            code="selection_not_configured",
+            explanation="The developer chat seed is not in the current catalog.",
+        )
     wire = GenerationCatalog(
         observed_at=now,
         chat_seed=ChatSeed(
-            selection=seed.selection, state=seed.chat_state, presentation=seed.presentation
+            selection=seed_selection,
+            state=seed_state,
+            presentation=None if seed is None else seed.presentation,
         ),
         routes=tuple(routes),
     )

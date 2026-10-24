@@ -13,9 +13,9 @@ the reader is three facts and one policy.
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
   `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
   read once from one snapshot, never mixed with another read. identity versions
-  content/targets; title and embedded-child presentation are mutable metadata.
-  a same-identity reload updates those without replacing units, learned
-  structure, surface nodes, navigation or unsaved progress.
+  source text; title, embedded-child presentation and transcript navigation are
+  mutable metadata. a same-identity reload replaces navigation/find inputs while
+  retaining units, geometry, surface nodes, held origin and unsaved progress.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
   below, negative above. capture, reflow and return use it; chrome insets can
@@ -69,15 +69,24 @@ workspace to the ports, the primitive never reaches for it.
 
 the runtime is a plain object; react reads it through `subscribe`/`getState`
 (`useSyncExternalStore`). surfaces register a `SurfaceHandle` (`identity`, `capture`,
-`position`, `find`, pdf `setZoom`) and report viewports and input.
+`captureSelection`, `position`, `find`, pdf `setZoom`) and report viewports and input.
 only a surface owning the ready publication may consume restoration or report
 its viewport. metadata labels do not own the text or pdf viewer lifecycle.
+visit capture projects that owned measurement; it does not recapture transient
+layout during host resize or unmount.
+
+`DocumentReaderView.before` is host content preceding the publication, including
+opening and failure feedback in the existing state scrollport. ready surfaces own
+the same slot; it remains outside text units, find and annotations. the surviving
+reader frame uses `useActionFocusRecovery` to return focus from removed controls
+to the current reading area, otherwise the frame, without scrolling. deliberate
+focus transfer or owner unmount releases recovery.
 
 ## server contracts
 
 | route | contract |
 | --- | --- |
-| `GET /media/{id}/reader` | the whole publication from one snapshot: text (`units` with `html_sanitized`, `canonical_text`, `char_count`, times and speakers for transcripts, `sections`, `toc_nodes`, `source_issues`, `embeds`) or pdf (`file`, `page_count`). typed `Data[ReaderTextDocumentOut \| ReaderPdfDocumentOut]`. |
+| `GET /media/{id}/reader` | one snapshot: prose `ReaderTextDocumentOut`, transcript `ReaderTranscriptDocumentOut`, or `ReaderPdfDocumentOut`. text shares units/embeds; transcripts require coverage and canonical `transcript_navigation`, with empty wire sections/toc. prose archives retain their shape. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
 | `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
@@ -89,6 +98,38 @@ the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
 `/evidence/{span}`, fragment and pdf highlight lists and creates, the highlight
 reader-target route) are gone. a text highlight whose fragment cache is gone is
 listed in Evidence as unavailable (`Stale`), never painted.
+
+### transcripts
+
+`transcript_navigation.py` reads ordered fragment ids and canonical publisher chapter
+facts. its digest is both navigation `key` and processing `transcript_reader_key`;
+body identity remains the segment-id digest. state/publication/chapter transactions
+notify `media_events` after commit. the pane reloads on a changed key or coverage;
+there is no episode-pane provisioning poll or raw media-response spread.
+before disabling a focused admission button, the hosted pane holds focus on its
+existing root. root blur or pane deactivation cancels the handoff. the ready reader
+takes focus only while that active pane's root still holds it; background completion
+is quiet. answered refusals stay distinct from an unconfirmed admission.
+
+chapter starts target only a containing half-open cue, choosing the last containing
+cue in publication order for overlap. uncovered starts retain a disabled destination.
+explicit publisher ends remain explicit; a confirmed absent end derives the next
+strictly later start. historical unverified null ends stay unknown. a chapter scope
+requires a bounded interval and contiguous whole cues entirely inside it; straddling
+or untimed holes refuse scope. current chapter requires unique whole-cue membership.
+otherwise find covers the whole available transcript and partial results stay qualified.
+chapter label refresh preserves captured scope; changed identity/interval/extent or
+body replacement clears scoped search. whole find retains query, active result and
+placement across navigation-only refresh without reveal.
+
+hosts pass `playback: {identity, unit} | null`. the generic reader imports no player.
+the hosted binding observes the engine clock, sends only changed covered cues and
+marks the existing timestamp with `aria-current="time"` plus an inset gutter mark.
+pause/buffering retains confirmed time; errors, gaps or another source clear it.
+ticks never scroll, focus, change selection, write progress or reveal mobile chrome.
+`show playback position` inspects once with a return spot. reader navigation and
+deep links inspect only; explicit transcript timestamps adopt reading position and
+request their named episode/source time. public and shelf supply null playback.
 
 ### the cursor
 
@@ -158,6 +199,9 @@ to the reader only if the removed feedback owned it.
 an ordinary publication reread retains the readable document and projects its
 `refreshFailure` beside it. retry retains that failure until a successful read;
 it does not remount the reader or change the cursor's existing fences.
+same-identity metadata refresh also preserves navigation feedback when position
+loading has failed. only explicit position recovery restarts that restoration;
+a new publication still rebinds source and cursor.
 
 **save.** a reading viewport reports `locatorAt(primary, terminal)`; the sync
 saves after 500 ms idle or 5 s after the first unsaved move, one request in
@@ -188,6 +232,20 @@ choosing a transcript
 segment's time stamp is reading from there (`readFrom`): the cursor moves and the
 player seeks and resumes. a click on the text itself only selects (words, marks).
 
+navigation failures are in-memory occurrences `{operation, reason}`. the navigator
+owns them; acknowledgement compares the exact object and changes only feedback.
+new explicit navigation and publication replacement retire old feedback; ordinary
+input cancels active positioning without acknowledging a settled failure. rollback
+and visit snapshots contain only mode, origin and origin availability. they cannot
+restore feedback or positioning. a failed rollback makes no preservation promise.
+
+`inspect` accepts a target or an abort-aware asynchronous target resolver. admission
+captures the departure before resolution; stale completion cannot position or
+publish unavailability. explicit navigation and reading intent also retire pending
+host arrivals, preserving the matching signal during an arrival's own delegated
+inspection. automatic restore/reflow emits no reader intent. explicit transcript
+point adoption needs no viewport capture.
+
 **text surface.** every unit mounts in one scroll; off-screen units skip
 rendering (`content-visibility: auto`) at an estimated height. a viewport is
 measured per scroll frame from boxes, never hit-tests (a sheet or menu over the text
@@ -200,9 +258,9 @@ repeat across spine documents). document embeds render as cards portalled into
 their placeholders inside a `data-document-embed-ui` wrapper, outside the
 canonical text. the public reader hydrates token-authorised images per unit as
 units near the viewport. the surface retains its last measured placement before
-a resize observer reports layout changes. width, typography, host chrome and
+a resize observer reports layout changes. width, typography, endpoint extent and
 realised-unit changes use the internal navigator `reflow({placement, change})`
-operation. the latest completed explicit stable target remains its geometry
+operation. the latest completed navigation or restoration target remains its geometry
 anchor until genuine reading input, another navigation/seek/continue or source
 replacement. without one, reflow preserves the measured passage. initial short
 content does not imply following the end. reflow keeps mode/origin and saves
@@ -210,12 +268,19 @@ nothing; ordinary measurement cannot replace explicit intent.
 
 viewport and pixel placement are published together from one surface capture.
 hosted visit retention consumes that measured placement and navigation state;
-explicit departure/history capture still reads fresh geometry. text positioning
-realizes the target before checking arrival. an already-satisfied target returns
+explicit navigation departure still reads fresh geometry. text positioning
+realizes the target before checking arrival, retaining layout/style/paint
+containment across temporary visibility changes. an already-satisfied target returns
 synchronously; writes within the existing 2px tolerance are skipped, so a resize
 below the passage cannot begin chasing native inertia. unchanged reflow preserves
 earlier genuine input while newer input or authority always wins; actual
 corrections retain the progress fence.
+explicit reading/navigation and source retirement also retire the surface's
+queued placement through `SurfaceHandle.retireReflow`; required layout work still
+runs without restoring over newer intent. an unmeasurable retained pane keeps
+queued geometry until its existing resize observer reports usable bounds.
+mid-positioning measurements cannot become later queued targets. completed pdf
+commands retain their measured placement, so layout never replays a mutable command.
 
 canonical cursors reuse collected spans when whole-string nfc is identical
 and token boundaries still match codepoints. normalization-changing input
@@ -236,6 +301,11 @@ mode and the first origin, clears earlier input intent and records no progress;
 explicit zoom cancels pending/held navigation before changing scale; saved-zoom
 restoration does not. cancellation retires active positioning synchronously.
 transient find matches and normalized pdf destinations use measured-placement reflow.
+pdf destination resolution is admitted before awaiting pdf.js and captures the
+source view at activation. rendered internal links distinguish preparing, ready
+and unavailable. preparing consumes activation without replay; unavailable
+activation uses the navigator's common failure notice. background preparation
+settles busy state and reports diagnostics without claiming a failed user action.
 `pdf/destination.ts` resolves native named/explicit annotation destinations before
 pdf.js discards the event. public view/scale events bind source-relative null
 coordinates and zoom; resolved links expose canonical hrefs. raw `PdfView`
@@ -259,47 +329,68 @@ is disabled at the actual viewport end, even when a fully visible final page is
 below that line. the pdf.js page keeps its required content-box sizing so canvas
 text and text-layer highlights agree.
 
-**selection.** completed trusted source gestures publish a `SelectionEvent` with
-publication identity and input origin. `Captured` carries one unit's canonical
-range or one pdf page's quads plus `exact`; `Rejected` identifies a cross-unit
-or cross-page selection. the host explains rejection without writing or clipping,
-retires the old foreground composer and retains its draft. collapsed, outside
-and uncapturable selections remain silent. editor selection and unowned
-`selectionchange` never admit a source command. a pointer release admits a range
-only when that gesture changed it or pressed and released within the already
-selected text. an unchanged native range elsewhere does not reopen its composer
-or suppress the click; native clearing keeps its usual meaning. trusted native
-long press also admits its touch session. an admitted native touch session
-continues through handle changes; repeated rejection is deduplicated until a
-fresh gesture or valid capture. focus dimming is suspended during live selection.
+**selection.** the browser owns its native range; `useReaderSelection` observes
+and validates it. every reader binding receives `SelectionNotice`: `Observed`
+carries a fresh `SelectionEvent | null` and `inputHeld`, while `Admitted` retains
+the existing trusted gesture rule. `Captured` holds one unit's canonical range or
+one pdf page's quads and quote; `Rejected` retains cross-unit/cross-page reasons.
+collapsed, foreign, editable and uncapturable ranges observe null. observation
+alone never starts a source session, and editor selection never admits one.
 
-the composer keeps its rich textbox below an icon command row. explicit names
-appear on hover and keyboard focus, including unavailable reasons. the split
-highlighter applies yellow in one activation on a fresh passage; a saved mark
-shows its persisted colour with the primary inactive. its disclosure opens a
-local anchored palette without reflowing or remounting the editor. palette
-selection applies only to that passage; the next fresh passage starts yellow.
-the picker reuses the overlay owner's dismissal, return focus and tab
-continuation. a passive tooltip press preserves existing composer ownership;
-actual focus moves and outside presses keep their usual ownership rules.
+observations cover range changes, source scrolling, source pointer begin/matching
+end/cancel and selection-extension chords. `inputHeld` records observed source
+input, never inferred native handle contact. a pointer release admits only a
+changed range or a press and release within the already selected text. completed
+selection gestures consume only their matching click, so preserving or clearing
+a selection cannot activate an underlying link or mark. trusted native long
+press admits its touch session; later handle changes remain observable. local
+`onSelecting` painting describes range existence, and suspends focus dimming.
 
-bounds editing retains the original unit, publication and observed highlight
-version in one reader-local session. it focuses the source and shows an owned
-instruction/cancel notice while selecting. another unit is rejected before a
-request. the media host publishes bounds and selection-rejection feedback in
-the reader chrome's existing navigation slot, where the pane measures its
-height and reserves source clearance. an active visible mobile pane holds that
-chrome open while the notice exists; cancel uses the shared large button and
-inherits the chrome's coarse-pointer target size. the notice neither scrolls
-away nor floats over selectable source content.
-a valid range synchronously enters submitting, freezes unit/offsets and
-version, and joins the tab's existing write fifo. submitting has no cancel
-claim; source retirement hides its presentation without cancelling a sent write.
-only its own still-active session handles completion. unit/version conflicts
-refresh and require reopening; duplicate ranges return to selection. the
-annotation acknowledgement map publishes quote/colour/ownership/version with
-paint until a read begun after acknowledgement replaces them, so older map data
-cannot replace an acknowledged command's observed state.
+`Reader.captureSelection()` synchronously delegates to the mounted surface of the
+current publication and this same validation/capture path. it returns null for
+absent, collapsed, foreign, editable or stale ranges and retains typed rejection.
+`PassageGeometry.lines` stays in source order before clipping or visual sorting;
+its first and last rectangles are the actual passage endpoints, including when
+offscreen. current source geometry is measured again at reveal and placement.
+
+`useAnnotationVerbs` consumes only admission on desktop, preserving the anchored
+composer, editor and gesture policy. on mobile it owns a provisional candidate
+and one 250 ms quiet timer. range changes, source scrolling and observed input
+hide the actions; input end restarts quiet, and an observed blocker prevents
+reveal. quiet recaptures and measures the current valid passage. collapse,
+outside selection, dismissal, source replacement, inactive/hidden pane, body
+disposal, document hiding, blur and viewport-policy changes retire the candidate.
+no provisional selection enters the journal, browser storage or `ReaderState`.
+
+mobile actions explicitly open the shared composer in `MobileSheet`; a saved mark
+is another explicit entry. commands prepare one frozen capture and await its
+existing slot/journal through the existing writes. copy and opening more do not
+author. presentation and save/send semantics belong to
+[highlight](highlight.md#reader-presentation).
+
+controls freeze a fresh capture before pointer focus or keyboard transfer and
+execute only their matching semantic activation. direct accessibility focus owns
+that rendered control's exact candidate. cancelled, moved or abandoned presses,
+new source input/range, outside dismissal and source retirement invalidate it.
+its own focus collapse cannot unmount the pressed control. the more owner
+outlives the passive row; closing returns to a surviving trigger or the reader.
+no failed capture uses an unrelated last-valid passage.
+
+mobile bounds and draft reselection retain an owned source session and require
+explicit `apply selection`; invalid/collapsed ranges keep cancel and never reuse
+an old valid proposal. apply uses the capture frozen before button focus. bounds
+retain unit/media/version constraints and relocation's exact-quote rule;
+reselection names the authored draft and source publication. desktop bounds
+admission remains immediate. [highlight](highlight.md#reader-presentation) owns
+submission, recovery and draft preservation. the host's existing `Navigate`
+intent retires selection sessions before explicit navigation; ordinary source
+scrolling and automatic reflow remain available while choosing a passage.
+
+compact action placement is opt-in and never resizes, reflows or scrolls source
+text. large selections still retain their commands; enlarged text wraps within
+one bounded scrollport. endpoint neighborhoods approximate unavailable native
+handle hit regions, and quiet time does not establish finger release. the
+placement owner is [overlays](overlays.md#reader-action-placement).
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
 it only after restore. `useFind` receives the pane's required `ownerKey`.
@@ -309,8 +400,9 @@ scope labels describe capability; active labels name the captured scope.
 requested narrowing without a valid scope fails explicitly, never broadens.
 clear aborts computation and movement and removes text/results/paint, while preserving
 preferences and the reader's held first departure. owner retirement resets the
-session; a publication change retains text/preferences and recaptures once
-against the restored replacement.
+session; a publication change clears a captured narrowed query, retaining the
+source's explanation through replacement loading. whole-document queries and
+preferences survive and prepare against the restored replacement.
 computation and reveal use separate abort signals. return cancels movement and
 revokes pending automatic reveal while results may still settle; a new query,
 option change or retry starts fresh navigation intent. effect cleanup aborts
@@ -320,7 +412,11 @@ failure or returnability.
 
 text searches canonical units and paints css highlights; pdf searches and paints
 through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;
-activation succeeds only for `Shown`. `inspect({target, signal?})` links external
+activation succeeds only for `Shown`. `FindSource.href(at)` projects immutable
+canonical targets through the host; standalone hosts return null. named-result
+activation validates the exact row and computation/source before local reveal or
+workspace dispatch. find/contents/chapter menus expose “open in new pane”.
+`inspect({target, signal?})` links external
 abort to one navigation request. pdf match page arrival, canvas/text-layer
 readiness and match positioning form one request with the transient
 `pdfMatch {page, index}` target. every wait checks cancellation before geometry
@@ -343,6 +439,13 @@ reader feedback uses the provider-free shared `FeedbackStatus`, `FeedbackNotice`
 ink, accent and surface tokens locally; portaled details use the application theme.
 the hosted pane supplies announcement permission; inactive panes are silent. public
 and shelf hosts supply their own recovery focus targets and geometry provider.
+
+one operation-aware navigation notice lives in the measured feedback stack,
+independently of progress capability. it is a warning with one factual title and
+an explicit close control; it has no timer or retained retry command. dismissal
+preserves mode, held origin, inspection, viewport and cursor. progress, conflict
+and document recovery keep their independent actions. public shares use this same
+notice and never attribute a later navigation failure to the shared highlight.
 
 readability, document-local find and indexed search/ai availability are separate.
 the reader body does not warn about indexing beside local find. the media inspector's
@@ -387,8 +490,6 @@ the dom is never rewritten (`text/paint.ts`).
   re-sorts it with fresh `Highlight` objects): webkit 26 crashes painting a
   highlight registered after one of higher priority, and empties a `Highlight`
   that leaves the registry.
-- **shadow roots.** a surface inside a shadow root (the dossier) needs the rules in
-  its adopted sheet; `components/dossier/dossierSheet.ts` carries the find rules.
 - **focus mode** (`reader-focus`): paragraph dims everything near but the block at
   the reading line; sentence dims all but the `Intl.Segmenter` sentence there.
 - selection offsets come from the untouched dom (`resolveDomRangeOffsets`).
@@ -409,11 +510,14 @@ an authored destination exceeding the href bound has no raw-hash fallback:
 its focusable link control still inspects locally or reports shifted unavailability.
 
 `ReaderHost.navigation` is a nullable href/activation capability. reader core
-imports no pane/workspace state; public and shelf hosts inspect locally. hosted
+imports no pane/workspace state; public and shelf hosts inspect locally. the port
+reports synchronous `Accepted | Refused` admission; local inspection retains its
+asynchronous outcome. hosted
 contents, section/page navigation, map, authored links and evidence items bind
 the same capability. shift opens the exact destination without inspecting,
-seeking, changing selection or advancing progress in its source. chapter/time
-ordinary activation seeks; shift opens a timed reader location.
+seeking, changing selection or advancing progress in its source. reader chapter
+activation inspects; timestamp activation explicitly reads and plays. shift opens
+a timed reader location without starting playback.
 choosing a local section through its menu focuses the reader source after
 inspection. standalone previous/next controls retain their repeatable focus.
 
@@ -425,9 +529,42 @@ arrows keep 44px targets while text may increase row height. pdf controls keep
 their separate wrapping layout. shared menu minimums yield to the positioning
 owner's measured viewport cap.
 
-`sourceArrival.ts` applies a union of resolved server source and direct reader
-destination through one saved-intent, claim, cancellation and focus fence.
+`sourceArrival.ts` applies resolved server sources and direct reader/chat
+locations through one saved-intent, claim, cancellation and focus fence.
+`InspectSource.purpose` distinguishes fresh opening from restored visits.
+`ReaderState.viewRestoration` reports the exact snapshot, publication and outcome;
+readiness alone does not prove restoration. initial view snapshots are one-shot.
+a valid copied view bypasses old locator resolution/validation; absent or obsolete
+views use the canonical href, while failed restoration refuses visibly.
+
+pdf find urls carry publication identity, page, frozen query/options, original
+eol-free utf-16 bounds and sha-256 of that page's complete extracted text. local
+indexes remain paint-only. replay uses the same pdf.js matcher and accepts only
+the exact range/digest before movement; extraction changes refuse. arrival owns
+paint until its actual inspection signal retires; cancellable positioning has a
+separate shorter lifetime. idle find/reflow preserve paint; a new query or
+semantic navigation supersedes it. fresh arrival retires prior local find.
+`Reader.restorePdfFind` rebuilds applied exact paint after a remount without
+repositioning the restored view. `pdfviewer` alone attaches its find controller;
+a second attachment would reset early-arrival matches. pdf.js upgrades must
+qualify that lifecycle, normalization, offsets and extraction together.
+
+closed location codecs reject unknown/duplicate fields and invalid coordinates.
+`loc` decoding is shared by workspace, native opening and reload. oversized cold
+links show entry refusal over the resumed workspace and are never persisted.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
+arrival intents remember `Pending`, `Applied` or `Retired`, without storing
+failure presentation. apply returns `Applied`, `Unavailable`, `Cancelled` or
+`FailureHandled`; the last delegates feedback to the reader, preventing duplicate
+notices. newer local intent retires waiting/running arrivals before old resolution
+can move the source. rejected attempts release their inspection lifetime;
+acknowledging failure retires replay. a retired arrival
+is skipped on remount; reopening a reference creates a fresh attempt.
+
+media preserves arrival api errors for the existing transport policy. an observed
+stale build retains canonical reload-only recovery while the document remains
+readable; fresh navigation cannot dismiss that fact. new-pane admission failures
+have their own local occurrence. forking does not supersede source inspection.
 evidence-item arrival opens connections and reveals the grouped root by canonical
 ref, native id or direct edge id. it expands source text when appropriate,
 waiting for the mounted disclosure shell before focus, without awaiting fetched
@@ -474,12 +611,13 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
 | `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `AnnotationStore`: one document-map read → marks of every visible highlight (topmost first), note refs, rail markers, evidence; writes paint at once from their acknowledgement through a pending ledger that a map read issued after the write settles; a failed read keeps the last map painted; `twin` finds the viewer's own highlight of an exact extent (a library-mate's never blocks theirs) |
-| `useAnnotationVerbs.ts` | admitted selection/rejection, canonical mark verbs, cancellable bounds sessions and highlight pane entries scoped to this reader visit |
-| `SelectionDock.tsx` | one passage composer with an icon command row, focused rich editor, canonical resource actions and retained note conflict/retry controls; overlap chooser, recolour dialog and chat chooser |
+| `useAnnotationVerbs.ts` | desktop admission; mobile provisional candidate, quiet timer and activation ownership; canonical mark verbs, confirmed bounds sessions and highlight pane entries scoped to this reader visit |
+| `useSelectionComposer.ts`, `selectionDrafts.ts` | one source-bound preparation path, explicit capture commands, authored visit branches, journal/retry ownership and draft reselection sessions |
+| `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
-| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
-| `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |
+| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
+| `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
 
@@ -506,9 +644,16 @@ constituent publications; embeds keep their separate projection.
 ## around the reader
 
 - **mobile chrome.** the host's `ReaderHost.scrollport` registers the surface's
-  scroll element with the mobile chrome (`lib/mobileShell/chrome.tsx`), which
-  owns tap-driven visibility. scrolling and programmatic positioning do not
-  change that target. see [workspace.md](workspace.md#mobile-reader-chrome).
+  scroll element with chrome and viewport owners. chrome owns tap-driven
+  visibility; viewport publishes stable endpoint extent and current occlusion.
+  `scrollport.ts` reads one bounds snapshot, independent of ordinary padding.
+  capture/navigation retain the shown reading line while visible ranges,
+  selection and popovers use current bounds. geometry-only measurement uses
+  explicit `Geometry` cause: programmatic intent, no progress/adoption/completion
+  or navigation. actual layout changes use the existing reflow fence with the
+  cached pre-change placement; occlusion changes never reflow. one independent
+  measured status stack protects return/adopt/retry controls. scrolling and
+  programmatic positioning do not change the visibility target. see [workspace.md](workspace.md#mobile-reader-chrome).
 - **consumption activity.** reading time accrues only while the pane is active,
   visible and focused, after genuine input within five minutes; reading viewports
   add the document fraction and word ordinal. inspection counts time only. see

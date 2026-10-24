@@ -44,7 +44,6 @@ from nexus.services.reader_publication import (
     ensure_reader_publication,
     read_publication_generation,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.web_article import prepare_article, replace_article_fragments
@@ -453,9 +452,6 @@ def publish_prepared_x_source(
     db.flush()
     projected_media = sorted(changed | affected | {winner_id})
     projection.refresh(db, "media", projected_media)
-    projection.refresh_subject_dossiers(
-        db, [ResourceRef("media", identity) for identity in projected_media]
-    )
     return SourceRunOutcome(
         diagnostics={
             "processing_status": "ready_for_reading",

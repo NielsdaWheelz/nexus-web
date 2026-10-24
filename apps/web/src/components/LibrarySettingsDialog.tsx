@@ -16,6 +16,7 @@ import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
+import { unstamped } from "@/lib/consumption/listening";
 import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { libraryNameError } from "@/lib/libraries/views";
@@ -25,7 +26,8 @@ import styles from "./LibrarySettingsDialog.module.css";
 interface SettingsDraft {
   draft: string | null;
   baseline: string | null;
-  request: { name: string; rawDraft: string | null; expectedName: string } | null;
+  /** `unconfirmed`: an earlier send of this request ended without an answer that settles it. */
+  request: { name: string; rawDraft: string | null; expectedName: string; unconfirmed: boolean } | null;
   busy: "Rename" | "Delete" | null;
   confirming: boolean;
   deleted: boolean;
@@ -43,11 +45,12 @@ export default function LibrarySettingsDialog({
   const { ctx } = useActionRuntime();
   const contentRef = useRef<HTMLDivElement>(null);
   const workspace = useLatestWorkspace();
-  const library = usePaneFreeServerValue({
-    key: libraryId,
+  const rawLibrary = usePaneFreeServerValue({
+    key: `/libraries/${libraryId}`,
     stale: useChangeStamp("Libraries"),
     load: (signal) => getLibrary(libraryId, signal),
   });
+  const library = unstamped(rawLibrary);
   const current = library.status === "ready" ? library.data : null;
   const guard = useWorkGuard();
   const state = useResourceDraft<SettingsDraft>(`LibrarySettings:${libraryId}`, () => ({
@@ -101,10 +104,14 @@ export default function LibrarySettingsDialog({
 
   const name = (draft ?? current.name).trim();
   const invalid = libraryNameError(name);
+  // A request in flight keeps the verb it was sent under; only an unconfirmed one offers a retry.
+  const renameRequest = state.value.request;
+  const renameLabel = renameRequest?.unconfirmed ? "retry same request"
+    : (renameRequest ? renameRequest.expectedName !== baseline : baseline !== current.name) ? "save my name" : "Save";
   const rename = async () => {
     const value = state.read();
     const signal = ctx.sessionSignal();
-    const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline };
+    const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline, unconfirmed: false };
     state.set({ ...value, request, busy: "Rename", feedback: null });
     try {
       const saved = await renameLibrary(libraryId, request.name, request.expectedName);
@@ -114,7 +121,7 @@ export default function LibrarySettingsDialog({
     } catch (error) {
       if (signal.aborted) return;
       state.set(latest => ({ ...latest, busy: null,
-        request: isRefusal(error) && value.request === null ? null : request,
+        request: isRefusal(error) && value.request === null ? null : { ...request, unconfirmed: true },
         feedback: libraryErrorFeedback(error, "Library name wasn’t saved", fail) }));
       library.refetch();
     }
@@ -160,13 +167,12 @@ export default function LibrarySettingsDialog({
             />
             {current.can_manage && !deleted ? (
               <Button
-                variant="secondary"
-                size="sm"
-                loading={busy === "Rename"}
-                disabled={invalid !== null || state.value.request === null && name === baseline || busy !== null}
+                emphasis="strong"
+                aria-busy={busy === "Rename" || undefined}
+                disabled={invalid !== null || renameRequest === null && name === baseline || busy !== null}
                 onClick={() => void rename()}
               >
-                {state.value.request !== null ? "retry same request" : baseline !== current.name ? "save my name" : "Save"}
+                {renameLabel}
               </Button>
             ) : null}
           </div>
@@ -184,17 +190,15 @@ export default function LibrarySettingsDialog({
             {confirming ? (
               <div className={styles.row}>
                 <Button
-                  variant="danger"
-                  size="sm"
-                  loading={busy === "Delete"}
+                  emphasis="strong"
+                  tone="danger"
+                  aria-busy={busy === "Delete" || undefined}
                   disabled={busy !== null}
                   onClick={() => void remove()}
                 >
                   Delete library
                 </Button>
                 <Button
-                  variant="ghost"
-                  size="sm"
                   disabled={busy !== null}
                   onClick={() => setConfirming(false)}
                 >
@@ -202,7 +206,7 @@ export default function LibrarySettingsDialog({
                 </Button>
               </div>
             ) : (
-              <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
+              <Button tone="danger" onClick={() => setConfirming(true)}>
                 Delete library…
               </Button>
             )}

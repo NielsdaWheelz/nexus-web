@@ -11,6 +11,8 @@ import {
   type MouseEventHandler,
   type PointerEventHandler,
   type ReactElement,
+  type Ref,
+  type RefCallback,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -26,8 +28,8 @@ let shownClose: (() => void) | null = null;
 
 type Trigger = HTMLButtonElement | HTMLAnchorElement;
 
-interface TooltipTriggerProps {
-  ref: (node: Trigger | null) => void;
+export interface TooltipTriggerProps {
+  ref: RefCallback<Trigger>;
   "aria-describedby": string | undefined;
   onPointerEnter: PointerEventHandler<Trigger>;
   onPointerLeave: PointerEventHandler<Trigger>;
@@ -43,6 +45,8 @@ interface TooltipTriggerProps {
  * collapsed rail's labels open at once), keyboard focus at once; it closes
  * 150 ms after the pointer leaves both trigger and caption, on press, blur,
  * Escape (the overlay kernel), while `disabled` and when another caption shows.
+ * `triggerRef` receives the native root; a stable ref stays attached across help
+ * changes. Callback cleanup runs once instead of an additional null callback.
  */
 export default function Tooltip({
   text,
@@ -50,16 +54,30 @@ export default function Tooltip({
   placement = "below",
   openDelayMs = 500,
   disabled = false,
+  triggerRef,
 }: {
   text: string;
   renderTrigger: (props: TooltipTriggerProps) => ReactElement;
   placement?: "below" | "right";
   openDelayMs?: number;
   disabled?: boolean;
+  /** The actual native root, composed without discarding React callback cleanup. */
+  triggerRef?: Ref<Trigger>;
 }) {
   const id = useId();
   const trigger = useRef<Trigger | null>(null);
-  const setTrigger = useCallback((node: Trigger | null) => { trigger.current = node; }, []);
+  const setTrigger = useCallback((node: Trigger | null) => {
+    trigger.current = node;
+    const cleanup = typeof triggerRef === "function" ? triggerRef(node) : undefined;
+    if (triggerRef && typeof triggerRef !== "function") triggerRef.current = node;
+    if (node === null) return;
+    return () => {
+      trigger.current = null;
+      if (typeof cleanup === "function") cleanup();
+      else if (typeof triggerRef === "function") triggerRef(null);
+      else if (triggerRef) triggerRef.current = null;
+    };
+  }, [triggerRef]);
   const timer = useRef<number | null>(null);
   const pointerTarget = useRef<HTMLElement | null>(null);
   const keyboardFocus = useRef(false);
@@ -99,12 +117,13 @@ export default function Tooltip({
     return () => { if (shownClose === close) shownClose = null; };
   }, [visible, close]);
   useEffect(() => {
+    if (disabled) return;
     window.addEventListener("blur", close);
     return () => {
       window.removeEventListener("blur", close);
       clearTimer();
     };
-  }, [close, clearTimer]);
+  }, [disabled, close, clearTimer]);
 
   const leave = () => {
     pointerTarget.current = null;

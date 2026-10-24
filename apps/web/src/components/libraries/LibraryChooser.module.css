@@ -1,127 +1,36 @@
 .chooser {
   display: flex;
+  flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
 }
 
 .searchHeader {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   flex: 0 0 auto;
-  padding: var(--space-2);
-  background: var(--surface-canvas);
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
-.search {
-  width: 100%;
-  min-height: var(--size-lg);
-  padding: var(--space-1) 0;
-  font-size: 16px;
-}
-
-.list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   padding: var(--space-1);
 }
 
 .summary {
+  flex: 0 0 auto;
   margin: 0;
-  padding: var(--space-2) var(--space-3);
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
-}
-
-.summary {
-  max-height: 5em;
-  overflow-y: auto;
-}
-
-.option {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--size-lg);
   padding: var(--space-2);
-  border-radius: var(--radius-sm);
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.option[data-action] {
-  display: flex;
-  color: var(--ink-muted);
-}
-
-.option[data-action="Create"] {
-  color: var(--accent);
-}
-
-.option[data-active="true"] {
-  background: var(--accent-muted);
-}
-
-.option[aria-disabled="true"] {
-  color: var(--ink-muted);
-  cursor: default;
-}
-
-@media (any-pointer: coarse) {
-  .search,
-  .option {
-    min-height: var(--size-xl);
-  }
-}
-
-.text {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.name,
-.note {
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.name {
-  font-size: var(--text-sm);
+.marks {
+  display: grid;
+  grid-template-columns: repeat(3, 1rem);
+  align-items: center;
+  gap: var(--space-1);
 }
 
-.note {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-.check {
-  color: var(--accent);
-}
-
-.spinner {
-  color: var(--ink-muted);
-  animation: spin 1s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.marks > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .empty {
-  padding: var(--space-3);
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
+  flex: 0 0 auto;
+  padding: var(--space-2);
 }

@@ -5,8 +5,26 @@
 one place answers "what can i do with this resource, now?" for any canonical ref
 (`<scheme>:<uuid>`) and does it. the server says which verbs exist and whether it blocks
 them; the web labels, orders, confirms and runs them through each verb's owner.
-resource subjects share those verbs. a connection occurrence instead exposes
-navigation and its owning relationship/local commands, without resource verbs.
+resource subjects share those verbs. both row families use that same resource
+ellipsis; an outline bullet separately exposes its exact relationship commands.
+
+podcasts and libraries share metadata and finite collection actions through the
+same catalog/projectors. `Metadata` selects an explicit media, podcast, library or
+supplied discovery subject; it never treats collection ids as media ids. podcast
+metadata is local catalog inspection; discovery metadata names its directory
+provenance. library details contains native collection facts. for podcasts, source
+means the supplied homepage; feed is a separate native rss link. absent facts grant
+no action.
+
+podcast subscription, libraries and more share one finite inline subject across
+ordinary rows and headers. at compact widths the complete menu retains every
+command once. library cards retain their single scoped removal shortcut. captured
+evidence and outline relationships acquire no resource shortcuts. menus retain
+their prepared canonical-facts lifecycle; opening a bulk dialog starts its own
+selection read. [collection actions](collection-actions.md) owns batch semantics.
+filtered view descriptors include their state in their presentation ids; canonical
+whole-resource descriptors retain canonical ids. menu identities distinguish
+selection scope while execution keeps the same catalog command ids.
 
 ## contract
 
@@ -33,21 +51,38 @@ navigation and its owning relationship/local commands, without resource verbs.
   explicit loading, ready or failed state keyed by ref and signal. abort forgets the read;
   ready projection uses current runtime availability. menu composers supply complete
   `MenuContent` through `MenuSource`; `ActionMenu` owns preparation and publication.
+  published geometry compares raw measurements to its frozen opening snapshot
+  within 1/64 css pixel; it never rebases that snapshot. meaning and viewport
+  remain exact. rounding buckets cannot define measurement equality.
   non-menu highlight actions and metadata remedies own their visible read lifetimes and
   local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
-  the overlays (authors, metadata, library settings, podcast settings, subscribe).
-- a connection/context menu supplies no resource ref, even when its mutation is
-  null. focusing establishes a resource root. when its action owner differs from
-  the displayed passage, the menu shows the authoritative action-owner label in
-  a `source: {label}` section; it never names a book
-  action after an excerpt.
-- `add item` is a local occurrence/root action with an explicit insertion source;
-  it opens that source's shared composer. resource-owned empty composers accept
-  `@` through the shared insertion controller. there is no canonical `LinkResource`
-  verb, global target picker, or dedicated page/reader link control. an action ref
-  never supplies a missing insertion identity.
+  the overlays (metadata, library settings, podcast settings and fixed
+  podcast subscription/import/unsubscribe/cleanup reviews).
+  `ResourceActionPresentation` renders overlays and throws reported action defects
+  beneath the existing workspace boundary. overlay state, identity-gated dismissal,
+  account command owners and their feedback remain above containment. a review
+  read/render defect therefore cannot discard another command's recovery.
+  unconfirmed podcast, consumption and lectern requests and their loss guards
+  therefore survive an action defect.
+- a row ellipsis supplies `action_ref` in either family. when it differs from the
+  displayed passage, management appears in `source: {label}`. row composition
+  omits loaded open/fork; `any-pointer: coarse` adds exactly one local fork from
+  displayed activation, preserving location. that activation participates in menu
+  subject identity, so a changed route retires the open menu.
+- a bullet relationship menu supplies no resource ref/fork. right-click,
+  context-menu key, shift-f10 and stationary touch hold use the shared context
+  anchor. native title link menus stay native. movement, scroll, cancellation,
+  lost subject or overlay/pane ownership aborts the hold; completed hold consumes
+  its activation click, including mobile-sheet retarget. opening never executes.
+  exact unlink/details retain the incoming edge's authority; missing navigation
+  does not erase an authorized relationship.
+- structural insertion/rearrangement/history use the outline session's direct
+  command interface and mobile accessory, never row/header menu shortcuts.
+  independent chat/message admission retains its own composer. no canonical
+  `LinkResource` verb or global picker is added. action refs never supply missing
+  insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
   bounds and delete, message fork, walk and delete) is a pane entry: the
   menu navigates with `paneEntryActivation` and is done; the landing pane claims and serves
@@ -59,44 +94,111 @@ navigation and its owning relationship/local commands, without resource verbs.
   a title blocked on missing x source context reads the media's verbs while blocked and offers
   its first available source remedy (refresh, retry or repair). an import's open reads the
   item's current activation when pressed (`resolveResourceItem`).
-- `useLecternAddAction` projects the additive `LecternMembership` command through the
-  action runtime and shared lectern owner. direct controls never preflight a resource menu.
-  unresolved same-media intent wins over membership and capacity; recovery checks its exact
-  retained command. acknowledged receipts and the single revision-gated read establish
-  positive membership; visibility-filtered absence cannot prove a delayed write failed.
-  direct add stays additive and never becomes remove under the pointer. library media
-  entries and search media results promote only stored `web_article`, `epub` and `pdf`,
-  identified by library `mediaSummary.media_id` or the canonical media-root id in
-  the resource outline; fragments never borrow their owner id. existing quick-read/suggestion/transcript cohorts
-  retain their eligibility and lifecycle. titles remain native links.
+- `useMediaActions` projects episode playback, lectern add/remove and the libraries
+  chooser from supplied media identity and shared account owners. direct controls
+  never preflight resource menus. unresolved lectern intent wins over membership
+  and capacity; recovery checks its exact retained command. newer acknowledgements
+  and the revision-gated read establish membership; unknown never means absent.
+  `projectLecternAction` owns checking and failed-read recovery for both direct
+  and prepared commands. an exact pending command and server prohibition precede
+  shared-read recovery. a failed read offers its own refetch when membership or
+  revision cannot authorize a new write.
+  libraries receives the actual trigger and owning-pane focus fallback. relationship
+  menus retain their occurrence principal; media quick actions retain the media id.
+- `resourceActions` is the finite media/podcast subject contract shared by pane
+  chrome and collection rows. domain hooks own command projection; `ActionButtons`
+  owns only button anatomy, disabled explanations, event isolation and focus
+  recovery. podcast subscription keeps one control key while its verb changes.
+  show indexes, discovery rows and headers expose subscription, libraries and
+  one complete more menu; compact hosts demote both shortcuts at 479px. library
+  cards retain their scoped single-shortcut policy. shows receive no playback controls.
+  live search/chat rows receive explicit subjects matching their own podcast ref;
+  captured evidence and editable references receive none.
+- podcast shortcut and menu commands share projectors. `PodcastLibraries` is
+  distinct from media-only `LibraryPlacement`. invocation passes explicit original
+  focus and captured surviving-row fallback through the prepared menu and overlay;
+  chooser-to-review handoff suppresses intermediate restoration. current facts
+  admit new intent; existing account commands alone own writes and uncertainty.
+  manager-scoped removal first restores the original control; the collection's
+  focus owner handles a later disappearance. card-local removal captures displayed
+  successors at selection and uses that target on acknowledgement, even before
+  refresh removes the row. aggregate unsubscribe uses the host's removal target;
+  discovery rows keep their original control and headers use their pane landmark.
+  disabled unresolved controls say checking/failure, never guess subscribe from
+  unknown membership.
+- prepared nonmissing media facts may omit playback while the player still owns
+  that exact loaded or pending episode. the projector supplements only that
+  current-session transport command with no retained descriptor. a server-offered
+  playback command, including its block, always wins; idle or unrelated players
+  confer no capability.
+- external collection rows compose `ExternalMediaMenu` from the same
+  `useMediaActions` producer and existing view actions. it is immediate at every
+  width and retains the sealed subject after acquisition. canonical saved menus
+  remain prepared. menu selection passes the surviving overflow trigger to the
+  command, not its departing menu item. no resource-action read occurs on row
+  render except the existing metadata source-remedy read.
+  podcast-directory episode rows expose the same playback/more composition; the
+  directory's bounded snapshot limits listing completeness, not sealed-target
+  command authority. find results and stale query rows retain their existing gates.
+- external subjects use their sealed target as identity. `mediaContinuation` retains
+  explicit membership intent above row/picker lifetime. acquisition freezes its source,
+  retry identity and removal/destination revisions before provider i/o. unknown
+  admission retries the exact command; refusal needs explicit review and fresh
+  choice. acceptance identity is retained before availability reads. URL settlement
+  supplies the final media id, including deduplication. library admission already
+  filed it; settlement reads current membership and never reapplies an old filing.
+  lectern membership waits for identity, not processing success. failure keeps saved
+  media and retries only the remaining stage; removed receipts claim no current saving.
+  the existing imports observer stays retained while identity resolves. libraries
+  retargets only its still-current picker session; completion never navigates or
+  reopens a dismissed picker. account teardown/reload ends client continuation.
+  pending destination creation blocks competing membership commands for that sealed
+  target through the existing creation owner. acknowledged canonical deletion
+  forgets completed receipts for that media id.
 - destination links and create commands carry explicit opening intent through
   `ActionSelectDetail`. bound links retain full targets and own pointer/keyboard
   handling; shared presenters classify commands and suppress new-pane return focus.
-- `Chat`, `LearnHighlight` and message repeat use the shared `openAsyncResult`
+- `Chat` and message repeat use the shared `openAsyncResult`
   landing contract ([workspace](workspace.md#target-activation)). later input,
   including wheel, source departure or competing overlay permanently relinquishes
   automatic opening; the initiating layer may remain. success offers its exact
-  named result after departure. accepted dossier builds say `dossier requested`.
+  named result after departure.
 - message repeat uses the shared chat command owner before placement. failure
   creates no pane. success names the returned assistant endpoint; ordinary
   placement retains bare-conversation reuse, while shift always forks.
 - source refresh and metadata research send the expectation the viewer saw. their account
-  admission owner retains an unconfirmed request and offers *confirm request*; checking
-  resends the same expectation. only these two admissions restore recovery after restart
+  admission owner retains an unconfirmed request and offers *retry same request*;
+  retry resends the same expectation. live recovery survives pane departure,
+  not account teardown or browser restart
   ([imports](imports.md), [media metadata](media-metadata.md)). an access failure after an
   unknown outcome cannot prove that the request was refused.
 - `ResourceActionsProvider` mounts the sole consumption command owner. callers use
-  `ctx.consumption.finish(id, { leaveLectern })`, `markUnread(id)` or `resetProgress(id)`;
+  `ctx.consumption.finish(id, { title, leaveLectern })`, `markUnread(id)` or `resetProgress(id)`;
   reader *open next* runs its finish through the existing tracked action runtime
   and delayed-result landing contract. the
   owner fences progress holders and keeps the finish response's exact undo receipt beyond
-  the originating pane. undo has no timer; a superseding consumption command on that media
-  or a definitive conflict retires it. an uncertain undo remains a workspace condition.
+  the originating pane. the named popup expires; the exact inverse remains in
+  activity and its subject menu through reactive `consumptionUndoItems`. `undo(commandKey)` and
+  `discardUndo(commandKey)` retain private receipts and revisions. overlapping
+  changes or authoritative refusal retire optional inverses. an uncertain undo
+  remains a required workspace condition even after a later refusal; the earlier
+  outcome is still unknown. send admission and exact owner identity are checked
+  after progress preparation, immediately before transmission.
+- progress preparation refusal means the position is not ready, not necessarily
+  that a save failed. no state request is sent; the reader/player retains its
+  specific recovery. an unloaded reader keeps its read fence so retry still loads.
 - chat deletion and repeat stay with `ConversationCommands`. `ctx.observeChatCommand` projects
   its continuing recovery after the originating pane closes; it stores no command
   or receipt. the target/revision or run id identify the frozen command, its
   owner's `retry()` checks it, and settlement or a different command removes the
   condition. retained failure copy and the same busy action survive checking.
+
+historical generic failures belong to the action runtime. an admitted deliberate
+same-subject/action retry withdraws its exact prior failure before execution;
+this does not claim success. current attempt identity fences delayed failures.
+modeled local device/admission refusals carry their content through
+`ResourceActionFailure` to this same runtime. domain conditions and inverses
+retain their separate settlement contracts.
 
 ## invariants
 
@@ -115,10 +217,16 @@ navigation and its owning relationship/local commands, without resource verbs.
   invalidation; admission and consumption owners guard their own effects. older domain api
   helpers retain their existing internal invalidation behavior. a defect while loading
   breaks the menu's pane (both header projections, the phone bar included, render
-  inside it), while running breaks the shell.
-- confirmations quote the resource's `label` (a media's bare title, without authors).
+  inside it), while an action defect stops workspace presentation below the
+  account owner.
+- confirmations substitute the resource's `label` literally into body `{title}`
+  tokens (a media's bare title, without authors); label text is never a replacement
+  pattern. confirmation precedes execution and busy tracking. podcast actions use
+  distinct `SubscribePodcast`, `ImportPodcastEpisodes`, `UnsubscribePodcast` and
+  `RemovePodcastEpisodes` ids and fixed overlays; their guarded review is the
+  confirmation. the subscription projector also serves loaded pane-header facts.
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
 - visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
   actions read and the item read agree on `missing`; a podcast is a public catalog row (any
   persisted show is visible, as its pane reads it). routing decides no visibility.
-- a passage, highlight, note or message is labelled by its words; a dossier by its subject.
+- a passage, highlight, note or message is labelled by its words.

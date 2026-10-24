@@ -3,14 +3,15 @@
 // A recognised document embed as a card in its placeholder: provider and
 // state, title and description, and its actions (open the child media, open
 // the original, or inspect a failed article's import). Cards sit outside the canonical text.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { DocumentEmbed, TextUnit } from "@/lib/documentReader/model";
 import { articleContentLabel } from "@/lib/documentReader/chrome/ArticleContentNotice";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
+import { readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import { addMediaFromUrl, fetchAcceptedSource, type AcceptedIngest } from "@/lib/imports/ingest";
 import { fetchImportDetail, recoverMedia } from "@/lib/imports/api";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -113,12 +114,13 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
   const runtime = usePaneRuntime();
   const imports = useImports();
   const [requestId, setRequestId] = useState(() => createRandomId());
+  const frozenGuard = useRef<AcquisitionGuard | null>(null);
   const fail = useThrowLater();
   const [request, setRequest] = useState<AcceptedIngest | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detail = usePaneFreeServerValue({
-    key: request?.sourceAttemptId ?? null,
+    key: request?.sourceAttemptId ? `embedded-source-attempt:${request.sourceAttemptId}` : null,
     stale: imports.observation,
     load: async (signal) => {
       const source = await fetchAcceptedSource(request!.sourceAttemptId!, signal);
@@ -143,10 +145,13 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
         if (!recovery || !item?.media_id) return;
         await recoverMedia(item.media_id, recovery);
         detail.refetch();
-      } else setRequest(await addMediaFromUrl({ id: requestId, url: post.source_url, libraryIds: [] }));
+      } else {
+        frozenGuard.current ??= await readAcquisitionGuard([]);
+        setRequest(await addMediaFromUrl({ id: requestId, url: post.source_url, guard: frozenGuard.current }));
+      }
     } catch (error) {
-      if (isApiError(error) && !["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"].includes(error.code)) {
-        if (!request) setRequestId(createRandomId());
+      if (isApiError(error) && !outcomeUnknown(error)) {
+        if (!request) { setRequestId(createRandomId()); frozenGuard.current = null; }
         else detail.refetch();
       }
       try {

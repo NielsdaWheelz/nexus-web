@@ -11,11 +11,14 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import {
   DEFAULT_RETURN_TARGET,
-  loginPath,
+  expectedAccountPath,
+  switchBrowserAccountPath,
+  parseReturnTarget,
   savedPasswordPath,
   type ReturnTarget,
 } from "@/lib/auth/urls";
@@ -33,9 +36,11 @@ const UNCONFIRMED: FeedbackContent = {
 export default function PasswordUpdateForm({
   nextPath,
   saved,
+  expectedAccountId,
 }: {
   nextPath: ReturnTarget;
   saved: boolean;
+  expectedAccountId: string | null;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [fieldError, setFieldError] = useState<FeedbackContent | null>(null);
@@ -51,10 +56,11 @@ export default function PasswordUpdateForm({
   }
 
   const { pending, submit } = useAuthForm<
-    "PolicyRejected" | "SessionEnded" | "RateLimited" | "ServiceUnavailable"
+    "PolicyRejected" | "SessionEnded" | "RateLimited" | "ServiceUnavailable" | "DifferentAccount"
   >((kind) => {
     // an ended session was cleared with feedback /login renders.
-    if (kind === "SessionEnded") window.location.replace(loginPath(nextPath));
+    if (kind === "DifferentAccount") window.location.replace(expectedAccountPath("/account/password", expectedAccountId));
+    else if (kind === "SessionEnded") window.location.replace(switchBrowserAccountPath(parseReturnTarget(expectedAccountPath("/account/password", expectedAccountId))));
     else if (kind === "PolicyRejected") fail(TOO_SHORT, null);
     else if (kind === "RateLimited") {
       fail(null, {
@@ -89,9 +95,9 @@ export default function PasswordUpdateForm({
           }}
           announcement="Polite"
         />
-        <Button asChild variant="primary" size="lg">
-          <Link href={nextPath}>Continue</Link>
-        </Button>
+        <Link href={nextPath} className={buttonClassName({ emphasis: "strong", size: "comfortable" })}>
+          Continue
+        </Link>
       </div>
     );
   }
@@ -108,12 +114,13 @@ export default function PasswordUpdateForm({
         aria-busy={pending}
         noValidate
         onSubmit={(event) =>
-          void submit(event, savedPasswordPath(nextPath), { validate })
+          void submit(event, savedPasswordPath(nextPath, expectedAccountId), { validate })
         }
       >
         {nextPath === DEFAULT_RETURN_TARGET ? null : (
           <input type="hidden" name="next" value={nextPath} />
         )}
+        {expectedAccountId ? <input type="hidden" name="expected_account_id" value={expectedAccountId} /> : null}
         <div className={authStyles.field}>
           <label
             className={authStyles.label}
@@ -142,20 +149,13 @@ export default function PasswordUpdateForm({
             />
             <Button
               className={authStyles.reveal}
-              variant="ghost"
-              size="lg"
+              size="comfortable"
               iconOnly
-              type="button"
+              icon={revealed ? <EyeOff /> : <Eye />}
               aria-label={revealed ? "Hide password" : "Show password"}
               aria-controls="password-update-password"
               onClick={() => setRevealed((value) => !value)}
-            >
-              {revealed ? (
-                <EyeOff size={18} aria-hidden="true" />
-              ) : (
-                <Eye size={18} aria-hidden="true" />
-              )}
-            </Button>
+            />
           </span>
           <p id="password-update-help" className={authStyles.help}>
             Use at least 15 characters.
@@ -166,7 +166,7 @@ export default function PasswordUpdateForm({
             </div>
           ) : null}
         </div>
-        <Button variant="primary" size="lg" type="submit" loading={pending}>
+        <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
           {pending ? "Saving password…" : "Save password"}
         </Button>
       </form>

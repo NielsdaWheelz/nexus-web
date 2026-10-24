@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.highlight_color import HighlightColor
-from nexus.schemas.note_bodies import AnnotationNoteRequest
+from nexus.schemas.note_bodies import AnnotationNoteRequest, Body
 from nexus.schemas.resource_items import ResourceItemOut
 
 HIGHLIGHT_COLORS = HighlightColor
@@ -47,6 +47,7 @@ class LinkedConversationRef(BaseModel):
 
 
 class LinkedNoteBlockRef(BaseModel):
+    link_id: UUID
     note_block_id: UUID
     body_pm_json: dict[str, object]
     body_text: str
@@ -121,16 +122,20 @@ class PdfHighlightAnchorIn(PdfBoundsUpdate):
 class EnsureMediaHighlightRequest(BaseModel):
     """Create or reuse the viewer's exact text span or canonical page geometry."""
 
+    id: UUID
     anchor: Annotated[TextHighlightAnchorIn | PdfHighlightAnchorIn, Field(discriminator="kind")]
     color: HIGHLIGHT_COLORS
-    expected_reader_generation: int | None = Field(default=None, ge=1)
+    expected_reader_generation: int | None = Field(ge=1)
+    initial_note: "InitialHighlightNote | None"
 
     model_config = ConfigDict(extra="forbid")
 
 
-class EnsureMediaHighlightOut(BaseModel):
-    created: bool
-    highlight: TypedHighlightOut
+class InitialHighlightNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note_id: UUID
+    link_id: UUID
+    body_pm_json: Body
 
 
 class AbsentHighlightNoteExpected(BaseModel):
@@ -155,6 +160,7 @@ HighlightNoteExpected = Annotated[
 class SetHighlightNoteRequest(AnnotationNoteRequest):
     """Create in the loaded empty slot or edit its exact attached note."""
 
+    link_id: UUID
     expected: HighlightNoteExpected
 
 
@@ -163,10 +169,6 @@ class DeleteHighlightNoteRequest(BaseModel):
     expected_version: int = Field(ge=1)
 
     model_config = ConfigDict(extra="forbid")
-
-
-class DeleteHighlightNoteOut(BaseModel):
-    deleted_note_id: UUID
 
 
 class PdfAnchorUpdateRequest(BaseModel):

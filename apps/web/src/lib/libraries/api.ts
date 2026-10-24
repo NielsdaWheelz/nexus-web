@@ -5,20 +5,18 @@
 // topics it moved for the viewer; readers reread. Retry rules (the server's
 // contract): a create or an invitation resends its client id, a rename or a role
 // change carries the value it expects to replace; moves carry the collection's
-// revision and cannot be rebased by a retry. Deletes, placements,
-// leaving, revoking and answering are absolute, so resending one that already
-// landed changes nothing.
+// revision and cannot be rebased by a retry. Placements carry exact library and removal revisions; a replay may conflict.
+// Deletes, leaving, revoking and answering are absolute.
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Move, Snapshot } from "@/lib/collections/order";
+import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
 export type Library = Schema<"LibraryOut">;
-export type LibraryEntry =
-  | Schema<"LibraryMediaEntryOut">
-  | Schema<"LibraryPodcastEntryOut">;
+export type LibraryEntry = Schema<"LibraryMediaEntryOut">;
 export type LibraryPlacement = Schema<"LibraryPlacementOut">;
 export type LibraryDestination = Schema<"LibraryDestinationOut">;
 export type LibraryMember = Schema<"LibraryMemberOut">;
@@ -26,14 +24,14 @@ export type LibraryInvitation = Schema<"LibraryInvitationOut">;
 export type ViewerInvitation = Schema<"ViewerInvitationOut">;
 export type LibraryRole = LibraryMember["role"];
 export interface LibraryPlacementTarget {
-  readonly kind: "Media" | "Podcast";
+  readonly kind: "Media";
   readonly id: string;
 }
 
 const libraryPath = (id: string) =>
   `/api/libraries/${encodeURIComponent(id)}` as const;
 const itemPath = (target: LibraryPlacementTarget, libraryId: string) =>
-  `${libraryPath(libraryId)}/items/${target.kind === "Media" ? "media" : "podcast"}:${target.id}` as const;
+  `${libraryPath(libraryId)}/items/media:${target.id}` as const;
 
 async function data<T>(path: `/api/${string}`, signal?: AbortSignal) {
   return (await apiFetch<{ data: T }>(path, { signal })).data;
@@ -43,26 +41,13 @@ export function librariesPage(query: URLSearchParams, signal?: AbortSignal) {
   return data<ListPage<Library>>(`/api/libraries?${query}`, signal);
 }
 
-/** Every library the viewer belongs to, oldest first. */
-export async function memberLibraries(signal?: AbortSignal) {
-  const all: Library[] = [];
-  let cursor: string | null = null;
-  do {
-    const query = new URLSearchParams({ limit: "200" });
-    if (cursor !== null) query.set("cursor", cursor);
-    const page = await librariesPage(query, signal);
-    all.push(...page.items);
-    cursor = page.next_cursor;
-  } while (cursor !== null);
-  return all;
-}
-
-export function getLibrary(id: string, signal?: AbortSignal) {
-  return data<Library>(libraryPath(id), signal);
+/** Stamped with its read snapshot's consumption revision; observations reach native. */
+export async function getLibrary(id: string, signal?: AbortSignal): Promise<StampedRead<Library>> {
+  return stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}", "get">>(libraryPath(id), { signal }));
 }
 
 export async function createLibrary(
-  input: { readonly id: string; readonly name: string },
+  input: Schema<"CreateLibraryRequest">,
   signal?: AbortSignal,
 ): Promise<Library> {
   const response = await apiFetch<{ data: Library }>("/api/libraries", {
@@ -92,15 +77,15 @@ export async function deleteLibrary(id: string): Promise<void> {
   publishChange("Libraries", "Entries");
 }
 
-export function entriesPage(
+/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
+export async function entriesPage(
   id: string,
   query: URLSearchParams,
   signal?: AbortSignal,
 ) {
-  return data<Schema<"LibraryEntriesPageOut">>(
-    `${libraryPath(id)}/entries?${query}`,
-    signal,
-  );
+  const { data, consumption_revision } = stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+    `${libraryPath(id)}/entries?${query}`, { signal }));
+  return { ...data, metadata: { consumption_revision } };
 }
 
 export async function libraryOrder(libraryId: string, signal: AbortSignal): Promise<Snapshot> {
@@ -127,36 +112,41 @@ export function placements(
   target: LibraryPlacementTarget,
   signal?: AbortSignal,
 ) {
-  const ref = `${target.kind === "Media" ? "media" : "podcast"}:${target.id}`;
-  return data<LibraryPlacement[]>(`/api/libraries/placements/${ref}`, signal);
+  const ref = `media:${target.id}`;
+  return data<Schema<"LibraryPlacementsOut">>(`/api/libraries/placements/${ref}`, signal);
 }
 
-/** File a target into a library; the viewer's All is Saved in Nexus. */
-export async function addPlacement(
+/** One strict absolute command; retry retains every precondition. */
+export async function setPlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
-  replaceEpisodes = false,
+  command: Schema<"PlaceItemRequest">,
   signal?: AbortSignal,
-): Promise<void> {
-  await apiFetch(itemPath(target, libraryId), {
-    method: "PUT",
-    body: JSON.stringify({ replace_episodes: replaceEpisodes }),
-    signal,
+): Promise<LibraryPlacement> {
+  const response = await apiFetch<{ data: LibraryPlacement }>(itemPath(target, libraryId), {
+    method: "PUT", body: JSON.stringify(command), signal,
   });
   publishChange("Entries");
+  return response.data;
 }
 
-export async function removePlacement(
-  target: LibraryPlacementTarget,
-  libraryId: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  await apiFetch(itemPath(target, libraryId), { method: "DELETE", signal });
-  publishChange("Entries");
+export function libraryDestinations(signal?: AbortSignal) {
+  return data<Schema<"LibraryDestinationsOut">>("/api/libraries/destinations", signal);
 }
 
-export function libraryDestinations(signal?: AbortSignal): Promise<LibraryDestination[]> {
-  return data<LibraryDestination[]>("/api/libraries/destinations", signal);
+export type AcquisitionGuard = Pick<Schema<"ConfirmUploadRequest">, "expected_removal_revision" | "destinations">;
+
+/** Selected revisions are what the reader reviewed, never a submission-time rebase. */
+export function acquisitionGuard(selected: readonly LibraryDestination[], removalRevision: string): AcquisitionGuard {
+  return {
+    expected_removal_revision: removalRevision,
+    destinations: selected.map(destination => ({ library_id: destination.id, expected_order_revision: destination.order_revision })),
+  };
+}
+
+/** Initial submission only. The caller retains this snapshot through unknown outcomes. */
+export async function readAcquisitionGuard(selected: readonly LibraryDestination[], signal?: AbortSignal): Promise<AcquisitionGuard> {
+  return acquisitionGuard(selected, (await libraryDestinations(signal)).removal_revision);
 }
 
 function page<T>(path: string, cursor: string | null, limit: number, signal: AbortSignal) {
@@ -230,4 +220,9 @@ export async function respondToInvitation(id: string, accept: boolean): Promise<
     method: "POST",
   });
   if (accept) publishChange("Libraries", "Entries");
+}
+
+/** Authenticated complete membership count, including all's visible union. */
+export async function getLibraryMetadata(id: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/libraries/{library_id}/metadata", "get">>(`${libraryPath(id)}/metadata`, { signal })).data;
 }

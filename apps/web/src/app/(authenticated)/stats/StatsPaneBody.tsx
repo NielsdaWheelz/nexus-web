@@ -11,11 +11,11 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import Input from "@/components/ui/Input";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
   useServerValue,
@@ -105,6 +105,8 @@ function correctionFailure(
     error.status >= 500
   )
     return RETRY;
+  const transport = apiTransportFeedback(error, "activity correction wasn’t confirmed");
+  if (transport !== null) return transport;
   if (error.status === 404)
     return { title: "That activity is no longer available" };
   return error.status === 400 || error.status === 409 ? STALE : null;
@@ -386,8 +388,6 @@ function Breakdowns({ data, onFilter }: { data: Stats; onFilter?: OnFilter }) {
       ? [
           <Button
             key="filter"
-            size="sm"
-            variant="ghost"
             aria-label={`Filter ${label}`}
             onClick={() => onFilter(key, value)}
           >
@@ -466,6 +466,11 @@ function Sessions(props: {
   onExclude: (row: Session) => void;
 }) {
   const { sessions, correcting } = props;
+  const section = useRef<HTMLDivElement>(null);
+  const readFeedback = useCollectionReadFeedback({
+    list: sessions, unit: { singular: "session", plural: "sessions" }, waiting: false, outcome: null,
+    returnFocus: () => section.current,
+  });
   const exclude = (row: Session) =>
     row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu
@@ -488,34 +493,31 @@ function Sessions(props: {
       description="Server-derived sessions; time is clipped to this range."
       scope={props.data.activity}
     >
-      <Table
-        head={["Session", "Active time", "Movement"]}
-        rows={sessions.items.map((row) => [
-          sessionKey(row),
-          <SessionCell
-            key="session"
-            title={<WorkLink mediaId={row.media_id} title={row.title} />}
-            row={row}
-            action={exclude(row)}
-          />,
-          duration(row.active_ms),
-          movement(row.forward_word_position, row.forward_media_position_ms),
-        ])}
-      />
-      {sessions.failure !== null ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: sessions.failure.op === "More" ? "more sessions couldn’t load" : sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
-          announcement="Polite"
-          actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
+      <div ref={section} tabIndex={-1} role="group" aria-label="sessions">
+        <Table
+          head={["Session", "Active time", "Movement"]}
+          rows={sessions.items.map((row) => [
+            sessionKey(row),
+            <SessionCell
+              key="session"
+              title={<WorkLink mediaId={row.media_id} title={row.title} />}
+              row={row}
+              action={exclude(row)}
+            />,
+            duration(row.active_ms),
+            movement(row.forward_word_position, row.forward_media_position_ms),
+          ])}
         />
-      ) : (
-        <LoadMoreFooter
-          hasMore={sessions.current && !sessions.complete}
-          loading={sessions.running === "More"}
-          onLoadMore={sessions.more}
-          label="Load more sessions"
-        />
-      )}
+        {sessions.failure !== null && sessions.failure.op !== "More" ? (
+          <FeedbackNotice
+            content={{ tone: "Warning", title: sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
+            announcement="Polite"
+            actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
+          />
+        ) : null}
+        {readFeedback.notice}
+        {readFeedback.announcement}
+      </div>
     </Section>
   );
 }
@@ -543,8 +545,6 @@ function Exclusions(props: {
             row={row}
             action={
               <Button
-                size="sm"
-                variant="ghost"
                 aria-label={`Restore ${row.title} session from ${shortDate(row.started_at)}`}
                 disabled={props.correcting}
                 onClick={() => props.onRestore(row)}
@@ -717,23 +717,17 @@ function Controls(props: {
     const value = view.filters[key];
     return value ? [[key, value] as const] : [];
   });
-  const pressed = (name: StatsView["view"]) =>
-    ({
-      size: "sm",
-      variant: view.view === name ? "primary" : "secondary",
-      "aria-pressed": view.view === name,
-    }) as const;
   return (
     <div className={styles.controls}>
       <div role="group" aria-label="Stats view">
         <Button
-          {...pressed("stats")}
+          aria-pressed={view.view === "stats"}
           onClick={() => update({ view: "stats", period: "day" })}
         >
           Stats
         </Button>
         <Button
-          {...pressed("year")}
+          aria-pressed={view.view === "year"}
           onClick={() => update({ view: "year", period: "year" })}
         >
           Year
@@ -788,19 +782,15 @@ function Controls(props: {
           role="group"
           aria-label={yearView ? "Year navigation" : "Date navigation"}
         >
-          <Button size="sm" variant="secondary" onClick={() => move(-1)}>
+          <Button onClick={() => move(-1)}>
             Previous
           </Button>
           <Button
-            size="sm"
-            variant="secondary"
             onClick={() => update(yearView ? { year: null } : { anchor: null })}
           >
             {yearView ? "This year" : "Today"}
           </Button>
           <Button
-            size="sm"
-            variant="secondary"
             onClick={() => move(1)}
             disabled={!canGoNext}
           >
@@ -866,7 +856,7 @@ export default function StatsPaneBody() {
   if (isActive) followed.current = consumption;
   const stale = `${refresh}:${followed.current}`;
   const stats = useServerValue({
-    key: query,
+    key: query === null ? null : `/consumption/stats?${query}`,
     stale,
     visit: STATS,
     load: async (signal) =>
@@ -878,11 +868,10 @@ export default function StatsPaneBody() {
       ).data,
   });
   const sessions = useServerList<Session>({
-    key: query,
+    key: query === null ? null : `/consumption/sessions?${query}`,
     stale,
     pageSize: 50,
-    drain: false,
-    active: isActive,
+    active: isActive && view.view !== "year" && stats.status === "ready" && stats.data.activity.totals.active_ms > 0,
     visit: SESSIONS,
     id: sessionKey,
     fetchPage: async (cursor, limit, signal) => {
@@ -920,7 +909,7 @@ export default function StatsPaneBody() {
       if (handleUnauthenticatedApiError(error)) return;
       const failure = correctionFailure(error);
       if (failure === null) return fail({ error });
-      feedback.offer({ key: "consumption-activity-correction", announcement: "Polite", content: { tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined } });
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "consumption-activity-correction", announcement: "Polite", content: { tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined } });
       if (failure === STALE) publishChange("Consumption");
     } finally {
       if (mounted.current) setCorrecting(false);

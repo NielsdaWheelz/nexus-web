@@ -67,9 +67,10 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
   existed before.
 - I6 live Nexus writes per generation <= 8.
 - I7 undo is principal-gated; every reversal and the stamp commit together; a second
-  undo is a no-op 204; an absent target counts as reverted; library undo removes
-  only the entry the write inserted, and never a media's last reference (409
-  `E_MEDIA_LAST_REFERENCE`).
+  undo is a no-op 204. other absent targets count as reverted. library undo
+  requires current named-library authority, the exact inserted entry id and its
+  unchanged receipt revision. stale, absent or historical null-revision entry
+  receipts return `E_RESOURCE_CONFLICT` atomically; default holdings survive.
 - I8 history, authorship and undo outlive the conversation and the target.
 - I9 the model sees a call's output only after its row committed; in a chat the
   output carries the call's numbered `tool_citation` sections.
@@ -110,7 +111,12 @@ declared errors.
 
 `GET /assistant-writes?generation_id=&before=` lists the viewer's finished write
 attempts (result present), newest first, 30 a page, keyed by `(created_at, id)`;
-an unknown cursor is 400 `E_INVALID_CURSOR`. `POST /assistant-writes/{id}/undo`
+an unknown cursor is 400 `E_INVALID_CURSOR`. the account surface uses the shared
+collection owner with that fixed 30-row page size (`before`, no `limit`),
+publishing and draining pages while its pane is active and the document visible.
+a deep link focuses its row once on arrival; absence is established only after
+source exhaustion. undo and manual refresh strictly invalidate the collection.
+`POST /assistant-writes/{id}/undo`
 answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
 `E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
 pass through.
@@ -161,3 +167,19 @@ completion and undo cannot reverse a central note.
 A change to the tool vocabulary the browser reads (effects, error types,
 presentation) breaks a tab loaded from the last release, so it takes the one
 `WIRE_REVISION` bump allowed before the next ([api edge](api-edge.md#wire-revision)).
+
+## guarded library filing
+
+`nexus.resource.inspect` returns `{resource: {kind: Media | Library, ...}}` from one
+read-only snapshot. media retains its read map; a visible library supplies its
+id, name, exact decimal `order_revision`, viewer `removal_revision` and
+`can_manage`. all remains unmanageable. admitted scope and visibility still apply.
+
+`nexus.library.add` requires a named `library_id`, resource uri and both frozen
+revisions. it uses the public absolute placement owner; conflicts map to the tool's
+`Conflict` refusal and require review, never refreshed-token retries. an actual
+named insertion records its exact entry id and final revision. a no-op records
+no undo ownership. filing personally retains media; undo removes only the named
+filing. account history uses the same receipt eligibility predicate as execution.
+historical entry receipts carry required `order_revision:null`; their provenance
+survives, but their old undo authority is unproved.

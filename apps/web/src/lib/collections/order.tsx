@@ -20,7 +20,7 @@ import {
 } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
-import { isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { libraryOrder, moveEntry } from "@/lib/libraries/api";
@@ -123,15 +123,16 @@ export async function deliver<T>(input: {
   readonly send: (signal: AbortSignal) => Promise<T>;
   readonly signal: AbortSignal;
 }): Promise<Delivery<T>> {
-  const signal = AbortSignal.any([input.signal, AbortSignal.timeout(WRITE_DEADLINE_MS)]);
   try {
-    if (input.checking && compareRevision(await input.current(signal), input.expected) > 0)
-      return { kind: "Moved" };
-    return { kind: "Acknowledged", value: await input.send(signal) };
+    return await requestWithDeadline({ signal: input.signal, timeoutMs: WRITE_DEADLINE_MS, request: async signal => {
+      if (input.checking && compareRevision(await input.current(signal), input.expected) > 0)
+        return { kind: "Moved" } as const;
+      return { kind: "Acknowledged", value: await input.send(signal) } as const;
+    } });
   } catch (error) {
     if (!input.checking && isRefusal(error)) return { kind: "Refused", error };
     if (handleUnauthenticatedApiError(error)) return { kind: "Unknown" };
-    if (isSameSystemApiDefect(error) || (!isApiError(error) && !signal.aborted)) throw error;
+    if (isSameSystemApiDefect(error) || (!isApiError(error) && !input.signal.aborted)) throw error;
     return { kind: "Unknown" };
   }
 }
@@ -220,15 +221,13 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
   switch (order?.state.kind) {
     case undefined:
     case "Ready":
+    case "Incomplete":
+    case "Refreshing":
       return null;
     case "Sorted":
       return "choose custom order to reorder.";
     case "Filtered":
       return "clear filters to reorder.";
-    case "Incomplete":
-      return "reordering is available when all items finish loading.";
-    case "Refreshing":
-      return "updating order…";
     case "Saving":
       return "saving order…";
     case "Checking":
@@ -239,8 +238,9 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
 }
 
 /** The order's notice, announced in the pane the move came from while that pane
- * shows it, else in the active pane. */
-export function OrderNotice({
+ * shows it, else in the active pane. Returns null when no notice is needed so
+ * the surface does not reserve an empty state slot. */
+export function renderOrderNotice({
   order,
   active,
   paneId,

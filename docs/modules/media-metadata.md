@@ -40,8 +40,8 @@ authors list. admitted handles preserve person identity across credited-name
 changes; unbound names use the contributor owner's exact resolver. observed
 spellings remain nonresolving aliases. duplicate identity within one role rejects
 the result. an explicit empty role slice may clear that role; unresolved roles
-remain untouched. the existing manual-author pin withholds differing automatic
-author proposals, and the outcome reports that fact. no new manual field pins.
+remain untouched. author slices follow the same publication policy as other
+roles; credit origin does not prevent a supported observation from replacing it.
 
 ## research input and capability
 
@@ -303,7 +303,7 @@ canonical urls distinct from the source url share one descriptive label.
 
 `0256` (typed job outcomes, 2026-10-13 release) and `0278` (current x snapshots;
 every settled old metadata payload tagged `purpose=bibliography`, by 2026-10-15)
-ran in production and are now part of the 0292 baseline. the archived legacy
+ran in production and are now part of the 0306 baseline. the archived legacy
 metadata jobs survive only in those releases' backups. no runtime legacy decoder
 remains; unavailable saved x copies stay readable through a refresh. the old
 publication-date backfill and metadata arm of `/media/{id}/retry` are removed;

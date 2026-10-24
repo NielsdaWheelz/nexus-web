@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Copy, Info, RotateCcw } from "lucide-react";
 import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import ResourceComposer from "@/components/resources/ResourceComposer";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
-import Tooltip from "@/components/ui/Tooltip";
+import Button from "@/components/ui/Button";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { Message } from "@/lib/chat/wire";
@@ -44,7 +44,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
       feedback.receipt({ tone: "Success", title: "message copied" });
     } catch (error) {
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
-      feedback.offer({ key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
     }
   };
   const regenerate = (event: TargetActivationEvent) => {
@@ -68,12 +68,11 @@ export default function MessageFooter({ message, latest, engaged, details = null
       {pending ? null : (
         <div className={styles.right}>
           {message.content.trim() && run?.failure?.code !== "invalid_output" ? (
-            <IconAction label="copy message" onClick={() => void copy()}><Copy size={16} aria-hidden="true" /></IconAction>
+            <Button iconOnly icon={<Copy />} aria-label="copy message" className={styles.secondary} onClick={() => void copy()} />
           ) : null}
           {message.role === "assistant" && message.status === "complete" && run ? (
-            <IconAction label="regenerate response" disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate}>
-              <RotateCcw size={16} aria-hidden="true" />
-            </IconAction>
+            <Button iconOnly icon={<RotateCcw />} aria-label="regenerate response" className={styles.secondary}
+              disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate} />
           ) : null}
           <MessageMenu message={message} onOpenChange={setMenuOpen} onAdd={() => setAdding(true)} />
         </div>
@@ -83,15 +82,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
       <ResourceComposer source={{ kind: "resource", ref: `message:${message.id}` }} occurrenceKey={`message:${message.id}`} label="add item" />
     ) : null}
     </>
-  );
-}
-
-function IconAction({ label, children, ...props }: Omit<ComponentProps<"button">, "type" | "aria-label"> & { label: string }) {
-  return (
-    <Tooltip
-      text={label}
-      renderTrigger={(hint) => <button {...props} {...hint} type="button" aria-label={label} className={`${styles.control} ${styles.secondary}`}>{children}</button>}
-    />
   );
 }
 

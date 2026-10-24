@@ -49,7 +49,7 @@ export async function createReading(attempt: { readonly id: string; readonly que
 export function watchReading(
   id: string,
   onState: (reading: OracleReading) => void,
-  onLost: () => void,
+  onLost: (error: Error) => void,
 ): () => void {
   return openStream<OracleReading, OracleReading>({
     path: `/api/stream/oracle-readings/${encodeURIComponent(id)}/events`,
@@ -62,6 +62,7 @@ export function watchReading(
       reading.status === "complete" || reading.status === "failed",
     onEvent: onState,
     onError: onLost,
+    onSuspended: onLost,
   });
 }
 

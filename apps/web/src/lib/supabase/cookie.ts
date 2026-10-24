@@ -81,7 +81,7 @@ export function decodeSessionCookie(cookies: readonly CookieValue[]): {
     return null;
   }
   if (!isRecord(raw) || typeof raw.access_token !== "string") return null;
-  if (typeof raw.expires_at !== "number" || typeof raw.token_type !== "string")
+  if (typeof raw.expires_at !== "number" || !Number.isSafeInteger(raw.expires_at) || typeof raw.token_type !== "string")
     return null;
   if (!raw.access_token) return null;
   return {
@@ -142,4 +142,12 @@ export function applyWrites(
     else jar.set(name, value);
   }
   return Array.from(jar, ([name, value]) => ({ name, value }));
+}
+
+// duration for the native credential owner; no token or wall-clock deadline
+// crosses the bridge or survives restart.
+export function refreshAfterMs(cookies: readonly CookieValue[]): number {
+  const session = decodeSessionCookie(cookies);
+  if (!session) throw new Error("Live session cookie missing");
+  return Math.max(0, Math.floor(session.expiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS));
 }

@@ -1,0 +1,78 @@
+/* The row's named container owns adaptation; names are removed, never clipped
+   with their links still focusable. Count and year retain independent slots. */
+.bibliography,
+.names,
+.credit {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.bibliography {
+  flex: 1 1 auto;
+  min-inline-size: min-content;
+  color: var(--ink-muted);
+}
+
+.names {
+  inline-size: 0;
+  flex: 1;
+  min-inline-size: min-content;
+}
+
+.credit {
+  flex: 1;
+  min-inline-size: min-content;
+}
+
+.name {
+  display: block;
+  flex: 1;
+  inline-size: 0;
+  min-inline-size: 1em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comma,
+.wideOverflow,
+.compactOverflow,
+.separator,
+.year {
+  flex: none;
+  white-space: nowrap;
+}
+
+.comma {
+  white-space: pre;
+}
+
+.wideOverflow,
+.compactOverflow {
+  color: var(--ink-faint);
+}
+
+.compactOverflow {
+  display: none;
+}
+
+.separator {
+  padding-inline: var(--row-publication-gap);
+  color: var(--ink-faint);
+}
+
+.year {
+  font-variant-numeric: tabular-nums;
+}
+
+@container indexRow (max-width: calc(32em - 1px)) {
+  .credit:nth-child(n + 2),
+  .wideOverflow {
+    display: none;
+  }
+
+  .compactOverflow {
+    display: inline;
+  }
+}

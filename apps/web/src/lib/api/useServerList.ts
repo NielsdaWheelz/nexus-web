@@ -1,34 +1,42 @@
 "use client";
 
 // One server-ordered list (docs/architecture.md §8.12).
-// - `key` names the view. A new key loads its first page; until it lands the
-//   previous key's rows stay shown (`current: false`), then they swap at once.
+// - `key` names the view. Only its matching, account-owned snapshot is
+//   exposed unless `retainPreviousKey` explicitly holds the last committed
+//   account-owned prefix while its replacement loads.
 // - Rows are deduped by `id`; the first occurrence wins.
 // - `refetch()` rereads the loaded prefix (at least one page; a complete list
 //   to its end, so it stays complete) and commits it at once. It runs after the
 //   read in flight, superseding its success or failure, and calls made meanwhile
 //   share one reread. A change of `stale` under the same key refetches.
-// - `drain` continues page by page to the end while `active` and the document
-//   is visible, and stops at the first failure until `retry()`.
-// - Rows are always kept. A continuation that fails in transport or with a 5xx
-//   is a failure, never a defect.
+// - Each page commits immediately, then continuation runs sequentially while
+//   `active` and the document is visible; settled failure requires `retry()`.
+//   Failure latches for this mounted read owner; snapshots retain data only.
+//   A remount has fresh admission under its existing route/open/query owner.
+// - `revalidate()` coalesces periodic observations behind traversal and strict
+//   refresh. It never supersedes a read or clears a settled failure.
+// - Same-key refresh and continuation failures keep the committed rows.
+//   A continuation that fails in transport or with a 5xx is a failure, never a defect.
 // - A pane return paints this visit's snapshot and rereads it only if `stale`
 //   moved since it was read; a server seed for the first key paints the first
 //   visit without a read. usePaneFreeServerList is the same list for a dialog
 //   no pane visit owns.
-// - Manual reads retain a rejected cursor until explicit page-one refresh; one
-//   optional deadline encloses the whole prefix walk and retry policy.
 // - Defects throw in render; aborts and 401s are not failures.
 
+import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
+import { remoteReady } from "@/lib/native/admission";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { isApiError, ApiError } from "@/lib/api/client";
 import {
   modeledApiError,
   requestWithRetry,
+  type ReadPolicy,
   useServerSeed,
+  useReadOwner,
   useThrowLater,
   useVisitSnapshot,
-  type ReadPolicy,
 } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
@@ -44,31 +52,41 @@ export interface ListPage<T, M = null> {
 export interface ListSnapshot<T, M = null> {
   readonly key: string;
   readonly stale: string;
+  readonly source: ReadSource;
   readonly items: readonly T[];
   readonly cursor: string | null;
+  /** Consumed page cursors preserve exact prefix coverage, even for empty pages. */
+  readonly cursors: readonly (string | null)[];
   readonly orderRevision: string | null;
   readonly metadata: M | null;
 }
 type Op = "Load" | "More" | "Refetch";
 export interface ServerList<T, M = null> {
+  /** Requested query identity, including null while no query is admitted. */
+  readonly requestedKey: string | null;
   readonly status: "loading" | "failed" | "ready";
   readonly items: readonly T[];
   readonly shownKey: string | null;
-  /** The invalidation stamp committed with the shown rows and cursor. */
   readonly shownStale: string | null;
-  /** The shown rows belong to the requested key. */
+  readonly source: ReadSource;
+  /** The requested key has a committed snapshot. */
   readonly current: boolean;
+  /** A live snapshot matches the invalidation token; running and failure still gate intent. */
+  readonly fresh: boolean;
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
   readonly orderRevision: string | null;
-  /** Metadata from the same committed response as the shown rows, including an empty page. */
+  /** Current-key metadata from the committed traversal (`foldMetadata`), including an empty page. */
   readonly metadata: M | null;
   readonly running: Op | null;
   readonly failure: { readonly op: Op; readonly error: ApiError } | null;
-  readonly more: () => void;
+  /** Input activity and document visibility; admitted reads may finish inactive. */
+  readonly active: boolean;
+  readonly revalidate: () => void;
   /** Repeats what failed; a rejected cursor rereads instead. */
   readonly retry: () => void;
   readonly refetch: () => Promise<void>;
+  readonly more: () => void;
 }
 
 interface Waiter {
@@ -95,9 +113,16 @@ interface ListInput<T, M> extends ReadPolicy {
   readonly key: string | null;
   readonly stale: string;
   readonly pageSize: number;
-  readonly drain: boolean;
+  readonly readPolicy?: string;
+  readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
+  /** Omit for ordinary sequential traversal; false leaves continuation to `more()`. */
+  readonly drain?: boolean;
+  /** Search replacement keeps the last committed prefix visible while a new key loads. */
+  readonly retainPreviousKey?: boolean;
   readonly id: (item: T) => string;
+  /** Combines one traversal's page metadata, earliest first; absent, the latest page's wins. */
+  readonly foldMetadata?: (earlier: M, later: M) => M;
   readonly fetchPage: (
     cursor: string | null,
     limit: number,
@@ -127,99 +152,176 @@ function useList<T, M>(
   shownRef: { current: ListSnapshot<T, M> | null },
 ): ServerList<T, M> {
   const { key, stale } = input;
+  const admissionGeneration = useRemoteGeneration();
+  const accountId = useOptionalAuthenticatedAccount()?.accountId ?? null;
+  const [shownAccount, setShownAccount] = useState(accountId);
+  const latestAccount = useRef(accountId);
+  latestAccount.current = accountId;
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
   const latest = useRef(input);
   latest.current = input;
   const seed = useServerSeed<ListPage<T, M>>(key);
-  const [shown, setShown] = useState<ListSnapshot<T, M> | null>(() => {
-    if (restored !== null || seed === null) return restored;
+  const [held, setShown] = useState<ListSnapshot<T, M> | null>(() => {
+    const retained = restored?.source.kind === "catalog" && restored.source.snapshot_id !== input.catalog?.snapshot_id ? null : restored;
+    if (retained !== null || seed === null) return retained;
     const { items, next_cursor, order_revision, metadata } = seed.data;
-    return { key: seed.key, stale, items, cursor: next_cursor, orderRevision: order_revision ?? null, metadata: metadata ?? null };
+    return { key: seed.key, stale, source: LIVE_SOURCE, items: unique(items, input.id), cursor: next_cursor, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
   });
+  const shown = shownAccount === accountId ? held : null;
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
-  const [failed, setFailure] = useState<(NonNullable<ServerList<T, M>["failure"]> & { key: string }) | null>(null);
-  const failure = failed?.key === key ? failed : null;
+  const [failureAccount, setFailureAccount] = useState(accountId);
+  const [heldFailure, setFailure] = useState<(NonNullable<ServerList<T, M>["failure"]> & { readonly key: string }) | null>(null);
+  const failure = failureAccount === accountId && heldFailure?.key === key ? heldFailure : null;
+  const pendingObservation = useRef(false);
+  const [observation, setObservation] = useState(0);
   const [visible, setVisible] = useState(isVisible);
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
 
+  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
+    if (latest.current.key === null) return;
+    waiters.current.push({ resolve() {}, reject() {} });
+    run("Refetch");
+  });
   const run = useCallback(
     function run(requested: Op) {
-      const { key, stale, pageSize, fetchPage, id, retry, timeoutMs } = latest.current;
-      const base = shownRef.current?.key === key ? shownRef.current : null;
-      if (key === null || flight.current !== null) return;
+      const { key, stale, pageSize, fetchPage, id, catalog, foldMetadata } = latest.current;
+      const fold = (earlier: M | null, later: M | null) =>
+        earlier === null || later === null || foldMetadata === undefined ? later : foldMetadata(earlier, later);
+      let base = shownRef.current?.key === key ? shownRef.current : null;
+      if (latestAccount.current !== accountId || key === null || flight.current !== null) return;
       if (requested === "More" && base?.cursor == null) return;
       // A reread of a key with no rows yet is its first load.
       const op = requested === "Refetch" && base === null ? "Load" : requested;
       const settle = op === "More" ? [] : waiters.current.splice(0);
+      if (op !== "More") pendingObservation.current = false;
+      const generation = owner.generation;
       const controller = new AbortController();
       flight.current = controller;
       setRunning(op);
       const superseded = () => {
-        if (waiters.current.length === 0 && latest.current.key === key && latest.current.stale === stale) return false;
+        if (latestAccount.current === accountId && generation === owner.generation && waiters.current.length === 0 && latest.current.key === key && latest.current.stale === stale) return false;
         // A caller awaiting this reread waits for the queued fresh one too.
         waiters.current.unshift(...settle);
         return true;
       };
+      // The cursor restart budget encloses transport retries, not each attempt.
+      let restarted = false;
+      let wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
+      let toEnd = op !== "Load" && base !== null && base.cursor === null;
       const read = async (signal: AbortSignal) => {
-        const want = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
-        const toEnd = base !== null && base.cursor === null;
+        const validateCursor = (page: ListPage<T, M>, cursors: readonly (string | null)[]) => {
+          if (page.next_cursor !== null && cursors.includes(page.next_cursor)) {
+            throw new ApiError(409, "E_INVALID_CURSOR", "list returned a repeated cursor");
+          }
+        };
         const walk = async () => {
           const items: T[] = [];
+          const cursors: (string | null)[] = [];
           let cursor: string | null = null;
           let orderRevision: string | null = null;
           let metadata: M | null = null;
           do {
-            const limit = toEnd ? 200 : Math.min(200, want - items.length);
-            const page = await fetchPage(cursor, limit, signal);
-            metadata = page.metadata ?? null;
+            const page = await fetchPage(cursor, pageSize, signal);
+            cursors.push(cursor);
+            validateCursor(page, cursors);
+            metadata = cursors.length === 1 ? page.metadata ?? null : fold(metadata, page.metadata ?? null);
             const revision = page.order_revision ?? null;
             if (cursor === null) orderRevision = revision;
             else if (revision !== orderRevision) throw new Error("list pages returned different order revisions");
             items.push(...page.items);
             cursor = page.next_cursor;
-          } while (cursor !== null && (toEnd || items.length < want));
-          return { items, cursor, orderRevision, metadata };
+          } while (cursor !== null && (toEnd || cursors.length < wantPages));
+          return { items, cursor, cursors, orderRevision, metadata, continuation: false };
         };
         try {
-          if (op === "More" && base !== null) {
+          if (op === "More" && base !== null && base.source.kind === "live" && !restarted) {
             const page = await fetchPage(base.cursor, pageSize, signal);
+            const cursors = [...base.cursors, base.cursor];
+            validateCursor(page, cursors);
             const orderRevision = page.order_revision ?? null;
             if (orderRevision !== base.orderRevision) throw new Error("list continuation returned a different order revision");
-            return { items: [...base.items, ...page.items], cursor: page.next_cursor, orderRevision, metadata: page.metadata ?? null };
+            return { items: page.items, cursor: page.next_cursor, cursors, orderRevision, metadata: fold(base.metadata, page.metadata ?? null), continuation: true };
           }
           return await walk();
         } catch (error) {
-          // A revision-bound cursor invalidates the whole walk, never just its last page.
-          if (retry !== "manual" && isApiError(error) && error.code === "E_INVALID_CURSOR") return walk();
-          throw error;
+          // Restart from the source, never from a cached first page.
+          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted || latest.current.retry === "manual") throw error;
+          restarted = true;
+          return walk();
         }
       };
-      void requestWithRetry(read, controller.signal, { retry, timeoutMs })
+      void (async () => {
+        let localError: ApiError | null = null;
+        if (catalog && (base === null || base.source.kind === "catalog" || base.cursor !== null)) {
+          try {
+            const saved = await catalog.load(controller.signal);
+            if (controller.signal.aborted) throw aborted();
+            if (superseded()) return null;
+            if (saved !== null) {
+              const { items, order_revision, metadata } = saved.data;
+              const next: ListSnapshot<T, M> = { key, stale, source: saved.source, items: unique(items, id), cursor: null, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
+              base = next;
+              shownRef.current = next;
+              setShownAccount(accountId);
+              setShown(next);
+              setFailure(null);
+              toEnd = true;
+              wantPages = 1;
+            } else localError = new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device");
+          } catch (error) {
+            if (controller.signal.aborted) throw aborted();
+            if (!isApiError(error)) throw error;
+            localError = error;
+          }
+        }
+        if (localError?.code === "E_CATALOG_COVERAGE" && base?.source.kind === "catalog") {
+          base = null;
+          shownRef.current = null;
+          setShown(null);
+        }
+        if (!remoteReady()) {
+          if (base !== null && base.cursor === null) { for (const waiter of settle) waiter.resolve(); return null; }
+          throw localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection");
+        }
+        const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
+          op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
+        return owner.read(requestKey, signal => requestWithRetry(read, signal, latest.current), controller.signal);
+      })()
         .then(
-          ({ items, cursor, orderRevision, metadata }) => {
+          result => {
+            if (result === null) return;
+            const { items, cursor, cursors, orderRevision, metadata, continuation } = result;
             if (controller.signal.aborted) throw aborted();
             if (superseded()) return;
-            const next = { key, stale, items: unique(items, id), cursor, orderRevision, metadata };
+            const next = { key, stale, source: LIVE_SOURCE, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, cursors, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
+            setShownAccount(accountId);
             setShown(next);
             for (const waiter of settle) waiter.resolve();
           },
           (error: unknown) => {
             if (controller.signal.aborted) throw aborted();
             if (superseded()) return;
+            if (isApiError(error) && error.code === "E_NETWORK" && !remoteReady() && base?.source.kind === "catalog") {
+              setFailure(null);
+              for (const waiter of settle) waiter.resolve();
+              return;
+            }
             // A continuation the server or network failed stops the list, not the pane.
             const modeled =
               op === "More" &&
               isApiError(error) &&
-              !isSameSystemApiDefect(error) &&
               (error.status === 0 || error.status >= 500)
                 ? error
                 : modeledApiError(error, fail, signIn);
-            if (modeled !== null) setFailure({ key, op, error: modeled });
+            if (modeled !== null) {
+              setFailureAccount(accountId);
+              setFailure({ key, op, error: modeled });
+            }
             for (const waiter of settle) waiter.reject(error);
           },
         )
@@ -230,26 +332,27 @@ function useList<T, M>(
           if (flight.current !== controller) return;
           flight.current = null;
           setRunning(null);
-          if (waiters.current.length > 0) run("Refetch");
+          if (latestAccount.current === accountId && waiters.current.length > 0) run("Refetch");
         });
     },
-    [fail, shownRef, signIn],
+    [fail, shownRef, signIn, owner, accountId],
   );
 
   const refetch = useCallback((): Promise<void> => {
     if (latest.current.key === null) return Promise.reject(aborted());
     return new Promise<void>((resolve, reject) => {
       waiters.current.push({ resolve, reject });
-      run("Refetch");
+      owner.invalidate();
     });
-  }, [run]);
+  }, [owner]);
 
   useEffect(() => {
+    pendingObservation.current = false;
     if (key === null) return;
     const queue = waiters.current;
     const kept = shownRef.current;
     if (kept?.key !== key) run("Load");
-    else if (kept.stale !== latest.current.stale) run("Refetch");
+    else if (kept.stale !== latest.current.stale || kept.source.kind === "catalog") run("Refetch");
     return () => {
       flight.current?.abort();
       flight.current = null;
@@ -259,46 +362,60 @@ function useList<T, M>(
     };
   }, [key, run, shownRef]);
 
-  const seen = useRef({ key, stale });
+  const catalogSnapshot = input.catalog?.snapshot_id ?? null;
+  const observedCatalog = useRef(catalogSnapshot);
   useEffect(() => {
-    const previous = seen.current;
-    seen.current = { key, stale };
-    if (previous.key === key && previous.stale !== stale) {
-      refetch().catch(() => {});
-    }
-  }, [key, stale, refetch]);
+    if (observedCatalog.current === catalogSnapshot) return;
+    observedCatalog.current = catalogSnapshot;
+    const held = shownRef.current;
+    if (held?.source.kind === "live" && held.cursor === null && held.key === key) return;
+    owner.invalidate();
+  }, [catalogSnapshot, key, owner, shownRef]);
+
+  const admittedGeneration = useRef(admissionGeneration);
+  useEffect(() => {
+    if (admissionGeneration === admittedGeneration.current) return;
+    admittedGeneration.current = admissionGeneration;
+    if (remoteReady()) void refetch().catch(() => {});
+  }, [admissionGeneration, refetch]);
+
+  const revalidate = useCallback(() => {
+    if (latest.current.key === null || pendingObservation.current) return;
+    pendingObservation.current = true;
+    setObservation((value) => value + 1);
+  }, []);
 
   useEffect(() => {
-    if (!input.drain) return;
     const update = () => setVisible(isVisible());
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
-  }, [input.drain]);
+  }, []);
 
   const ofKey = shown !== null && shown.key === key ? shown : null;
-  const drainable =
-    input.drain &&
-    input.active &&
-    visible &&
-    ofKey?.cursor != null &&
-    running === null &&
-    failure === null;
+  const display = input.retainPreviousKey ? shown : ofKey;
+  const active = input.active && visible;
   useEffect(() => {
-    if (drainable) run("More");
-  }, [drainable, shown, run]);
+    if (!active || ofKey === null || running !== null || failure !== null) return;
+    if (ofKey.cursor !== null && input.drain !== false) run("More");
+    else if (pendingObservation.current) run("Refetch");
+  }, [active, ofKey, running, failure, observation, input.drain, run]);
 
   return {
-    status: shown !== null ? "ready" : failure !== null ? "failed" : "loading",
-    items: shown?.items ?? NONE,
-    shownKey: shown?.key ?? null,
-    shownStale: shown?.stale ?? null,
+    requestedKey: key,
+    status: ofKey !== null ? "ready" : failure !== null ? "failed" : "loading",
+    items: display?.items ?? NONE,
+    shownKey: display?.key ?? null,
+    shownStale: display?.stale ?? null,
+    source: display?.source ?? LIVE_SOURCE,
     current: ofKey !== null,
+    fresh: ofKey !== null && ofKey.source.kind === "live" && ofKey.stale === stale,
     complete: ofKey !== null && ofKey.cursor === null,
-    orderRevision: ofKey?.orderRevision ?? null,
-    metadata: shown?.metadata ?? null,
+    orderRevision: display?.orderRevision ?? null,
+    metadata: display?.metadata ?? null,
     running,
     failure,
-    more: () => run("More"),
+    active,
+    revalidate,
     retry: () => {
       if (input.retry === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
       if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
@@ -308,6 +425,7 @@ function useList<T, M>(
       }
     },
     refetch,
+    more: () => run("More"),
   };
 }
 
@@ -325,15 +443,11 @@ export function pageQuery(
 
 /** The filter bar's status: `loadedCount` rows shown of the list, `visibleCount` matching. */
 export function listRowStatus(
-  list: ServerList<unknown>,
+  list: ServerList<unknown, unknown>,
   loadedCount: number,
   visibleCount: number,
   unit: { readonly singular: string; readonly plural: string },
 ): PaneFilterRowsStatus {
-  if (list.status === "ready" && !list.current) {
-    const cause = list.failure === null ? "Updating" : "Failed";
-    return { kind: "Retained", visibleCount, loadedCount, unit, cause };
-  }
   if (list.status === "failed" || list.failure?.op === "More") {
     return { kind: "Failed", visibleCount, loadedCount, unit };
   }

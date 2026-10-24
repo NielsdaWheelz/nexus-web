@@ -4,7 +4,9 @@
 // Pure: no network, no storage, no page DOM. The three bundles come from one
 // build, so these types are the contract and nothing re-validates them.
 
-import type { LibraryDestination } from "@/lib/libraries/api";
+import type { Schema } from "@/lib/api/wire";
+
+type LibraryDestination = Schema<"LibraryDestinationOut">;
 
 export const VIEW_PORT = "nexus-capture-view";
 export const CONTENT_PORT = "nexus-capture-content";
@@ -55,11 +57,12 @@ export type TargetView =
 
 export type CapturePhase =
   | { kind: "draft" }
+  | { kind: "review" }
   | { kind: "acquiring" }
   | { kind: "uploading" }
   | { kind: "confirming" }
-  | { kind: "saved"; openUrl: string }
-  | { kind: "failed"; failure: CaptureFailure; retryable: boolean };
+  | { kind: "saved"; openUrl: string | null }
+  | { kind: "failed"; failure: CaptureFailure; recovery: "Retry" | "Check" | "Review" | "Recapture" | "Discard" };
 
 export interface ViewState {
   account: {
@@ -76,7 +79,7 @@ export interface ViewState {
     target: TargetView;
     phase: CapturePhase;
     destinations: LibraryDestination[];
-    /** a save was attempted: the libraries are fixed until Discard */
+    /** submitted choices stay fixed until a definitive refusal is reviewed */
     locked: boolean;
     /** no command currently owns the draft and its selection may change */
     editable: boolean;
@@ -92,13 +95,14 @@ export type Command =
   | { kind: "list_destinations" }
   | { kind: "login" }
   | { kind: "retry" }
+  | { kind: "review" }
   | { kind: "discard" }
   | { kind: "capture_again" }
   | { kind: "disconnect" };
 
 export type CommandResult =
   | { kind: "state"; state: ViewState }
-  | { kind: "destinations"; destinations: LibraryDestination[] }
+  | { kind: "destinations"; snapshot: Schema<"LibraryDestinationsOut"> }
   | { kind: "failure"; failure: CaptureFailure };
 
 /** Selection and its save barrier share this port's ordered message stream. */
