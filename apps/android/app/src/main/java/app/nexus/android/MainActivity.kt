@@ -66,7 +66,6 @@ class MainActivity : AppCompatActivity() {
     internal lateinit var shellChromeClient: WebChromeClient
     private lateinit var root: FrameLayout
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
-    private var writingExportPicker: ((Uri?) -> Unit)? = null
     private val nexusBaseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
     private val deviceSession by lazy { DeviceSession.get(this) }
     private val appRouter by lazy { AppRouter(this, deviceSession) }
@@ -104,13 +103,6 @@ class MainActivity : AppCompatActivity() {
                     null
                 }
             )
-        }
-
-    private val writingExportLauncher =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-            val complete = writingExportPicker
-            writingExportPicker = null
-            complete?.invoke(uri)
         }
 
     @Suppress("SetJavaScriptEnabled")
@@ -151,18 +143,6 @@ class MainActivity : AppCompatActivity() {
                         ) {
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
-                    }
-
-                    override fun chooseWritingExport(complete: (Uri?) -> Unit): Boolean {
-                        if (writingExportPicker != null || fileChooserCallback != null) return false
-                        writingExportPicker = complete
-                        try {
-                            writingExportLauncher.launch("nexus-writing-${System.currentTimeMillis()}.json")
-                        } catch (_: ActivityNotFoundException) {
-                            writingExportPicker = null
-                            return false
-                        }
-                        return true
                     }
                 },
             ).also { it.install() }
@@ -548,7 +528,6 @@ class MainActivity : AppCompatActivity() {
         playerControllerFuture = null
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
-        writingExportPicker = null
         offline?.close()
         webView.stopLoading()
         (webView.parent as? ViewGroup)?.removeView(webView)

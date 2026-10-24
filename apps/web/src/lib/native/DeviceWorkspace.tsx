@@ -43,7 +43,15 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
       if (!next?.binding) { initial.current = null; revision.current = "0"; }
       setStartup(next);
       setFailure(null);
-    } catch (error) { if (live.current && request === reading.current) setFailure({ error }); }
+    } catch (error) {
+      if (!live.current || request !== reading.current) return;
+      if (isApiError(error) && error.code === "E_LOCAL_CLEANUP") {
+        initial.current = null;
+        revision.current = "0";
+        setStartup(null);
+      }
+      setFailure({ error });
+    }
   }, []);
   useEffect(() => {
     live.current = true;

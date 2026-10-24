@@ -11513,24 +11513,6 @@ export interface components {
             kind: "Current";
             state: components["schemas"]["SuggestionStateOut"];
         };
-        /** SuggestionEnsureFreshIn */
-        SuggestionEnsureFreshIn: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "EnsureFresh";
-        };
-        /** SuggestionExplicitRefreshIn */
-        SuggestionExplicitRefreshIn: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Explicit";
-            /** Observed Publication Id */
-            observed_publication_id: string | null;
-        };
         /** SuggestionItemOut */
         SuggestionItemOut: {
             /** Target */
@@ -14673,11 +14655,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuggestionEnsureFreshIn"] | components["schemas"]["SuggestionExplicitRefreshIn"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {
@@ -14686,15 +14664,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_SuggestionStateOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -15688,11 +15657,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuggestionEnsureFreshIn"] | components["schemas"]["SuggestionExplicitRefreshIn"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {

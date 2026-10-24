@@ -58,7 +58,7 @@
 }
 
 .separator {
-  padding-inline: var(--space-1);
+  padding-inline: var(--row-publication-gap);
   color: var(--ink-faint);
 }
 

@@ -30,9 +30,9 @@ client_cpu_throttle is null normally, or the requested integer slowdown rate.
 NEXUS_LAB_CONTEXT is the driver's only extra environment variable. Live JSON
 accepts only LIVE_KEYS, string values or null, including supported provider
 HTTPS origins and additional PEM trust roots; core service topology stays owned.
-An explicit existing Codex socket stays caller-owned. Its health probe qualifies
-the real host; api and a host interactive worker use that socket. The host worker's
-TMPDIR and heartbeat belong to this run; the background worker stays in Linux.
+Explicit live Codex attachment holds shared access to one enrolled compatible host
+through teardown. The API reads its host websocket; both Linux workers use its
+private client network and separate per-run cwd root. No account state enters a lab.
 Fake mode owns verified HTTPS Responses SSE/WebSocket and embedding wires plus
 separate real pinned Codex hosts for the host API and Linux workers. Replies
 prove transport, never model quality, tools or structured generation. The short
@@ -66,6 +66,7 @@ import tempfile
 import time
 import tomllib
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 from urllib.error import URLError
@@ -324,10 +325,10 @@ def main() -> int:
         + "; nonempty string or null; never inherits ambient credentials",
     )
     parser.add_argument(
-        "--codex-socket",
-        type=Path,
-        help="absolute existing authenticated Codex unix socket; caller owns its host and account; "
-        "runs the interactive worker locally and keeps the background worker in Linux",
+        "--live-codex",
+        action="store_true",
+        help="use the shared live codex host. starts the enrolled compatible host if stopped. "
+        "concurrent labs keep separate sessions. enroll with ./scripts/lab-codex enroll.",
     )
     parser.add_argument(
         "--fake-providers",
@@ -349,18 +350,9 @@ def main() -> int:
         parser.error("a nonempty driver command after -- is required")
     if args.client_throttle is not None and args.client_throttle < 1:
         parser.error("--client-throttle requires an integer >= 1")
-    if args.fake_providers and (args.live_config is not None or args.codex_socket is not None):
-        parser.error("--fake-providers cannot be combined with --live-config or --codex-socket")
-    codex_socket: Path | None = args.codex_socket
-    if codex_socket is not None and (
-        not codex_socket.is_absolute() or not codex_socket.is_socket()
-    ):
-        parser.error("--codex-socket requires an absolute existing unix socket")
-    worker_services = (
-        ["worker-background"]
-        if codex_socket is not None
-        else ["worker-interactive", "worker-background"]
-    )
+    if args.fake_providers and (args.live_config is not None or args.live_codex):
+        parser.error("--fake-providers cannot be combined with --live-config or --live-codex")
+    worker_services = ["worker-interactive", "worker-background"]
     try:
         live = live_configuration(args.live_config)
     except (OSError, ValueError) as exc:
@@ -386,10 +378,14 @@ def main() -> int:
     lock_owned = False
     slot_files: list[TextIO] = []
     resources_owned = False
+    run_id = ""
     project = ""
     auth_project = ""
     run_dir: Path | None = None
     host_codex_dir: Path | None = None
+    shared_access = ExitStack()
+    shared_host = None
+    shared_cwd_prepared = False
     compose: list[str] = []
     cli: list[str] = []
     auth_cleanup: list[str] = []
@@ -704,6 +700,11 @@ def main() -> int:
                     f"observed holders: {current_holders}"
                 )
             time.sleep(0.2)
+        if args.live_codex:
+            phase = "shared live codex host"
+            from lab_codex import attach
+
+            shared_host = shared_access.enter_context(attach())
         sockets: list[socket.socket] = []
         try:
             for offset in range(10):
@@ -777,8 +778,12 @@ def main() -> int:
             "NEXUS_HANDLE_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
             "NEXUS_INTERNAL_SECRET": secrets.token_hex(32),
             "NEXUS_RUNTIME_IDENTITY_FILE": str(identity_path),
-            "NEXUS_CODEX_NATIVE_SOCKET": str(codex_socket or inputs / "no-native-socket"),
+            "NEXUS_CODEX_ENDPOINT": (inputs / "no-native-socket")
+            .as_uri()
+            .replace("file:", "unix:", 1),
         }
+        if shared_host is not None:
+            app_env |= shared_host.host_environment
         fake_providers: dict[str, str] | None = None
         fake_tls = inputs / "fake-tls"
         fake_ca_pem: str | None = None
@@ -791,7 +796,10 @@ def main() -> int:
                 "OPENAI_GENERATION_API_KEY": "lab-fake-" + secrets.token_hex(24),
                 "GENERATION_API_PROVIDERS": "openai",
                 "PROVIDER_CA_PEM": fake_ca_pem,
-                "NEXUS_CODEX_NATIVE_SOCKET": str(host_codex_dir / "app-server.sock"),
+                "NEXUS_CODEX_ENDPOINT": (host_codex_dir / "app-server.sock")
+                .as_uri()
+                .replace("file:", "unix:", 1),
+                "NEXUS_CODEX_CWD_ROOT": str(host_codex_dir / "cwds"),
             }
         compose_env = (
             app_env
@@ -831,6 +839,18 @@ def main() -> int:
                 + os.pathsep
                 + str(ROOT / "docker/docker-compose.lab-fakes.yml"),
             }
+        if shared_host is not None:
+            worker_environment = shared_host.worker_environment(run_id)
+            compose_env |= {
+                "NEXUS_LAB_CODEX_ENDPOINT": worker_environment["NEXUS_CODEX_ENDPOINT"],
+                "NEXUS_LAB_CODEX_TRANSPORT_TOKEN": worker_environment[
+                    "NEXUS_CODEX_TRANSPORT_TOKEN"
+                ],
+                "NEXUS_LAB_CODEX_CWD_ROOT": worker_environment["NEXUS_CODEX_CWD_ROOT"],
+                "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
+                + os.pathsep
+                + str(ROOT / "docker/docker-compose.lab-live.yml"),
+            }
         auth_env = base_env | {
             "SUPABASE_AUTH_JWT_SECRET": secrets.token_hex(32),
             "SUPABASE_AUTH_PUBLISHABLE_KEY": publishable_key,
@@ -849,6 +869,9 @@ def main() -> int:
             "compose_env": compose_env,
             "auth_env": base_env,
             "host_codex_dir": str(host_codex_dir) if host_codex_dir is not None else None,
+            "shared_codex_cwd": compose_env.get("NEXUS_LAB_CODEX_CWD_ROOT"),
+            "shared_codex_image": None if shared_host is None else shared_host.image_id,
+            "shared_codex_run_id": run_id if shared_host is not None else None,
             "commands": [
                 auth_cleanup,
                 compose
@@ -865,6 +888,11 @@ def main() -> int:
             f"manual store cleanup: {recovery_command}\n"
             f"inspect host process groups against {run_dir / 'launches.json'}; never blindly kill saved pids.\n"
             + (f"after verified host shutdown remove {host_codex_dir}.\n" if host_codex_dir else "")
+            + (
+                f"shared codex cwd: {compose_env['NEXUS_LAB_CODEX_CWD_ROOT']}; retain until owned workers and remote sessions are closed; never stop the shared host to clean a lab.\n"
+                if shared_host is not None
+                else ""
+            )
             + f"after verified recovery delete {inputs} and manually remove {lock}.\n"
         )
         message(f"ownership: {project}; private logs and recovery: {run_dir}")
@@ -899,16 +927,6 @@ def main() -> int:
         private_json(auth_root / "supabase/signing_keys.json", [jwk])
         config = set_config(config, "auth", "signing_keys_path", "./signing_keys.json")
         (auth_root / "supabase/config.toml").write_text(config)
-        if codex_socket is not None:
-            phase = "native codex host"
-            message("native codex: qualifying caller-owned host and authenticated catalog")
-            command(
-                [sys.executable, "-m", "apps.codex_agent.health"],
-                env=app_env,
-                cwd=inputs,
-                timeout=125,
-                log=run_dir / "native-codex-health.log",
-            )
         phase = "dependency acquisition"
         message(f"{phase}: bounded image pull/build; logs: {run_dir}")
         command(
@@ -929,6 +947,7 @@ def main() -> int:
             log=run_dir / "worker-image.log",
         )
         if args.fake_providers:
+            assert host_codex_dir is not None  # created by this mode before dependency acquisition
             phase = "fake providers"
             command(
                 compose + ["up", "-d", "--no-build", "fake-providers", "fake-codex"],
@@ -962,14 +981,15 @@ def main() -> int:
                     "--state",
                     str(inputs / "codex-state"),
                     "--socket",
-                    app_env["NEXUS_CODEX_NATIVE_SOCKET"],
+                    str(host_codex_dir / "app-server.sock"),
                 ],
                 base_env,
                 inputs,
             )
             ready(
                 "native codex host socket",
-                lambda: Path(app_env["NEXUS_CODEX_NATIVE_SOCKET"]).is_socket(),
+                lambda: host_codex_dir is not None
+                and (host_codex_dir / "app-server.sock").is_socket(),
             )
             command(
                 [sys.executable, "-m", "apps.codex_agent.health"],
@@ -1073,6 +1093,9 @@ def main() -> int:
             and http_json(api_origin + "/version")["data"] == identity,
         )
         phase = "workers"
+        if shared_host is not None:
+            shared_cwd_prepared = True
+            shared_host.prepare_run(run_id)
         command(
             compose + ["up", "-d", "--no-build", *worker_services],
             env=compose_env,
@@ -1082,49 +1105,38 @@ def main() -> int:
         container_ids += worker_ids
         if len(worker_ids) != len(worker_services):
             raise RuntimeError("owned worker containers missing")
-        host_worker_env = app_env | live | {"WORKER_LANE": "interactive", "TMPDIR": str(inputs)}
-        if codex_socket is not None:
-            start(
-                "worker-interactive",
-                [sys.executable, "-m", "apps.worker.main"],
-                host_worker_env,
-                inputs,
-            )
         for lane in ("interactive", "background"):
 
             def worker_ready(lane: str = lane) -> bool:
                 try:
-                    if codex_socket is not None and lane == "interactive":
-                        argv = [sys.executable, "-S", "-m", "apps.worker.health", "--lane", lane]
-                        env = host_worker_env
-                    else:
-                        argv = compose + [
-                            "exec",
-                            "-T",
-                            f"worker-{lane}",
-                            "python",
-                            "-S",
-                            "-m",
-                            "apps.worker.health",
-                            "--lane",
-                            lane,
-                        ]
-                        env = compose_env
+                    argv = compose + [
+                        "exec",
+                        "-T",
+                        f"worker-{lane}",
+                        "python",
+                        "-S",
+                        "-m",
+                        "apps.worker.health",
+                        "--lane",
+                        lane,
+                    ]
+                    env = compose_env
                     health = json.loads(command(argv, env=env, cwd=inputs, timeout=10))
                 except RuntimeError:
                     return False
                 return health == {"status": "ready", "lane": lane, **identity}
 
             ready(f"worker-{lane}", worker_ready)
-        if args.fake_providers:
+        if args.fake_providers or shared_host is not None:
             phase = "native codex linux catalog"
-            command(
-                compose
-                + ["exec", "-T", "worker-interactive", "python", "-m", "apps.codex_agent.health"],
-                env=compose_env,
-                timeout=125,
-                log=run_dir / "native-codex-linux-health.log",
-            )
+            for lane in ("interactive", "background"):
+                command(
+                    compose
+                    + ["exec", "-T", f"worker-{lane}", "python", "-m", "apps.codex_agent.health"],
+                    env=compose_env,
+                    timeout=125,
+                    log=run_dir / f"native-codex-{lane}-health.log",
+                )
         phase = "web"
         extension_id = json.loads((ROOT / "apps/extension/manifest.json").read_text())[
             "browser_specific_settings"
@@ -1407,6 +1419,17 @@ def main() -> int:
                             cleanup_errors.append(f"owned {kind} resources remain ({namespace})")
             except Exception:
                 cleanup_errors.append("cleanup verification unavailable")
+        if shared_host is not None and shared_cwd_prepared:
+            try:
+                if cleanup_errors:
+                    raise RuntimeError("owned worker shutdown and cleanup are unverified")
+                shared_host.remove_run(run_id)
+            except Exception as exc:
+                cleanup_errors.append(f"shared codex cwd retained ({exc})")
+        try:
+            shared_access.close()
+        except Exception as exc:
+            cleanup_errors.append(f"shared codex access release failed ({exc})")
         if lock_owned and run_dir is not None:
             if not cleanup_errors:
                 try:

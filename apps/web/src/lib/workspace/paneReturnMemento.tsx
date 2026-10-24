@@ -322,6 +322,12 @@ function useScope() {
   return { memory, ...scope };
 }
 
+/** Whether input cells outlive their mounted surface. Route identity and cell
+ * retention are independent: a surface may keep its enclosing visit identity. */
+export function usePaneVisitRetained(): boolean {
+  return useScope().paneId !== null;
+}
+
 /** The exact route identity whose retained memory owns this input. */
 export function usePaneVisitWorkScope(): Extract<WorkScope, { kind: "visit" }> {
   const { visitId, routeKey } = useScope();

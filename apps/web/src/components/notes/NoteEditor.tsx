@@ -22,14 +22,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { readWriting, subscribeWriting } from "@/lib/notes/journal";
+import { readWriting, subscribeWriting } from "@/lib/notes/writes";
 import type { TextEditBase } from "@/lib/notes/texts";
 import { createPortal } from "react-dom";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { resourceDraftOwnerId, useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
-import { usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { usePaneVisitRetained, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import {
@@ -139,6 +139,7 @@ export interface NoteEditorProps {
   keys?: StructuralKeys | null;
   onEdit(edit: NoteEdit): void;
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
+  onAttachmentActiveChange?(active: boolean): void;
   onSave?(): void;
   onNewChat?(): void;
   onContinueChat?(): void;
@@ -169,6 +170,10 @@ interface LinkDialog {
   left: number;
   top: number;
 }
+
+/** The explicit upload risk an enclosing composer consults before abandonment. */
+export const noteEditorAttachmentOwnerId = (visitId: string, editorKey: string) =>
+  resourceDraftOwnerId(visitId, `Notes.Attachment:${editorKey}`);
 
 export default function NoteEditor(props: NoteEditorProps) {
   const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
@@ -203,6 +208,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const workspace = useLatestWorkspace();
   const subscribeWorkspace = useSubscribeWorkspace();
   const visitScope = usePaneVisitWorkScope();
+  const retainedInput = usePaneVisitRetained();
   const linkDraft = useResourceDraft<LinkDialog | null>(`Notes.LinkInput:${props.editorKey}`, () => null,
     value => ({ changed: value !== null && value.query !== value.baseline, unconfirmed: false, stopsBrowserWork: false }));
   const attachment = useResourceDraft<{
@@ -216,6 +222,15 @@ export default function NoteEditor(props: NoteEditorProps) {
   const setLink = linkDraft.set;
   const readLink = linkDraft.read;
   const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
+  const attachmentActive = attachmentValue !== null;
+  useLayoutEffect(() => { latest.current.onAttachmentActiveChange?.(attachmentActive); }, [attachmentActive]);
+  useLayoutEffect(() => () => {
+    if (!retainedInput) {
+      readAttachment()?.controller.abort();
+      setAttachment(null);
+      latest.current.onAttachmentActiveChange?.(false);
+    }
+  }, [retainedInput, readAttachment, setAttachment]);
   const discardAttachment = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); };
   const linkInputId = useId();
   const linkErrorId = useId();
@@ -282,7 +297,6 @@ export default function NoteEditor(props: NoteEditorProps) {
       editBase: {
         value: intent.base,
         acknowledged: intent.editBase?.acknowledged ?? null,
-        consumed_reference: consumed,
       },
     });
   };

@@ -60,7 +60,7 @@ export default function CanonicalNoteEditor({
         occurrenceKey={occurrence.key}
         containingNoteRef={text.acked === null ? null : occurrence.noteRef}
         body={body}
-        editBase={{ value: body, acknowledged: text.acked, consumed_reference: null }}
+        editBase={{ value: body, acknowledged: text.acked }}
         revision={text.revision}
         editable={canEdit}
         label={label}
@@ -82,7 +82,6 @@ export default function CanonicalNoteEditor({
           canEdit && continuation
             ? {
                 source: text.acked === null ? null : continuation.source,
-                recoverySource: continuation.source,
                 textRef: occurrence.noteRef,
                 label,
                 position: continuation.position,

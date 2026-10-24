@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./PaneSection.module.css";
 
-/** A bordered section of a pane body, with an optional header (title, description, actions). */
+/** An open section of a pane body, with an optional header (title, description, actions). */
 export default function PaneSection({
   title,
   description,

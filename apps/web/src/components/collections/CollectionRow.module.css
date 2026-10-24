@@ -1,5 +1,5 @@
 .mark { border-radius: var(--radius-xs); background: var(--accent-muted); color: var(--ink); padding: 0 2px; }
-.supportLine { display: flex; min-width: 0; max-width: 100%; align-items: baseline; gap: var(--space-2); white-space: nowrap; }
+.supportLine { display: flex; min-width: 0; max-width: 100%; align-items: baseline; gap: var(--row-metadata-gap); white-space: nowrap; }
 .context { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .supportLine > .context:not(:first-child) { max-inline-size: 45%; }
 .activity { flex: none; margin-inline-start: auto; font-variant-numeric: tabular-nums; }

@@ -3,9 +3,8 @@
 // One account's synchronous loss decision. Owners retain their own input and
 // requests; this registry reads their current risks and never stores either.
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
-import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { readWriting } from "@/lib/notes/journal";
+import { hasUnsettledWriting } from "@/lib/notes/writes";
 
 export type WorkRisk = Readonly<{
   changed: boolean;
@@ -118,8 +117,8 @@ function createWorkRegistry() {
   };
   return {
     guard,
-    async signOut(purge: () => Promise<void>, submit: () => void, options?: { reviewedOwnerIds: readonly string[] }): Promise<boolean> {
-      if (!active || signingOut || !confirm(risk(owner => !options?.reviewedOwnerIds.includes(owner.id)))) return false;
+    async signOut(purge: () => Promise<void>, submit: () => void): Promise<boolean> {
+      if (!active || signingOut || !guard.confirmDocumentExit()) return false;
       const operation = {};
       signingOut = operation;
       previousInert = document.body.inert;
@@ -174,9 +173,7 @@ export function useGuardedSignOut() {
   return registry.signOut;
 }
 
-/** A new build may not decode this build’s pending requests or journal format. */
+/** Automatic exits also retain admitted explicit writing, without adding a user-exit warning. */
 export function reloadStrandsWriting(guard: WorkGuard): boolean {
-  const { outbox, incompatible } = readWriting();
-  return guard.hasWork() || incompatible.length > 0 || outbox.some(row =>
-    row.dispatch.kind === "sealed" && row.dispatch.wire_revision <= WIRE_REVISION);
+  return guard.hasWork() || hasUnsettledWriting();
 }

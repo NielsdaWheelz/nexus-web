@@ -193,8 +193,8 @@ the keyboard layout's `event.key` rather than a physical key position.
 - command/control+shift+left/right moves between visible panes without wrapping.
   it yields while typing or while an overlay owns interaction. the pane strip's
   plain arrow keys only move focus; modified keys reach the shortcut owner.
-- the desktop strip has its own fixed keys: arrows/home/end browse titles,
-  enter opens, down/context-menu/shift-f10 opens actions, delete/backspace closes
+- the desktop strip has its own fixed keys: left/right/home/end browse titles
+  and controls, enter/space activates, delete/backspace closes
   once per press, and shift-m maximizes or restores the named pane. tab leaves
   its single roving stop. these keys never become global letter bindings.
 
@@ -298,10 +298,15 @@ related link gestures still work. The rendered anchor always retains a real
 The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
 the Nexus trigger. workspace creation has no pane-count refusal. the launcher's
-own close/minimize/restore/reorder commands stay in place on root or manage tabs,
+own close/minimize/layout commands stay in place on root or manage tabs,
 including final close; primary open and recently closed restore dismiss it and
 focus the destination. external navigation still dismisses the task. the desktop Account
 menu retains its existing focus contract.
+
+manage-tabs shares direct control content with the desktop strip. there are no
+tab menus or move-earlier/later commands. mobile omits layout controls and
+reorder; its minimized title restores through ordinary activation. see
+[panes and tabs](panes-tabs.md) for the state table and focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the

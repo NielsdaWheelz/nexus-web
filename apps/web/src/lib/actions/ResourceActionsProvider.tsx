@@ -126,7 +126,7 @@ export interface ActionContext {
 }
 
 /** Server-only commands are fenced at invocation, including after confirmation.
- * Player/queue/download and authored journal operations retain their own policies. */
+ * Player/queue/download and live writing operations retain their own policies. */
 const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "Metadata", "MarkCollectionFinished", "MarkCollectionUnread", "AddUnfinishedToLectern", "TranscribePodcastEpisodes", "LeaveLibrary", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
   "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "ImportPodcastEpisodes", "RemovePodcastEpisodes",

@@ -1,6 +1,6 @@
 "use client";
 
-/** Library cards promote one removal command: global in all, scoped in named
+/** Library sections promote one removal command: global in all, scoped in named
  * libraries. Current reads gate shortcuts; canonical menus prepare their own facts.
  */
 import { useEffect, useId, useRef } from "react";

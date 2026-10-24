@@ -240,7 +240,8 @@ async def _dispatch(
             from nexus.services.generation.codex import run_codex
 
             result = await run_codex(
-                socket=runtime.codex_socket,
+                endpoint=runtime.codex_endpoint,
+                cwd_root=runtime.codex_cwd_root,
                 owner=owner,
                 generation_id=ref.id,
                 target=row.target,

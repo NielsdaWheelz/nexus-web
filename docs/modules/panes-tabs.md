@@ -1,4 +1,4 @@
-# Panes And Tabs
+# panes and tabs
 
 ## Scope
 
@@ -8,29 +8,44 @@ switching and tab management; the store owns order, visibility and selection.
 ## Desktop Pane Strip
 
 `WorkspacePaneStrip` renders one toolbar in workspace order, including minimized
-panes. each chip has a title, more menu and close control; chips keep a 12 rem
-minimum and overflow horizontally. one roving stop records the pane id and title
-or menu control. active, in-view, focused and minimized are separate facts.
+panes. each chip has a title and three stable control slots: visibility, layout,
+close. active, in-view, focused and minimized are separate facts. there is no tab
+menu. [visual system](visual-system.md#workspace-strip) owns target geometry.
 
-plain left/right wrap focus through every title; home/end reach the ends.
-ordinary title activation selects/restores that exact pane and enters content.
-shift-click/shift-enter opens a fresh independent copy immediately after the
-clicked pane, including an inactive/minimized pane; its state remains unchanged.
-down, context-menu or shift+f10 open that item's menu. tab exits from the current
-roving control; menu return keeps more as that stop. delete/backspace close once
-per press, and shift+m toggles maximize once per press for the focused item.
+plain left/right wrap focus through every title and control; home/end reach the
+ends. one roving stop records pane id and slot. ordinary title activation selects
+and unminimizes that exact pane, then enters its content within the current
+viewing mode. shift-click or shift-enter forks its current visit into a fresh pane
+immediately after it, preserving the clicked pane even when inactive or minimized.
+there is no tab menu or replacement touch-duplication control.
+tab exits the toolbar. delete/backspace close once per press, and shift+m toggles
+maximize once per press for the focused pane. repeated or composing enter/space
+cannot dispatch management again or activate a changing slot.
 global mod+shift+left/right retain the separate sequential traversal contract.
 there are no global shift-letter commands.
 
-`lib/workspace/paneActions.ts` supplies the strip and manage tabs with explicit
-target actions: open in new pane, minimize/restore, move earlier/later, close.
-opening uses an admission-aware canonical link; management remains commands. the strip adds
-maximize/restore layout; [workspace](workspace.md#layout-modes) owns its geometry
-and lifetime. disabled actions retain their explanations: keep one stored-visible
-pane, or already first/last. menu management retains strip focus, unless a new
-companion sheet takes modal focus. close selects the next surviving title, else
-the previous, independent of the store's active-pane successor. focused chips
-reveal only inside the strip.
+`lib/workspace/paneControls.ts` projects ordered slots, commands, icons, accessible
+names, help and disabled reasons from live workspace state, the resolved title,
+desktop mode and viewport composition. strip and manage-tabs render shared
+`Button` controls and dispatch through their command owners. keys and refs use
+stable slots; a glyph change retains the focused node.
+
+ordinary desktop panes offer minimize/maximize/close. minimized panes offer
+restore-canvas/maximize/close. the active maximized pane offers
+minimize/restore-canvas/close. restore-canvas selects and unminimizes its target
+and exits maximize; title activation preserves that mode. last stored-visible
+minimize is focusable, inert and explains `keep at least one pane visible`.
+[workspace](workspace.md#layout-modes) owns mode, geometry and lifetime.
+
+management focuses its invoking button before dispatch and retains it, unless a
+companion sheet takes modal focus. accepted close focuses the next surviving
+title, else the previous or replacement; refused close retains the initiator.
+focused chips reveal only inside the strip, never under a held pointer.
+
+manage-tabs uses ordinary tab order. mobile visible rows offer minimize/close;
+minimized titles restore through ordinary activation, alongside close. minimizing
+focuses that same row's title and keeps nexus open. mobile has no layout control
+or reorder. desktop management adopts returned selections without dismissing nexus.
 
 reorder uses the existing dnd-kit mouse and touch sensors from the title alone:
 8 px mouse activation, or 250 ms touch hold with 8 px tolerance. unactivated
@@ -55,16 +70,17 @@ keep it until the library supplies the same listener-lifetime guarantees.
 `store.movePane({paneId, beforePaneId})` is the only reorder writer; null appends.
 it preserves pane objects, activation, visits and histories, returns false for
 missing/self/unchanged moves, and commits one changed array. a changed move
-announces its position. move commands provide the keyboard and touch alternative
-to dragging; there is no keyboard pickup mode.
+announces its position. desktop reorder is drag-only: there is no keyboard or
+click/tap alternative. this deliberately gives up accessible dragging parity.
 
 ## history
 
-header back/forward use the shared gesture classifier and required store
-history disposition. ordinary activation traverses; shifted activation peeks
-into a fresh pane. menus expose “open previous page in new pane” and “open next
-page in new pane”; empty stacks retain disabled reasons. menu selection rechecks
-the captured current and adjacent visit ids, including equal-href occurrences.
+header back/forward use the shared gesture classifier and an explicit store
+disposition. ordinary activation traverses; shifted activation opens the exact
+adjacent visit in a fresh pane. pane menus expose “open previous page in new pane”
+and “open next page in new pane”, with disabled reasons for empty stacks.
+selection rechecks the captured current and adjacent visit ids, including
+equal-href occurrences, before admission; refusal preserves the source and menu.
 
 ## Sequential Traversal
 
@@ -149,8 +165,9 @@ pane, including minimized panes. search is entered explicitly and retains its
 query when returning to the overview within the same opening. desktop nexus
 keeps its compact open-pane preview and direct `Manage tabs…` row.
 
-the manager renders all primary panes and delegates activation, minimize,
-restore, reorder and close to the shared workspace commands. closing a tab
+the manager renders all primary panes and delegates activation, minimize and
+close to the shared workspace commands. desktop adds maximize/restore-canvas;
+mobile restores through title activation. closing a tab
 keeps nexus open and adopts the exact committed close selection, including the
 replacement when the final pane closes. focus moves to the next tab, otherwise
 the previous tab or replacement; a root close returns to the surviving row or

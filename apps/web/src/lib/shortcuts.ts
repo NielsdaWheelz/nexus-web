@@ -28,33 +28,33 @@ export const SHORTCUTS = {
   },
 } as const;
 
-export const PANE_STRIP_DESCRIPTION = "Arrow keys browse tabs. Enter opens. Down opens actions. Delete closes. Shift+M maximizes or restores.";
+export const PANE_STRIP_DESCRIPTION = "left/right browse pane titles and controls. home/end reach the first/last control. enter or space activates. tab leaves the strip. delete closes the focused pane. shift+m maximizes or restores layout.";
 
 // These keys belong to the focused toolbar control, not the app-wide matcher.
 export const PANE_STRIP_SHORTCUTS = [
   {
     id: "PaneStrip.Browse",
-    title: "Browse tab titles",
-    description: "Moves focus through all tabs, including minimized panes. Wraps at either end without activating a pane.",
+    title: "Browse pane titles and controls",
+    description: "Moves focus through titles and controls, including minimized panes and disabled minimize. Wraps at either end without activating a pane.",
     meta: "← / →",
   },
   {
     id: "PaneStrip.Edge",
-    title: "First or last tab",
-    description: "Focuses the first or last tab title without activating it.",
+    title: "First or last control",
+    description: "Focuses the first title or last close control without activating it.",
     meta: "Home / End",
   },
   {
     id: "PaneStrip.Open",
-    title: "Open tab",
-    description: "Activates the focused tab, restores it if minimized, and moves focus into its pane.",
+    title: "Activate title or control",
+    description: "A title selects its pane and enters its content. A management control keeps focus in the strip.",
     meta: "Enter / Space",
   },
   {
-    id: "PaneStrip.Actions",
-    title: "Open tab actions",
-    description: "Opens actions for the focused tab. Escape returns to its menu button; Tab or Shift+Tab leaves the strip.",
-    meta: "↓ / Shift+F10 / Context Menu",
+    id: "PaneStrip.Leave",
+    title: "Leave the strip",
+    description: "Tab or Shift+Tab leaves from the current roving control.",
+    meta: "Tab / Shift+Tab",
   },
   {
     id: "PaneStrip.Close",

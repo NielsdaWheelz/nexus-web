@@ -8,7 +8,7 @@ import { ApiError, apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDe
 import { assertNever } from "@/lib/assertNever";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { admitWriting, captureLane, type WritingAck, type WritingCommand } from "@/lib/notes/journal";
+import { admitWriting, captureLane, type WritingAck, type WritingCommand } from "@/lib/notes/writes";
 import { parseResourceRef } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 
@@ -83,9 +83,9 @@ export async function queryConnections(
   return data;
 }
 
-/** Absolute commands are durable before delivery; a retry reuses its sealed bytes. */
+/** Absolute commands are immutable after admission; a retry reuses its sealed bytes. */
 export async function graphCommands(commands: WritingCommand[]): Promise<WritingAck> {
-  return admitWriting({ kind: "outline", commands }, []).settled;
+  return admitWriting({ kind: "outline", commands }).settled;
 }
 
 /** Called once by the account's committed acknowledgement receiver. */

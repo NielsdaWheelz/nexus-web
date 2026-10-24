@@ -138,12 +138,22 @@ json-encoded provider-to-https-origin map STRING, validated by the same import-l
 `provider_ca_pem` is the actual pem certificate STRING, not a path. additional
 operator certificates extend normal verified trust roots for generation and
 embeddings; endpoint overrides retain each adapter's api path. ordinary live
-configuration may combine with `--codex-socket`, whose authenticated host/account
-remain caller-owned. api and the interactive worker use that host; the background
-worker stays in linux. credential propagation alone does not prove model success.
+configuration may combine with `--live-codex`. enroll its dedicated account once
+with `./scripts/lab-codex enroll`; `up`, `status` and `down` own explicit installed
+host administration. attachment starts an enrolled compatible stopped host or
+reuses the running host; it never installs or replaces one. api reads the
+loopback authenticated websocket; both workers stay in linux and use the private
+shared client network. account state stays in the daemon-only volume. each run
+owns a cwd root on the shared volume, removed only after worker shutdown and
+observed remote session closure. shared access spans teardown; other labs and
+shared resources survive. setup failure exits 125 before the driver. ordinary
+live smokes during authorized implementation/verification have standing authority
+after dedicated enrollment; account changes, disruptive administration and
+load/calibration approvals remain explicit. credential propagation alone does
+not prove model success.
 
 `./scripts/lab --fake-providers -- COMMAND [ARG ...]` is retained lab composition,
-not a scenario fixture corpus. it excludes `--live-config` and `--codex-socket`.
+not a scenario fixture corpus. it excludes `--live-config` and `--live-codex`.
 each invocation owns a fresh ca and signed server leaf, explicit https origins,
 synthetic credentials and real pinned codex hosts in separate host/linux socket
 namespaces. the api stays on the host, with its own native codex host for the

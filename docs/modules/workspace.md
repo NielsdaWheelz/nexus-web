@@ -163,13 +163,25 @@ Mobile mode:
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
 
-desktop maximize is one page-lifetime `WorkspaceHost` flag. it follows the
-active pane, including close/minimize successors, and resets on reload. mobile
-suspends its projection and desktop resumes it. the active wrapper fills the
+desktop maximize is transient `Data.desktopMaximized` in the workspace store,
+outside persisted `WorkspaceState`. it follows the active pane, including
+close/minimize successors. host remounts preserve it; reload and account
+replacement reset it. mobile suspends its projection and desktop resumes it;
+mobile title activation does not clear the dormant flag. the active wrapper fills the
 canvas; siblings stay mounted, hidden and inert. the runtime receives effective
 visibility, while stored visibility, widths, visits and history stay unchanged.
 maximized primary resize is absent; error, loading and unsupported panes keep
 the same full-width host geometry.
+
+`maximizePane(id)` and `restoreCanvas(id)` resolve the live target, select and
+unminimize it through ordinary activation, and atomically publish the requested
+mode with that selection. both return the committed `WorkspaceSelection`; a
+missing target returns null without effects. an already selected, visible target
+in the requested mode does not publish again. mode-only changes preserve
+`state` identity and schedule no cloud or native save. these management commands
+request no content focus, history entry or loss decision. title activation keeps
+the current mode. the host owns effective visibility, inertness and geometry;
+[panes and tabs](panes-tabs.md) owns controls and focus.
 
 The workspace store is the sole owner of sequential traversal. It follows
 stored-visible panes in strip order, clamps at the first and last pane,

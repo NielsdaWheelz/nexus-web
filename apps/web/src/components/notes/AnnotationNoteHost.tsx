@@ -19,8 +19,6 @@ import { resourceOccurrenceKey } from "@/lib/notes/outline";
 import type { OutlineBranch } from "@/lib/resources/outlineProjection";
 import { bodyHasContent } from "@/lib/notes/noteBody";
 import { readTextTitle, useText } from "@/lib/notes/texts";
-import { useWriting } from "./NoteNotices";
-import { readWriting } from "@/lib/notes/journal";
 import { fetchNote } from "@/lib/notes/api";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import {
@@ -60,7 +58,6 @@ export default function AnnotationNoteHost({
   showItemsLabel?: boolean;
 }) {
   const session = useContext(OutlineSessionContext);
-  const writing = useWriting();
   const inherited = useContext(ResourceBranch);
   const {
     value: draft,
@@ -68,19 +65,14 @@ export default function AnnotationNoteHost({
     read: readDraft,
   } = useResourceDraft<{ noteId: string; attachmentRef: string | null; attachment: AnnotationAttachment;
     detachment: { intentId: string; confirmed: boolean } | null }>(`Annotations.Note:${occurrenceKey}`, () => {
-    const candidates = noteRef === null ? readWriting().drafts.filter(saved => saved.context.kind === "body" &&
-      saved.context.publication?.kind === "attach_highlight" && saved.context.publication.highlight_id === target.id) : [];
-    const recovered = candidates.length === 1 ? candidates[0] : null;
-    const publication = recovered?.context.kind === "body" ? recovered.context.publication : null;
-    const attachment: AnnotationAttachment = { kind: "highlight", linkId: publication?.kind === "attach_highlight"
-      ? publication.request.link_id : completeAnnotation?.attachment_edge_id ?? crypto.randomUUID() };
-    return { noteId: noteRef?.slice("note_block:".length) ?? recovered?.resource_ref?.slice("note_block:".length) ?? crypto.randomUUID(), attachmentRef: noteRef, attachment, detachment: null };
+    return { noteId: noteRef?.slice("note_block:".length) ?? crypto.randomUUID(), attachmentRef: noteRef,
+      attachment: { kind: "highlight", linkId: completeAnnotation?.attachment_edge_id ?? crypto.randomUUID() }, detachment: null };
+
   });
   const attachment = useMemo<AnnotationAttachment>(() => noteRef !== null && completeAnnotation?.note_ref === noteRef
     ? { kind: "highlight", linkId: completeAnnotation.attachment_edge_id }
     : draft.attachment, [noteRef, completeAnnotation, draft.attachment]);
-  const removal = writing.outbox.find(row => row.intent.kind === "detach_highlight" && row.intent.highlight_id === target.id && row.intent.note_id === draft.noteId);
-  const locallyRemoved = draft.detachment?.confirmed === true || removal !== undefined && (removal.blocked === null || removal.uncertain);
+  const locallyRemoved = draft.detachment !== null;
   const effectiveNoteRef = locallyRemoved ? null : noteRef;
   const retainedRef = `note_block:${draft.noteId}`;
   const retainedText = useText(retainedRef);
@@ -205,7 +197,7 @@ export default function AnnotationNoteHost({
     <ResourceBranch value={branch}>
       <div className={styles.host} ref={root} tabIndex={-1}>
         {removedAttachment && keepDraft ? <FeedbackNotice content={{ tone: "Warning",
-          title: removal ? "removal saved on this device. your words are kept." : "this note is no longer attached. your words are kept." }} announcement="Polite" /> : null}
+          title: draft.detachment?.confirmed ? "annotation removed" : "removing annotation…" }} announcement="Polite" /> : null}
         {note === null && text?.acked == null && attachedRef !== null ? (
           read.status === "failed" ? (
             <FeedbackNotice

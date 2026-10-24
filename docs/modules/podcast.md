@@ -9,21 +9,21 @@ one destination; contextless subscribe uses the existing default library. finite
 import chooses that personal destination or one writable named library and never
 changes subscriptions.
 
-the show pane's libraries card contains named subscription destinations, including
+the show pane's libraries section contains named subscription destinations, including
 read-only rows. its shared title links navigate; inline removal unsubscribes only
-that library and keeps episodes. the card's library icon manages named
+that library and keeps episodes. the section's library control manages named
 subscription destinations, including reviewed removal. the header's shared rss
 action subscribes personally or unsubscribes everywhere from loaded aggregate
 facts. the default destination is
-excluded only from card rows, never from subscription state. library changes
+excluded only from section rows, never from subscription state. library changes
 invalidate these names immediately within the tab.
 
-library podcast cards and the podcast index share the native `browse podcasts`
+library podcast sections and the podcast index share the native `browse podcasts`
 plus link. browse has no destination context: discovery and canonical subscribe
 both use the personal default; named placement requires explicit selection.
 browsing remains available in readable, read-only libraries. all promotes global
-unsubscribe; named cards promote local removal with the same projector as the
-show's libraries card. confirmed rows remain during failed/refreshing reads, with
+unsubscribe; named sections promote local removal with the same projector as the
+show's libraries section. confirmed rows remain during failed/refreshing reads, with
 their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
 warnings and import progress remain.
 local removal uses the permission from the same current section read as its rows.
@@ -33,7 +33,7 @@ more at 479px and below. named menus
 contain distinct local occurrence removal and canonical global unsubscribe; all
 contains the canonical action once. hiding a focused shortcut returns focus to
 more. removal captures displayed successor ids at selection; acknowledged success
-focuses the next surviving title, then the card's browse/picker control, then its
+focuses the next surviving title, then the section's browse/picker control, then its
 section or pane. cancellation restores the opener. list refresh does not own
 acknowledgement or this success target.
 
@@ -50,6 +50,11 @@ acknowledgement settles the command's feedback condition before offering a
 still apply; authoritative rereads never settle an uncertain command.
 command feedback names the observed destination or everywhere, including refusal
 and exact-request recovery.
+
+the show identity keeps its 56px cover, contributor links, counts and explicit
+show-more disclosure. expanded description, contributor roles, source links and
+playback defaults retain their order and 12px group spacing. description is
+primary prose; source/default facts are secondary interface text. no second title.
 
 ## owners and contracts
 
@@ -264,10 +269,16 @@ then truthful queued, running, failed or unavailable states. its mounted process
 stream owns updates.
 readable full/partial text mounts the shared reader and tools; failed document reads
 remain reader retries. available publisher notes occupy one expanded `show notes`
-card before transcript content, including document loading and failure. absent notes
-omit the card. notes use the existing content scrollport and surrounding typography
+section before transcript content, including document loading and failure. absent notes
+omit the section. notes use the existing content scrollport and surrounding typography
 and palette; restored reading destinations retain precedence. playback remains in the
 canonical header action; body playback explanations and chapter inventories are gone.
+notes retain profile font/size on their public root, reader ink and body leading;
+the shared section owns its header. their centered prose measure subtracts the
+reader column's two 16px gutters from the profile width, matching transcript
+text after removing the section inset. reader-surface/accent tokens still serve
+rich content. notes introduce no vertical scrollport or collapse. presentation
+issues no seek or progress command; explicit timestamps retain their destinations.
 
 - **Current transcript publication — `transcripts.current`.** This is the single,
   advisory-locked writer of `podcast_transcript_segments`, `fragments`, and

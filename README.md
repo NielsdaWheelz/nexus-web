@@ -91,12 +91,12 @@ core needs no model credentials. `--live-config FILE` accepts only the documente
 provider settings as string/null values; no ambient application configuration
 enters core. `provider_endpoint_overrides` is a json-encoded origin map string;
 `provider_ca_pem` contains actual pem certificates, added to normal trust roots.
-`--codex-socket /absolute/existing/app-server.sock` explicitly connects api and a
-host interactive worker to an already authenticated native host, qualified through
-its ordinary health probe. its host/account remain caller-owned; the runtime
-neither copies credentials nor stops that host. the interactive worker's temporary
-directory and heartbeat belong to the run. the background worker stays in linux.
-ordinary `--live-config` and `--codex-socket` may be combined.
+`--live-codex` attaches the dedicated shared host after one-time
+`./scripts/lab-codex enroll`. it starts a compatible enrolled stopped host; both
+worker lanes stay in linux with separate run/session directories. use
+`./scripts/lab-codex status`, `up` and `down` for explicit administration.
+ordinary `--live-config` and `--live-codex` may be combined. see the
+[host runbook](docs/runbooks/codex-personal-agent-host.md#shared-live-labs).
 
 `--fake-providers` instead starts owned verified https provider wires and real
 pinned codex hosts for the host api and linux workers, with fresh synthetic

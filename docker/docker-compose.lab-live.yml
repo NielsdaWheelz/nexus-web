@@ -1,0 +1,27 @@
+# Shared Codex clients retain their private lab networks and own only their cwd root.
+volumes:
+  lab_codex_cwds:
+    external: true
+    name: nexus-lab-codex-cwds
+
+networks:
+  lab_codex_clients:
+    external: true
+    name: nexus-lab-codex-clients
+
+x-live-worker: &live-worker
+  environment:
+    NEXUS_CODEX_ENDPOINT: ${NEXUS_LAB_CODEX_ENDPOINT:?attach the enrolled shared Codex host}
+    NEXUS_CODEX_TRANSPORT_TOKEN: ${NEXUS_LAB_CODEX_TRANSPORT_TOKEN:?attach the enrolled shared Codex host}
+    NEXUS_CODEX_CWD_ROOT: ${NEXUS_LAB_CODEX_CWD_ROOT:?prepare the owned run cwd}
+  volumes:
+    - lab_codex_cwds:/tmp/codex-daemon-10001
+  networks:
+    default: {}
+    lab_codex_clients: {}
+
+services:
+  worker-interactive:
+    <<: *live-worker
+  worker-background:
+    <<: *live-worker

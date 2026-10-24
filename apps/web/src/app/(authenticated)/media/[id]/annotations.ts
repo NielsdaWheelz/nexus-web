@@ -9,7 +9,7 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { admitWriting, type WritingAck, type WritingIntent } from "@/lib/notes/journal";
+import { admitWriting, type WritingAck, type WritingIntent } from "@/lib/notes/writes";
 import { adoptText, readText, setGone } from "@/lib/notes/texts";
 import { parseBody } from "@/lib/notes/noteBody";
 import { fetchNote } from "@/lib/notes/api";
@@ -323,7 +323,6 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
   /** admission freezes the exact observed version; delivery never belongs to a pane. */
   async function update(id: string, request: Schema<"UpdateHighlightRequest">): Promise<WritingAck> {
     const admitted = admitWriting({ kind: "highlight_update", highlight_id: id, request }, []);
-    await admitted.durable;
     const ack = await admitted.settled;
     acknowledge(ack);
     return ack;
@@ -360,8 +359,7 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
       anchor: { type: "fragment_offsets", unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
     async remove(id) {
       const admitted = admitWriting({ kind: "highlight_delete", highlight_id: id }, []);
-      await admitted.durable;
-      acknowledge(await admitted.settled);
+        acknowledge(await admitted.settled);
     },
     highlight,
   };

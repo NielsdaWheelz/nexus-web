@@ -212,7 +212,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   const mode: ShareMode = target.kind === "Route" ? "CopyOnly" : (snapshot?.sharing ?? "None");
   const href =
     target.kind === "Route"
-      ? new URL(target.href, process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN).toString()
+      ? new URL(target.href, session.origin).toString()
       : (snapshot?.authenticated_href ?? null);
   const label = target.kind === "Route" ? target.label : `${target.ref.split(":")[0]} link`;
   const members = snapshot?.members != null ? snapshot.members : null;

@@ -14,8 +14,8 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { emptyBody } from "@/lib/notes/noteBody";
-import { adoptText, createText, readText, setCreator, snapshotText, textDraft, useText } from "@/lib/notes/texts";
-import { admitWriting, assertWritingRuntimeToken, readDraft, writingRuntimeToken, type Publication } from "@/lib/notes/journal";
+import { adoptText, createText, readText, setCreator, snapshotText, readPublication, useText } from "@/lib/notes/texts";
+import { admitWriting, readWriting, type Publication } from "@/lib/notes/writes";
 import styles from "./AnnotationNoteEditor.module.css";
 
 type AttachedNote = Schema<"LinkedNoteBlockRef">;
@@ -84,10 +84,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
   }, [note, ref]);
   useEffect(() => {
     if (attached || props.attachmentRemoved || publication === null || !readText(ref)) return;
-    const handle = textDraft(ref);
-    const context = handle && readDraft(handle.draft_id)?.context;
-    // restored writing keeps its original fence and publication policy.
-    if (context?.kind === "body" && context.publication !== null) return;
+    if (readPublication(ref) !== null) return;
     setCreator(ref, publication);
   }, [attached, props.attachmentRemoved, publication, ref]);
 
@@ -104,7 +101,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
 
   const detach = async () => {
     if (detaching || writing.paused || !text?.ready) return;
-    const token = writingRuntimeToken();
+    const token = readWriting();
     const owner = props.onDetached;
     const failed = (error: unknown) => {
       if (!mounted.current || latest.current.noteId !== noteId || handleUnauthenticatedApiError(error)) return;
@@ -116,19 +113,17 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
     setDetaching(true);
     try {
       const intent = { kind: "detach_highlight" as const, highlight_id: target.id, note_id: noteId, link_id: attachment.linkId };
-      const admitted = admitWriting(intent, snapshotText(ref).then(snapshot => [snapshot]));
-      void admitted.settled.then(ack => {
-        assertWritingRuntimeToken(token);
+      const admitted = admitWriting(intent, [snapshotText(ref)]);
+      owner(target.id, noteId, admitted.id, "pending");
+      await admitted.settled.then(ack => {
+        if (readWriting().account_id !== token.account_id || readWriting().generation !== token.generation) return;
         for (const note of ack.notes) adoptText(`note_block:${note.id}`, { body_pm_json: note.body_pm_json, body_text: note.body_text }, note.body_version);
-        owner(target.id, noteId, admitted.intent_id, "confirmed");
+        owner(target.id, noteId, admitted.id, "confirmed");
       }, error => {
-        assertWritingRuntimeToken(token);
-        owner(target.id, noteId, admitted.intent_id, "failed");
+        if (readWriting().account_id !== token.account_id || readWriting().generation !== token.generation) return;
+        owner(target.id, noteId, admitted.id, "failed");
         failed(error);
-      }).catch(() => undefined);
-      await admitted.durable;
-      assertWritingRuntimeToken(token);
-      owner(target.id, noteId, admitted.intent_id, "pending");
+      }).catch(reportError);
     } catch (error) { failed(error); }
     finally { if (mounted.current) setDetaching(false); }
   };
@@ -141,7 +136,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
       label={props.label ?? "edit note: annotation"}
       editable={editable && !writing.paused} embeddedItem={note?.embedded_item ?? null} atomicEmbeds={props.atomicEmbeds} />
     {!attached && slot.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t prepare this attachment",
-      message: text.durable ? "your draft is saved on this device. retry to save it here." : "keep this tab open until your draft is saved on this device.", requestId: slot.error.requestId }}
+      message: "your changes remain in this tab. retry to save this annotation.", requestId: slot.error.requestId }}
       announcement="Polite" actions={[{ label: "retry attachment setup", onClick: slot.refetch, busy: slot.retrying }]} /> : null}
     <div className={styles.actions}>
       <WritingStatus textRef={ref} />
