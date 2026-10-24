@@ -304,7 +304,7 @@ function MediaInfo({
       {group("reading/listening", [
         fact("completion", COMPLETION[media.consumption.state]),
         fact(
-          "reading progress",
+          "saved position",
           media.consumption.progress === null
             ? null
             : `${Math.round(media.consumption.progress * 100)}%`,

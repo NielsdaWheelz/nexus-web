@@ -12,6 +12,7 @@ import type { Schema } from "@/lib/api/wire";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { Move, MoveOutcome, OrderRevision } from "./order";
+import type { ConversationMetadataView } from "@/lib/chat/conversationIndex";
 
 /** A complete manual-order scope. Its owner alone commits and reconciles moves. */
 export interface OrderPresentation {
@@ -57,6 +58,7 @@ export type CollectionActivity =
 
 export type CollectionContext =
   | { readonly kind: "Text"; readonly text: string }
+  | { readonly kind: "Conversation"; readonly metadata: ConversationMetadataView }
   | { readonly kind: "Snippet"; readonly segments: readonly EmphasisSegment[] };
 
 export type ExceptionalStatus = {

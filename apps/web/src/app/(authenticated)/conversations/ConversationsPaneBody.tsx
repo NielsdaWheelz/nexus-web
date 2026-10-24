@@ -22,6 +22,7 @@ import {
   type ConversationListItem,
 } from "@/lib/chat/conversationIndex";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
+import { useChatAgeClock } from "@/lib/chat/useChatAgeClock";
 import {
   CANONICAL_UPDATED_TITLE_INDEX_VIEW as CANONICAL,
   decodeUpdatedTitleIndexView,
@@ -48,6 +49,7 @@ import {
 import {
   requirePaneRuntime,
   usePaneIsActive,
+  usePaneIsVisible,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -99,6 +101,7 @@ export default function ConversationsPaneBody() {
     fetchPage: (cursor, limit, signal) =>
       fetchConversationIndex(pageQuery(viewQuery, cursor, limit), signal),
   });
+  const nowMs = useChatAgeClock({ initialInstant: environment.currentInstant, items: list.items, visible: usePaneIsVisible() });
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(list.items);
   const setView = useCallback(
@@ -110,8 +113,8 @@ export default function ConversationsPaneBody() {
   );
 
   const rows = useMemo(
-    () => list.items.map((item) => presentConversation(item, environment)),
-    [list.items, environment],
+    () => list.items.map((item) => presentConversation(item, environment, nowMs)),
+    [list.items, environment, nowMs],
   );
   const filterRows = usePaneFilterRows({
     sourceKey: "Conversations:mine",

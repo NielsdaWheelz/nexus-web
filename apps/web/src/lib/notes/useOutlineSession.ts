@@ -7,6 +7,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   useFeedback,
 } from "@/components/feedback/Feedback";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import { assertNever } from "@/lib/assertNever";
 import {
   ApiError,
@@ -24,7 +25,7 @@ import {
 } from "./noteBody";
 import * as model from "./outline";
 import * as store from "./texts";
-import { admitWriting, captureLane, readDraft, readWriting, subscribeWritingBindings, type AuthoredSnapshot, type LaneDependency, type WritingAck, type WritingCommand, type WritingPosition, type Publication, type RestoreNoteProof, type ReferenceConsumption } from "./journal";
+import { admitWriting, canRetryWriting, captureLane, readWriting, subscribeWriting, subscribeWritingBindings, type AuthoredSnapshot, type LaneDependency, type WritingAck, type WritingCommand, type WritingPosition, type Publication, type RestoreNoteProof, type WriteHandle } from "./writes";
 import {
   isDeletedResource,
   subscribeLinkMutations,
@@ -49,7 +50,7 @@ import type {
 } from "@/lib/resources/outlineProjection";
 import { enterOutlineOccurrence } from "@/lib/resources/outlineProjection";
 type Reply = WritingAck;
-type Admission = { intent_id: string; draft_id: string | null };
+type Admission = { write: WriteHandle };
 type Restore = Extract<WritingCommand, { kind: "restore_note" }>["removed_by"];
 /** Exact pending deletion owners retain their own inverse; foreign histories expire. */
 const historyDeletionOwners = new Map<string, Set<Item>>();
@@ -191,6 +192,16 @@ type PendingRecord = PendingOccurrence & {
 };
 const pendingRemovals = new Map<string, PendingRemoval>();
 const pendingOccurrences = new Map<string, PendingRecord>();
+let accountLifetime = readWriting().generation;
+subscribeWriting(() => {
+  if (accountLifetime === readWriting().generation) return;
+  accountLifetime = readWriting().generation;
+  graph.clear(); latest.clear(); insertionCapabilities.clear(); reviewedRefs.clear();
+  textHistoryOwners.clear(); pendingUnlinks.clear(); carried.clear();
+  pendingRemovals.clear(); pendingOccurrences.clear(); historyDeletionOwners.clear();
+  publish();
+});
+
 /** Existing loaded outlines own the dirty evidence used when a pane loses its root. */
 export function outlineTextRefs(ref: string): string[] {
   const refs = new Set<string>();
@@ -539,19 +550,19 @@ function sendEdits(
   removalBodies: ReadonlyMap<string, NoteBody> = new Map(),
   onAcknowledged: (reply: Reply) => void = () => undefined,
   restores: ReadonlyMap<string, Restore> = new Map(),
-  consumed_reference: ReferenceConsumption | null = null,
-): { intent_id: string; draft_id: string | null } | null {
+): Admission | null {
+  const lifetime = readWriting().generation;
   const serial = ++jobSerial;
   carried.set(serial, { texts, refs });
   const release = () => carried.delete(serial);
   try {
     const checked = (ref: string, position?: model.OutlinePosition | null): LaneDependency => {
       if (position?.expected_links_version === null) return {
-        kind: "result", intent_id: position.proof.intent_id, draft_id: position.proof.draft_id, ref, lane: "links", version: position.proof.version,
+        kind: "result", write: position.proof.write, ref, lane: "links", version: position.proof.version,
       };
       const observed = captured.get(ref) ?? position?.expected_links_version;
       if (typeof observed === "object" && observed !== null) return {
-        kind: "result", intent_id: observed.intent_id, draft_id: observed.draft_id, ref, lane: "links", version: observed.version,
+        kind: "result", write: observed.write, ref, lane: "links", version: observed.version,
       };
       const minted = edits.some(edit => edit.kind === "insert_note" && model.noteRef(edit.note_id) === ref);
       const base = observed ?? (minted ? 1 : null);
@@ -559,22 +570,22 @@ function sendEdits(
       return captureLane(ref, "links", base);
     };
     const commands = wireEdits(edits, checked, removed, bodyBases, removalBodies, restores);
-    const admitted = admitWriting({ kind: "outline", commands }, Promise.all([...texts].map(store.snapshotText)), consumed_reference);
+    const admitted = admitWriting({ kind: "outline", commands }, [...texts].map(store.snapshotText));
     void admitted.settled.then(reply => {
+      if (readWriting().generation !== lifetime) return;
       release();
-      acknowledge(reply, edits);
+      acknowledge(reply);
       onAcknowledged(reply);
       receive([]);
       publish();
     }, error => {
+      if (readWriting().generation !== lifetime) return;
       release();
       handleUnauthenticatedApiError(error);
       onRefused(error);
       publish({ kind: "refused", refs, texts });
     });
-    void admitted.durable.catch(() => publish());
-    const anchor = [...texts].map(ref => store.textDraft(ref)?.draft_id).find(id => id !== undefined) ?? null;
-    return { intent_id: admitted.intent_id, draft_id: anchor };
+    return { write: admitted };
   } catch (error) {
     release();
     onRefused(error);
@@ -585,13 +596,11 @@ function sendEdits(
 /** Only carried body writes are acknowledged. Canonical nodes merely read or reused
  * by an insertion are adopted, preserving dirty drafts and opening unopened texts.
  * Deleted notes stop saving unless a later queued write recreates them. */
-function acknowledge(reply: Reply, edits: readonly model.Edit[]) {
-  const written = new Set(edits.flatMap(edit => edit.kind === "set_body" || edit.kind === "insert_note" ? [model.noteRef(edit.note_id)] : []));
+function acknowledge(reply: Reply) {
   for (const note of reply.notes) {
     const ref = model.noteRef(note.id);
     const value = { body_pm_json: note.body_pm_json, body_text: note.body_text };
-    if (written.has(ref)) store.acknowledgeText(ref, value, note.body_version);
-    else store.adoptText(ref, value, note.body_version);
+    store.adoptText(ref, value, note.body_version);
   }
   for (const page of reply.pages) store.adoptText(`page:${page.id}`, page.title, page.title_version);
 }
@@ -937,8 +946,7 @@ type ChildAction = {
   left: NoteBody | null;
   target: Schema<"InsertLink">["target"] | null;
   targetItem: ResourceItem | null;
-  authored: Promise<AuthoredSnapshot[]> | null;
-  consumed_reference: ReferenceConsumption | null;
+  authored: readonly AuthoredSnapshot[] | null;
   noteId: string;
   linkId: string;
   publication: DailyPublication | null;
@@ -1016,6 +1024,8 @@ export function useOutlineSession({
   scope: string;
   inheritedBranch: OutlineBranch;
 }) {
+  const lifetime = readWriting().generation;
+  const currentLifetime = () => readWriting().generation === lifetime;
   const feedback = useFeedback();
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const retained = useResourceDraft(`Notes.Session:${scope}`, () => ({
@@ -1090,7 +1100,7 @@ export function useOutlineSession({
       history.current = { items: [], index: 0 };
     };
   }, [history, owner]);
-  const ownsSurface = () => live.current && currentOwner.current === owner;
+  const ownsSurface = () => currentLifetime() && live.current && currentOwner.current === owner;
   const focusRow = useCallback(
     (
       key: string,
@@ -1150,6 +1160,7 @@ export function useOutlineSession({
     };
   }, [history]);
   function reportRefusal(error: unknown) {
+    if (!currentLifetime()) return;
     feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
       key: `notes-outline-refused:${owner}`,
       announcement: "Assertive",
@@ -1157,10 +1168,36 @@ export function useOutlineSession({
         tone: "Danger",
         title: "that change couldn’t be saved",
         message:
-          "your drafts are kept in the original outline. review its refreshed source and position before retrying.",
+          "your text remains in this tab. review the saved outline before making a corrected change.",
         requestId: isApiError(error) ? error.requestId : undefined,
       },
     });
+  }
+  function observeSave(write: WriteHandle, refs: ReadonlySet<string>): void {
+    let offer: ReturnType<typeof feedback.offer> | null = null;
+    const inspect = () => {
+      const state = write.read();
+      if (state.kind !== "unconfirmed") { offer?.withdraw(); offer = null; return; }
+      const retryable = canRetryWriting(write);
+      const copy = () => {
+        const value = [...refs].map(ref => store.readText(ref)?.value).flatMap(value => value === undefined ? [] : [typeof value === "string" ? value : value.body_text]).join("\n\n");
+        void copyText(value).catch(error => {
+          if (!(error instanceof ClipboardWriteUnavailableError)) { reportError(error); return; }
+          feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `outline-copy:${write.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy text", message: "select and copy the text in the editor." } });
+        });
+      };
+      const notice = {
+        needsAttention: true,
+        announcement: "Polite" as const,
+        content: { tone: "Warning" as const, title: "save not confirmed", message: retryable ? "the request may have succeeded." : "copy changes you want to keep, then reload. other unsaved changes will be lost.", requestId: isApiError(state.error) ? state.error.requestId : undefined },
+        actions: retryable ? [{ label: "retry same save", onClick: () => write.retry() }, { label: "copy text", onClick: copy }] as const
+          : [{ label: "copy text", onClick: copy }, { label: "reload", onClick: () => { if (window.confirm("other unsaved changes will be lost. reload?")) window.location.reload(); } }] as const,
+      };
+      if (offer) offer.update(notice); else offer = feedback.offer({ key: `notes-outline-save:${write.id}`, undo: null, onDismiss: null, ...notice });
+    };
+    const unsubscribe = write.subscribe(inspect);
+    void write.settled.then(() => { unsubscribe(); offer?.withdraw(); }, () => { unsubscribe(); offer?.withdraw(); });
+    inspect();
   }
   /** Apply, send and (unless replaying history) record one structure batch. */
   function commit(
@@ -1173,7 +1210,6 @@ export function useOutlineSession({
       captured?: ReadonlyMap<string, CapturedLinksVersion>;
       restores?: ReadonlyMap<string, Restore>;
       preserve?: Item;
-      consumed_reference?: ReferenceConsumption | null;
       freshNotes?: ReadonlySet<string>;
       onAdmitted?: (admission: Admission) => void;
       onAcknowledged?: (reply: Reply) => void;
@@ -1182,7 +1218,7 @@ export function useOutlineSession({
       occurrences?: readonly OccurrenceIntent[];
     } = {},
   ) {
-    if (readWriting().paused) return false;
+    if (!currentLifetime() || readWriting().paused) return false;
     if (!edits.length && !options.publication) return false;
     const occurrences = options.occurrences ?? [];
     const refs = editReferences(edits);
@@ -1536,7 +1572,7 @@ export function useOutlineSession({
         failed.set((prior) => [
           ...prior.slice(0, failedBefore),
           {
-            edits: structuredClone(edits),
+            edits: edits.map(edit => ({ ...edit })),
             inverse,
             occurrences,
             publication: options.publication ?? null,
@@ -1656,7 +1692,7 @@ export function useOutlineSession({
           }
         }
         if (recorded) advanceHistoryPositions(recorded, reply);
-        if (protectedItem && protectedItem.lastAdmission?.intent_id === admission?.intent_id)
+        if (protectedItem && protectedItem.lastAdmission?.write === admission?.write)
           protectedItem.removalProofs = removalProofs(removed.values(), reply);
         options.onAcknowledged?.(reply);
         releaseHistory(reply);
@@ -1686,9 +1722,9 @@ export function useOutlineSession({
         }
       },
       options.restores,
-      options.consumed_reference,
     );
     if (!admission) { releaseHistory(); history.current = previousHistory; return false; }
+    observeSave(admission.write, texts);
     if (recorded) recorded.lastAdmission = admission;
     options.onAdmitted?.(admission);
     if (admission) for (const value of admissions) {
@@ -1772,7 +1808,7 @@ export function useOutlineSession({
     preserve: Item | null;
     rows?: readonly model.Row[];
   }): boolean {
-    if (readWriting().paused) return false;
+    if (!currentLifetime() || readWriting().paused) return false;
     const ids = new Set(commands.map((command) => command.link_id));
     if (
       !ids.size ||
@@ -1792,23 +1828,25 @@ export function useOutlineSession({
         links_version: captureLane(command.expected.endpoint, "links", command.expected.links_version),
       },
     })) }, []);
-    if (preserve) preserve.lastAdmission = { intent_id: admitted.intent_id, draft_id: null };
+    observeSave(admitted, endpoints);
+    if (preserve) preserve.lastAdmission = { write: admitted };
     void admitted.settled.then(reply => {
+      if (!currentLifetime()) return;
       if (preserve && preserve.kind !== "text") {
         advanceHistoryPositions(preserve, reply);
-        if (preserve.lastAdmission?.intent_id === admitted.intent_id) preserve.removalProofs = removalProofs(endpoints, reply);
+        if (preserve.lastAdmission?.write === admitted) preserve.removalProofs = removalProofs(endpoints, reply);
       }
       for (const id of ids) pendingOccurrences.delete(id);
       publish({ kind: "links", ids, preserve });
       releaseHistory(reply);
     }, error => {
+      if (!currentLifetime()) return;
       releaseHistory();
       if (preserve) history.current = retainHistory(history.current, item => item !== preserve);
       if (!handleUnauthenticatedApiError(error)) reportRefusal(error);
       invalidateResourceOutlines(endpoints);
       publish({ kind: "refused", refs: endpoints, texts: new Set() });
-    }).finally(() => { release(); publish(); });
-    void admitted.durable.catch(error => { reportRefusal(error); publish(); });
+    }).finally(() => { if (currentLifetime()) { release(); publish(); } });
     boundaryNext.current = true;
     if (ownsSurface() && rows.length > 0) {
       const at = rows.findIndex(row => ids.has(row.link.link_id));
@@ -1862,7 +1900,7 @@ export function useOutlineSession({
     publish();
   }), [readActions, remapHistory]);
   function step(redo: boolean) {
-    if (readWriting().paused) return;
+    if (!currentLifetime() || readWriting().paused) return;
     const { items, index } = history.current;
     const item = redo ? items[index] : items[index - 1];
     if (!item) return;
@@ -2131,10 +2169,7 @@ export function useOutlineSession({
   ): OutlineDestination {
     return {
       source: structuredClone(destination.source),
-      position:
-        destination.position?.expected_links_version === null
-          ? { ...destination.position }
-          : structuredClone(destination.position),
+      position: destination.position === null ? null : { ...destination.position },
       occurrencePrefix: destination.occurrencePrefix,
       path: [...destination.path],
       rootOccurrencePrefix: destination.rootOccurrencePrefix,
@@ -2228,16 +2263,13 @@ export function useOutlineSession({
     edgeId: string;
     sourceRef: string;
   } | null> {
-    if (readWriting().paused) return null;
+    if (!currentLifetime() || readWriting().paused) return null;
     const creator = action.creator;
     const canFocus = ownsSurface();
     const generation = interaction.current;
     const focused = document.activeElement;
     if (creator && action.kind === "reference" && store.readText(creator.noteRef)?.acked === null) {
-      await store.snapshotText(creator.noteRef);
-      const handle = store.textDraft(creator.noteRef);
-      const context = handle ? readDraft(handle.draft_id)?.context : null;
-      const publication = context?.kind === "body" ? context.publication : null;
+      const publication = store.readPublication(creator.noteRef);
       if (publication?.kind === "page" && publication.request.initial_item.kind === "note" && action.target && action.targetItem) {
         const request = publication.request;
         const pageRef = `page:${request.id}`;
@@ -2248,23 +2280,24 @@ export function useOutlineSession({
         if (!endpoint) return null;
         const key = createdKey(action.destination, item.ref, linkId);
         graph.set(pageRef, { ...endpoint, links: [{ link_id: linkId, target: node(item.ref) ?? { item, content: { kind: "resource" } }, connection: null }] });
-        store.setCreator(creator.noteRef, null);
         const pending: PendingRecord = { key, ref: item.ref, edgeId: linkId, sourceRef: pageRef, item, body: null, position: { after: null, expected_links_version: 1 }, acknowledged: false, generation: null };
         pendingOccurrences.set(linkId, pending);
         const firstPage: Extract<Publication, { kind: "page" }> = { kind: "page", request: { ...request, title: typeof title === "string" && title.trim() ? title : "untitled", initial_item: { kind: "resource", link_id: linkId, target: action.target } } };
-        const admitted = admitWriting(firstPage, Promise.all([store.snapshotPageTitle(firstPage), ...(action.authored ? [action.authored] : [])]).then(parts => parts.flat()));
-        pending.proof = { intent_id: admitted.intent_id, draft_id: handle?.draft_id ?? null, requested_link_id: linkId, source_ref: pageRef, version: 1 };
+        const admitted = admitWriting(firstPage, [store.snapshotPageTitle(firstPage), ...(action.authored ?? [])]);
+        observeSave(admitted, new Set([pageRef]));
+        pending.proof = { write: admitted, requested_link_id: linkId, source_ref: pageRef, version: 1 };
         actions.set(prior => prior.filter(item => item !== action));
         publish();
         void admitted.settled.then(reply => {
+      if (!currentLifetime()) return;
+          store.setCreator(creator.noteRef, null);
           const result = reply.insertions.find(value => value.requested_link_id === linkId);
           if (!result) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "the saved first item is no longer available");
           const targetRef = insertionTarget(reply, result);
           const actual = item.ref === targetRef ? item : { ...item, ref: targetRef, activation: { ...item.activation, resource_ref: targetRef } };
           pendingOccurrences.delete(linkId);
           rememberReference(result, actual, reply, createdKey(action.destination, targetRef, result.canonical_link_id));
-        }, error => { action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
-        void admitted.durable.catch(reportRefusal);
+        }, error => { if (!currentLifetime()) return; action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
         return { key, noteRef: item.ref, ref: item.ref, edgeId: linkId, sourceRef: pageRef };
       }
     }
@@ -2280,8 +2313,7 @@ export function useOutlineSession({
         reportRefusal(null);
         return null;
       }
-      parentAdmission = { intent_id: made.intent_id, draft_id: store.textDraft(creator.noteRef)?.draft_id ?? null };
-      void made.durable.catch(reportRefusal);
+      parentAdmission = { write: made };
       void made.settled.catch(reportRefusal);
     }
     if (action.cancelled) return null;
@@ -2310,11 +2342,13 @@ export function useOutlineSession({
         authored: action.authored ?? [],
         dependency: parentDependency,
       });
+      observeSave(admitted, new Set([endpoint, item.ref]));
       const sourceVersion = graph.get(endpoint)?.links_version;
-      if (sourceVersion !== undefined) pending.proof = { intent_id: admitted.intent_id, draft_id: null, requested_link_id: action.linkId, source_ref: endpoint, version: sourceVersion };
+      if (sourceVersion !== undefined) pending.proof = { write: admitted, requested_link_id: action.linkId, source_ref: endpoint, version: sourceVersion };
       publish();
       actions.set(prior => prior.filter(item => item !== action));
       void admitted.settled.then(reply => {
+      if (!currentLifetime()) return;
         const result = reply.insertions.find(value => value.requested_link_id === action.linkId);
         if (!result) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "the saved link is no longer available");
         const targetRef = insertionTarget(reply, result);
@@ -2323,8 +2357,7 @@ export function useOutlineSession({
         pendingOccurrences.delete(action.linkId);
         rememberReference(result, actual, reply, actualKey);
         invalidateResourceOutlines(new Set([endpoint, result.source_ref]));
-      }, error => { action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
-      void admitted.durable.catch(reportRefusal);
+      }, error => { if (!currentLifetime()) return; action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
       if (canFocus && ownsSurface() && interaction.current === generation) focusRow(provisionalKey, "end", "reference");
       return { key: provisionalKey, noteRef: item.ref, ref: item.ref, edgeId: action.linkId, sourceRef: endpoint };
     }
@@ -2371,7 +2404,6 @@ export function useOutlineSession({
         : selection,
       {
         publication: action.publication ?? undefined,
-        consumed_reference: action.consumed_reference,
         freshNotes: new Set([action.noteId]),
         captured: parentDependency?.kind === "result" ? new Map([[endpoint, {
           ...parentAdmission!, version: parentDependency.version,
@@ -2411,8 +2443,7 @@ export function useOutlineSession({
     left?: NoteBody;
     target?: Schema<"InsertLink">["target"];
     targetItem?: ResourceItem;
-    authored?: Promise<AuthoredSnapshot[]>;
-    consumed_reference?: ReferenceConsumption | null;
+    authored?: readonly AuthoredSnapshot[];
     creator?: BodyCreator;
     publication?: DailyPublication;
   }) {
@@ -2426,7 +2457,6 @@ export function useOutlineSession({
       target: input.target ? structuredClone(input.target) : null,
       targetItem: input.targetItem ?? null,
       authored: input.authored ?? null,
-      consumed_reference: input.consumed_reference ?? null,
       noteId: crypto.randomUUID(),
       linkId: crypto.randomUUID(),
       publication: input.publication ?? null,
@@ -2867,7 +2897,7 @@ export function useOutlineSession({
       selectionBefore: {anchor: number; head: number; direction?: "forward" | "backward" | "none"}; selectionAfter: {anchor: number; head: number; direction?: "forward" | "backward" | "none"};
       editBase?: store.TextEditBase; write?: (value: string, editBase?: store.TextEditBase) => void;
     }) {
-      if (readWriting().paused) return;
+      if (!currentLifetime() || readWriting().paused) return;
       if (textHistoryOwners.get(occurrence.noteRef) !== owner)
         history.current = retainHistory(history.current, item => item.kind !== "text" || item.ref !== occurrence.noteRef);
       textHistoryOwners.set(occurrence.noteRef, owner);
@@ -2897,7 +2927,7 @@ export function useOutlineSession({
       occurrence: BodyOccurrence;
       edit: NoteEdit;
     }) {
-      if (readWriting().paused) return;
+      if (!currentLifetime() || readWriting().paused) return;
       const ref = occurrence.noteRef;
       if (isDeletedResource(ref)) return;
       if (textHistoryOwners.get(ref) !== owner)
@@ -2983,13 +3013,11 @@ export function useOutlineSession({
     insertNote({
       destination,
       body = emptyBody(),
-      consumed_reference,
       creator,
       publication,
     }: {
       destination: OutlineDestination;
       body?: NoteBody;
-      consumed_reference?: ReferenceConsumption | null;
       creator?: BodyCreator;
       publication?: DailyPublication;
     }) {
@@ -2997,7 +3025,6 @@ export function useOutlineSession({
         kind: "note",
         destination,
         body,
-        consumed_reference,
         creator,
         publication,
       });
@@ -3013,7 +3040,7 @@ export function useOutlineSession({
       destination: OutlineDestination;
       target: Schema<"InsertLink">["target"];
       targetItem: ResourceItem;
-      authored: Promise<AuthoredSnapshot[]>;
+      authored: readonly AuthoredSnapshot[];
       creator?: BodyCreator;
       publication?: DailyPublication;
     }) {

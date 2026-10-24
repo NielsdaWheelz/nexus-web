@@ -3,7 +3,6 @@
 import { apiFetch, requestWithDeadline, type ApiPath } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { SUGGESTIONS_REQUEST_TIMEOUT_MS } from "@/lib/api/suggestionPolicy";
-import type { paths } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -14,7 +13,6 @@ export type SuggestionTarget = SuggestionItem["target"];
 export type Suggestions = Schema<"SuggestionsOut">;
 export type SuggestionPublication = Schema<"SuggestionPublicationOut">;
 export type SuggestionState = Schema<"SuggestionStateOut">;
-export type SuggestionRefresh = paths["/lectern/suggestions/refresh"]["post"]["requestBody"]["content"]["application/json"];
 export type SuggestionObservation = Schema<"SuggestionObservationOut">;
 export type QuickReads = Schema<"QuickReadsOut">;
 export type SuggestionsDestination =
@@ -39,10 +37,10 @@ export async function viewSuggestions(path: ApiPath, refs: string[], signal: Abo
   });
 }
 
-export async function refreshSuggestions(path: ApiPath, input: SuggestionRefresh, signal: AbortSignal) {
+export async function refreshSuggestions(path: ApiPath, signal: AbortSignal) {
   return requestWithDeadline({ request: async (attemptSignal) =>
     (await apiFetch<ApiJson<"/lectern/suggestions/refresh", "post">>(`${path}/refresh`, {
-      method: "POST", body: JSON.stringify(input), signal: attemptSignal,
+      method: "POST", signal: attemptSignal,
     })).data,
   signal, timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS });
 }

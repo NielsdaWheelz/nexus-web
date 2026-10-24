@@ -1,8 +1,8 @@
 .section {
-  overflow: hidden;
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .header {
@@ -10,9 +10,10 @@
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--edge-subtle);
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
 }
 
 .heading {
@@ -24,34 +25,27 @@
 
 .title {
   margin: 0;
-  color: var(--ink);
-  font-size: var(--text-lg);
-}
-
-/* The Solar's display face, which needs 20px for its hairlines. */
-:global([data-theme="elvish"]) .title {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  font-weight: 300;
-  letter-spacing: 0.01em;
-  font-variant-numeric: lining-nums tabular-nums;
+  color: inherit;
+  font: var(--pane-section-title-font);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .description {
   margin: 0;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
 .actions {
   display: flex;
-  flex-shrink: 0;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
 
 .body {
-  padding: var(--space-3) var(--space-4);
+  min-width: 0;
 }

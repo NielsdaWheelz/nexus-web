@@ -108,7 +108,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  width: min(36rem, var(--floating-action-content-max-width));
+  width: min(24rem, var(--floating-action-content-max-width));
   max-height: var(--floating-action-content-max-height);
   overflow-y: auto;
   padding: var(--space-2);
@@ -126,7 +126,6 @@
 }
 
 .selectionInput {
-  min-height: 4rem;
   padding: var(--space-2);
   border-top: var(--stroke-hairline) solid var(--edge-subtle);
 }
@@ -137,27 +136,9 @@
   overflow-wrap: anywhere;
 }
 
-.composerHint {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-
-
-
 .selectionIcon {
   --control-icon-size: 16px;
   flex: none;
-}
-
-.selectionStatusMarker {
-  position: absolute;
-  inset-block-start: var(--space-1);
-  inset-inline-end: var(--space-1);
-  width: var(--space-1);
-  height: var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--accent);
 }
 
 .highlightControl {
@@ -185,17 +166,18 @@
 }
 
 .passageCue {
-  display: none;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  max-height: 3em;
+  overflow-wrap: anywhere;
   color: var(--ink-muted);
   font-size: var(--text-sm);
 }
 
-.selectionComposer[data-mobile="true"] .passageCue,
-.composerSurface[data-anchor-state="offscreen"] .passageCue,
-.composerSurface[data-anchor-state="unavailable"] .passageCue {
-  display: block;
+.dock[data-mobile="true"] {
+  --control-min-size: var(--size-xl);
+  padding: var(--space-2) var(--space-4);
 }
 
 .colours {
@@ -309,30 +291,17 @@
   margin-bottom: var(--space-6);
 }
 
-/* The card shares the text column's measure, while only its body reads as prose. */
+/* Notes align with transcript prose; the shared section owns the header. */
 .transcriptChrome .showNotes {
   --reader-accent-hover: var(--reader-accent, var(--accent-hover));
   --reader-surface: var(--reader-bg-secondary, var(--surface-2));
   min-inline-size: 0;
   inline-size: calc(100% - 2 * var(--space-4));
-  max-inline-size: var(--reader-column-width-ch, 65ch);
+  max-inline-size: calc(var(--reader-column-width-ch, 65ch) - 2 * var(--space-4));
   margin: var(--space-4) auto 0;
-  border-color: var(--reader-border-subtle, var(--edge-subtle));
-  background: var(--reader-bg-secondary, var(--surface-2));
   color: var(--reader-text, var(--ink));
   font-family: var(--reader-font-family, var(--font-serif));
   font-size: var(--reader-font-size-px, var(--text-md));
-}
-
-.showNotes > header {
-  border-bottom-color: var(--reader-border-subtle, var(--edge-subtle));
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  line-height: var(--leading-normal);
-}
-
-.showNotes > header h2 {
-  color: inherit;
 }
 
 .showNotes .showNotesBody {
@@ -404,26 +373,4 @@
 .embedActions {
   display: flex;
   gap: var(--space-3);
-}
-
-.chatFooter {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.destinationAction {
-  flex: 1 1 14rem;
-  min-inline-size: 0;
-  max-inline-size: 100%;
-  overflow: hidden;
-}
-
-.destinationLabel {
-  display: block;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

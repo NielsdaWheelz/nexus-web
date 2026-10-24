@@ -73,7 +73,7 @@
   display: block;
 }
 .section {
-  margin-top: 1rem;
+  margin-top: var(--space-6);
   overflow: auto;
 }
 .scope {

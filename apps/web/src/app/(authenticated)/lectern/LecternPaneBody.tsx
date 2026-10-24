@@ -10,6 +10,7 @@ import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
+import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import {
   FeedbackNotice,
@@ -102,8 +103,15 @@ export default function LecternPaneBody() {
   const { refresh: refreshSuggestionFeed } = suggestions;
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
     const outcome = await refreshSuggestionFeed(signal);
-    return outcome === "Requested" ? { kind: "Complete", announcement: "refresh requested" } : { kind: "Failed",
-      announcement: outcome === "Repair" ? "suggestions need repair." : "couldn’t request suggestions." };
+    switch (outcome) {
+      case "Refreshed": return { kind: "Complete", announcement: "suggestions refreshed." };
+      case "Finding": return { kind: "Complete", announcement: "finding suggestions…" };
+      case "Repair": return { kind: "Failed", announcement: "suggestions need repair." };
+      case "Failed": return { kind: "Failed", announcement: "couldn’t refresh suggestions." };
+      // justify-defect: the lectern has no authority or applicability gate.
+      case "NotApplicable": throw new Error("lectern suggestions cannot be inapplicable");
+      default: return assertNever(outcome);
+    }
   }, [refreshSuggestionFeed]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();

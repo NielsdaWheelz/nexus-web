@@ -1,0 +1,19 @@
+{
+  "config": {
+    "ingress": [
+      {
+        "hostname": "nexus-api.nielseriknandal.com",
+        "service": "http://caddy:80",
+        "originRequest": {
+          "httpHostHeader": "nexus-api.nielseriknandal.com"
+        }
+      },
+      {
+        "service": "http_status:404"
+      }
+    ],
+    "warp-routing": {
+      "enabled": false
+    }
+  }
+}

@@ -142,7 +142,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
         after={writable && trailingDestination ? <>
           {originalPositionMissing ? <FeedbackStatus announcement="Polite" content={{
             tone: "Warning", title: "original insertion position is no longer available",
-            message: "your draft keeps its captured destination. discard it before choosing another position.",
+            message: "your input stays at its original destination. discard it before choosing another position.",
           }}/> : null}
           <OutlineInsertionLine session={session} destination={trailingDestination} publication={publication}/>
         </> : null}>

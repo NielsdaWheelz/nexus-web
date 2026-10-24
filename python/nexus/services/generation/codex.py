@@ -52,6 +52,7 @@ from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
     AgentRuntimeError,
+    CodexEndpoint,
     CredentialRef,
     CredentialRejected,
     CredentialUnavailable,
@@ -93,7 +94,8 @@ _CAUSES: dict[str, FailureCode] = {
 
 async def run_codex(
     *,
-    socket: Path,
+    endpoint: CodexEndpoint,
+    cwd_root: Path,
     owner: Owner,
     generation_id: UUID,
     target: CodexTarget,
@@ -141,12 +143,11 @@ async def run_codex(
         through_checkpoint=None,
     )
     ports = _Ports(owner, stopped, on_event, tools)
-    cwd_root = socket.parent / "cwds"
     cwd_root.mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="nexus-native-runtime-") as state:
         async with AgentRuntime(
             AgentRuntimeConfig(
-                state_root_base=Path(state), codex_endpoints={"codex-personal": socket}
+                state_root_base=Path(state), codex_endpoints={"codex-personal": endpoint}
             )
         ) as runtime:
             provider = CodexProvider(runtime, cwd_parent=cwd_root)

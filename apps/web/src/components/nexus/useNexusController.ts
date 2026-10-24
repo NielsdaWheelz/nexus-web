@@ -608,6 +608,7 @@ export function useNexusController() {
   }
 
   function closePane(paneId: string) {
+    if (!latestWorkspace().state.panes.some((pane) => pane.id === paneId)) return null;
     const keys = rows.filter((row) => rootMode === "Search" || row.key.startsWith("Pane:")).map((row) => row.key);
     const row = rows.find((row) => row.secondary?.kind === "CloseTab" ? row.secondary.paneId === paneId
       : row.secondary?.kind === "ResourceMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
@@ -686,6 +687,7 @@ export function useNexusController() {
     addDefect: addDefect?.sessionId === addSession.state.sessionId,
     panes,
     workspaceState: state,
+    desktopMaximized: workspace.desktopMaximized,
     titlesFailed: panes.some((pane) => pane.presentation.status === "Failed"),
     retryTitles: presentations.retryTitles,
     closedPanes: workspace.recentlyClosedPanes.map((snapshot) => ({
@@ -788,19 +790,19 @@ export function useNexusController() {
       run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     },
     closePane,
-    minimizePane: (paneId: string) => keepWorkspaceSelection(workspace.minimizePane(paneId)),
-    restorePane(paneId: string) {
-      workspace.activatePane(paneId);
-      const { state } = latestWorkspace();
-      const active = state.panes.find((pane) => pane.id === state.active_primary_pane_id)!;
-      keepWorkspaceSelection({ paneId: active.id, visitId: active.current_visit.id });
+    minimizePane(paneId: string) {
+      const pane = latestWorkspace().state.panes.find((pane) => pane.id === paneId);
+      if (!pane || pane.visibility !== "visible") return null;
+      const selection = keepWorkspaceSelection(workspace.minimizePane(paneId));
+      return latestWorkspace().state.panes.find((pane) => pane.id === paneId)?.visibility === "minimized" ? selection : null;
     },
-    movePane(input: { paneId: string; beforePaneId: string | null }) {
-      if (!workspace.movePane(input)) return;
-      const { state } = latestWorkspace();
-      const index = state.panes.findIndex((pane) => pane.id === input.paneId);
-      const label = presentations.forVisit(state.panes[index]!.current_visit).title;
-      setAnnouncement(`Moved ${label} to position ${index + 1} of ${state.panes.length}.`);
+    maximizePane(paneId: string) {
+      const selection = workspace.maximizePane(paneId);
+      return selection === null ? null : keepWorkspaceSelection(selection);
+    },
+    restoreCanvas(paneId: string) {
+      const selection = workspace.restoreCanvas(paneId);
+      return selection === null ? null : keepWorkspaceSelection(selection);
     },
     restoreClosedPane: restoreClosed,
     activateAdjacentPane: workspace.activateAdjacentPane,

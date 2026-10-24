@@ -19,7 +19,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { emptyBody, type NoteBody } from "./noteBody";
 import * as model from "./outline";
 import * as store from "./texts";
-import { readWriting } from "./journal";
+import { readWriting } from "./writes";
 import {
   hasUnsavedOutline,
   openOutlineDraft,

@@ -258,7 +258,9 @@ stops scrolling independently. the sheet header/close remains reachable.
 **MobileSheet**: fixed visible title and close x above an independently scrolling
 body; the full title names the dialog and close control. `renderHeader` replaces
 the standard header and receives the frame's guarded `requestDismiss`; specialized
-headers must retain a visible exit. noninteractive header space is a drag target
+headers retain an explicit guarded exit. the compact passage composer places
+`close composer` in its always-available overflow; its primary row has no x.
+noninteractive header space is a drag target
 at least 44px high, with a 36×4px grabber. a drag of 96px asks the same guard as
 x, scrim, escape and back; cancellation restores position. reduced motion removes
 animated travel while retaining dismissal. scrim is `"default"`, or `"soft"` for
@@ -288,8 +290,12 @@ while taking a fresh signal and budget. mobile uses a titled `MobileSheet` with
 ordinary buttons/links and modal tab order. touch focuses the panel, keyboard the
 requested command edge. `aria-haspopup` matches the displayed role.
 both presentations use natural content height with available-space ceilings;
-mobile selects the sheet's available-height policy. sizing settles before
-publication; published geometry and resize retirement keep their existing owner.
+mobile selects the sheet's available-height policy. mobile admission focuses the
+panel with choices hidden, then requires 150ms without viewport/row geometry
+changes before publishing one snapshot. its own keyboard closure can settle
+there; this quiet interval does not assert portable keyboard completion. close,
+replacement and unmount cancel admission; prepared actions retain their original
+five-second deadline. published geometry and resize retirement remain strict.
 
 Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
 wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
@@ -313,12 +319,11 @@ mobile sheets measure layout position within their fixed backdrop, independently
 of entry/drag translation. fractional dimensions and row geometry retain their
 1/64 css px comparison; compositor position samples are not subtracted. viewport facts
 remain exact and are checked at publication and activation, before deferred resize
-delivery can permit a stale press. viewport changes retire pending or published
-invocations. `onOpenChange` reports
+delivery can permit a stale press. viewport changes restart quiet mobile
+admission; they retire other pending or published invocations. `onOpenChange` reports
 actual visibility only; preparation never starts there. `ActionMenu` owns mobile
 chrome hold. `returnFocusTo` can name the invocation context independently of the trigger;
-absent it, the trigger owns return. canonical main's passage-composer reader
-cutover retires the old directly anchored mode before its shared-menu removal.
+absent it, the trigger owns return.
 
 **FloatingActionSurface**: nonmodal selection actions, desktop passage composers,
 clicked-highlight choosers and action-bar popovers. ordinary text-selection

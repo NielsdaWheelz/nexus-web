@@ -81,6 +81,8 @@ export type SecondaryPanePatch = Partial<
 >;
 interface Data {
   state: WorkspaceState;
+  /** Provider-local desktop mode; mobile suspends its projection. Never saved. */
+  desktopMaximized: boolean;
   /** Session-local: leaving a foreground source permanently revokes its async opening. */
   readonly foregroundGeneration: number;
   columnWidthPx: number;
@@ -173,6 +175,7 @@ function createWorkspaceStore(
   let mounted = false;
   let data: Data = {
     state: initial,
+    desktopMaximized: false,
     foregroundGeneration: 0,
     columnWidthPx,
     recentlyClosedPanes: [],
@@ -332,6 +335,20 @@ function createWorkspaceStore(
 
   const commands = {
     activatePane,
+    maximizePane(paneId: string): WorkspaceSelection | null {
+      if (!find(paneId)) return null;
+      const next = activated(data.state, paneId);
+      if (next !== data.state || !data.desktopMaximized)
+        commit(next, { desktopMaximized: true });
+      return selection();
+    },
+    restoreCanvas(paneId: string): WorkspaceSelection | null {
+      if (!find(paneId)) return null;
+      const next = activated(data.state, paneId);
+      if (next !== data.state || data.desktopMaximized)
+        commit(next, { desktopMaximized: false });
+      return selection();
+    },
     activateAdjacentPane(input: { direction: WorkspaceAdjacentPaneDirection }) {
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
       const index = visible.findIndex(
@@ -398,9 +415,9 @@ function createWorkspaceStore(
         if (entry.kind === "ComposeChat" || entry.kind === "ComposePage" || entry.kind === "ComposeReaderQuestion") {
           const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
           memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
-          memento.retainWorkOwner({
+          if (entry.kind !== "ComposePage") memento.retainWorkOwner({
             id: paneEntryWorkOwnerId(delivery), scope,
-            read: () => ({ changed: (entry.kind === "ComposePage" ? entry.title : entry.text) !== "", unconfirmed: false, stopsBrowserWork: false }),
+            read: () => ({ changed: entry.text !== "", unconfirmed: false, stopsBrowserWork: false }),
             subscribe: () => () => {},
           });
         } else if (previous) {

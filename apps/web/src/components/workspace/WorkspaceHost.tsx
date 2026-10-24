@@ -14,8 +14,6 @@ import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
-import { useWritingState } from "@/lib/notes/readiness";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { FeedbackState } from "@/components/feedback/Feedback";
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
@@ -46,19 +44,15 @@ const PaneContent = memo(function PaneContent(props: {
   readonly isPresented: boolean;
 }) {
   const admission = useRemoteAdmission();
-  const writingState = useWritingState();
-  const writingReady = writingState === "ready";
   const local = props.routeId === "unsupported" || ["settings", "settingsAppearance", "settingsReader", "settingsKeybindings"].includes(props.routeId);
   // Covered bodies own saved-data and coverage states; mounting grants no remote
   // capability. Other cold server panes still require credential admission.
   const catalog = ["libraries", "library", "podcasts", "podcastDetail", "lectern",
     "notes", "conversations", "media", "page", "conversation", "note"].includes(props.routeId);
-  const canAdmit = writingReady && (local || catalog || admission === "Ready");
+  const canAdmit = local || catalog || admission === "Ready";
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
-  if (!admitted && writingState === "failed") return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Warning", title: "writing couldn’t start" }} announcement="Polite" /></div>;
-  if (!admitted && !writingReady) return <PaneLoadingState label="opening writing…" announcement="Polite" />;
   if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
   if (props.routeId !== "unsupported") return renderPane(props.routeId);
   return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this destination is unavailable" }} announcement="Polite" /></div>;
@@ -77,8 +71,7 @@ export default function WorkspaceHost() {
   const isMobile = useIsMobileViewport();
   const latestWorkspace = useLatestWorkspace();
   const interactionOwner = useInteractionOwner();
-  const [isMaximized, setIsMaximized] = useState(false);
-  const maximized = isMaximized && !isMobile;
+  const maximized = store.desktopMaximized && !isMobile;
   const panes = useMemo(
     () =>
       state.panes.map((pane) => ({
@@ -245,7 +238,7 @@ export default function WorkspaceHost() {
       {isMobile ? null : (
         <WorkspacePaneStrip
           state={state}
-          isMaximized={isMaximized}
+          isMaximized={store.desktopMaximized}
           items={panes.map(({ pane, label }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
@@ -260,14 +253,9 @@ export default function WorkspaceHost() {
             scrollPaneIntoView(paneId);
             requestPaneFocus(paneId);
           }}
-          onToggleMaximize={(paneId) => {
-            contentActivation.current = null;
-            const restoring = isMaximized && latestWorkspace().state.active_primary_pane_id === paneId;
-            store.activatePane(paneId);
-            setIsMaximized(!restoring);
-          }}
+          onMaximize={store.maximizePane}
+          onRestoreCanvas={store.restoreCanvas}
           onMove={store.movePane}
-          onRestore={store.activatePane}
           onMinimize={store.minimizePane}
           onClose={store.closePane}
         />

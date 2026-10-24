@@ -1,4 +1,4 @@
-/** One podcast row. Null facts publish metadata only; the containing card owns its scoped controls. */
+/** One podcast row. Null facts publish metadata only; the containing section owns its scoped controls. */
 
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import type { Schema } from "@/lib/api/wire";

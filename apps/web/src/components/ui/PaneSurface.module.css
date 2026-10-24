@@ -28,7 +28,7 @@
 }
 
 .content {
-  gap: var(--space-4);
+  gap: var(--space-6);
 }
 
 .footer {

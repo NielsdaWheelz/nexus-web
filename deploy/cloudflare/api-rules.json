@@ -1,0 +1,48 @@
+{
+  "http_request_firewall_custom": {
+    "rules": [
+      {
+        "ref": "nexus_api_machine_requests",
+        "description": "nexus api: skip browser checks while retaining managed waf",
+        "expression": "http.host eq \"nexus-api.nielseriknandal.com\"",
+        "action": "skip",
+        "action_parameters": {
+          "products": ["bic", "securityLevel"]
+        },
+        "logging": {
+          "enabled": true
+        },
+        "enabled": true
+      }
+    ]
+  },
+  "http_request_firewall_managed": {
+    "rules": [
+      {
+        "ref": "nexus_api_free_managed_waf",
+        "description": "nexus api: execute cloudflare free managed waf",
+        "expression": "http.host eq \"nexus-api.nielseriknandal.com\"",
+        "action": "execute",
+        "action_parameters": {
+          "id": "77454fe2d30c4220b5701f6fdfb893ba",
+          "version": "latest"
+        },
+        "enabled": true
+      }
+    ]
+  },
+  "http_request_cache_settings": {
+    "rules": [
+      {
+        "ref": "nexus_api_cache_bypass",
+        "description": "nexus api: bypass shared edge caching",
+        "expression": "http.host eq \"nexus-api.nielseriknandal.com\"",
+        "action": "set_cache_settings",
+        "action_parameters": {
+          "cache": false
+        },
+        "enabled": true
+      }
+    ]
+  }
+}

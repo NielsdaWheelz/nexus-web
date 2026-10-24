@@ -10,8 +10,9 @@ import type { CollectionRowView } from "@/lib/collections/types";
 export function presentConversation(
   item: ConversationListItem,
   environment: Parameters<typeof presentConversationListItem>[1],
+  nowMs: number,
 ): CollectionRowView {
-  const presentation = presentConversationListItem(item, environment);
+  const presentation = presentConversationListItem(item, environment, nowMs);
   const href = `/conversations/${item.id}`;
   return {
     presentation: "Index",
@@ -25,7 +26,7 @@ export function presentConversation(
     title: { text: presentation.title },
     contributors: [],
     publicationDate: null,
-    context: { kind: "Text", text: presentation.metadata },
+    context: { kind: "Conversation", metadata: presentation.metadata },
     activity: null,
     exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "conversation", id: item.id }),

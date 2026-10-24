@@ -13,6 +13,10 @@ packages:
   - ufw
 
 write_files:
+  - path: /root/.nexus-tailscale-auth-key
+    owner: root:root
+    permissions: "0600"
+    content: "__NEXUS_TAILSCALE_AUTH_KEY__"
   # Keep Ubuntu's AppArmor user-namespace hardening persistent. Native callbacks
   # require no host exception or nested execution namespace.
   - path: /etc/sysctl.d/60-nexus-codex-userns.conf
@@ -29,6 +33,7 @@ write_files:
       PubkeyAuthentication yes
       PermitRootLogin no
       X11Forwarding no
+      GatewayPorts no
       AllowUsers nexus
   # Container logs use the journald driver, so the host journal must persist
   # across reboots and stay bounded.
@@ -79,9 +84,20 @@ runcmd:
     fi
     swapon --show=NAME --noheadings | grep -qx /swapfile || swapon /swapfile
     grep -qxF '/swapfile none swap sw 0 0' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  - ufw allow OpenSSH
-  - ufw allow 80/tcp
-  - ufw allow 443/tcp
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list
+  - apt-get update
+  - apt-get install -y tailscale
+  - systemctl enable --now tailscaled
+  - |
+    set -eu
+    trap 'rm -f /root/.nexus-tailscale-auth-key' EXIT
+    tailscale up --auth-key=file:/root/.nexus-tailscale-auth-key \
+      --hostname=nexus-prod --advertise-tags=tag:nexus-prod --ssh=false
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow in on tailscale0 to any port 22 proto tcp
+  - ufw allow 41641/udp
   - ufw --force enable
   - sshd -t
   - systemctl reload ssh || systemctl reload ssh.socket || systemctl restart ssh

@@ -14,7 +14,7 @@ import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { subscribeWritingAcknowledgements, writingAccount } from "@/lib/notes/journal";
+import { readWriting, subscribeWritingAcknowledgements, writingAccount } from "@/lib/notes/writes";
 import { acknowledgeGraphCommands } from "@/lib/resourceGraph/links";
 
 export type WritingVersionLane = "body_version" | "title_version" | "links_version" | "annotations_version" | "highlight_version";
@@ -227,10 +227,11 @@ function receiver(accountId: string): Receiver {
       stopAcknowledgements = subscribeWritingAcknowledgements(ack => {
         if (writingAccount() !== accountId) return;
         const started = epoch;
-        // synchronous journal subscribers adopt facts first. local request/history
+        const lifetime = readWriting().generation;
+        // synchronous writer subscribers adopt facts first. local request/history
         // owners must not depend on the ordering of nested promise continuations.
         queueMicrotask(() => {
-          if (started !== epoch || controller === null || writingAccount() !== accountId) return;
+          if (started !== epoch || controller === null || writingAccount() !== accountId || readWriting().generation !== lifetime) return;
           for (const watch of [...current.watchers]) {
             try {
               const adopted = watch.acknowledge?.(ack);

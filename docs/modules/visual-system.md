@@ -36,8 +36,8 @@ a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
 oracle and atlas routes. rooms redefine colour, shadow, grain, hairline, body
-size and tracking only. text on an 18% tint of its own tone (`Pill`) reads the
-tone's `--*-ink` step, which holds 4.5:1 over that tint.
+size, tracking and the section-title font role only. text on an 18% tint of its
+own tone (`Pill`) reads the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 ## the solar's ornament
 
@@ -69,7 +69,7 @@ surface. native menu and player controls retain their widget semantics.
 workspace feedback has two presentations. one passive floating receipt acknowledges
 an action without allocating layout space. activity lists current conditions and
 optional offers; it is not notification history. `FeedbackProvider` owns both
-above writing readiness and workspace failure containment. `workspaceSignals.ts`
+above the document's writing owner and workspace failure containment. `workspaceSignals.ts`
 retains token-fenced publications; domain owners retain commands, exact receipts,
 validity, settlement and recovery.
 
@@ -149,6 +149,22 @@ scrolling. see [workspace controls](workspace.md) and the toolbar
 specification and browser qualification in #628. the latter
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
+
+## pane sections
+
+`PaneSection` is one open, transparent section: optional interface header and
+body, separated by 12px, with no perimeter, clipping or nested inset. native
+section props and refs pass through; it owns no reads, commands or state.
+callers retain their fields, tables and collection rows without a boxed variant.
+`PaneSurface` supplies 16px outer padding, 12px minor stacks and 24px major
+content gaps; statistics owns the equivalent 24px section margin locally.
+
+`--pane-section-title-font` is a complete font shorthand resolved through the
+nearest theme: garamond 500 at 24px/1.2 in the study, sans 600 at 18px/1.35 in
+the press, cormorant 300 at 24px/1.2 in the solar. headings reset tracking and
+inherit section ink; descriptions use `--ink-muted`. the header owns interface
+typography independently of reader prose. headings and actions wrap at the
+containing width; control targets remain owned by their controls.
 
 ## collections and searchable pickers
 
@@ -273,13 +289,18 @@ shortcut-bearing control through the same geometry contract.
 
 ## workspace strip
 
-the desktop workspace strip keeps readable 12–15rem chips in its own horizontal
-scrollport. each chip has a title, overflow and stable close target: 32px within
-the 40px strip, or 44px within 52px when any pointer is coarse. active fill,
+the desktop workspace strip keeps readable chips in its own horizontal
+scrollport: the previous 12–15rem chip bounds grow by one 32px control width, or
+44px when any pointer is coarse, preserving title space. each chip has three fixed, quiet slots:
+visibility, layout, close. targets remain 32px within the 40px strip, or 44px
+within 52px when any pointer is coarse. active fill,
 in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
-retain selection and focus. tab actions share content with manage tabs through
-`lib/workspace/paneActions.ts`; completion uses one polite position announcement.
+retain selection and focus. controls use shared `Button` paint, tooltips and
+decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
+`lib/workspace/paneControls.ts` owns content shared with manage-tabs. mobile keeps
+48px controls and wrapping titles. reorder completion uses one polite position
+announcement; layout management emits no success toast.
 
 ## the lint
 

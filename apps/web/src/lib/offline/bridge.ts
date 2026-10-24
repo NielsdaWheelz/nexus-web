@@ -56,7 +56,6 @@ export const offlineAvailable = port !== undefined;
 
 let snapshot: OfflineSnapshot | null = null;
 let connected = false;
-let writingExportActive = false;
 let nextId = 1;
 const listeners = new Set<() => void>();
 const pending = new Map<number, {
@@ -103,37 +102,6 @@ export function offlineCall(
     pending.set(id, { resolve, reject });
     port.postMessage(JSON.stringify({ ...args, id, op }));
   });
-}
-
-/** A native receipt exists only after the user-picked JSON stream flushes and closes. */
-export async function saveWritingExport(blob: Blob, accountId: string): Promise<void> {
-  if (port === undefined) throw new Error("Unsupported");
-  if (writingExportActive) throw new Error("Busy");
-  writingExportActive = true;
-  let exportId: string | null = null;
-  let completed = false;
-  try {
-    const reply = await offlineCall("exportStart", { account_id: accountId });
-    exportId = reply.export_id as string;
-    let index = 0;
-    for (let offset = 0; offset < blob.size; offset += 24 * 1024) {
-      const bytes = new Uint8Array(await blob.slice(offset, offset + 24 * 1024).arrayBuffer());
-      const data = btoa(String.fromCharCode(...bytes));
-      await offlineCall("exportChunk", { export_id: exportId, index, data });
-      index += 1;
-    }
-    await offlineCall("exportFinish", { export_id: exportId, chunk_count: index });
-    completed = true;
-  } finally {
-    if (exportId !== null && !completed) {
-      try { await offlineCall("exportCancel", { export_id: exportId }); }
-      catch (error) {
-        // Native failure/navigation already closes its stream; cancellation adds no receipt.
-        if (!(error instanceof Error) || error.message !== "Cancelled") reportError(error);
-      }
-    }
-    writingExportActive = false;
-  }
 }
 
 /** The latest pushed snapshot, for code that acts after a reply (the shelf's progress port). */

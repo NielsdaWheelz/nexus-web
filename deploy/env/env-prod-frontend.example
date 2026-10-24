@@ -1,7 +1,7 @@
 # Vercel frontend env.
 # Import/set these in the Vercel project for the production environment.
 
-FASTAPI_BASE_URL=https://api.example.com
+FASTAPI_BASE_URL=https://nexus-api.nielseriknandal.com
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
 

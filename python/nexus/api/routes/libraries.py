@@ -30,7 +30,6 @@ from nexus.schemas.library import (
     RenameLibraryRequest,
 )
 from nexus.schemas.suggestions import (
-    SuggestionRefreshIn,
     SuggestionsOut,
     SuggestionStateOut,
     SuggestionViewIn,
@@ -186,13 +185,12 @@ def reconcile_library_suggestions(
 @router.post("/libraries/{library_id}/suggestions/refresh", status_code=202)
 def refresh_library_suggestions(
     library_id: UUID,
-    request: SuggestionRefreshIn,
     viewer: ViewerDep,
     db: DbSession,
 ) -> Data[SuggestionStateOut]:
     return Data(
         data=suggestion_shortlists.request_suggestions_refresh(
-            db, viewer_id=viewer.user_id, library_id=library_id, request=request
+            db, viewer_id=viewer.user_id, library_id=library_id
         )
     )
 
