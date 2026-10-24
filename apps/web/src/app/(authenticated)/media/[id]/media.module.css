@@ -80,6 +80,19 @@
 
 /* ===== Selection dock and annotation surfaces ===== */
 
+.mobileSelectionActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  width: max-content;
+  user-select: none;
+}
+
+.mobileSelectionActions > * {
+  flex: none;
+}
+
 .dock {
   display: flex;
   flex-wrap: wrap;
@@ -99,6 +112,13 @@
   max-height: var(--floating-action-content-max-height);
   overflow-y: auto;
   padding: var(--space-2);
+}
+
+.selectionComposer[data-mobile="true"] {
+  --control-min-size: var(--size-xl);
+  width: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .selectionComposer > * {
@@ -172,6 +192,7 @@
   font-size: var(--text-sm);
 }
 
+.selectionComposer[data-mobile="true"] .passageCue,
 .composerSurface[data-anchor-state="offscreen"] .passageCue,
 .composerSurface[data-anchor-state="unavailable"] .passageCue {
   display: block;
@@ -226,11 +247,13 @@
   min-width: 0;
 }
 
-@media (any-pointer: coarse) {
-  .selectionComposer {
-    --pane-control-size: var(--size-xl);
-  }
+.colours[data-size="comfortable"] .colour,
+.selectionComposer[data-mobile="true"] .colour {
+  width: var(--size-xl);
+  height: var(--size-xl);
+}
 
+@media (any-pointer: coarse) {
   .colour {
     width: var(--size-xl);
     height: var(--size-xl);

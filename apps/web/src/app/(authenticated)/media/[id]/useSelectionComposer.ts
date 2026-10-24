@@ -1,5 +1,11 @@
 "use client";
 
+// Retained authored passage branches and their explicit editor interaction.
+// Preparation fixes one source and its identities; capture commands await that
+// exact slot and journal without presenting an editor. Writes use the existing
+// journal's fixed create identities and absolute versioned updates for retry.
+// Acknowledgement adopts saved facts; it never replaces prose or opens a view.
+
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
@@ -21,7 +27,7 @@ import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
 import { chatFailure, type Catalog, type Selection } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import type { Mark, SelectionCapture } from "@/lib/documentReader/DocumentReader";
+import { useReaderState, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { emptyNoteBodyHistory, recordNoteBodyEdit } from "@/lib/notes/bodyHistory";
@@ -43,11 +49,12 @@ const DEFAULT_VISIT = definePaneVisitDataKey<Visit<ListPage<ConversationListItem
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Highlight = Schema<"TypedHighlightOut">;
-type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
+type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number; mode: "Note" | "Ask" };
+type Reselection = { id: string; draftId: string; identity: string; mode: Opening["mode"] };
 type Command =
   | { kind: "Save" }
   | { kind: "Ensure" }
-  | { kind: "Highlight"; color: HighlightColor }
+  | { kind: "Highlight"; color: HighlightColor; version: string | null }
   | { kind: "Delete" };
 
 async function liveHighlight(id: string): Promise<Highlight | null> {
@@ -78,9 +85,10 @@ export function useSelectionComposer(input: {
   reader: Reader;
   annotations: AnnotationStore;
   active: boolean;
+  isMobile: boolean;
   onError: (error: unknown, title: string) => void;
 }) {
-  const { reader, annotations, active, onError } = input;
+  const { reader, annotations, active, isMobile, onError } = input;
   const latestWorkspace = useLatestWorkspace();
   const { ctx } = useActionRuntime();
   const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
@@ -106,16 +114,28 @@ export function useSelectionComposer(input: {
   });
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const writing = useSyncExternalStore(subscribeWriting, readWriting, readWriting);
-  const reselecting = useRef<string | null>(null);
+  const publication = useReaderState(reader, state => state.document.status === "ready" ? state.document.doc.identity : null);
+  const [reselection, setReselection] = useState<Reselection | null>(null);
+  const reselecting = useRef<Reselection | null>(null);
+  const cancelReselection = useCallback(() => { reselecting.current = null; setReselection(null); }, []);
   const [pickerDraftId, setPickerDraftId] = useState<string | null>(null);
   const [opening, setOpening] = useState<Opening | null>(null);
   const current = useRef<Opening | null>(null);
+  const interaction = useRef<string | null>(null);
+  const preparing = useRef(new Set<string>());
   const serial = useRef(0);
   const activeRef = useRef(active);
   activeRef.current = active;
-  const show = useCallback((next: Opening | null) => { current.current = next; setOpening(next); }, []);
+  const show = useCallback((next: Opening | null) => { current.current = next; interaction.current = next?.id ?? null; setOpening(next); }, []);
   useEffect(() => { if (!active) { show(null); setPickerDraftId(null); } }, [active, show]);
-  useEffect(() => () => { current.current = null; activeRef.current = false; }, []);
+  useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
+  useEffect(() => {
+    const retire = () => { if (document.visibilityState === "hidden") cancelReselection(); };
+    document.addEventListener("visibilitychange", retire);
+    window.addEventListener("blur", cancelReselection);
+    return () => { document.removeEventListener("visibilitychange", retire); window.removeEventListener("blur", cancelReselection); };
+  }, [cancelReselection]);
+  useEffect(() => () => { current.current = null; interaction.current = null; reselecting.current = null; activeRef.current = false; }, []);
   useEffect(() => {
     const moved = (event: Event) => {
       const source = current.current;
@@ -411,8 +431,8 @@ export function useSelectionComposer(input: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drafts, store, writing]);
 
-  const restore = (saved: DraftSnapshot, focus: boolean, retainedId: string | null = null) => {
-    if (saved.context.kind !== "passage" || saved.value.kind !== "body") return;
+  const restore = (saved: DraftSnapshot, retainedId: string | null = null) => {
+    if (saved.context.kind !== "passage" || saved.value.kind !== "body") return null;
     const context = saved.context, publication = context.publication;
     const id = retainedId ?? saved.draft_id;
     const noteId = context.resource_ref.slice("note_block:".length);
@@ -434,11 +454,12 @@ export function useSelectionComposer(input: {
       sourceMediaId: context.media_id, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
     });
     void journal.then(handle => store.update(id, entry => ({ ...entry, handle }))).catch(() => undefined);
-    show({ id: createRandomId(), draftId: id, focus, ownsFocus: focus, serial: ++serial.current });
+    return id;
   };
 
-  const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null) => {
-    setPickerDraftId(null);
+  // Preparation fixes the source and all request identities before loading the
+  // saved slot. It never presents an editor; commands await this same target.
+  const prepare = (passage: ComposerDraft["passage"], highlightId: string | null, carried: ComposerDraft | null) => {
     let existing = carried ? undefined : (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
       store.getSnapshot().find((entry) => samePassage(entry.passage, passage));
     if (existing) {
@@ -489,21 +510,38 @@ export function useSelectionComposer(input: {
         sourceMediaId: boundSource.mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
       });
     }
-    else if (sameBody(existing.body, initialBody(existing.base))) store.update(id, entry => ({ ...entry,
+    else if (!existing.operation && !preparing.current.has(id) && sameBody(existing.body, initialBody(existing.base))) store.update(id, entry => ({ ...entry,
       passage: passage.quote ? passage : { ...passage, quote: entry.passage.quote },
       referenceSource, sourceMediaId: boundSource.mediaId, highlightId: highlightId ?? entry.highlightId,
     }));
     const candidates = readWriting().drafts.filter(value => value.context.kind === "passage" &&
       value.context.media_id === boundSource.mediaId && samePassage(value.context.passage, passage));
     const saved = candidates.length === 1 ? candidates[0] : undefined;
-    if (!existing && !carried && saved) { restore(saved, focus, id); return; }
-    show({ id: createRandomId(), draftId: id, focus, ownsFocus: true, serial: ++serial.current });
-    const opened = get(id);
-    if (opened?.load === "Ready" && opened.publication && !opened.journal) void journalFor(opened).catch(() => undefined);
+    if (!existing && !carried && saved) restore(saved, id);
     const clean = existing && sameBody(existing.body, initialBody(existing.base));
-    if (highlightId && !saved && !existing?.operation && existing?.load !== "Loading") {
-      void readNote(id, highlightId, !carried && (!existing || Boolean(clean)));
-    } else if (carried && opened?.publication) keep(opened);
+    const held = preparing.current.has(id);
+    const ready = async () => {
+      if (highlightId && !saved && !existing?.operation && !held)
+        await readNote(id, highlightId, !carried && (!existing || Boolean(clean)));
+      else if (carried) {
+        const opened = get(id);
+        if (opened?.publication) keep(opened);
+      }
+      const opened = get(id);
+      if (opened?.load === "Ready" && opened.publication) await journalFor(opened);
+      return opened ?? null;
+    };
+    return { id, ready, mediaId: boundSource.mediaId, generation, restored: !existing && !carried && saved !== undefined };
+  };
+  const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null, mode: Opening["mode"]) => {
+    const prepared = prepare(passage, highlightId, carried);
+    setPickerDraftId(null);
+    show({ id: createRandomId(), draftId: prepared.id, focus, ownsFocus: prepared.restored ? focus : true, serial: ++serial.current, mode });
+    void prepared.ready().catch(error => {
+      if (ctx.sessionSignal().aborted) return;
+      store.update(prepared.id, entry => ({ ...entry, issue: { kind: "Failed", message: "your draft could not be prepared. your words are kept." } }));
+      onError(error, "draft couldn’t be prepared");
+    });
   };
 
   const highlightDeleted = useCallback((id: string) => {
@@ -515,8 +553,13 @@ export function useSelectionComposer(input: {
     }
   }, [show, store]);
 
-  const submit = (command: Command, continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>) => {
-    const source = current.current, entry = source && get(source.draftId);
+  const submit = ({ command, source, commandId, continuation }: {
+    command: Command;
+    source: Opening | null;
+    commandId?: string;
+    continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>;
+  }) => {
+    const entry = source && get(source.draftId);
     if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.issue?.kind === "Conflict" || entry.issue?.kind === "Deleted") return;
     const shown = reader.getState().document;
     let sourceMatches = false;
@@ -533,9 +576,10 @@ export function useSelectionComposer(input: {
       return;
     }
     if (!entry.highlightId && !reader.measurePassage(entry.passage)) return;
-    const submitted = { ...entry, commandId: createRandomId() };
+    const submitted = { ...entry, commandId: commandId ?? createRandomId() };
     const openingId = source.id;
-    const owns = () => activeRef.current && current.current?.id === openingId && current.current.ownsFocus && get(entry.id)?.revision === submitted.revision;
+    const owns = () => activeRef.current && interaction.current === openingId &&
+      (current.current === null || current.current.id === openingId && current.current.ownsFocus) && get(entry.id)?.revision === submitted.revision;
     const run = async () => {
       store.update(entry.id, value => ({ ...value, operation: { id: submitted.commandId, kind: command.kind }, issue: null, status: "saving…" }));
       try {
@@ -552,7 +596,7 @@ export function useSelectionComposer(input: {
           if (submitted.base.kind !== "Present") throw new Error("deleting an absent note");
           intent = { kind: "highlight_note_delete", highlight_id: submitted.highlightId!, request: { note_id: submitted.base.id, expected_version: submitted.base.version } };
         } else if (command.kind === "Highlight") {
-          const version = annotations.highlight(submitted.highlightId!)?.version ?? submitted.highlight?.version;
+          const version = command.version ?? submitted.highlight?.version;
           if (version === undefined) throw new Error("load the highlight before changing its colour");
           intent = { kind: "highlight_update", highlight_id: submitted.highlightId!, request: { color: command.color, expected_version: version } };
         } else if (command.kind === "Ensure" || (submitted.base.kind === "Absent" && isEmptyParagraph(submitted.body))) {
@@ -627,6 +671,34 @@ export function useSelectionComposer(input: {
     };
     const completion = run();
     return completion;
+  };
+
+  const captureCommand = async (capture: SelectionCapture, command: Extract<Command, { kind: "Ensure" | "Highlight" }>): Promise<{ id: string; isCurrent: () => boolean } | null> => {
+    const prepared = prepare(capture, annotations.twin(capture.anchor), null);
+    const source: Opening = { id: createRandomId(), draftId: prepared.id, focus: false, ownsFocus: true, serial: ++serial.current, mode: "Note" };
+    const entry = get(prepared.id);
+    if (!entry || entry.operation || preparing.current.has(entry.id)) return null;
+    preparing.current.add(entry.id);
+    show(null);
+    interaction.current = source.id;
+    let result: { id: string; isCurrent: () => boolean } | null = null;
+    try {
+      const loaded = await prepared.ready();
+      const target = get(prepared.id);
+      if (!loaded || !target || !samePassage(target.passage, capture) || target.sourceMediaId !== prepared.mediaId ||
+        target.referenceSource.expected_reader_generation !== prepared.generation) return null;
+      const frozen = command.kind === "Highlight" && command.version === null
+        ? { ...command, version: loaded.highlight?.version ?? null } : command;
+      await submit({ command: frozen, source, commandId: source.id, continuation: (id, isCurrent) => { result = { id, isCurrent }; } });
+    } catch (error) {
+      if (ctx.sessionSignal().aborted) return null;
+      store.update(prepared.id, value => samePassage(value.passage, capture) ? { ...value,
+        issue: { kind: "Failed", message: "your request could not be prepared. your draft is kept." } } : value);
+      onError(error, "passage request didn’t finish");
+    } finally {
+      preparing.current.delete(entry.id);
+    }
+    return result;
   };
 
   const restoreEditor = () => {
@@ -730,7 +802,7 @@ export function useSelectionComposer(input: {
     const owns = () => activeRef.current && current.current?.id === source.id && current.current.ownsFocus && get(entry.id)?.revision === entry.revision;
     const execute = async (): Promise<OpenResult | null> => {
       let ensured: string | null = null;
-      await submit({ kind: "Ensure" }, id => { ensured = id; });
+      await submit({ command: { kind: "Ensure" }, source, continuation: id => { ensured = id; } });
       if (!ensured || ctx.sessionSignal().aborted) return null;
       store.update(entry.id, value => ({ ...value, operation: { id: runId, kind: "Chat" }, chatIssue: null }));
       const sourceNow = annotations.source(entry.passage.anchor);
@@ -867,8 +939,25 @@ export function useSelectionComposer(input: {
       saved.context.media_id === annotations.getState().map.data?.media_id &&
       (saved.base === null || saved.conflict !== null || saved.base.value.kind !== "body" || saved.value.kind !== "body" ||
         !sameBody(parseBody(saved.base.value.body_pm_json), parseBody(saved.value.body_pm_json)))),
-    restore(id: string) { const saved = readDraft(id); if (saved) restore(saved, true); },
-    reselect() { if (draft && !draft.operation) { reselecting.current = draft.id; show(null); reader.focusSource(); } },
+    restore(id: string) {
+      const saved = readDraft(id), restored = saved && restore(saved);
+      if (restored) show({ id: createRandomId(), draftId: restored, focus: true, ownsFocus: true, serial: ++serial.current, mode: "Note" });
+    },
+    reselection, cancelReselection,
+    reselect() {
+      const shown = reader.getState().document;
+      if (!draft || draft.operation || shown.status !== "ready" || shown.refreshing) return;
+      const next: Reselection = { id: createRandomId(), draftId: draft.id, identity: shown.doc.identity, mode: opening?.mode ?? "Note" };
+      reselecting.current = next; setReselection(next); show(null); reader.focusSource();
+    },
+    applyReselection(capture: SelectionCapture) {
+      const selected = reselecting.current, previous = selected && get(selected.draftId);
+      const shown = reader.getState().document;
+      if (!selected || !previous || !activeRef.current || shown.status !== "ready" || shown.refreshing ||
+        capture.identity !== selected.identity || shown.doc.identity !== selected.identity) return;
+      cancelReselection();
+      open(capture, annotations.twin(capture.anchor), true, previous, selected.mode);
+    },
     pickerOpen: draft !== null && pickerDraftId === draft.id,
     chooseChat, closePicker: restoreEditor,
     chooseDestination(conversation: Pick<ConversationListItem, "id" | "title">) {
@@ -914,15 +1003,30 @@ export function useSelectionComposer(input: {
     },
     activePassage: active && draft ? draft.passage : null,
     select(capture: SelectionCapture) {
-      const previous = reselecting.current ? get(reselecting.current) ?? null : null;
-      reselecting.current = null;
-      open(capture, annotations.twin(capture.anchor), capture.input !== "touch", previous);
+      const selected = reselecting.current;
+      const previous = selected?.identity === capture.identity ? get(selected.draftId) ?? null : null;
+      cancelReselection();
+      open(capture, annotations.twin(capture.anchor), capture.input !== "touch", previous, selected?.mode ?? "Note");
     },
-    activate(mark: Mark, identity: string, focus = true) { open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus, null); },
+    compose(capture: SelectionCapture, mode: "Note" | "Ask") {
+      cancelReselection();
+      open(capture, annotations.twin(capture.anchor), true, null, mode);
+    },
+    async highlightCapture(capture: SelectionCapture, color: HighlightColor) {
+      const id = annotations.twin(capture.anchor);
+      return captureCommand(capture, { kind: "Highlight", color, version: id ? annotations.highlight(id)?.version ?? null : null });
+    },
+    async ensureCapture(capture: SelectionCapture) {
+      return captureCommand(capture, { kind: "Ensure" });
+    },
+    activate(mark: Mark, identity: string, focus = true) {
+      cancelReselection();
+      open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus, null, "Note");
+    },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
       const returnFocus = current.current?.ownsFocus;
-      show(null); setPickerDraftId(null);
+      show(null); setPickerDraftId(null); cancelReselection();
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
     },
     edit(edit: NoteEdit) {
@@ -961,18 +1065,21 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => ({ ...value, journal, handle: null }));
       const handle = await journal;
       store.update(entry.id, value => ({ ...value, handle }));
-      await submit({ kind: "Save" });
+      await submit({ command: { kind: "Save" }, source: current.current });
       if (draftIsDurable(handle.draft_id)) await retireBranch(entry, shown);
     },
 
-    save() { if (draft) submit({ kind: "Save" }); },
+    save() { if (draft) void submit({ command: { kind: "Save" }, source: current.current }); },
     newChat(openIntent: OpenIntent) { void sendChat("New", openIntent); },
     continueChat(openIntent: OpenIntent = "default") { void sendChat("Existing", openIntent); },
-    deleteNote() { if (draft?.base.kind === "Present" && isEmptyParagraph(draft.body)) submit({ kind: "Delete" }); },
-    highlight(color: HighlightColor) { submit({ kind: "Highlight", color }); },
+    deleteNote() { if (draft?.base.kind === "Present" && isEmptyParagraph(draft.body)) void submit({ command: { kind: "Delete" }, source: current.current }); },
+    highlight(color: HighlightColor) {
+      void submit({ command: { kind: "Highlight", color,
+        version: draft?.highlightId ? annotations.highlight(draft.highlightId)?.version ?? draft.highlight?.version ?? null : null }, source: current.current });
+    },
     async ensure(): Promise<{ id: string; isCurrent: () => boolean } | null> {
       let result: { id: string; isCurrent: () => boolean } | null = null;
-      await submit({ kind: "Ensure" }, (id, isCurrent) => { result = { id, isCurrent }; });
+      await submit({ command: { kind: "Ensure" }, source: current.current, continuation: (id, isCurrent) => { result = { id, isCurrent }; } });
       return result;
     },
     retry() {
@@ -1018,7 +1125,7 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => ({ ...value, handle }));
       if (useSaved) await retireBranch(entry, shown);
       else {
-        await submit({ kind: "Save" });
+        await submit({ command: { kind: "Save" }, source: current.current });
         if (draftIsDurable(handle.draft_id)) await retireBranch(entry, shown);
       }
     },

@@ -17,6 +17,7 @@ export type AnchorState = "visible" | "offscreen" | "unavailable";
 export interface AnchorMeasurement {
   /** null keeps an unavailable passage's draft pinned inside its live pane. */
   readonly rect: DOMRect | null;
+  /** Source order before clipping/sorting; offscreen endpoints remain endpoints. */
   readonly lines: readonly DOMRect[];
   readonly bounds: DOMRect;
 }
@@ -24,6 +25,10 @@ export type MeasuredAnchor = () => AnchorMeasurement | null;
 
 export interface AnchorOptions {
   readonly enabled: boolean;
+  /** Compact reader commands may overlap selected text, while avoiding endpoints. */
+  readonly strategy?: "mobile-selection-actions";
+  /** Stable through range changes and temporary hiding within a source session. */
+  readonly selectionSession?: string | null;
   /** Default "below"; with `flip`, the other side when this one does not fit. */
   readonly placement?: "above" | "below" | "right";
   readonly align?: "start" | "center" | "end";
@@ -54,6 +59,8 @@ interface Placed {
 }
 
 const PADDING_PX = 8;
+/** Native handle hit regions are unavailable; keep this conservative source-box margin. */
+const ENDPOINT_CLEARANCE_PX = 24;
 
 /** The visible viewport less padding, the safe-area insets and the bottom clearance. */
 function viewportBounds(clearContent: boolean): Bounds {
@@ -208,6 +215,61 @@ function againstSelection(
   return atEdge(area, box, bounds);
 }
 
+/** Compact commands always have a placement, even when selected text fills the pane. */
+function mobileSelectionActions(
+  anchor: DOMRect,
+  sourceLines: readonly DOMRect[],
+  box: DOMRect,
+  bounds: Bounds,
+  previous: number | null,
+): Placed & { readonly candidate: number } {
+  const lines = sourceLines.filter((line) => line.width > 0 && line.height > 0);
+  // Derive neighborhoods before clipping: visible lines are not substitute handles.
+  const endpoints = [lines[0], lines.at(-1)].filter((line): line is DOMRect => line !== undefined)
+    .map((line) => new DOMRect(
+      line.left - ENDPOINT_CLEARANCE_PX, line.top - ENDPOINT_CLEARANCE_PX,
+      line.width + ENDPOINT_CLEARANCE_PX * 2, line.height + ENDPOINT_CLEARANCE_PX * 2,
+    ));
+  const visible = lines.map((line) => clip(line, bounds)).filter((line): line is DOMRect => line !== null);
+  const body = visible.length ? new DOMRect(
+    Math.min(...visible.map((line) => line.left)),
+    Math.min(...visible.map((line) => line.top)),
+    Math.max(...visible.map((line) => line.right)) - Math.min(...visible.map((line) => line.left)),
+    Math.max(...visible.map((line) => line.bottom)) - Math.min(...visible.map((line) => line.top)),
+  ) : clip(anchor, bounds);
+  const middle = bounds.left + (bounds.right - bounds.left - box.width) / 2;
+  const centered = bounds.top + (bounds.bottom - bounds.top - box.height) / 2;
+  const selectionMiddle = anchor.left + (anchor.width - box.width) / 2;
+  const candidates = ([
+    { top: anchor.bottom + 8, left: selectionMiddle, side: "below" },
+    { top: anchor.top - box.height - 8, left: selectionMiddle, side: "above" },
+    { top: body ? body.top + (body.height - box.height) / 2 : centered, left: body ? body.left + (body.width - box.width) / 2 : middle, side: "edge" },
+    { top: bounds.bottom - box.height, left: middle, side: "edge" },
+    { top: bounds.top, left: middle, side: "edge" },
+    { top: centered, left: middle, side: "edge" },
+  ] satisfies readonly Placed[]).map((at, candidate) => {
+    const left = clamp(at.left, bounds.left, Math.max(bounds.left, bounds.right - box.width));
+    const top = clamp(at.top, bounds.top, Math.max(bounds.top, bounds.bottom - box.height));
+    const right = left + box.width;
+    const bottom = top + box.height;
+    const overlap = endpoints.reduce((total, endpoint) => total +
+      Math.max(0, Math.min(right, endpoint.right) - Math.max(left, endpoint.left)) *
+      Math.max(0, Math.min(bottom, endpoint.bottom) - Math.max(top, endpoint.top)), 0);
+    // Center distance still distinguishes placements when every one overlaps.
+    const distance = endpoints.length ? Math.min(...endpoints.map((endpoint) => Math.hypot(
+      left + box.width / 2 - (endpoint.left + endpoint.width / 2),
+      top + box.height / 2 - (endpoint.top + endpoint.height / 2),
+    ))) : Infinity;
+    return { top, left, side: at.side, candidate, overlap, distance,
+      inside: left >= bounds.left && top >= bounds.top && right <= bounds.right && bottom <= bounds.bottom };
+  });
+  const held = previous === null ? null : candidates[previous];
+  if (held?.inside && held.overlap === 0) return held;
+  return candidates.find((candidate) => candidate.overlap === 0) ?? candidates.reduce((best, candidate) =>
+    candidate.overlap < best.overlap || candidate.overlap === best.overlap && candidate.distance > best.distance
+      ? candidate : best);
+}
+
 interface AnchoredStyle extends CSSProperties {
   readonly "--anchored-max-width"?: string;
   readonly "--anchored-max-height"?: string;
@@ -242,6 +304,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
   readonly anchorState: AnchorState;
 } {
   const ref = useRef<T | null>(null);
+  const mobilePlacement = useRef<{ session: string; candidate: number } | null>(null);
   const [placed, setPlaced] = useState<{
     style: AnchoredStyle;
     side: Side;
@@ -255,6 +318,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
 
   const measure = useCallback(() => {
     const opts = current.current;
+    const session = opts.selectionSession ?? null;
     const element = anchor && "current" in anchor ? anchor.current : anchor;
     const floating = ref.current;
     const hide = () => setPlaced((previous) => previous.style === HIDDEN ? previous : {
@@ -270,6 +334,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     } else {
       rect = element instanceof DOMRect ? element : element.getBoundingClientRect();
     }
+    if (opts.strategy === "mobile-selection-actions" && (rect === null || session === null)) return hide();
     const viewport = viewportBounds(opts.subscribeContentClearance !== undefined);
     const bounds = measurement ? {
       left: Math.max(viewport.left, measurement.bounds.left + PADDING_PX),
@@ -288,7 +353,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     floating.style.setProperty("--anchored-max-height", `${maxHeight}px`);
     let box = floating.getBoundingClientRect();
     let placement = opts.placement;
-    if (rect !== null && opts.keepAnchorVisible && !opts.lines && placement !== "right") {
+    if (rect !== null && opts.strategy !== "mobile-selection-actions" && opts.keepAnchorVisible && !opts.lines && placement !== "right") {
       const gap = opts.gap ?? 4;
       const above = Math.max(0, Math.min(rect.top - gap, bounds.bottom) - bounds.top);
       const below = Math.max(0, bounds.bottom - Math.max(rect.bottom + gap, bounds.top));
@@ -305,7 +370,13 @@ export function useAnchoredPosition<T extends HTMLElement>(
       ? lines.some((line) => clip(line, bounds))
       : rect && clip(rect, bounds);
     const anchorState = rect === null ? "unavailable" : visible ? "visible" : "offscreen";
-    const at: Placed = rect === null ? {
+    let at: Placed;
+    if (opts.strategy === "mobile-selection-actions" && rect !== null && session !== null) {
+      const compact = mobileSelectionActions(rect, lines ?? [], box, bounds,
+        mobilePlacement.current?.session === session ? mobilePlacement.current.candidate : null);
+      mobilePlacement.current = { session, candidate: compact.candidate };
+      at = compact;
+    } else at = rect === null ? {
       top: bounds.bottom - box.height,
       left: bounds.left + (maxWidth - box.width) / 2,
       side: "edge",

@@ -88,7 +88,7 @@ export default function TextSurface({
     );
   }, [doc.identity, runtime]);
   const { geometryChanged, retireReflow } = useScrollport(scrollport, runtime, measure, { placement, change: () => measure("Geometry") }, scrollIndicator, feedback);
-  const selectionInput = useReaderSelection(scrollport, {
+  const { input: selectionInput, captureSelection } = useReaderSelection(scrollport, {
     identity,
     textSelector: "[data-reader-text]",
     capture(selection) {
@@ -123,6 +123,7 @@ export default function TextSurface({
       measureBounds() {
         return measureScrollport(port);
       },
+      captureSelection,
       focusSource() {
         port.focus({ preventScroll: true });
       },
@@ -179,7 +180,7 @@ export default function TextSurface({
       painter.current = null;
       finder.current = null;
     };
-  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged, retireReflow]);
+  }, [identity, format, units, length, ranges, measure, runtime, embeds, geometryChanged, retireReflow, captureSelection]);
 
   useLayoutEffect(() => {
     if (finder.current) runtime.updateFind(finder.current.update(doc, structure));

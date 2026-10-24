@@ -312,6 +312,8 @@ export function createTextGeometry(
       if (!found) return null;
       const ranges = resolveDomTextRanges(found.cursor, start, end);
       if (!ranges) return null;
+      // Preserve canonical range order: offscreen endpoints must not become
+      // the first/last visible line when contextual controls are positioned.
       const lines = ranges.flatMap((range) => {
         probe.setStart(range.startContainer, range.startOffset);
         probe.setEnd(range.endContainer, range.endOffset);
