@@ -327,11 +327,11 @@ function LibraryPane({ id }: { readonly id: string }) {
       label: "add content",
       icon: <Plus size={20} aria-hidden="true" />,
       restoreFocusOnClose: false,
-      onSelect: () =>
+      onSelect: ({ triggerEl }) =>
         requestNexusOpen({
           kind: "Add",
           seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name, order_revision: library.order_revision }] },
-        }),
+        }, triggerEl),
     }
     : undefined;
   const emptyFeedback = emptyEntriesFeedback({ params, isAll, change: recover });

@@ -68,7 +68,7 @@ type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> 
 type Exit =
   | { readonly kind: "Close" }
   | { readonly kind: "Root" }
-  | { readonly kind: "Replace"; readonly intent: NexusOpenIntent }
+  | { readonly kind: "Replace"; readonly intent: NexusOpenIntent; readonly opener?: HTMLElement | null }
   | { readonly kind: "Navigate"; readonly target: NexusTarget; readonly activation: NexusTargetActivation };
 
 export type NexusController = ReturnType<typeof useNexusController>;
@@ -519,7 +519,7 @@ export function useNexusController() {
   function performExit(exit: Exit): WorkspaceTargetActivationResult | null {
     if (exit.kind === "Navigate") return run(exit.target, exit.activation);
     setAnnouncement("");
-    if (exit.kind === "Replace") { openIntent(exit.intent); return null; }
+    if (exit.kind === "Replace") { openIntent(exit.intent, exit.opener); return null; }
     addSession.discard();
     setPage({ kind: "Root" });
     if (exit.kind === "Close") { visible.current = false; setOpen(false); }
@@ -532,9 +532,9 @@ export function useNexusController() {
   }
 
   /** An open request resets to Root or Add. */
-  function openIntent(intent: NexusOpenIntent) {
+  function openIntent(intent: NexusOpenIntent, trigger: HTMLElement | null = null) {
     if (!open) {
-      opener.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+      opener.current = trigger ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
       rootScroll.current = { Overview: 0, Search: 0 };
       suppressReturnFocus.current = false;
       transferFocus.current = null;
@@ -645,7 +645,7 @@ export function useNexusController() {
     document.addEventListener("keydown", listener);
     return () => document.removeEventListener("keydown", listener);
   }, []);
-  useNexusOpenRequests((intent) => requestExit({ kind: "Replace", intent }), viewport.hydrated);
+  useNexusOpenRequests((intent, opener) => requestExit({ kind: "Replace", intent, opener }), viewport.hydrated);
   useEffect(() => {
     if (open) suppressReturnFocus.current = false;
   }, [open]);
