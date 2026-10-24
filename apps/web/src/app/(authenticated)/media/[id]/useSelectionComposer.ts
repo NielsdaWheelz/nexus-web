@@ -451,7 +451,7 @@ export function useSelectionComposer(input: {
           const message = irreducible ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded.";
           store.update(entry.id, value => ({ ...value,
             issue: { kind: "Failed", message: `save not confirmed. ${message}` } }));
-          if (current.current?.draftId !== entry.id) notice = feedback.offer({ key: `passage-save:${admitted.id}`, announcement: "Polite",
+          if (current.current?.draftId !== entry.id) notice = feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `passage-save:${admitted.id}`, announcement: "Polite",
             content: { tone: "Warning", title: "passage save not confirmed", message },
             actions: irreducible ? [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) },
               { label: "reload", onClick: () => { window.location.reload(); } }]
@@ -500,7 +500,7 @@ export function useSelectionComposer(input: {
         if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && submitted.highlightId)
           void readNote(entry.id, submitted.highlightId, false);
         else if (!(isApiError(error) && error.code === "E_READER_CONTENT_CHANGED")) onError(error, "couldn’t save this passage");
-        if (current.current?.draftId !== entry.id) feedback.offer({ key: `passage-save:${submitted.commandId}`, announcement: "Polite",
+        if (current.current?.draftId !== entry.id) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `passage-save:${submitted.commandId}`, announcement: "Polite",
           content: { tone: "Warning", title: "couldn’t save this passage", message: isApiError(error) ? error.message : "review the passage before saving again." } });
       }
     };
@@ -557,7 +557,7 @@ export function useSelectionComposer(input: {
     const attempt = currentAttempt?.kind === "Dispatched" ? currentAttempt : null;
     const held = readerRecovery(attempt ?? null) ? attempt : null;
     if (submitted && outcome.kind === "Failed" && current.current?.draftId !== entry.id)
-      feedback.offer({ key: `passage-send:${entry.id}`, announcement: "Polite",
+      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `passage-send:${entry.id}`, announcement: "Polite",
         content: { tone: "Warning", title: "highlight saved; question not sent", message: outcome.feedback.title },
         actions: [{ label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" }] });
     switch (outcome.kind) {
@@ -715,7 +715,7 @@ export function useSelectionComposer(input: {
             destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
-      if (result.kind === "Pending" && current.current?.draftId !== entry.id) sendNotice = feedback.offer({
+      if (result.kind === "Pending" && current.current?.draftId !== entry.id) sendNotice = feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
         key: `passage-send:${runId}`, announcement: "Polite",
         content: { tone: "Warning", title: "highlight saved; send not confirmed", message: "the request may have succeeded." },
         actions: [{ label: "retry same send", onClick: () => { void owner.retry().then(result => chatOutcome(entry, result, target, true)).catch(error => onError(error, "chat retry didn’t finish")); } }],

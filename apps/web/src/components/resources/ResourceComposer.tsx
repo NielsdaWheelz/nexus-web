@@ -71,7 +71,7 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
         const state = write.read();
         if (mounted.current || state.kind !== "unconfirmed" || readWriting().generation !== generation) return;
         const irreducible = !canRetryWriting(write);
-        notice = feedback.offer({ key: `item-save:${write.id}`, announcement: "Polite",
+        notice = feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `item-save:${write.id}`, announcement: "Polite",
           content: { tone: "Warning", title: "item save not confirmed", message: irreducible
             ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded." },
           actions: irreducible ? [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) },
@@ -83,7 +83,7 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
       const stop = write.subscribe(inspect);
       void write.settled.then(() => { stop(); notice?.withdraw(); }, error => {
         stop();
-        if (!mounted.current && readWriting().generation === generation) feedback.offer({ key: `item-save:${write.id}`, announcement: "Polite",
+        if (!mounted.current && readWriting().generation === generation) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `item-save:${write.id}`, announcement: "Polite",
           content: { tone: "Warning", title: "couldn’t save this item", message: isApiError(error) ? error.message : "review its destination before saving again." },
           actions: [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) }] });
       });
