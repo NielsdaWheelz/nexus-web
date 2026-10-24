@@ -95,7 +95,7 @@
   pointer-events: none;
 }
 
-.toc :is(button, a) {
+.tocLink {
   display: block;
   width: 100%;
   min-height: 24px;
@@ -109,8 +109,19 @@
   cursor: pointer;
 }
 
-.toc :is(button, a):hover {
+.tocLink:hover {
   background: var(--surface-hover);
+}
+
+.tocRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tocRow > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .ribbon {

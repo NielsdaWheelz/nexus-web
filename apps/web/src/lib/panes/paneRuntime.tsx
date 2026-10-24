@@ -20,7 +20,7 @@ import type {
   WorkspaceSecondaryPane,
 } from "@/lib/workspace/model";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import { useWorkspaceStore, type PaneViewHrefUpdate, type WorkspaceNavigationResult } from "@/lib/workspace/store";
+import { useWorkspaceStore, type PaneViewHrefUpdate, type PaneHistoryOptions, type WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type {
   PaneDailyPage,
   PaneEntryDelivery,
@@ -44,8 +44,8 @@ export interface PaneScopedRouter {
   readonly canGoForward: boolean;
   push(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
   replace(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
-  back(options?: { discardOwnerIds?: readonly string[] }): WorkspaceNavigationResult;
-  forward(options?: { discardOwnerIds?: readonly string[] }): WorkspaceNavigationResult;
+  back(options: PaneHistoryOptions): WorkspaceNavigationResult;
+  forward(options: PaneHistoryOptions): WorkspaceNavigationResult;
 }
 
 /** What a body knows that its href alone does not say, and what it may do. */

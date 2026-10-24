@@ -1,8 +1,9 @@
 "use client";
 
 /** The queue displays occurrences from the current cursor forward. Its viewport
- * never requests preceding history; all edits go through the player's revision owner. */
-import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
+ * never requests preceding history; all edits go through the player's revision owner.
+ * resource links use the supplied global origin and dismiss only after admission. */
+import { useLayoutEffect, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
 import { ArrowDown, ArrowUp, Ellipsis, Play, Trash2, ListStart } from "lucide-react";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -15,6 +16,7 @@ import type { CollectionRowView, OrderPresentation } from "@/lib/collections/typ
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import type { QueueCommand, QueueEntry, QueueSource } from "@/lib/player/queue";
+import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import styles from "./Player.module.css";
 
 const SORT_LABELS = {
@@ -53,7 +55,12 @@ export function QueueStatus() {
   </>;
 }
 
-export default function QueuePanel({ announce, scrollport }: { readonly announce: (message: string) => void; readonly scrollport: () => HTMLElement | null }) {
+export default function QueuePanel({ announce, scrollport, runtime, onOpened }: {
+  readonly announce: (message: string) => void;
+  readonly scrollport: () => HTMLElement | null;
+  readonly runtime: TargetLinkActivationRuntime;
+  readonly onOpened: () => void;
+}) {
   const { queue, state } = usePlayerSession();
   const commands = usePlayerCommands();
   const header = queue.header;
@@ -72,6 +79,12 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
   const ready = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
   const failure = queue.failure?.kind === "Episode" && queue.failure.entry_id === current?.id ? queue.failure : null;
   const failed = failure !== null;
+  const activateAnchor = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
+    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+    const result = activateTargetAnchor({ event, anchor, runtime });
+    if (result === "handled-default" || result === "handled-new-pane") onOpened();
+  };
   useLayoutEffect(() => { setPrefix(100); setPageError(false); }, [header?.queue_id, header?.current_entry_id]);
   useLayoutEffect(() => {
     if (!ready || pendingFocus.current === null) return;
@@ -174,7 +187,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     />;
   };
   const remaining = Math.max(0, (header?.count ?? 0) - firstUpcoming);
-  return <section ref={root} className={styles.queuePanel} aria-label="up next">
+  return <section ref={root} className={styles.queuePanel} aria-label="up next" onClickCapture={activateAnchor} onKeyDownCapture={activateAnchor}>
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
     <QueueStatus />
     {commandFailed ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t change queue", message: "try the queue action again" }} /> : null}

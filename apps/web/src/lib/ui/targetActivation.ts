@@ -45,9 +45,9 @@ export function workspaceTargetActivationIntent(
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
     return { kind: "Unowned" };
   if ("key" in event) {
-    if (event.key !== "Enter" || event.isComposing || event.nativeEvent?.isComposing || event.keyCode === 229)
-      return { kind: "Unowned" };
-    if (event.repeat) return { kind: "Consume" };
+    if (event.key !== "Enter") return { kind: "Unowned" };
+    if (event.repeat || event.isComposing || event.nativeEvent?.isComposing || event.keyCode === 229)
+      return { kind: "Consume" };
     return event.shiftKey ? { kind: "Open", intent: "new_pane" }
       : enter === "activate" ? { kind: "Open", intent: "default" } : { kind: "Unowned" };
   }

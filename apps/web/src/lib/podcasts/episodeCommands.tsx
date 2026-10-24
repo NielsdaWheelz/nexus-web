@@ -190,8 +190,9 @@ function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnT
     content: { tone: sending ? "Neutral" : "Warning", title: `${title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${sending ? "" : ` ${message}${entry.failure === null ? "" : ` ${entry.failure.title}. ${entry.failure.message ?? ""}`}`}`, requestId: entry.requestId ?? undefined },
     actions: sending ? undefined : [
       { label: "view imports", href: "/imports", onActivate: event => {
+        const current = workspace();
         const handled = activateTargetLink({ event, target: { href: "/imports" },
-          runtime: { activateTarget: request => workspace().activateWorkspaceTarget({ ...request, originPaneId: workspace().state.active_primary_pane_id }) },
+          runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId: current.state.active_primary_pane_id }) },
         });
         if (handled === "handled-default" || handled === "handled-new-pane") commands.inspect(entry.commandKey);
         return handled;

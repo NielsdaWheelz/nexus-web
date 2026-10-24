@@ -5,6 +5,7 @@ import { FeedbackState } from "@/components/feedback/Feedback";
 import { isApiError, isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import { reportClientDefect } from "@/lib/telemetry/clientDefects";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import styles from "./WorkspaceHost.module.css";
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
   slotMinWidth: string;
   isActive: boolean;
   /** The pane's own Back, while it has history: a failed pane can still leave. */
-  onBack: (() => void) | null;
+  onBack: ((intent: OpenIntent) => void) | null;
   children: ReactNode;
 }
 interface State {

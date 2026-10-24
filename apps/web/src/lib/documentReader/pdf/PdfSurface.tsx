@@ -42,6 +42,7 @@ import styles from "../documentReader.module.css";
 interface Live {
   readonly viewer: PDFViewer;
   readonly pdf: PDFDocumentProxy;
+  readonly find: ReturnType<typeof createPdfFind>;
 }
 type PdfLink =
   | { readonly kind: "Preparing" }
@@ -388,7 +389,7 @@ export default function PdfSurface({
             signal,
           });
       };
-      const find = createPdfFind(lib, eventBus, runtime);
+      const find = createPdfFind(lib, eventBus, runtime, doc.identity);
       const viewer = new lib.PDFViewer({
         container: container.current!,
         viewer: host.current!,
@@ -530,7 +531,7 @@ export default function PdfSurface({
         measure("Geometry");
         for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
       }));
-      live.current = { viewer, pdf };
+      live.current = { viewer, pdf, find };
       setStatus({ kind: "Open" });
       const key = `${doc.identity}:${pdf.fingerprints[0]}:${attempt}`;
       detach = runtime.attach({
@@ -643,10 +644,16 @@ export default function PdfSurface({
         const measured = capture();
         return measured && { ...measured.placement, identity: doc.identity };
       },
-      async position(to, signal) {
+      async position(to, signal, inspectionSignal) {
         if (signal.aborted) return { kind: "Cancelled" };
         if ("identity" in to && to.identity !== doc.identity) {
           return { kind: "Unavailable", reason: "SourceChanged" };
+        }
+        if (!("offsetPx" in to) && to.kind === "pdf_find") {
+          const hit = await live.current!.find.replay(to, signal, inspectionSignal);
+          if (signal.aborted) return { kind: "Cancelled" };
+          if (!hit) return { kind: "Unavailable", reason: "TargetUnavailable" };
+          to = { kind: "pdfMatch", ...hit };
         }
         if (!("offsetPx" in to) && (to.kind === "pdf" || to.kind === "quads")) {
           const { viewer, pdf } = live.current!;
@@ -702,9 +709,10 @@ export default function PdfSurface({
         }
         if (!("offsetPx" in to) && to.kind === "pdfMatch") {
           // One navigation request owns page arrival, text readiness and the match.
+          const hit = to;
           const point = (y: number): ReaderTarget => ({
             kind: "point",
-            point: { kind: "pdf", page: to.page, y },
+            point: { kind: "pdf", page: hit.page, y },
           });
           const arrival = await settle(point(0), signal);
           if (signal.aborted || arrival.kind === "Cancelled") return { kind: "Cancelled" };
@@ -713,9 +721,9 @@ export default function PdfSurface({
             if (signal.aborted) return { kind: "Cancelled" };
             const viewer = live.current?.viewer;
             const selected = viewer?.findController?.selected;
-            if (selected?.pageIdx !== to.page - 1 || selected.matchIdx !== to.index)
+            if (selected?.pageIdx !== hit.page - 1 || selected.matchIdx !== hit.index)
               return { kind: "Cancelled" };
-            const page = pageView(viewer, to.page)?.div;
+            const page = pageView(viewer, hit.page)?.div;
             const match = page?.querySelector(".textLayer .highlight.selected");
             if (page && match) {
               const box = page.getBoundingClientRect();
@@ -736,6 +744,9 @@ export default function PdfSurface({
         const viewer = live.current?.viewer;
         if (!viewer || zoom === chosenZoom(viewer)) return;
         scaleTo(viewer, zoom === null ? "page-width" : String(zoom));
+      },
+      async restorePdfFind(target, signal) {
+        return Boolean(await live.current?.find.replay(target, signal, signal));
       },
     };
 

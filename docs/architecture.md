@@ -151,8 +151,8 @@ served by Vercel.
 Key topology facts (details: [`deployment.md`](../deployment.md),
 `deploy/hetzner/`, `deploy/vercel/`):
 
-- Default request path is **Browser → Next.js BFF → FastAPI → Postgres**.
-  SSE is the documented exception (**Browser → FastAPI `/stream/*`**).
+- default request path is **browser → next.js bff → fastapi → postgres**,
+  including live streams at the web origin's `/api/stream/*`.
 - One full Git SHA identifies a release vector. Each `main` push publishes one
   strict manifest (schema 3) containing immutable API/worker image digests and
   the expected schema. The host pulls those digests; it never

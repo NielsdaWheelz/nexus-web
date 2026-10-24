@@ -16,7 +16,7 @@ import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
 import { DeviceSessionNotice } from "@/lib/native/DeviceSessionNotice";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
-import { FeedbackProvider, useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { FeedbackProvider, useFeedback, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import Nexus from "@/components/nexus/Nexus";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
@@ -76,6 +76,7 @@ export default function AuthenticatedShell(props: {
   initialState: WorkspaceState;
   seeds: Record<string, Record<string, unknown>>;
   entryFailure: { requestId?: string } | null;
+  locationLinkFailure: "TooLong" | null;
 }) {
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
@@ -93,6 +94,7 @@ export default function AuthenticatedShell(props: {
                         accountId={props.account.accountId}
                         initialState={props.initialState}
                         entryFailure={props.entryFailure}
+                        locationLinkFailure={props.locationLinkFailure}
                       />
                     </ReaderProvider>
                   </ServerSeedsProvider>
@@ -110,6 +112,7 @@ function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
   entryFailure: { requestId?: string } | null;
+  locationLinkFailure: "TooLong" | null;
 }) {
   const { accountId } = props;
   const { profile } = useReaderContext();
@@ -146,7 +149,7 @@ function Workspace(props: {
       >
         <WritingRuntime accountId={accountId}>
           <ChatWorkOwners />
-          <WorkspaceEntryNotice failure={props.entryFailure} />
+          <WorkspaceEntryNotice failure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
           <SignOutProvider>
             <MobileChromeProvider>
               {/* One Lectern owner wraps the workspace leaves and the player
@@ -270,8 +273,10 @@ function ChatWorkOwners() {
 
 const ENTRY_NOTICE = "workspace-entry-read";
 
-function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | null }) {
+function WorkspaceEntryNotice({ failure, locationLinkFailure }: { failure: { requestId?: string } | null; locationLinkFailure: "TooLong" | null }) {
   const host = useHostPolicy();
+  const feedback = useFeedback();
+  const reportedLocation = useRef(false);
   const { state } = useWorkspaceStore();
   const [pending, startTransition] = useTransition();
   const inFlight = useRef(false);
@@ -281,6 +286,13 @@ function WorkspaceEntryNotice({ failure }: { failure: { requestId?: string } | n
     inFlight.current = true;
     startTransition(() => host.recover());
   }, [host]);
+
+  useEffect(() => {
+    if (locationLinkFailure === null || reportedLocation.current) return;
+    reportedLocation.current = true;
+    feedback.offer({ key: "location-entry", announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
+      content: { tone: "Warning", title: "this location link is too long" } });
+  }, [feedback, locationLinkFailure]);
 
   useEffect(() => {
     if (!pending) inFlight.current = false;

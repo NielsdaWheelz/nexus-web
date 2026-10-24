@@ -366,6 +366,13 @@
 
 .chapter {
   justify-content: space-between;
+  flex: 1 1 auto;
+}
+
+.chapterRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .chapter > span:first-child {

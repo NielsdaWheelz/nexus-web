@@ -59,8 +59,8 @@ export interface PaneReturnMemento {
   forgetWorkOwner(id: string): void;
   /** A fresh source arrival owns position and focus over an old visit return. */
   prepareSourceArrival(visitId: string): void;
-  /** A duplicate source starts at the same reading view, without copying pending commands. */
-  forkReadingView(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void;
+  /** Exact visit forks copy presentation alone; authored state and commands keep their owner. */
+  forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void;
 }
 export interface PaneVisitDataKey<T> {
   readonly name: string;
@@ -254,7 +254,11 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         if (entries.size === 0) readiness.delete(key);
       };
     },
-    forkReadingView(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
+    forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
+      const shell = mementos.get(sourceVisitId);
+      if (shell?.routeKey === sourceRouteKey) {
+        mementos.set(visitId, { ...structuredClone(shell), routeKey, focus: null });
+      }
       const source = visitData.get(sourceVisitId);
       if (source?.routeKey !== sourceRouteKey) return;
       const view = source.values.get("Reader.InspectionView");

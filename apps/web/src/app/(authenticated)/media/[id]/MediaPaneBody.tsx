@@ -242,6 +242,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const readerRef = useRef<Reader | null>(null);
   const verbsRef = useRef<{ readonly isMobile: boolean; readonly verbs: AnnotationVerbs } | null>(null);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
+  const findRef = useRef<ReturnType<typeof useFind>>(null);
   const navigationRuntime = useRef(runtime);
   navigationRuntime.current = runtime;
   const [forkFailure, setForkFailure] = useState<{ readonly title: string } | null>(null);
@@ -273,10 +274,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
           href: (destination: ReaderDestination) => readerDestinationHref(id, destination),
           activate: (destination: ReaderDestination, intent: OpenIntent, onDefault: () => void) => {
             setForkFailure(null);
-            if (intent === "default") return onDefault();
+            if (intent === "default") { onDefault(); return "Accepted"; }
             const href = readerDestinationHref(id, destination);
-            if (href === null) return setForkFailure({ title: "couldn’t open that location" });
-            navigationRuntime.current.activateTarget({ target: { href }, disposition: { kind: "Fork" } });
+            if (href === null) { setForkFailure({ title: "this location link is too long" }); return "Refused"; }
+            const result = navigationRuntime.current.activateTarget({ target: { href }, disposition: { kind: "Fork" } });
+            return !result || result.kind === "Cancelled" ? "Refused" : "Accepted";
           },
         } },
       }),
@@ -286,6 +288,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   );
   readerRef.current = reader;
   const restored = useReaderState(reader, (s) => s.restored);
+  const viewRestoration = useReaderState(reader, (s) => s.viewRestoration);
   const navigationMode = useReaderState(reader, (s) => s.navigation.mode);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
   useEffect(() => { setForkFailure(null); }, [doc?.identity, runtime.visitId]);
@@ -443,12 +446,20 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const arrival = useSourceArrival({
     ready: restored || (media !== null && !readable),
     sourceIdentity: doc?.identity ?? null,
-    onAttempt: () => {
+    restoreVisit: {
+      visitId: runtime.visitId,
+      sourceIdentity: doc?.identity ?? null,
+      outcome: !readable ? "Absent" : !restored ? "Pending" : !savedView || savedView.identity !== doc?.identity ? "Absent"
+        : viewRestoration?.snapshot === savedView && viewRestoration.sourceIdentity === doc?.identity ? viewRestoration.outcome : "Pending",
+    },
+    onAttempt: (_signal, target) => {
+      if (target.kind === "reader_destination" && target.destination.target.kind === "pdf_find") findRef.current?.clear();
       reader.retireNavigationAttempt();
       setForkFailure(null);
     },
     apply: async (result, context) => {
       if (context.signal.aborted) return "Cancelled";
+      if (result.kind === "chat_destination") return "Unavailable";
       if (result.kind === "reader_destination") {
         if (!doc) return "Unavailable";
         const { destination } = result;
@@ -483,14 +494,27 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         if (!context.restored) {
           const outcome = await reader.inspect({ target, signal: context.signal });
           switch (outcome.kind) {
-            case "Unavailable": return "FailureHandled";
+            case "Unavailable": {
+              if (target.kind !== "pdf_find") return "FailureHandled";
+              const failure = reader.getState().navigation.failure;
+              if (failure) reader.dismissNavigationFailure(failure);
+              return "Unavailable";
+            }
             case "Cancelled": return "Cancelled";
             case "Arrived":
             case "Unchanged": break;
             default: assertNever(outcome);
           }
+        } else if (target.kind === "pdf_find" && !await reader.restorePdfFind(target, context.signal)) {
+          return context.signal.aborted ? "Cancelled" : "Unavailable";
         }
         if (context.signal.aborted) return "Cancelled";
+        if (target.kind === "range") {
+          setInspection({ identity: doc.identity, anchors: [{ kind: "text", unit: target.unit, start: target.start, end: target.end }], pages: [], precision: "exact", activationId: context.activationId });
+          context.signal.addEventListener("abort", () => {
+            setInspection((current) => current?.activationId === context.activationId ? null : current);
+          }, { once: true });
+        }
         if (context.mayFocus()) reader.focusSource();
         return "Applied";
       }
@@ -574,7 +598,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
 
   // ---- find ----
   const source = useReaderState(reader, (s) => s.restored ? s.find : null);
-  const find = useFind({ ownerKey: paneSourceKey(runtime), source });
+  const find = useFind({ ownerKey: paneSourceKey(runtime), source,
+    onSearchIntent: () => arrival.supersede({ preserveSignal: null, retireFailure: true }),
+  });
+  findRef.current = find;
 
   // ---- evidence and chrome ----
   const { noteEdit, hovered, hover, closeNoteEdit, relocate } = verbs;

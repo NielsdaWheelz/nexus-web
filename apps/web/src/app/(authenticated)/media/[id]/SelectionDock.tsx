@@ -331,8 +331,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const newLabel = hasMessage ? "send in new chat" : "open in new chat";
     const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another chat change is still in progress." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading chat…" : continuationBlocked ? "this chat is not ready for this action." : null);
-    const newAction = command("NewChat", newLabel, <MessageCircle size={16} aria-hidden="true" />, () => composer.newChat("default"), chatReason);
-    const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, () => composer.continueChat(), existingReason);
+    const newAction = command("NewChat", newLabel, <MessageCircle size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), chatReason);
+    const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
     const chooseAction = { ...command("ChooseChat", "choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
     const options: ActionDescriptor[] = [
@@ -352,7 +352,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     }
     if (draft.highlightId) {
       if (resourceState?.kind === "Ready") options.push(...resourceState.options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) =>
-        action.id === "DeleteHighlight" || action.id === "EditHighlightBounds"
+        action.kind === "command" && (action.id === "DeleteHighlight" || action.id === "EditHighlightBounds")
           ? { ...action, disabled: action.disabled || blockedReason !== null, disabledReason: action.disabledReason ?? blockedReason ?? undefined } : action));
       else {
         options.push({ kind: "custom", id: "HighlightActionsFeedback", label: "highlight actions", render: () => resourceState?.kind === "Failed"

@@ -2,7 +2,7 @@
 
 // Source and cursor ports, source-locator geometry and per-visit reader state.
 // The workspace delivers arrivals; this module never watches a hash or a bus.
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
@@ -28,7 +28,7 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
   const { target } = destination;
   if (target.kind === "evidence_item") return null;
   if (target.kind === "edge") return target;
-  if (target.kind === "pdf" || target.kind === "quads")
+  if (target.kind === "pdf" || target.kind === "quads" || target.kind === "pdf_find")
     return doc.kind === "pdf" && target.page <= (state.pdf?.pages ?? doc.pages ?? 0) ? target : null;
   if (doc.kind !== "text") return null;
   if (target.kind === "time") return doc.format === "transcript" && transcriptUnitAtTime(doc.units, target.ms) !== null ? target : null;
@@ -152,6 +152,15 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
   const write = usePaneVisitDataWriter(VIEW);
   const reader = readerRef.current;
   const previous = useRef(runtime.visitId);
+  const delivery = runtime.paneEntryDelivery?.entry;
+  const opening = useRef({ visitId: runtime.visitId, purpose: delivery?.kind === "InspectSource" ? delivery.purpose : null });
+  if (opening.current.visitId !== runtime.visitId)
+    opening.current = { visitId: runtime.visitId, purpose: delivery?.kind === "InspectSource" ? delivery.purpose : null };
+  const purpose = opening.current.purpose;
+  const sourceIdentity = useSyncExternalStore(reader?.subscribe ?? (() => () => {}), () => {
+    const document = reader?.getState().document;
+    return document?.status === "ready" ? document.doc.identity : null;
+  }, () => null);
   useEffect(() => {
     if (!reader) return;
     return reader.subscribe(() => {
@@ -164,12 +173,14 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
   }, [reader, write]);
   useLayoutEffect(() => {
     if (previous.current === runtime.visitId) return;
-    previous.current = runtime.visitId;
     // A new arrival begins at the live departure; a history return restores its visit.
-    if (!saved || runtime.paneEntryDelivery?.entry.kind === "InspectSource" || !reader) return;
+    if (!saved || !reader || purpose === "Open") { previous.current = runtime.visitId; return; }
+    if (sourceIdentity === null) return;
+    previous.current = runtime.visitId;
+    if (saved.identity !== sourceIdentity) return;
     const controller = new AbortController();
     void reader.restoreView(saved, controller.signal);
     return () => controller.abort();
-  }, [reader, runtime.paneEntryDelivery, runtime.visitId, saved]);
+  }, [purpose, reader, runtime.visitId, saved, sourceIdentity]);
   return saved;
 }

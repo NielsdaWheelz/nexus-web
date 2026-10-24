@@ -32,8 +32,10 @@ import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
 import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { paneControls, type PaneControl } from "@/lib/workspace/paneControls";
+import type { WorkspaceTargetActivationResult, WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useLatestWorkspace, type WorkspaceSelection } from "@/lib/workspace/store";
 import styles from "./WorkspacePaneStrip.module.css";
 
@@ -83,7 +85,7 @@ function StripTab(props: {
     event: ButtonKey,
     control: Control,
   ) => void;
-  readonly onActivate: () => void;
+  readonly onActivate: (event: TargetActivationEvent) => void;
   readonly onCommand: (command: PaneControl["command"]) => void;
 }) {
   const { item } = props;
@@ -110,7 +112,7 @@ function StripTab(props: {
         aria-current={item.isActive ? "page" : undefined}
         aria-describedby={props.descriptionId}
         aria-keyshortcuts="ArrowLeft ArrowRight Home End Delete Backspace Shift+M"
-        title={item.label}
+        title={`${item.label}. shift-click or shift-enter opens in a new pane`}
         onMouseDown={(event) => {
           if (!hasActiveInteractionOwner()) sortable.listeners?.onMouseDown?.(event);
         }}
@@ -160,7 +162,7 @@ export default function WorkspacePaneStrip(props: {
   readonly state: WorkspaceState;
   readonly items: readonly StripItem[];
   readonly isMaximized: boolean;
-  readonly onActivate: (paneId: string) => void;
+  readonly onActivate: (paneId: string, disposition: WorkspaceTargetDisposition) => WorkspaceTargetActivationResult | null;
   readonly onRestoreCanvas: (paneId: string) => WorkspaceSelection | null;
   readonly onMinimize: (paneId: string) => void;
   readonly onClose: (paneId: string) => WorkspaceSelection | null;
@@ -266,12 +268,24 @@ export default function WorkspacePaneStrip(props: {
     const label = items.find((item) => item.paneId === input.paneId)!.label;
     setAnnouncement(`Moved ${label} to position ${panes.findIndex((pane) => pane.id === input.paneId) + 1} of ${panes.length}.`);
   };
+  const activate = (paneId: string, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume" || hasActiveInteractionOwner()) return;
+    const result = props.onActivate(paneId, { kind: activation.intent === "new_pane" ? "Fork" : "Follow" });
+    if (result && result.kind !== "Cancelled" && result.kind !== "CreatedPane") reveal(result.paneId);
+  };
   const onKeyDown = (
     event: ButtonKey,
     paneId: string,
     control: Control,
   ) => {
     if (event.defaultPrevented) return;
+    if (control === "activate" && event.key === "Enter") {
+      activate(paneId, event);
+      return;
+    }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (!event.repeat && !event.nativeEvent.isComposing && !event.metaKey &&
@@ -393,10 +407,7 @@ export default function WorkspacePaneStrip(props: {
                   if (heldPointer.current === null) reveal(item.paneId);
                 }}
                 onKeyDown={(event, control) => onKeyDown(event, item.paneId, control)}
-                onActivate={() => {
-                  reveal(item.paneId);
-                  props.onActivate(item.paneId);
-                }}
+                onActivate={event => activate(item.paneId, event)}
                 onCommand={(command) => {
                   switch (command) {
                     case "minimize": props.onMinimize(item.paneId); return;

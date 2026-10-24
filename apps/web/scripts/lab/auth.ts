@@ -10,6 +10,7 @@ import { login } from "./browser";
 
 interface BootstrapInput {
   web_origin: string;
+  web_tls: { ca_file: string; leaf_spki_sha256: string };
   wire_revision: number;
   seed: { user_id: string; email: string; password: string };
   browser_state_file: string;
@@ -29,7 +30,9 @@ async function bootstrap() {
     throw new Error("browser bootstrap state path must be absolute");
   if (!isAbsolute(input.artifacts_dir))
     throw new Error("browser bootstrap artifacts path must be absolute");
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({
+    args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
+  });
   try {
     const context = await browser.newContext();
     context.setDefaultTimeout(30_000);

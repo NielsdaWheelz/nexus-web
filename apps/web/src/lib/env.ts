@@ -110,8 +110,10 @@ export function getEnv(): ResolvedEnv {
     { localDefault: "http://localhost:8000", localhost: true },
   );
   const app = origin("APP_PUBLIC_URL", process.env.APP_PUBLIC_URL, deployed, {
-    localDefault: "http://localhost:3000",
+    localDefault: "https://127.0.0.1:3000",
   });
+  if (app && app.protocol !== "https:")
+    throw new Error("APP_PUBLIC_URL must be an https origin");
   const storage = origin(
     "R2_S3_API_ORIGIN",
     process.env.R2_S3_API_ORIGIN,

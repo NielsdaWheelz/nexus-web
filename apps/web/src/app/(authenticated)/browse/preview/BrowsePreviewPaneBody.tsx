@@ -195,7 +195,7 @@ export default function BrowsePreviewPaneBody() {
 
   if (failure !== null) {
     const back = () =>
-      router.canGoBack ? router.back() : router.replace("/browse");
+      router.canGoBack ? router.back({ disposition: { kind: "Follow" } }) : router.replace("/browse");
     return (
       <PaneSurface
         state={

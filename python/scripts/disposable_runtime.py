@@ -23,7 +23,8 @@ absolute paths name private browser state, admin key and artifacts; its closed
 snake_case fields are run_id, worktree, web_origin, api_origin, auth_origin,
 auth_anon_key, auth_admin_key_file, database_url, storage (origin, bucket, region,
 access_key_id, secret_access_key), wire_revision, seed (user_id,
-default_library_id, email, password), browser_state_file, artifacts_dir and
+default_library_id, email, password), browser_state_file, artifacts_dir,
+web_tls (ca_file and leaf_spki_sha256) and
 fake_providers (null, or origin and ca_file for the explicit fake transport).
 client_cpu_throttle is null normally, or the requested integer slowdown rate.
 NEXUS_LAB_CONTEXT is the driver's only extra environment variable. Live JSON
@@ -105,7 +106,12 @@ def _complete_web_build(web: Path) -> str | None:
             and all((standalone / name).is_file() for name in files)
             and all(
                 (standalone / name).is_file()
-                for name in ("server.js", "package.json", "node_modules/next/package.json")
+                for name in (
+                    "serve.mjs",
+                    "probe-web.mjs",
+                    "package.json",
+                    "node_modules/next/package.json",
+                )
             )
             and (standalone / "public").is_dir()
             and (standalone / ".next/static").is_dir()
@@ -180,8 +186,8 @@ def set_config(text: str, section: str, key: str, value: object) -> str:
     return text[: match.start(2)] + body + text[match.end(2) :]
 
 
-def _write_fake_tls(directory: Path) -> str:
-    """Fresh lab-only certificate for the explicit host and compose origins."""
+def _write_tls(directory: Path, name: str, dns_names: tuple[str, ...]) -> tuple[str, str]:
+    """Fresh root and loopback leaf; return the root PEM and exact leaf SPKI pin."""
     import datetime
     import ipaddress
 
@@ -192,7 +198,7 @@ def _write_fake_tls(directory: Path) -> str:
 
     directory.mkdir(mode=0o755)
     root_key = ec.generate_private_key(ec.SECP256R1())
-    root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab provider root")])
+    root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name + " root")])
     now = datetime.datetime.now(datetime.UTC)
     root = (
         x509.CertificateBuilder()
@@ -208,9 +214,7 @@ def _write_fake_tls(directory: Path) -> str:
     key = ec.generate_private_key(ec.SECP256R1())
     certificate = (
         x509.CertificateBuilder()
-        .subject_name(
-            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab fake providers")])
-        )
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)]))
         .issuer_name(root.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
@@ -220,7 +224,8 @@ def _write_fake_tls(directory: Path) -> str:
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(
             x509.SubjectAlternativeName(
-                [x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.DNSName("fake-providers")]
+                [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                + [x509.DNSName(host) for host in dns_names]
             ),
             critical=False,
         )
@@ -236,11 +241,14 @@ def _write_fake_tls(directory: Path) -> str:
             serialization.NoEncryption(),
         )
     )
-    # The private inputs parent is 0700; only the fake service sees this read-only bind.
+    # The 0700 inputs parent protects the key; provider containers get a read-only bind.
     directory.chmod(0o755)
     for path in directory.iterdir():
         path.chmod(0o644)
-    return pem
+    spki = key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return pem, base64.b64encode(hashlib.sha256(spki).digest()).decode()
 
 
 def http_json(
@@ -730,10 +738,16 @@ def main() -> int:
         finally:
             for listener in sockets:
                 listener.close()
-        web_origin = f"http://127.0.0.1:{web_port}"
+        web_origin = f"https://127.0.0.1:{web_port}"
         api_origin = f"http://127.0.0.1:{api_port}"
         auth_origin = f"http://127.0.0.1:{auth_port}"
         storage_origin = f"http://127.0.0.1:{storage_port}"
+        web_tls_dir = inputs / "web-tls"
+        _, web_leaf_pin = _write_tls(web_tls_dir, "nexus lab web", ("localhost",))
+        web_tls = {
+            "ca_file": str(web_tls_dir / "ca.pem"),
+            "leaf_spki_sha256": web_leaf_pin,
+        }
         db_password = secrets.token_hex(24)
         database_url = f"postgresql+psycopg://postgres:{db_password}@127.0.0.1:{db_port}/postgres"
         source_sha = command(["git", "rev-parse", "HEAD"]).strip()
@@ -774,7 +788,7 @@ def main() -> int:
         fake_tls = inputs / "fake-tls"
         fake_ca_pem: str | None = None
         if args.fake_providers:
-            fake_ca_pem = _write_fake_tls(fake_tls)
+            fake_ca_pem, _ = _write_tls(fake_tls, "nexus lab fake providers", ("fake-providers",))
             # Darwin's Unix socket limit cannot fit the checkout's private-input path.
             host_codex_dir = Path(tempfile.mkdtemp(prefix="nexus-lab-codex-", dir="/tmp"))
             app_env |= {
@@ -1142,6 +1156,8 @@ def main() -> int:
             "NODE_ENV": "production",
             "HOSTNAME": "127.0.0.1",
             "PORT": str(web_port),
+            "NEXUS_WEB_TLS_CERT_FILE": str(web_tls_dir / "cert.pem"),
+            "NEXUS_WEB_TLS_KEY_FILE": str(web_tls_dir / "key.pem"),
         }
         phase = "web build"
         web = ROOT / "apps/web"
@@ -1193,11 +1209,29 @@ def main() -> int:
         phase = "web"
         start(
             "web",
-            ["node", str(web_runtime / "server.js")],
+            ["node", str(web_runtime / "serve.mjs")],
             web_env,
             web_runtime,
         )
-        ready("web", lambda: http_json(web_origin + "/version") == {"source_sha": source_sha})
+
+        def web_ready() -> bool:
+            try:
+                observed = json.loads(
+                    command(
+                        [
+                            "node",
+                            str(web_runtime / "probe-web.mjs"),
+                            web_origin,
+                            web_tls["ca_file"],
+                        ],
+                        timeout=6,
+                    )
+                )
+            except RuntimeError:
+                return False
+            return observed == {"source_sha": source_sha}
+
+        ready("web", web_ready)
         phase = "reader bootstrap"
         message("reader bootstrap: creating one confirmed lab reader and performing browser login")
         email = f"lab-reader-{run_id}@example.test"
@@ -1218,6 +1252,7 @@ def main() -> int:
             bootstrap,
             {
                 "web_origin": web_origin,
+                "web_tls": web_tls,
                 "wire_revision": WIRE_REVISION,
                 "seed": {"user_id": user["id"], "email": email, "password": password},
                 "browser_state_file": str(browser_state),
@@ -1251,6 +1286,7 @@ def main() -> int:
                 "run_id": run_id,
                 "worktree": str(ROOT),
                 "web_origin": web_origin,
+                "web_tls": web_tls,
                 "api_origin": api_origin,
                 "auth_origin": auth_origin,
                 "auth_anon_key": status["PUBLISHABLE_KEY"],

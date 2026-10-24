@@ -71,14 +71,14 @@ import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
-import { useWorkspaceStore } from "@/lib/workspace/store";
+import { useLatestWorkspace, useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
 
 /** One route-owned composition, derived by the workspace before its body mounts. */
@@ -187,13 +187,23 @@ function PaneView({
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
+  const latestWorkspace = useLatestWorkspace();
+  const activateHistory = (back: boolean, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume") return;
+    const options: PaneHistoryOptions = { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } };
+    if (back) router.back(options);
+    else router.forward(options);
+  };
   const body = state.chrome;
   const primary = body?.primaryAction;
   const principal = primary?.kind === "link" && !primary.onActivate
-    ? { ...primary, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: { href: primary.href } }) }
+    ? { ...primary, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: primary.href === null ? null : { href: primary.href } }) }
     : primary;
   const menuActions = body?.menuActions?.map((action) => action.kind === "link" && !action.onActivate
-    ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: { href: action.href } }) }
+    ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: action.href === null ? null : { href: action.href } }) }
     : action);
   const activatePrincipal = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | ReactKeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     if (!principal) return;
@@ -333,7 +343,28 @@ function PaneView({
         companionExpanded(state, pane.secondary),
       )
     : undefined;
-  const paneActions: ActionDescriptor[] = [];
+  const paneActions = [true, false].map<ActionDescriptor>(back => {
+    const visit = back ? pane.history.back.at(-1) : pane.history.forward[0];
+    return {
+      id: `${back ? "Pane.HistoryPrevious" : "Pane.HistoryNext"}:${pane.current_visit.id}:${visit?.id ?? "none"}`,
+      kind: "link",
+      label: back ? "open previous page in new pane" : "open next page in new pane",
+      ...(visit ? { href: visit.href } : { href: null, disabled: true as const }),
+      disabledReason: visit ? undefined : back ? "no earlier visit" : "no later visit",
+      onActivate: event => {
+        const activation = workspaceTargetActivationIntent(event);
+        if (activation.kind === "Unowned") return "unhandled";
+        event.preventDefault();
+        if (activation.kind === "Consume") return "consumed";
+        const current = latestWorkspace().state.panes.find(current => current.id === paneId);
+        const adjacent = back ? current?.history.back.at(-1) : current?.history.forward[0];
+        if (!visit || current?.current_visit.id !== pane.current_visit.id || adjacent?.id !== visit.id) return "consumed";
+        const options: PaneHistoryOptions = { disposition: { kind: "Fork" } };
+        const result = back ? router.back(options) : router.forward(options);
+        return result === "committed" ? "handled-new-pane" : "consumed";
+      },
+    };
+  });
   if (query) {
     const isFind = query.kind === "Find";
     const verb = isFind ? "Find" : query.label;
@@ -410,8 +441,8 @@ function PaneView({
       navigation={{
         canGoBack: router.canGoBack,
         canGoForward: router.canGoForward,
-        onBack: router.back,
-        onForward: router.forward,
+        onBack: event => activateHistory(true, event),
+        onForward: event => activateHistory(false, event),
       }}
       onMouseDown={isMobile ? undefined : onChromeMouseDown}
     />

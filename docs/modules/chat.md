@@ -165,7 +165,14 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   Forks rows are canonical destinations with `?leaf` and `?message` arrival selectors:
   plain activation follows a matching pane, shift opens a fresh pane; nothing is written. an arrival or `?message`
   off the path moves a bare endpoint to the newest leaf under it; an explicit one must
-  contain it. a deleted endpoint falls back to its nearest surviving ancestor ("this
+  contain it. exact find uses `/conversations/{id}?leaf=…&loc=…`: the closed
+  `find_match` payload carries message id, codepoint bounds and sha-256 of complete
+  rendered searched text, excluding find chrome. search freezes branch/text and
+  hashes once per matched message. arrival verifies the terminal message on that
+  exact branch and the rebuilt cursor/digest before positioning/paint; it never
+  resolves via the backend, guesses a quote or substitutes a branch. native open
+  and reload decode identically. local find/navigation retires arrival paint.
+  without an exact `loc`, a deleted endpoint falls back to its nearest surviving ancestor ("this
   branch was deleted"); an invalid or missing one shows "this branch is no longer
   available" until the viewer chooses one.
 - **one command owner per account and chat, and per pane for a new chat** (`commands.ts`,

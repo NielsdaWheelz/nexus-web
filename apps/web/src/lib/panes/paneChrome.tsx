@@ -16,6 +16,7 @@ import {
 } from "react";
 import type {OutlineCommand, OutlineCommandState} from "@/lib/notes/useOutlineSession";
 import type { FindController } from "@/lib/find/useFind";
+import { FIND_QUERY_LIMIT } from "@/lib/find/find";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import type {
   WorkspaceSecondaryGroupId,
@@ -32,7 +33,7 @@ export const PANE_COMMAND_RESOLVING_REASON =
 
 /** The pane search row's input cap, for filter and find alike. */
 export function truncatePaneSearchQuery(query: string): string {
-  return Array.from(query).slice(0, 256).join("");
+  return Array.from(query).slice(0, FIND_QUERY_LIMIT).join("");
 }
 
 /** A shared query toolbar, or Find with its existing Companion integration. */

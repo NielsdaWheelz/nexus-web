@@ -41,7 +41,8 @@ export interface FindController {
   setWholeWord(value: boolean): void;
   setNarrowed(value: boolean): void;
   step(direction: 1 | -1): void;
-  activate(index: number): Promise<boolean>;
+  activate(row: FindRow<unknown>): Promise<boolean>;
+  targetHref(row: FindRow<unknown>): string | null;
   retry(): void;
   goBack(): void;
 }
@@ -74,11 +75,21 @@ export function useFind({
   ownerKey,
   source,
   presentation,
+  onSearchIntent,
 }: {
   readonly ownerKey: string;
   readonly source: FindSource<unknown> | null;
   readonly presentation?: unknown;
+  /** An authored query/options command, never an automatic source recomputation. */
+  readonly onSearchIntent?: () => void;
 }): FindController | null {
+  const searchIntent = useRef(onSearchIntent);
+  searchIntent.current = onSearchIntent;
+  const computed = useRef<{
+    readonly source: FindSource<unknown>;
+    readonly rows: readonly FindRow<unknown>[];
+    readonly signal: AbortSignal;
+  } | null>(null);
   const key = source?.key ?? null;
   const initial: Session = {
     ownerKey,
@@ -229,6 +240,7 @@ export function useFind({
         const outcome = await source.search({ query, matchCase, wholeWord }, narrowed, signal);
         if (signal.aborted) return;
         if (outcome.kind !== "Rows") return update({ result: outcome });
+        computed.current = { source, rows: outcome.rows, signal };
         update({
           result: {
             kind: "Rows",
@@ -287,6 +299,15 @@ export function useFind({
   }, [lifetime, source, update]);
   const controller = useMemo<FindController | null>(() => {
     if (!source) return null;
+    const currentIndex = (row: FindRow<unknown>): number | null => {
+      const current = latest.current;
+      const publication = computed.current;
+      if (current.source !== source || current.result.kind !== "Rows" ||
+        publication?.source !== source || publication.signal.aborted ||
+        publication.rows !== current.result.rows) return null;
+      const index = current.result.rows.indexOf(row);
+      return index < 0 ? null : index;
+    };
     const restart = () => {
       lifetime.computation?.abort();
       lifetime.movement?.abort();
@@ -294,6 +315,7 @@ export function useFind({
     };
     const option = (name: "matchCase" | "wholeWord" | "narrowed", value: boolean) => {
       if (latest.current[name] === value) return;
+      if (latest.current.query) searchIntent.current?.();
       restart();
       update({ [name]: value, result: latest.current.query ? { kind: "Searching" } : IDLE });
     };
@@ -312,6 +334,7 @@ export function useFind({
         const next = truncatePaneSearchQuery(value);
         if (!next) return clear();
         if (next === latest.current.query) return;
+        searchIntent.current?.();
         restart();
         prepare();
         update({ query: next, result: { kind: "Searching" } });
@@ -319,7 +342,13 @@ export function useFind({
       setMatchCase: (value) => option("matchCase", value),
       setWholeWord: (value) => option("wholeWord", value),
       setNarrowed: (value) => option("narrowed", value),
-      activate: (index) => show(index, null),
+      activate(row) {
+        const index = currentIndex(row);
+        return index === null ? Promise.resolve(false) : show(index, null);
+      },
+      targetHref(row) {
+        return currentIndex(row) === null ? null : source.href(row.at);
+      },
       step(direction) {
         const current = latest.current.result;
         if (current.kind !== "Rows" || current.rows.length === 0) return;
@@ -331,6 +360,7 @@ export function useFind({
         );
       },
       retry() {
+        if (latest.current.query) searchIntent.current?.();
         restart();
         update({
           attempt: latest.current.attempt + 1,
