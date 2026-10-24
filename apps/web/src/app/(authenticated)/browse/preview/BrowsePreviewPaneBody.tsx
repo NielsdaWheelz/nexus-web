@@ -5,6 +5,8 @@
 // target already in Nexus redirects to its owned pane.
 
 import { useEffect, useState } from "react";
+import { podcastActionFacts } from "@/lib/actions/inlineActions";
+import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import MediaActions from "@/components/media/MediaActions";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import CollectionView from "@/components/collections/CollectionView";
@@ -39,8 +41,6 @@ import {
   usePaneSearchParams,
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
-import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "../browse.module.css";
 
@@ -127,7 +127,6 @@ export default function BrowsePreviewPaneBody() {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const target = params.get("target");
-  const { ctx } = useActionRuntime();
   const resource = usePaneFreeServerValue<BrowsePreview>({
     key: target === null ? null : `browse-preview:${target}`,
     stale: "",
@@ -136,10 +135,22 @@ export default function BrowsePreviewPaneBody() {
   });
   const [videoLoaded, setVideoLoaded] = useState(false);
   const preview = resource.status === "ready" ? resource.data : null;
-  const owned =
-    preview !== null && preview.resolution.kind !== "Preview"
-      ? preview.resolution.href
-      : null;
+  const actionFacts = usePodcastActionFacts({ scope: `Browse.Preview:${target}`,
+    targets: preview?.kind === "Podcast" ? [{ kind: "Discovery", target: preview.target }] : [],
+    refresh: `${resource.status}:${resource.status === "ready" ? resource.generation : ""}`,
+  });
+  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
+  const sourceError = resource.status === "loading" ? null : resource.error;
+  const podcast = preview?.kind === "Podcast" ? {
+    target: { kind: "Discovery" as const, target: preview.target }, title: preview.title,
+    facts: sourceError !== null
+      ? { kind: "Failed" as const, error: sourceError, retry: resource.refetch, retrying: resource.status === "failed" ? resource.retrying : resource.status === "ready" && resource.refreshing }
+      : resource.status !== "ready" || resource.refreshing ? { kind: "Resolving" as const }
+      : podcastActionFacts(actionFacts, { kind: "Discovery", target: preview.target }),
+  } : null;
+  const owned = preview?.kind === "Podcast"
+    ? podcast?.facts.kind === "Ready" && podcast.facts.resolution.kind === "Canonical" ? `/podcasts/${podcast.facts.resolution.podcast_id}` : null
+    : preview !== null && preview.resolution.kind !== "Preview" ? preview.resolution.href : null;
   useEffect(() => {
     // A background read canonicalizes its pane without changing the active pane.
     if (owned !== null) router.replace(owned, { labelHint: preview?.title, activate: false });
@@ -152,11 +163,7 @@ export default function BrowsePreviewPaneBody() {
         : null;
   usePreviewTitleHint(target, preview?.title);
   usePaneChrome({
-    menuActions: preview?.kind === "Podcast" && owned === null ? [{
-      kind: "command", id: "ImportPodcastEpisodes", label: ACTION_CATALOG.ImportPodcastEpisodes.label,
-      icon: <ACTION_CATALOG.ImportPodcastEpisodes.icon size={16} aria-hidden="true" />,
-      onSelect: () => ctx.overlays.open({ kind: "ImportPodcastEpisodes", target: { kind: "Discovery", target: preview.target }, title: preview.title }),
-    }] : undefined,
+    resourceActions: podcast === null || owned !== null ? undefined : { kind: "Podcast", subject: podcast },
     header:
       failure !== null
         ? { kind: "Resource", resource: { status: "Failed" } }
@@ -210,7 +217,6 @@ export default function BrowsePreviewPaneBody() {
     );
   }
 
-  const acquisition = preview.kind === "Podcast" ? <Button emphasis="strong" aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Discovery", target: preview.target }, title: preview.title, libraryId: null })}>subscribe…</Button> : null;
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =
@@ -238,7 +244,8 @@ export default function BrowsePreviewPaneBody() {
           ]}
           note="Previewing does not subscribe or add episodes."
         />
-        {acquisition}
+        {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check subscription", requestId: factsError.requestId }} announcement="Polite"
+          actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
         <PreviewEpisodes preview={preview} />
       </PaneSurface>
     );
@@ -294,7 +301,6 @@ export default function BrowsePreviewPaneBody() {
         density="Row"
         returnFocus={() => findPaneLandmarkFocusTarget(pane.paneId)}
       />
-      {acquisition}
     </PaneSurface>
   );
 }

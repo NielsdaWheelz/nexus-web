@@ -64,6 +64,8 @@ export interface ServerList<T, M = null> {
   readonly items: readonly T[];
   /** The requested key has a committed snapshot. */
   readonly current: boolean;
+  /** That snapshot matches the current invalidation token; running and failure still gate intent. */
+  readonly fresh: boolean;
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
   readonly orderRevision: string | null;
@@ -340,6 +342,7 @@ function useList<T, M>(
     status: ofKey !== null ? "ready" : failure !== null ? "failed" : "loading",
     items: ofKey?.items ?? NONE,
     current: ofKey !== null,
+    fresh: ofKey !== null && ofKey.stale === stale,
     complete: ofKey !== null && ofKey.cursor === null,
     orderRevision: ofKey?.orderRevision ?? null,
     metadata: ofKey?.metadata ?? null,

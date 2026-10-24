@@ -30,7 +30,7 @@ export function presentMedia(
   return {
     id: occurrence.id,
     kind: summary.media_kind === "podcast_episode" ? "podcast_episode" : "media",
-    media: { subject: { kind: "Stored", summary }, knownDescriptor: occurrence.knownDescriptor ?? null },
+    resourceActions: { kind: "Media", subject: { kind: "Stored", summary }, knownDescriptor: occurrence.knownDescriptor ?? null },
     primary: { ...occurrence.primary, paneLabelHint: summary.title },
     title: { text: summary.title },
     contributors: selectMediaAuthors(summary.contributors),

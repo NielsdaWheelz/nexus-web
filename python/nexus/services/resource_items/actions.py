@@ -216,6 +216,7 @@ def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceAct
         return []
     actions: list[ResourceActionOut] = []
     actions.append(_simple("UnsubscribePodcast" if state.subscribed else "SubscribePodcast"))
+    actions.append(_simple("PodcastLibraries"))
     actions.append(_simple("ImportPodcastEpisodes"))
     actions.append(_simple("PodcastSettings"))
     if state.subscribed:

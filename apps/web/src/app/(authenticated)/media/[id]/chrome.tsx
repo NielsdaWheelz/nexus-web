@@ -150,7 +150,8 @@ export function useReaderChrome(input: {
           : input.failed
             ? { kind: "Resource" as const, resource: { status: "Failed" as const } }
             : undefined,
-        mediaActions: summary === null ? undefined : {
+        resourceActions: summary === null ? undefined : {
+          kind: "Media" as const,
           subject: { kind: "Stored" as const, summary },
           knownDescriptor: media?.playerDescriptor ?? null,
         },

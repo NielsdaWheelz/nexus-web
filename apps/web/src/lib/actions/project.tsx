@@ -1,5 +1,7 @@
 import { installedApp } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
+import type { PodcastActionFocus } from "./inlineActions";
+import type { PodcastTarget } from "@/lib/podcasts/api";
 import { Minus, type LucideIcon } from "lucide-react";
 import {
   ACTION_CATALOG,
@@ -55,7 +57,6 @@ import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
@@ -67,7 +68,7 @@ import type {
 
 export type ResourceActions = Schema<"ResourceActionsOut">;
 type Action = ResourceActions["actions"][number];
-type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribePodcast" | "UnsubscribePodcast">;
+type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribePodcast" | "UnsubscribePodcast" | "PodcastLibraries">;
 
 /** One chosen verb. The provider confirms it, tracks it busy and reports failure. */
 export interface ActionCommand {
@@ -168,7 +169,7 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
   readonly playbackSource: PlaybackSource | null;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
-}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly glyph: "Play" | "Pause" } {
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
   const player = ctx.player.state;
   const loaded = player.kind === "Loaded" && player.source.kind === "Episode" &&
     player.source.descriptor.media_id === mediaId;
@@ -180,7 +181,6 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
     : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio" : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
-    glyph: pausing ? "Pause" : "Play",
     icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
     onSelect: () => run({
@@ -192,47 +192,68 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
   };
 }
 
-/** Loaded aggregate subscription facts choose the same fixed verb in header and menu. */
-export function projectPodcastSubscriptionAction({ podcastId, title, subscribed, blocked, captureSuccessFocus, ctx, run }: {
-  readonly podcastId: string;
+/** Subscription and organization keep the admitted target and original focus. */
+export function projectPodcastSubscriptionAction({ target, title, subscribed, disabledReason, ctx, run, focus }: {
+  readonly target: PodcastTarget;
   readonly title: string;
   readonly subscribed: boolean;
-  readonly blocked: BlockedReason | null;
-  readonly captureSuccessFocus?: () => ReturnFocusTarget;
+  readonly disabledReason: string | null;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
-}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
+  readonly focus?: PodcastActionFocus;
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId } {
   const id = subscribed ? "UnsubscribePodcast" : "SubscribePodcast";
   const entry = ACTION_CATALOG[id];
-  const label = `${entry.label}: ${title}`;
   return {
-    kind: "command", id, label,
+    kind: "command", id, label: entry.label,
     icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
-    disabled: blocked !== null || undefined,
-    disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
-    onSelect: () => {
-      if (blocked !== null) return;
-      const successFocus = subscribed ? captureSuccessFocus?.() : undefined;
-      run({
-        ref: `podcast:${podcastId}`, id, label, title,
+    disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined,
+    restoreFocusOnClose: false,
+    onSelect: detail => {
+      if (disabledReason !== null) return;
+      if (subscribed && target.kind !== "Canonical") throw new Error("a subscription requires canonical identity");
+      const overlay: Overlay = subscribed && target.kind === "Canonical"
+        ? { kind: "UnsubscribePodcast", podcastId: target.podcast_id, title, libraryId: null, successFocus: focus?.afterRemoval }
+        : { kind: "SubscribePodcast", target, title, libraryId: null };
+      const trigger = detail.triggerEl ?? focus?.trigger ?? null;
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id, label: entry.label, title,
         confirmation: null, tracked: false,
-        execute: () => ctx.overlays.open(subscribed
-          ? { kind: "UnsubscribePodcast", podcastId, title, libraryId: null, successFocus }
-          : { kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: podcastId }, title, libraryId: null }),
+        execute: () => ctx.overlays.open(overlay, focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
+      });
+    },
+  };
+}
+
+export function projectPodcastLibrariesAction({ target, title, disabledReason, ctx, run, focus }: {
+  readonly target: PodcastTarget; readonly title: string; readonly disabledReason: string | null;
+  readonly ctx: ActionContext; readonly run: (command: ActionCommand) => void; readonly focus?: PodcastActionFocus;
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId } {
+  return {
+    kind: "command", id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label,
+    icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { size: 16, "aria-hidden": true }),
+    disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined, restoreFocusOnClose: false,
+    onSelect: detail => {
+      if (disabledReason !== null) return;
+      const trigger = detail.triggerEl ?? focus?.trigger ?? null;
+      const successFocus = focus?.afterRemoval;
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: "libraries…", title,
+        confirmation: null, tracked: false,
+        execute: () => ctx.overlays.open({ kind: "PodcastLibraries", target, title, successFocus },
+          focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
       });
     },
   };
 }
 
 /** One named destination's removal; the existing review owns scope and acknowledgement. */
-export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId, libraryName, canRemove, blocked, captureSuccessFocus, ctx, run }: {
+export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId, libraryName, canRemove, blocked, focus, ctx, run }: {
   readonly podcastId: string;
   readonly title: string;
   readonly libraryId: string;
   readonly libraryName: string;
   readonly canRemove: boolean;
   readonly blocked: BlockedReason | null;
-  readonly captureSuccessFocus: () => ReturnFocusTarget;
+  readonly focus: PodcastActionFocus;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly accessibleLabel: string } {
@@ -243,14 +264,15 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
     kind: "command", id: "PodcastLibraryRemoval", label,
     accessibleLabel: `remove ${title} from ${libraryName}`,
     icon: createElement(Minus, { size: 16, "aria-hidden": true }),
-    disabled: disabledReason !== undefined || undefined, disabledReason,
-    onSelect: () => {
+    disabled: disabledReason !== undefined || undefined, disabledReason, restoreFocusOnClose: false,
+    onSelect: detail => {
       if (disabledReason !== undefined) return;
-      const successFocus = captureSuccessFocus();
-      run({
-        ref: `podcast:${podcastId}`, id: "UnsubscribePodcast", label, title,
+      const successFocus = focus.afterRemoval;
+      const trigger = detail.triggerEl ?? focus.trigger;
+      run({ ref: `podcast:${podcastId}`, id: "UnsubscribePodcast", label, title,
         confirmation: null, tracked: false,
-        execute: () => ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title, libraryId, successFocus }),
+        execute: () => ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title, libraryId, successFocus },
+          { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
       });
     },
   };
@@ -267,7 +289,7 @@ export function projectResourceActions(
   run: (command: ActionCommand) => void,
   boundPaneId: string | null,
   playbackSource: PlaybackSource | null,
-  { capturePodcastRemovalFocus }: { readonly capturePodcastRemovalFocus?: () => ReturnFocusTarget } = {},
+  podcastFocus?: PodcastActionFocus,
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
   const id = ref.slice(ref.indexOf(":") + 1);
@@ -426,7 +448,10 @@ export function projectResourceActions(
     });
   };
   const overlay = (next: Overlay): Verb => [
-    () => ctx.overlays.open(next),
+    () => {
+      const trigger = podcastFocus?.trigger ?? null;
+      ctx.overlays.open(next, podcastFocus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: podcastFocus.returnFocus });
+    },
     { tracked: false },
   ];
   // What had focus when the verb ran (the trigger, the menu closed first).
@@ -751,9 +776,10 @@ export function projectResourceActions(
       case "SubscribePodcast":
       case "UnsubscribePodcast":
         return projectPodcastSubscriptionAction({
-          podcastId: id, title: facts.label, subscribed: action.kind === "UnsubscribePodcast", blocked,
-          captureSuccessFocus: capturePodcastRemovalFocus, ctx, run,
+          target: { kind: "Canonical", podcast_id: id }, title: facts.label, focus: podcastFocus, subscribed: action.kind === "UnsubscribePodcast", disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run,
         });
+      case "PodcastLibraries":
+        return projectPodcastLibrariesAction({ target: { kind: "Canonical", podcast_id: id }, title: facts.label, disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run, focus: podcastFocus });
       case "RetryMetadata": {
         const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;

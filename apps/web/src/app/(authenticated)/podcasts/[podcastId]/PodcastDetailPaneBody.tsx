@@ -14,7 +14,7 @@ import { presentMedia } from "@/lib/collections/presenters/media";
 import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
-import { projectPodcastLibraryRemovalAction, projectPodcastSubscriptionAction } from "@/lib/actions/project";
+import { projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
 import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
@@ -145,7 +145,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const detailPanel = useRef<HTMLDivElement>(null);
   const { ctx, run } = useActionRuntime();
   const librariesCard = useRef<HTMLElement>(null);
-  const libraryRemovalReasonId = useId();
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const consumption = useChangeStamp("Consumption");
@@ -153,12 +152,16 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   if (observing) seenConsumption.current = consumption;
   const entries = useChangeStamp("Entries", "Metadata");
   const queryRevision = useMediaQueryRevision();
+  const headStale = `${useChangeStamp("Podcasts", "Libraries")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`;
   const head = useServerValue<PodcastDetail>({
     key: `podcast-head:${podcastId}`,
-    stale: `${useChangeStamp("Podcasts", "Libraries")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`,
+    stale: headStale,
     visit: HEAD,
     load: signal => getPodcastDetail(podcastId, signal),
   });
+  const authority = useRef<{ stale: string; generation: number | null }>({ stale: headStale, generation: null });
+  if (authority.current.stale !== headStale) authority.current = { stale: headStale, generation: head.status === "ready" ? head.generation : null };
+  const headError = head.status === "loading" ? null : head.error;
   const ready = head.status === "ready" ? head : null;
   const destinations = ready?.data.destinations ?? [];
   const namedDestinations = destinations.filter(destination => !destination.is_default);
@@ -390,10 +393,13 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   });
   usePaneChrome({
     menuActions: bulkActions,
-    primaryAction: ready !== null && podcast !== undefined ? projectPodcastSubscriptionAction({
-      podcastId, title: podcast.title, subscribed: following,
-      blocked: ready.error !== null ? "TemporarilyUnavailable" : null, ctx, run,
-    }) : undefined,
+    resourceActions: podcast === undefined ? undefined : { kind: "Podcast", subject: {
+      target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title,
+      facts: headError !== null
+        ? { kind: "Failed", error: headError, retry: head.refetch, retrying: head.status === "failed" ? head.retrying : head.status === "ready" && head.refreshing }
+        : head.status !== "ready" || head.refreshing || head.generation === authority.current.generation
+          ? { kind: "Resolving" } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: podcastId, subscribed: following } },
+    } },
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
       following
@@ -489,10 +495,10 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
               rows={libraryRows}
               rowControls={Object.fromEntries(namedDestinations.map(destination => {
-                const action = projectPodcastLibraryRemovalAction({
-                  podcastId, title: podcast.title, libraryId: destination.library_id, libraryName: libraryDisplayName(destination),
-                  canRemove: destination.can_add_content, blocked: ready.error !== null || ready.refreshing ? "TemporarilyUnavailable" : null, ctx, run,
-                  captureSuccessFocus: () => {
+                const focus = {
+                  trigger: null,
+                  returnFocus: () => librariesCard.current?.querySelector<HTMLButtonElement>("header button") ?? librariesCard.current,
+                  get afterRemoval() {
                     const paneId = librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
                     const rows = Array.from(librariesCard.current?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
                     const after = rows.slice(rows.findIndex(item => item.dataset.collectionRowId === destination.library_id) + 1).map(item => item.dataset.collectionRowId!);
@@ -500,15 +506,21 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                       ?? librariesCard.current?.querySelector<HTMLButtonElement>("header button")
                       ?? librariesCard.current ?? findPaneLandmarkFocusTarget(paneId);
                   },
+                };
+                const action = projectPodcastLibraryRemovalAction({
+                  podcastId, title: podcast.title, libraryId: destination.library_id, libraryName: libraryDisplayName(destination),
+                  canRemove: destination.can_add_content,
+                  blocked: ready.error !== null || ready.refreshing || ready.generation === authority.current.generation ? "TemporarilyUnavailable" : null,
+                  ctx, run, focus,
                 });
-                const reasonId = `${libraryRemovalReasonId}-${destination.library_id}`;
-                return [destination.library_id, <>
+                const reasonId = `${detailId}-library-${destination.library_id}`;
+                return [destination.library_id, <span key={destination.library_id}>
                   <Button iconOnly icon={action.icon} aria-label={action.accessibleLabel} aria-haspopup="dialog"
                     aria-disabled={action.disabled} aria-describedby={action.disabledReason ? reasonId : undefined}
                     tooltip={{ text: action.disabledReason ? `${action.accessibleLabel}: ${action.disabledReason}` : action.accessibleLabel }}
                     onClick={event => { const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
                   {action.disabledReason ? <span className="sr-only" id={reasonId}>{action.disabledReason}</span> : null}
-                </>];
+                </span>];
               }))}
               empty={<p>choose a library to receive new episodes.</p>} />
           </PaneSection> : null}

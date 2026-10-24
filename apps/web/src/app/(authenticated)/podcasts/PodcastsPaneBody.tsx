@@ -5,6 +5,7 @@
 // A selected scope owns its label read independently of the closed choices.
 
 import { useCallback, useId, useState } from "react";
+import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { viewHref } from "@/lib/collections/view";
@@ -84,9 +85,10 @@ export default function PodcastsPaneBody() {
   const query = new URLSearchParams({ sort, filter });
   if (libraryId !== null) query.set("library_id", libraryId);
   const key = query.toString();
+  const stale = `${useChangeStamp("Podcasts")}:${librariesRevision}:${useMediaQueryRevision()}`;
   const list = useServerList<PodcastRow>({
     key: `/podcasts?${key}`,
-    stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
+    stale,
     pageSize: 100,
     active,
     visit: VISIT,
@@ -94,6 +96,10 @@ export default function PodcastsPaneBody() {
     fetchPage: (cursor, limit, signal) =>
       listPodcasts(pageQuery(key, cursor, limit), signal),
   });
+  const actionFacts = (id: string): PodcastActionSubject["facts"] => list.failure !== null
+    ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
+    : !list.fresh || list.running !== null
+      ? { kind: "Resolving" } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: id, subscribed: true } };
   const libraries = useServerList<Library>({
     key: "podcasts:member-libraries",
     stale: librariesRevision,
@@ -250,6 +256,7 @@ export default function PodcastsPaneBody() {
         returnScope="Podcasts.Subscriptions"
         rows={visible.map((row) =>
           presentPodcast({
+            facts: actionFacts(row.id),
             id: row.id,
             title: row.title,
             imageUrl: row.image_url,

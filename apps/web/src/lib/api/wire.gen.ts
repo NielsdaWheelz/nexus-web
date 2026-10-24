@@ -2520,6 +2520,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/podcasts/action-facts/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Podcast Action Facts */
+        post: operations["resolve_podcast_action_facts_podcasts_action_facts_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/podcasts/refresh": {
         parameters: {
             query?: never;
@@ -4847,6 +4864,10 @@ export interface components {
         /** Data[PlayerDescriptor] */
         Data_PlayerDescriptor_: {
             data: components["schemas"]["PlayerDescriptor"];
+        };
+        /** Data[PodcastActionFactsOut] */
+        Data_PodcastActionFactsOut_: {
+            data: components["schemas"]["PodcastActionFactsOut"];
         };
         /** Data[PodcastAdmissionOut] */
         Data_PodcastAdmissionOut_: {
@@ -8434,6 +8455,58 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastActionCanonicalResolutionOut */
+        PodcastActionCanonicalResolutionOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Canonical";
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Subscribed */
+            subscribed: boolean;
+        };
+        /** PodcastActionDiscoveryResolutionOut */
+        PodcastActionDiscoveryResolutionOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Discovery";
+        };
+        /** PodcastActionFactsOut */
+        PodcastActionFactsOut: {
+            /** Items */
+            items: components["schemas"]["PodcastActionResultOut"][];
+        };
+        /** PodcastActionFactsResolveRequest */
+        PodcastActionFactsResolveRequest: {
+            /** Targets */
+            targets: components["schemas"]["PodcastCommitTarget"][];
+        };
+        /** PodcastActionResultOut */
+        PodcastActionResultOut: {
+            /** Resolution */
+            resolution: components["schemas"]["PodcastActionCanonicalResolutionOut"] | components["schemas"]["PodcastActionDiscoveryResolutionOut"] | components["schemas"]["PodcastActionUnavailableResolutionOut"];
+            target: components["schemas"]["PodcastCommitTarget"];
+        };
+        /** PodcastActionUnavailableResolutionOut */
+        PodcastActionUnavailableResolutionOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Unavailable";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "NotFound" | "InvalidDiscoveryTarget";
+        };
         /** PodcastAdmissionOut */
         PodcastAdmissionOut: {
             /** Href */
@@ -11042,7 +11115,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "UnsubscribePodcast";
+            kind: "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "UnsubscribePodcast";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -17664,6 +17737,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_CollectionPage_PodcastListItemOut__"];
+                };
+            };
+        };
+    };
+    resolve_podcast_action_facts_podcasts_action_facts_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastActionFactsResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastActionFactsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -141,6 +141,7 @@ export const ACTION_CATALOG = {
   },
   SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
   UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
+  PodcastLibraries: { label: "libraries…", icon: Library, group: "Organize" },
   ImportPodcastEpisodes: { label: "import available episodes…", icon: Download, group: "Organize" },
   Chat: {
     label: "Chat about this…",

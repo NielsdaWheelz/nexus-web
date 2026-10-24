@@ -421,8 +421,9 @@ current toolbar presentation is specified in the query toolbar plan (#628);
 its verification records browser and dom
 evidence, including native page/text zoom, with no spoken assistive-technology claim.
 
-A resource pane publishes only its canonical `resourceRef`
-(`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
+a resource pane publishes its canonical `resourceRef`
+(`CanonicalResourceRef`) and explicit inline `resourceActions` subject.
+`PaneShell` composes its pane commands and the body's
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
@@ -430,6 +431,12 @@ order, and danger-last come from the server's verbs, read when the menu opens,
 so the pane menu includes `Open`. Pane bodies never build resource action
 arrays. Both header projections render inside the pane, so a menu defect breaks
 only that pane.
+
+podcast discovery headers additionally publish their current explicit podcast
+subject through `resourceActions`; their immediate menu shares the shortcut
+projectors. canonical headers retain prepared resource menus. `resourceActions`
+also carries media subjects; it replaces the former media-only chrome slot.
+the host owns compact promotion and original-control/more/pane focus recovery.
 
 A delete settles panes after the command succeeds: the active pane on the
 deleted ref adopts its collection and other panes on it close; they are not

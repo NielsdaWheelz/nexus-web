@@ -91,6 +91,63 @@ type PodcastCommitTarget = Annotated[
 ]
 
 
+class PodcastActionFactsResolveRequest(BaseModel):
+    targets: list[PodcastCommitTarget] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_targets(self) -> "PodcastActionFactsResolveRequest":
+        keys = [
+            (target.kind, target.podcast_id)
+            if isinstance(target, PodcastCanonicalCommitTarget)
+            else (target.kind, target.target)
+            for target in self.targets
+        ]
+        if len(set(keys)) != len(keys):
+            raise ValueError("Duplicate podcast targets")
+        return self
+
+    model_config = _CLOSED
+
+
+class PodcastActionCanonicalResolutionOut(BaseModel):
+    kind: Literal["Canonical"] = "Canonical"
+    podcast_id: UUID
+    subscribed: bool
+
+    model_config = _CLOSED
+
+
+class PodcastActionDiscoveryResolutionOut(BaseModel):
+    kind: Literal["Discovery"] = "Discovery"
+
+    model_config = _CLOSED
+
+
+class PodcastActionUnavailableResolutionOut(BaseModel):
+    kind: Literal["Unavailable"] = "Unavailable"
+    reason: Literal["NotFound", "InvalidDiscoveryTarget"]
+
+    model_config = _CLOSED
+
+
+class PodcastActionResultOut(BaseModel):
+    target: PodcastCommitTarget
+    resolution: Annotated[
+        PodcastActionCanonicalResolutionOut
+        | PodcastActionDiscoveryResolutionOut
+        | PodcastActionUnavailableResolutionOut,
+        Field(discriminator="kind"),
+    ]
+
+    model_config = _CLOSED
+
+
+class PodcastActionFactsOut(BaseModel):
+    items: list[PodcastActionResultOut]
+
+    model_config = _CLOSED
+
+
 class PodcastImportOut(BaseModel):
     library_name: str
     library_is_default: bool

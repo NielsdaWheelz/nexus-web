@@ -3,7 +3,7 @@
 /** Fixed keep/remove intent. Cleanup discovers scopes from all/remove, then
  * keys only its inner review: each scope reads and submits its own exact guards.
  */
-import { useId, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
@@ -56,7 +56,7 @@ export default function PodcastStopDialog(props: Props) {
   const name = library.status === "ready" ? libraryDisplayName(library.data) : "library";
   const title = cleanup ? `remove ${props.title} and episodes?` : libraryId === null ? `unsubscribe from ${props.title}?` : `remove ${props.title} from ${name}?`;
   return <Dialog open onClose={props.onClose}
-    returnFocusTo={() => accepted.current && props.successFocus !== undefined ? props.successFocus() ?? props.returnFocusFallback?.() ?? null : props.returnFocusTo?.() ?? null}
+    returnFocusTo={() => (accepted.current ? props.successFocus?.() : null) ?? props.returnFocusTo?.() ?? null}
     returnFocusFallback={props.returnFocusFallback} title={title}>
     <div className={styles.form}>
       {local && library.status === "loading" ? <PaneLoadingState label="checking library…" announcement="Polite" /> : null}
@@ -84,6 +84,8 @@ export default function PodcastStopDialog(props: Props) {
 function StopPreview({ podcastId, title, libraryId, episodes, onClose, onSaved }: Props & { readonly onSaved: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
+  const live = useRef(false);
+  useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [stale, setStale] = useState(false);
   const stamp = useChangeStamp("Libraries", "Podcasts", "Entries");
   const source = usePaneFreeServerValue({ key: `podcast-stop-preview:${ctx.accountId}:${podcastId}:${libraryId ?? "all"}:${episodes}`, stale: stamp,
@@ -102,7 +104,7 @@ function StopPreview({ podcastId, title, libraryId, episodes, onClose, onSaved }
   const submit = async () => {
     if (sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null) return;
     setSending(true);
-    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${all ? "everywhere" : preview.destinations.map(libraryDisplayName).join(", ")}`, command: { kind: "Stop", podcastId, body: {
+    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${all ? "everywhere" : preview.destinations.map(libraryDisplayName).join(", ")}`, onAccepted: () => { if (live.current) onSaved(); }, command: { kind: "Stop", podcastId, body: {
       scope: preview.scope, episodes: preview.episodes, expected_removal_revision: preview.removal_revision,
       destinations: preview.destinations.map(destination => ({ library_id: destination.library_id,
         expected_subscription_id: destination.subscription_id, expected_import_id: destination.import_id,
@@ -110,12 +112,12 @@ function StopPreview({ podcastId, title, libraryId, episodes, onClose, onSaved }
         expected_order_revision: episodes === "remove" ? destination.order_revision : null })),
     } } });
     setSending(false);
-    if (accepted) onSaved(); else setStale(true);
+    if (!accepted && live.current) setStale(true);
   };
   return <>
     <p>{all ? "affected libraries:" : "library:"}</p>
     <ul className={styles.destinations}>{preview.destinations.map(destination => <li key={destination.library_id}>{libraryDisplayName(destination)}{destination.is_shared ? " · shared library; other members’ access may change" : ""}</li>)}</ul>
-    <p>{count} distinct {count === 1 ? "episode" : "episodes"}{episodes === "keep" ? " already added stay." : all ? " will be removed from the affected libraries and your lectern, including individually added episodes." : " will be removed from this library, including individually added episodes."}</p>
+    {episodes === "remove" ? <p>{count} distinct {count === 1 ? "episode" : "episodes"}{all ? " will be removed from the affected libraries and your lectern, including individually added episodes." : " will be removed from this library, including individually added episodes."}</p> : null}
     <p>stop new episodes and cancel unfinished imports{all ? " in the affected libraries." : " in this library."}</p>
     {episodes === "keep" ? <p>episodes already added stay.</p> : <>
       {!all ? <p>personal retention and placements in other libraries stay.</p> : null}

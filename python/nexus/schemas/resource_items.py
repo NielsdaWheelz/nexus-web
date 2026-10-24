@@ -214,6 +214,7 @@ SimpleActionKind = Literal[
     "DeleteLibrary",
     "PodcastSettings",
     "SubscribePodcast",
+    "PodcastLibraries",
     "ImportPodcastEpisodes",
     "UnsubscribePodcast",
     "RemovePodcastEpisodes",

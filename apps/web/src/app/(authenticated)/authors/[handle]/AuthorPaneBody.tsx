@@ -126,7 +126,8 @@ function presentWork(work: ContributorWork): CollectionRowView {
       ...row,
       id: work.href,
       primary: { ...row.primary, href: browsePreviewHref(work.target) },
-      media: {
+      resourceActions: {
+        kind: "Media",
         subject: {
           kind: "External",
           target: work.target,
