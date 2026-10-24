@@ -16,6 +16,7 @@ import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
+import { unstamped } from "@/lib/consumption/listening";
 import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { libraryNameError } from "@/lib/libraries/views";
@@ -44,11 +45,12 @@ export default function LibrarySettingsDialog({
   const { ctx } = useActionRuntime();
   const contentRef = useRef<HTMLDivElement>(null);
   const workspace = useLatestWorkspace();
-  const library = usePaneFreeServerValue({
+  const rawLibrary = usePaneFreeServerValue({
     key: `/libraries/${libraryId}`,
     stale: useChangeStamp("Libraries"),
-    load: async (signal) => (await getLibrary(libraryId, signal)).data,
+    load: (signal) => getLibrary(libraryId, signal),
   });
+  const library = unstamped(rawLibrary);
   const current = library.status === "ready" ? library.data : null;
   const guard = useWorkGuard();
   const state = useResourceDraft<SettingsDraft>(`LibrarySettings:${libraryId}`, () => ({
