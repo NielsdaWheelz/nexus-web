@@ -2,6 +2,8 @@
 
 Every later read derives from the snapshot, never the live highlight. Its revision
 is the sha256 of its sorted compact JSON: the precondition a send compares.
+The key names the reading identity; canonical highlight anchors may belong to
+its source. Capture proves that exact passage within the requested reading scope.
 """
 
 from __future__ import annotations
@@ -14,8 +16,8 @@ from xml.sax.saxutils import escape
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight
-from nexus.db.models import Highlight, Media
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.db.models import Highlight
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     MAX_QUOTE_AFFIX,
     MAX_QUOTE_EXACT,
@@ -38,14 +40,17 @@ def build_snapshot(
         raise ApiError(missing, "Highlight not found")
     if not can_read_highlight(db, viewer_id, key.highlight_id):
         raise ApiError(ApiErrorCode.E_READER_SELECTION_FORBIDDEN, "Highlight not readable")
-    media = db.get(Media, key.media_id)
-    if highlight.anchor_media_id != key.media_id or media is None:
-        raise ApiError(missing, "media_id does not match the highlight anchor media")
     from nexus.services.resource_items.evidence import capture_evidence
 
-    evidence = capture_evidence(
-        db, viewer_id=viewer_id, ref=ResourceRef("highlight", key.highlight_id)
-    )
+    try:
+        evidence = capture_evidence(
+            db,
+            viewer_id=viewer_id,
+            ref=ResourceRef("highlight", key.highlight_id),
+            reading_media_id=key.media_id,
+        )
+    except NotFoundError as error:
+        raise ApiError(missing, "Highlight is outside the requested reading scope") from error
     quote = evidence.quote
     if quote is None or not quote.exact.strip():
         raise ApiError(
@@ -96,7 +101,11 @@ def selection_out(
         from nexus.services.resource_items.items import resource_item_out
 
         item = item.model_copy(
-            update={"activation": resource_item_out(db, viewer_id=viewer_id, ref=ref).activation}
+            update={
+                "activation": resource_item_out(
+                    db, viewer_id=viewer_id, ref=ref, reading_media_id=snapshot.key.media_id
+                ).activation
+            }
         )
     return ReaderSelectionOut(key=snapshot.key, item=item)
 

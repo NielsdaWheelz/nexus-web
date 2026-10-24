@@ -202,16 +202,22 @@ def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
 
 
 def reopen_search_result(
-    db: Session, *, viewer_id: UUID, result_type: str, source_id: str
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result_type: str,
+    source_id: str,
+    passage_target: CapturedPassageTarget | None = None,
 ) -> SearchResultOut:
     """One search result reopened by identity for a single read or an attached resource.
 
     A media passage reopens through the reading owner captured for it now: the ref alone
     names no reading context, so that is the viewer-wide owner (a piece when its source
-    is unreadable), never a naked source row. 404 when the viewer cannot capture it.
+    is unreadable). A supplied target instead requires its exact reading owner and
+    publication; failure never falls back. 404 when the viewer cannot capture it.
     """
-    target = None
-    if result_type in _READING_OWNED:
+    target = passage_target
+    if target is None and result_type in _READING_OWNED:
         ref = ResourceRef(cast(ResourceScheme, result_type), UUID(source_id))
         captured = capture_evidence(db, viewer_id=viewer_id, ref=ref).target
         target = captured if isinstance(captured, CapturedPassageTarget) else None
