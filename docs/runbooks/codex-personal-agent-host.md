@@ -183,6 +183,32 @@ that dependency, then deliberately retry the affected metadata operation.
 
 ## release and repair
 
+the recovery key is kept off production. the current protected local custody
+path is `/Users/nnandal/.config/fleet-security/nexus-codex-state-recovery.key`
+(directory `0700`, file `0600`). never print it, place it in command arguments,
+or copy it onto the vps. stream its bytes through ssh stdin when unlocking:
+
+```sh
+ssh nexus@nexus-prod 'sudo cryptsetup open --key-file=- /var/lib/nexus/codex-state.luks nexus-codex-state' \
+  < /Users/nnandal/.config/fleet-security/nexus-codex-state-recovery.key
+```
+
+the key/container association must pass a fresh close/open and mounted-data
+check before reboot. a working mounted volume alone is insufficient. recovery
+from an unavailable original key uses a separate encrypted container, never a
+reformat of the original. use an explicitly bounded argon2id memory cost
+(128 mib for the high-entropy recovery key), verify the keyslot and fresh reopen,
+then stop writers and the codex host before copying all state and attributes
+between encrypted mounts on the same host. prove data/metadata equality before
+switching the canonical backing file and mapper; retain the original ciphertext.
+never export decrypted account state to a workstation or ordinary disk path.
+
+the independent hetzner console login uses the existing `nexus` account. its
+off-host credential is
+`/Users/nnandal/.config/fleet-security/nexus-console-recovery.password` (`0600`).
+network password and keyboard-interactive ssh authentication stay disabled.
+verify console login and elevation before removing an old network access path.
+
 after a reboot, unlock, mount and release:
 
 ```sh
@@ -190,7 +216,7 @@ sudo cryptsetup open /var/lib/nexus/codex-state.luks nexus-codex-state
 sudo mount -o rw,nosuid,nodev,noexec \
   /dev/mapper/nexus-codex-state /srv/nexus/codex-state
 PYTHONPATH=python python3 deploy/hetzner/release.py --check
-./deploy/hetzner/deploy.sh "$(git rev-parse origin/main)"
+./deploy/hetzner/deploy.sh <reviewed-exact-source-sha>
 ```
 
 a host left exited (a manual kill, or its restart budget spent) is repaired by

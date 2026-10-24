@@ -65,14 +65,9 @@ services:
     pids_limit: 128
     environment:
       CADDY_SITE: ${CADDY_SITE:?set}
-      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?set}
     depends_on:
       api:
         condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
     volumes:
       - /etc/nexus/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -83,6 +78,44 @@ services:
       timeout: 3s
       retries: 6
       start_period: 10s
+    logging: *default-logging
+
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?set an immutable production digest}
+    cgroup_parent: system-nexus.slice
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_reservation: 32m
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 64
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --metrics
+      - 127.0.0.1:2000
+      - run
+      - --token-file
+      - /run/secrets/cloudflared-token
+    depends_on:
+      caddy:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${NEXUS_CLOUDFLARED_TOKEN_FILE:?publish the private connector token}
+        target: /run/secrets/cloudflared-token
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:2000", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
     logging: *default-logging
 
   api:

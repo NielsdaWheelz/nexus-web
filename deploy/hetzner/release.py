@@ -39,12 +39,14 @@ from nexus.release_backup import (
 
 REPOSITORY = "NielsdaWheelz/nexus-web"
 WORKFLOW = ".github/workflows/backend-images.yml"
-SSH_TARGET = "nexus@5.78.194.235"
+SSH_TARGET = "nexus@nexus-prod"
 SSH_OPTIONS = (
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=10",
     "-o", "ServerAliveInterval=15",
     "-o", "ServerAliveCountMax=4",
+    "-o", "HostKeyAlias=5.78.194.235",
+    "-o", "StrictHostKeyChecking=yes",
 )  # fmt: skip
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +95,7 @@ WRITERS = ("api", "worker-interactive", "worker-background")
 SERVICES = (
     "postgres",
     "caddy",
+    "cloudflared",
     "api",
     "worker-interactive",
     "worker-background",
@@ -349,11 +352,38 @@ def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> Candidate
     if free < MIN_ROOT_FREE:
         raise Failure(f"host root filesystem has only {free} bytes free")
     host(f"sudo test -r {CONFIG_FILE} && sudo test -r {BACKUP_CONFIG_FILE}")
+    connector = config_value("CLOUDFLARED_IMAGE")
+    if re.fullmatch(r"cloudflare/cloudflared@sha256:[0-9a-f]{64}", connector) is None:
+        raise Failure("CLOUDFLARED_IMAGE must pin the official connector by sha256 digest")
+    token = config_value("NEXUS_CLOUDFLARED_TOKEN_FILE")
+    if re.fullmatch(r"/etc/nexus/tunnel-config/[0-9a-f]{64}\.token", token) is None:
+        raise Failure("the tunnel token path must name its private content-addressed file")
+    token_mode = host(
+        f"sudo test -f {token} && sudo test -s {token} && sudo stat -Lc '%u:%g:%a' {token}"
+    ).strip()
+    if token_mode != "0:65532:440":
+        raise Failure("the tunnel token must be a root-owned regular file, group 65532, mode 0440")
     # Docker cannot create the Codex host without its credential bind source;
     # after a reboot the operator unlocks that LUKS volume before releasing.
     host(f"sudo findmnt --noheadings --mountpoint {CODEX_STATE}")
     note(f"{memory['MemAvailable'] >> 20} MiB memory available, {free >> 30} GiB disk free")
     return candidate
+
+
+def assert_tunnel_token_readable(candidate: CandidateManifest) -> None:
+    note("proving the connector uid can read its captured private token")
+    token = config_value("NEXUS_CLOUDFLARED_TOKEN_FILE")
+    mount = shlex.quote(f"type=bind,src={token},dst=/run/secrets/cloudflared-token,readonly")
+    probe = shlex.quote(
+        "from pathlib import Path; assert Path('/run/secrets/cloudflared-token').read_bytes().strip()"
+    )
+    host(
+        "docker run --rm --network none --read-only --cap-drop ALL"
+        " --security-opt no-new-privileges:true --user 65532:65532"
+        " --memory 32m --memory-swap 32m --pids-limit 32"
+        f" --mount {mount} --entrypoint /app/.venv/bin/python"
+        f" {candidate.images.api} -B -c {probe}"
+    )
 
 
 def install_host_inputs() -> None:
@@ -593,15 +623,21 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
         note(f"{service}: memory max {cap}; leaf swap max {limits[1]}, effective max/current 0/0")
 
 
-def reload_caddy() -> None:
-    note("activating the candidate Caddy configuration")
+def install_caddy() -> None:
+    note("installing the private candidate Caddy configuration")
     desired = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_bytes()
     # Adapt the candidate bytes before replacing the live file, so a malformed
     # Caddyfile can never reach the running proxy's bind mount.
-    adapted = inside("caddy", "caddy adapt --config /dev/stdin --adapter caddyfile", stdin=desired)
+    inside("caddy", "caddy adapt --config /dev/stdin --adapter caddyfile", stdin=desired)
     # `tee` truncates in place, so the container's bind mount keeps its inode.
     host(f"sudo tee {CADDYFILE} && sudo chown root:root {CADDYFILE}", stdin=desired)
     host(f"sudo chmod 0444 {CADDYFILE}")
+
+
+def reload_caddy() -> None:
+    note("activating the candidate Caddy configuration")
+    desired = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_bytes()
+    adapted = inside("caddy", "caddy adapt --config /dev/stdin --adapter caddyfile", stdin=desired)
     inside("caddy", "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile")
     loaded = inside("caddy", "wget -q -O - http://127.0.0.1:2019/config/")
     if json.loads(loaded) != json.loads(adapted):
@@ -625,6 +661,11 @@ def health(candidate: CandidateManifest) -> None:
     if ready != {"data": {"status": "ready"}}:
         raise Failure(f"the API is not ready: {ready}")
     for service in SERVICES:
+        if service == "cloudflared":
+            image = inspect(container(service))["Config"]["Image"]
+            if image != config_value("CLOUDFLARED_IMAGE"):
+                raise Failure("cloudflared does not run its pinned connector image")
+            continue
         # Stock images, not built from this SHA (the proxy is pinned in the compose file).
         if service in {"postgres", "caddy", "codex-egress-policy"}:
             continue
@@ -696,10 +737,13 @@ def release(source_sha: str, workspace: Path) -> None:
     install_host_inputs()
     pull_image(candidate, candidate.images.api)
     pull_image(candidate, candidate.images.worker)
+    host(f"docker pull {config_value('CLOUDFLARED_IMAGE')}", timeout=900)
     free = int(host("df --output=avail -B1 /").splitlines()[1])
     if free < MIN_ROOT_FREE:
         raise Failure(f"host root filesystem has only {free} bytes free after image pulls")
 
+    assert_tunnel_token_readable(candidate)
+    install_caddy()
     starting_revision = database_revision(psql)
     if starting_revision:
         prove_ancestry(candidate, starting_revision)
@@ -779,6 +823,7 @@ def check(source_sha: str | None, workspace: Path) -> None:
         if status != "healthy":
             problems.append(f"{service} is {status}, not healthy")
     for proof in (
+        lambda: assert_tunnel_token_readable(candidate),
         lambda: health(candidate),
         lambda: assert_resource_limits(candidate),
         assert_isolation,
