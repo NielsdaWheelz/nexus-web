@@ -22,8 +22,8 @@
   display: flex;
   align-items: center;
   height: var(--size-md);
-  min-width: 12rem;
-  max-width: 15rem;
+  min-width: calc(12rem + var(--size-md));
+  max-width: calc(15rem + var(--size-md));
   flex: 0 0 auto;
   background: transparent;
   border-radius: var(--radius-md);
@@ -161,25 +161,15 @@
 }
 
 .action {
+  --control-icon-size: 16px;
+  --control-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
   width: var(--size-md);
   height: var(--size-md);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
   color: var(--ink-muted);
-  cursor: pointer;
-  transition:
-    background-color var(--duration-fast) var(--ease-snap),
-    color var(--duration-fast) var(--ease-glide);
-}
-
-.action:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
 }
 
 @media (any-pointer: coarse) {
@@ -189,6 +179,8 @@
 
   .tab {
     height: var(--size-xl);
+    min-width: calc(12rem + var(--size-xl));
+    max-width: calc(15rem + var(--size-xl));
   }
 
   .action {

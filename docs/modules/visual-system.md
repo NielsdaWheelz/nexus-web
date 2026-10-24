@@ -272,13 +272,18 @@ shortcut-bearing control through the same geometry contract.
 
 ## workspace strip
 
-the desktop workspace strip keeps readable 12–15rem chips in its own horizontal
-scrollport. each chip has a title, overflow and stable close target: 32px within
-the 40px strip, or 44px within 52px when any pointer is coarse. active fill,
+the desktop workspace strip keeps readable chips in its own horizontal
+scrollport: the previous 12–15rem chip bounds grow by one 32px control width, or
+44px when any pointer is coarse, preserving title space. each chip has three fixed, quiet slots:
+visibility, layout, close. targets remain 32px within the 40px strip, or 44px
+within 52px when any pointer is coarse. active fill,
 in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
-retain selection and focus. tab actions share content with manage tabs through
-`lib/workspace/paneActions.ts`; completion uses one polite position announcement.
+retain selection and focus. controls use shared `Button` paint, tooltips and
+decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
+`lib/workspace/paneControls.ts` owns content shared with manage-tabs. mobile keeps
+48px controls and wrapping titles. reorder completion uses one polite position
+announcement; layout management emits no success toast.
 
 ## the lint
 
