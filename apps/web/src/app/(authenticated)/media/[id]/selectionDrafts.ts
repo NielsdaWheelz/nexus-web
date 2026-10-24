@@ -31,6 +31,7 @@ type ChatAttempt =
 
 export interface ComposerDraft {
   id: string;
+  /** visual anchor only; capture-only fields belong to reference/publication inputs. */
   passage: Passage & { quote: string };
   referenceSource: Schema<"LinkFragmentSelectionSource"> | Schema<"LinkPdfSelectionSource">;
   highlightId: string | null;

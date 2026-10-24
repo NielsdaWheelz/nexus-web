@@ -136,7 +136,8 @@ claims focus, even if that control later detaches. a menu returns focus before i
 so whatever the command opens names the trigger, not the vanishing item, as its
 opener. nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
-and clicked-highlight composition belong to `FloatingActionSurface`.
+and clicked-highlight composition use `FloatingActionSurface` on desktop;
+mobile composition explicitly opens the shared body in `MobileSheet`.
 
 return candidates must be connected, visible and enabled; a css-hidden opener
 cannot suppress its surviving fallback. visible but temporarily inert modal
@@ -317,12 +318,13 @@ chrome hold. `returnFocusTo` can name the invocation context independently of th
 absent it, the trigger owns return. canonical main's passage-composer reader
 cutover retires the old directly anchored mode before its shared-menu removal.
 
-**FloatingActionSurface**: the text-selection toolbar (above the first visible
-line, below the last on phones, beside the selection, else pinned to the
-nearest edge, with a caret at the selection), clicked-highlight choosers,
-composers and action-bar popovers. Escape, an outside press and, inside a
-modal, Back dismiss it; `preservePointerSelection` keeps a live selection when
-pressed.
+**FloatingActionSurface**: nonmodal selection actions, desktop passage composers,
+clicked-highlight choosers and action-bar popovers. ordinary text-selection
+placement keeps its first/last visible line and edge policy; mobile reader
+actions explicitly select `mobile-selection-actions`. escape, an outside press
+and, inside a modal, back dismiss it. opted-in `preservePointerSelection` keeps
+a live range when pressed; mobile reader actions instead freeze their subject
+before focus transfer and retain native button activation.
 
 **useHoverPreview**: mouse or pen hover, or keyboard focus while focus is
 visible, opens a card above the citation after 150 ms; leaving the citation
@@ -402,19 +404,47 @@ shelf readers mount only the existing mobile geometry provider.
 
 ## reader action placement
 
-`FloatingActionSurface` accepts a measured anchor callback plus an optional
-source subscription. measurements include the reader bounds and selected line
-boxes; null geometry with live bounds pins an unavailable draft without a
-caret. placement intersects those bounds with the usable visual viewport.
-`data-anchor-state` distinguishes visible, offscreen and unavailable. children
-may render from `(placed, anchorState)` so editor focus waits for actual visible
-placement, with no timer or duplicate host state. ordinary element/rect anchors
-remain for their existing consumers.
+`FloatingActionSurface` accepts a source-owned measurement callback and optional
+subscription. the reader supplies live bounds, passage rect and source-ordered
+line boxes before clipping or visual sorting. ordinary composer placement keeps
+its existing policy: null passage geometry with live bounds pins an unavailable
+draft without a caret. `data-anchor-state` distinguishes visible, offscreen and
+unavailable. `(placed, anchorState)` lets desktop editor focus wait for visible
+placement without a timer or duplicate host state. other element/rect and chat
+strategies retain their contracts.
 
-the hosted composer is a nonmodal group with normal tab order. its rich editor
-consumes escape only for its own nested controls; otherwise the overlay kernel
-receives it. navigation deactivates the source overlay before the destination
-can own escape/focus.
+`mobile-selection-actions` is explicit opt-in with a stable `selectionSession`.
+it intersects live reader bounds, visual viewport, safe areas and the existing
+player/keyboard clearance. first/last source rectangles define endpoint
+neighborhoods expanded by 24 css px before clipping; the first visible line never
+substitutes for an offscreen endpoint. the measured compact group is constrained
+to the usable bounds, with one internal scrollport when oversized.
+
+candidate order is below selection, above selection, centered over its visible
+body, viewport bottom, viewport top and viewport center. within one session the
+previous candidate kind is recomputed and retained while inside bounds and clear
+of endpoint neighborhoods. otherwise use the first clear candidate; if none is
+clear, minimize endpoint overlap, maximize endpoint distance, then retain listed
+order. selected-body overlap is allowed, so lack of empty space never suppresses
+a valid action group. compact actions fade without transforming their geometry,
+so an immediate more activation keeps a stationary trigger.
+source scrolling/reflow measures current geometry; opening
+or hiding these actions never reflows, resizes or scrolls the source.
+
+the annotation controller owns its provisional candidate and quiet timer under
+the [reader selection contract](reader-implementation.md).
+hidden controls have no hit targets or focus stops. owned controls are inside the
+overlay; focus collapse cannot remove a pressed control, and the more owner
+outlives the passive row. native handle hit regions remain unavailable to the
+page; endpoint clearance and quiet time are approximations, not a release signal.
+
+mobile note/ask and saved-mark entry use the existing `MobileSheet` with its
+close, back, focus and existing scrolling body behavior. the shared composer body
+keeps note history, destinations and recovery controls. closing retains authored
+work and never reconstructs a native selection. desktop composition remains a
+nonmodal anchored group with normal tab order; its rich editor consumes escape
+only for nested controls. explicit navigation retires the source interaction
+before its destination can own focus or escape.
 
 destination presenters close without return focus after handled new-pane
 navigation. `FloatingActionSurface.skipReturnFocus` carries that decision through

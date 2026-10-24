@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
-import type { SelectionCandidate, SelectionEvent } from "./DocumentReader";
+import type { SelectionCandidate, SelectionEvent, SelectionNotice } from "./DocumentReader";
 
 const EXTENDING_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
 
-/** Admit completed reader gestures, never the editor's or a bare selectionchange. */
+/** Observe native ranges; only completed trusted reader gestures admit a session. */
 export function useReaderSelection(
   root: RefObject<HTMLElement | null>,
   options: {
     readonly identity: string;
     readonly textSelector: string;
     readonly capture: (selection: Selection) => SelectionCandidate | null;
-    readonly onSelection: ((event: SelectionEvent) => void) | undefined;
+    readonly onSelection: ((notice: SelectionNotice) => void) | undefined;
     readonly onSelecting?: (selecting: boolean) => void;
   },
 ) {
@@ -22,10 +22,31 @@ export function useReaderSelection(
   current.current = options;
   const enabled = options.onSelection !== undefined;
   const observing = enabled || options.onSelecting !== undefined;
+  const sourceElement = useCallback((target: EventTarget | null) => {
+    const node = target instanceof Node ? target : null;
+    const element = node instanceof Element ? node : node?.parentElement;
+    const source = element?.closest("[data-reader-unit]");
+    const embedUi = element?.closest("[data-document-embed-ui]");
+    return element && root.current?.isConnected && root.current.contains(element) &&
+      !isEditableTarget(element) && !element.closest("button,[data-reader-metadata],[hidden],[inert]") &&
+      (!embedUi || source && embedUi.contains(source)) ? element : null;
+  }, [root]);
+  const selected = useCallback(() => {
+    const selection = document.getSelection();
+    return selection && !selection.isCollapsed && selection.rangeCount > 0 &&
+      sourceElement(selection.anchorNode)?.closest(current.current.textSelector) &&
+      sourceElement(selection.focusNode)?.closest(current.current.textSelector)
+      ? selection : null;
+  }, [sourceElement]);
+  const captureSelection = useCallback((): SelectionEvent | null => {
+    const selection = selected();
+    const capture = selection && current.current.capture(selection);
+    return capture ? { ...capture, identity: current.current.identity, input: input.current } : null;
+  }, [selected]);
 
   useEffect(() => {
     if (!observing) return;
-    let pointer: { id: number; input: "pointer" | "touch"; range: Range | null; changed: boolean; reengaged: boolean } | null = null;
+    let pointer: { id: number; input: "pointer" | "touch"; range: Range | null; changed: boolean; reengaged: boolean; admit: boolean } | null = null;
     let keyboard = false;
     // Completed gestures can precede each other's native clicks. Missing clicks
     // retain only an id until reuse, cancellation, blur or reader disposal.
@@ -34,24 +55,11 @@ export function useReaderSelection(
     let touchOwned = false;
     let touchAnchor: string | null = null;
     let touchRejected = false;
-    const inText = (target: EventTarget | null) => {
-      const node = target instanceof Node ? target : null;
-      const element = node instanceof Element ? node : node?.parentElement;
-      const source = element?.closest("[data-reader-unit]");
-      const embedUi = element?.closest("[data-document-embed-ui]");
-      return Boolean(
-        element && root.current?.contains(element) &&
-        element.closest(options.textSelector) && !isEditableTarget(element) &&
-        !element.closest("button,[data-reader-metadata],[hidden],[inert]") &&
-        (!embedUi || source && embedUi.contains(source)),
-      );
-    };
-    const selected = () => {
-      const selection = document.getSelection();
-      return selection && !selection.isCollapsed &&
-        inText(selection.anchorNode) && inText(selection.focusNode)
-        ? selection
-        : null;
+    const inText = (target: EventTarget | null) => Boolean(sourceElement(target)?.closest(current.current.textSelector));
+    const observe = () => {
+      current.current.onSelection?.({
+        kind: "Observed", selection: captureSelection(), inputHeld: pointer !== null || keyboard,
+      });
     };
     const sameRange = (before: Range | null, after: Range | null) => before === null || after === null
       ? before === after
@@ -61,8 +69,7 @@ export function useReaderSelection(
       rect.width > 0 && rect.height > 0 && event.clientX >= rect.left && event.clientX <= rect.right &&
       event.clientY >= rect.top && event.clientY <= rect.bottom);
     const commit = (kind: SelectionEvent["input"]) => {
-      const selection = selected();
-      const capture = selection && current.current.capture(selection);
+      const capture = captureSelection();
       if (!capture || !current.current.onSelection) return;
       if (kind === "touch") {
         if (capture.kind === "Rejected") {
@@ -76,7 +83,7 @@ export function useReaderSelection(
           touchAnchor = key;
         }
       }
-      current.current.onSelection({ ...capture, identity: current.current.identity, input: kind });
+      current.current.onSelection({ kind: "Admitted", selection: { ...capture, input: kind } });
     };
     const selectionchange = () => {
       const selection = selected();
@@ -85,6 +92,7 @@ export function useReaderSelection(
       current.current.onSelecting?.(Boolean(
         native && !native.isCollapsed && inText(native.anchorNode),
       ));
+      observe();
       if (!selection) {
         touchOwned = false;
         touchAnchor = null;
@@ -92,17 +100,21 @@ export function useReaderSelection(
     };
     const down = (event: PointerEvent) => {
       suppressedClicks.delete(event.pointerId);
-      pointer = null;
-      keyboard = false;
       touchOwned = false;
       touchCandidate = false;
       touchAnchor = null;
       touchRejected = false;
-      if (!event.isTrusted || !event.isPrimary || event.button !== 0 || !inText(event.target)) return;
+      // Owned controls capture before their default focus transfer. Their
+      // presses are not source activity, even while a native range survives.
+      if (!event.isTrusted || !event.isPrimary || event.button !== 0 || !sourceElement(event.target)) return;
+      pointer = null;
+      keyboard = false;
       input.current = event.pointerType === "touch" ? "touch" : "pointer";
       const range = selected()?.getRangeAt(0).cloneRange() ?? null;
-      pointer = { id: event.pointerId, input: input.current, range, changed: false, reengaged: hitsRange(range, event) };
-      touchCandidate = input.current === "touch";
+      const admit = inText(event.target);
+      pointer = { id: event.pointerId, input: input.current, range, changed: false, reengaged: hitsRange(range, event), admit };
+      touchCandidate = admit && input.current === "touch";
+      observe();
     };
     const up = (event: PointerEvent) => {
       if (!event.isTrusted || pointer?.id !== event.pointerId) return;
@@ -114,12 +126,16 @@ export function useReaderSelection(
         gesture.reengaged && hitsRange(range, event));
       // Clearing a selection also owns the click; it cannot activate the link
       // or mark underneath after the browser collapses the native range.
-      if (gesture.range !== null || selectedRange) suppressedClicks.add(gesture.id);
-      touchOwned = gesture.input === "touch" && selectedRange;
-      if (selectedRange) commit(gesture.input);
+      if (gesture.admit && (gesture.range !== null || selectedRange)) suppressedClicks.add(gesture.id);
+      touchOwned = gesture.admit && gesture.input === "touch" && selectedRange;
+      observe();
+      if (gesture.admit && selectedRange) commit(gesture.input);
     };
     const cancel = (event: PointerEvent) => {
-      if (pointer?.id === event.pointerId) pointer = null;
+      if (pointer?.id === event.pointerId) {
+        pointer = null;
+        observe();
+      }
       suppressedClicks.delete(event.pointerId);
     };
     const contextmenu = (event: MouseEvent) => {
@@ -145,13 +161,20 @@ export function useReaderSelection(
       touchCandidate = false;
       touchOwned = false;
       touchRejected = false;
-      if (!atSource(event.target)) keyboard = false;
-      else if (event.shiftKey && !event.isComposing && EXTENDING_KEYS.has(event.key))
+      if (!atSource(event.target)) {
+        if (keyboard) {
+          keyboard = false;
+          observe();
+        }
+      } else if (event.shiftKey && !event.isComposing && EXTENDING_KEYS.has(event.key)) {
         keyboard = true;
+        observe();
+      }
     };
     const keyup = (event: KeyboardEvent) => {
       if (!event.isTrusted || !keyboard || event.shiftKey) return;
       keyboard = false;
+      observe();
       if (!event.isComposing && atSource(event.target)) commit("keyboard");
     };
     const blur = () => {
@@ -160,7 +183,12 @@ export function useReaderSelection(
       suppressedClicks.clear();
       touchCandidate = false;
       touchOwned = false;
+      current.current.onSelection?.({ kind: "Observed", selection: null, inputHeld: false });
     };
+    const scroll = (event: Event) => {
+      if (event.target === root.current || inText(event.target)) observe();
+    };
+    const port = root.current;
     document.addEventListener("selectionchange", selectionchange);
     if (enabled) {
       window.addEventListener("pointerdown", down, true);
@@ -171,6 +199,7 @@ export function useReaderSelection(
       window.addEventListener("keydown", keydown, true);
       window.addEventListener("keyup", keyup, true);
       window.addEventListener("blur", blur);
+      port?.addEventListener("scroll", scroll, { capture: true, passive: true });
     }
     return () => {
       blur();
@@ -183,8 +212,9 @@ export function useReaderSelection(
       window.removeEventListener("keydown", keydown, true);
       window.removeEventListener("keyup", keyup, true);
       window.removeEventListener("blur", blur);
+      port?.removeEventListener("scroll", scroll, true);
     };
-  }, [root, options.identity, options.textSelector, enabled, observing]);
+  }, [root, options.identity, options.textSelector, enabled, observing, sourceElement, selected, captureSelection]);
 
-  return input;
+  return { input, captureSelection };
 }

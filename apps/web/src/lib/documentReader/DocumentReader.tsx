@@ -105,8 +105,12 @@ export type SelectionEvent = SelectionCandidate & {
   readonly input: "pointer" | "keyboard" | "touch";
 };
 export type SelectionCapture = Extract<SelectionEvent, { readonly kind: "Captured" }>;
+export type SelectionNotice =
+  | { readonly kind: "Observed"; readonly selection: SelectionEvent | null; readonly inputHeld: boolean }
+  | { readonly kind: "Admitted"; readonly selection: SelectionEvent };
 export interface PassageGeometry {
   readonly rect: DOMRect;
+  /** Source order, before clipping or visual sorting; first/last retain the actual endpoints. */
   readonly lines: readonly DOMRect[];
   readonly bounds: DOMRect;
 }
@@ -131,7 +135,7 @@ export interface DocumentReaderViewProps {
   readonly activePassage?: Passage | null;
   readonly inspection?: Inspection | null;
   /** Absent: selection is inert. */
-  readonly onSelection?: (event: SelectionEvent) => void;
+  readonly onSelection?: (notice: SelectionNotice) => void;
   readonly onMarks?: (event: MarkEvent) => void;
   readonly onApparatus?: (
     key: string,

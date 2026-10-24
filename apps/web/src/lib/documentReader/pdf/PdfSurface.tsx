@@ -151,7 +151,7 @@ export default function PdfSurface({
   const readPosition = () => runtime.getState().pdf;
   const position = useSyncExternalStore(runtime.subscribe, readPosition, readPosition);
   const { decorations, activePassage, inspection, isMobile } = view;
-  const selectionInput = useReaderSelection(container, {
+  const { input: selectionInput, captureSelection } = useReaderSelection(container, {
     identity: doc.identity,
     textSelector: ".textLayer",
     capture(selection) {
@@ -613,6 +613,7 @@ export default function PdfSurface({
         const shown = pageView(live.current?.viewer, passage.anchor.page);
         if (!shown?.div.isConnected) return null;
         const origin = shown.div.getBoundingClientRect();
+        // Capture keeps quads in source range order, including offscreen ends.
         const lines = quadRects(passage.anchor.quads, shown.viewport)
           .filter((rect) => rect.width > 0 && rect.height > 0)
           .map((rect) => new DOMRect(
@@ -634,6 +635,7 @@ export default function PdfSurface({
       measureBounds() {
         return measureScrollport(container.current);
       },
+      captureSelection,
       focusSource() {
         container.current?.focus({ preventScroll: true });
       },
@@ -753,7 +755,7 @@ export default function PdfSurface({
       live.current = null;
       void task?.destroy();
     };
-  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged, retireReflow]);
+  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged, retireReflow, captureSelection]);
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {

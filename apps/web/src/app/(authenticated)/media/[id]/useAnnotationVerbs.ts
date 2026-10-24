@@ -3,6 +3,8 @@
 // What a reader does with a selection or a mark. A selection is not yet a
 // resource: highlight, note and share create its highlight first
 // and continue with it; Link creates nothing until a target is confirmed.
+// Mobile observations remain provisional: only explicit frozen-capture commands
+// prepare authoring. A quiet range owns no draft, journal or chat destination.
 // A mark's verbs arrive as this pane visit's entry, claimed once its marks load.
 // An unresolved quote enters the same bounds session from its evidence row;
 // relocation keeps its owner, quote and note, with the mounted generation fenced.
@@ -16,6 +18,8 @@ import {
   type Mark,
   type MarkEvent,
   type SelectionEvent,
+  type SelectionCapture,
+  type SelectionNotice,
 } from "@/lib/documentReader/DocumentReader";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -26,6 +30,15 @@ import { useOverlay } from "@/lib/ui/overlay";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useSelectionComposer, type SelectionComposer } from "./useSelectionComposer";
 import type { AnnotationStore } from "./annotations";
+import { samePassage } from "./selectionDrafts";
+
+const MOBILE_SELECTION_QUIET_MS = 250;
+
+export interface MobileSelection {
+  readonly id: string;
+  readonly capture: SelectionCapture;
+  readonly highlightId: string | null;
+}
 
 interface BoundsSession {
   readonly id: string;
@@ -53,7 +66,18 @@ export interface AnnotationVerbs {
   readonly bounds: BoundsSession | null;
   cancelBounds(): void;
   relocate(id: string): void;
-  onSelection(event: SelectionEvent): void;
+  readonly mobileSelection: MobileSelection | null;
+  readonly selectionVisible: boolean;
+  captureSelection(): MobileSelection | null;
+  ownSelectionFocus(subject: MobileSelection): boolean;
+  cancelSelectionActivation(): void;
+  selectionCurrent(subject: MobileSelection): boolean;
+  dismissSelection(): void;
+  composeSelection(subject: MobileSelection, mode: "Note" | "Ask"): void;
+  highlightSelection(subject: MobileSelection, color: HighlightColor): void;
+  shareSelection(subject: MobileSelection, trigger: HTMLElement | null): void;
+  applySelection(subject: MobileSelection): void;
+  onSelection(notice: SelectionNotice): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
   share(trigger: HTMLElement | null): void;
@@ -68,12 +92,13 @@ export interface AnnotationVerbs {
 export function useAnnotationVerbs(input: {
   readonly reader: Reader;
   readonly active: boolean;
+  readonly isMobile: boolean;
   readonly store: AnnotationStore;
   /** The marks mounted in the reader; pane entries wait for their first load. */
   readonly marks: readonly Mark[] | null;
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
-  const { reader, active, store, marks, openEvidence } = input;
+  const { reader, active, isMobile, store, marks, openEvidence } = input;
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const { closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
@@ -86,26 +111,56 @@ export function useAnnotationVerbs(input: {
   const [selectionIssue, setSelectionIssue] = useState<string | null>(null);
   const [bounds, setBounds] = useState<BoundsSession | null>(null);
   const currentBounds = useRef<BoundsSession | null>(null);
+  const [mobileSelection, setMobileSelection] = useState<MobileSelection | null>(null);
+  const [selectionVisible, setSelectionVisible] = useState(false);
+  const candidate = useRef<MobileSelection | null>(null);
+  const activation = useRef<MobileSelection | null>(null);
+  const quietTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputHeld = useRef(false);
+  const mobileRef = useRef(isMobile);
+  mobileRef.current = isMobile;
   const activeRef = useRef(active);
   activeRef.current = active;
-  const publication = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
+  const documentState = useReaderState(reader, state => state.document);
+  const publication = documentState.status === "ready" ? documentState.doc.identity : null;
+  const clearQuiet = useCallback(() => {
+    if (quietTimer.current !== null) clearTimeout(quietTimer.current);
+    quietTimer.current = null;
+  }, []);
+  const retireSelection = useCallback(() => {
+    clearQuiet();
+    candidate.current = null; activation.current = null; inputHeld.current = false;
+    setMobileSelection(null); setSelectionVisible(false);
+  }, [clearQuiet]);
   // Admission changes synchronously, before another source event or queue completion.
   const showBounds = useCallback((next: BoundsSession | null) => { currentBounds.current = next; setBounds(next); }, []);
   const cancelBounds = useCallback(() => {
     if (currentBounds.current?.phase !== "Selecting") return;
+    retireSelection();
     showBounds(null);
     setSelectionIssue(null);
     reader.focusSource();
-  }, [reader, showBounds]);
+  }, [reader, retireSelection, showBounds]);
   useOverlay(active && bounds !== null && bounds.identity === publication && bounds.phase === "Selecting", {
     kind: "transient",
     onDismiss: cancelBounds,
   });
   useEffect(() => {
+    retireSelection();
     showBounds(null);
     setSelectionIssue(null);
-  }, [active, publication, showBounds]);
-  useEffect(() => () => { currentBounds.current = null; activeRef.current = false; }, []);
+  }, [active, isMobile, publication, retireSelection, showBounds]);
+  useEffect(() => {
+    if (documentState.status !== "ready" || documentState.refreshing) retireSelection();
+  }, [documentState, retireSelection]);
+  useEffect(() => {
+    const retire = () => { retireSelection(); showBounds(null); setSelectionIssue(null); };
+    const visibility = () => { if (document.visibilityState === "hidden") retire(); };
+    window.addEventListener("blur", retire);
+    document.addEventListener("visibilitychange", visibility);
+    return () => { window.removeEventListener("blur", retire); document.removeEventListener("visibilitychange", visibility); };
+  }, [retireSelection, showBounds]);
+  useEffect(() => () => { clearQuiet(); candidate.current = null; activation.current = null; currentBounds.current = null; activeRef.current = false; }, [clearQuiet]);
 
   const fail = useCallback(
     (error: unknown, title: string) => {
@@ -116,10 +171,98 @@ export function useAnnotationVerbs(input: {
     [],
   );
 
-  const composer = useSelectionComposer({ reader, annotations: store, active, onError: fail });
+  const composer = useSelectionComposer({ reader, annotations: store, active, isMobile, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
   const recolouringHighlight = colour ? store.highlight(colour) : null;
+  useEffect(() => {
+    const shown = candidate.current;
+    if (!shown) return;
+    const highlightId = store.twin(shown.capture.anchor);
+    if (highlightId === shown.highlightId) return;
+    if (activation.current) return retireSelection();
+    const next = { ...shown, highlightId };
+    candidate.current = next; setMobileSelection(next);
+  }, [marks, store, retireSelection]);
+
+  const currentSource = (capture: SelectionCapture) => {
+    const shown = reader.getState().document;
+    return activeRef.current && mobileRef.current && document.visibilityState !== "hidden" &&
+      shown.status === "ready" && !shown.refreshing && shown.doc.identity === capture.identity && reader.measureBounds() !== null;
+  };
+  const selectionCurrent = (subject: MobileSelection) => activation.current === subject && currentSource(subject.capture);
+  const consumeSelection = () => {
+    clearQuiet(); candidate.current = null; setMobileSelection(null); setSelectionVisible(false);
+  };
+  const observeSelection = (capture: SelectionCapture, held: boolean) => {
+    clearQuiet(); setSelectionVisible(false);
+    const previous = candidate.current;
+    const highlightId = store.twin(capture.anchor);
+    const next = previous && samePassage(previous.capture, capture) && previous.capture.quote === capture.quote && previous.highlightId === highlightId
+      ? previous : { id: previous?.id ?? createRandomId(), capture, highlightId };
+    candidate.current = next; setMobileSelection(next);
+    if (held) return;
+    quietTimer.current = setTimeout(() => {
+      quietTimer.current = null;
+      if (candidate.current?.id !== next.id || inputHeld.current || !currentSource(next.capture)) return;
+      const fresh = reader.captureSelection();
+      if (!fresh || fresh.kind !== "Captured" || !currentSource(fresh) || !reader.measurePassage(fresh)) return retireSelection();
+      const latest = candidate.current, saved = store.twin(fresh.anchor);
+      const revealed = latest && samePassage(latest.capture, fresh) && latest.capture.quote === fresh.quote && latest.highlightId === saved
+        ? latest : { id: next.id, capture: fresh, highlightId: saved };
+      candidate.current = revealed; setMobileSelection(revealed); setSelectionVisible(true);
+    }, MOBILE_SELECTION_QUIET_MS);
+  };
+  const rejectedSelection = (next: Extract<SelectionEvent, { kind: "Rejected" }>) => {
+    const shown = reader.getState().document;
+    setSelectionIssue(next.reason === "CrossUnit" ? (shown.status === "ready" && shown.doc.kind === "text" && shown.doc.units.some(unit => unit.xPost !== null)
+      ? "select text within one post" : "select within one text section.") : "select within one pdf page.");
+  };
+  const validBounds = (session: BoundsSession, next: SelectionEvent): next is SelectionCapture & { anchor: Extract<SelectionCapture["anchor"], { kind: "text" }> } => {
+    if (next.kind === "Rejected" || next.anchor.kind !== "text" || session.identity !== next.identity ||
+      (session.unit !== null && next.anchor.unit !== session.unit) || store.source(next.anchor).mediaId !== session.mediaId) {
+      showBounds({ ...session, issue: session.unit === null
+        ? "select matching text within the highlight’s original document."
+        : "select within the same text section as this highlight." });
+      return false;
+    }
+    return true;
+  };
+  const applyBounds = (session: BoundsSession, next: SelectionEvent) => {
+    if (!validBounds(session, next)) return;
+    const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
+    showBounds(submitted);
+    const owns = () => {
+      const shown = reader.getState().document;
+      return activeRef.current && currentBounds.current?.id === submitted.id &&
+        shown.status === "ready" && shown.doc.identity === submitted.identity;
+    };
+    void store.rebound(submitted.highlightId, next.anchor, submitted.version).then(
+      () => { if (owns()) showBounds(null); },
+      (error: unknown) => {
+        if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") {
+          if (owns()) { showBounds(null); setSelectionIssue("this post changed. select the passage again."); }
+          reader.reload();
+        } else if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
+          if (error.details?.reason === "quote_mismatch") {
+            if (owns()) showBounds({ ...submitted, phase: "Selecting",
+              issue: "select text matching the original quote. the quote and note will stay unchanged." });
+          } else if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
+            store.refresh();
+            if (owns()) { showBounds(null); setSelectionIssue("this highlight changed. start again from its evidence row."); }
+          } else if (owns()) showBounds({ ...submitted, phase: "Selecting",
+            issue: "a highlight already covers that passage. select another passage or cancel." });
+        } else {
+          if (owns()) showBounds(null);
+          fail(error, "Highlight wasn’t changed");
+        }
+      },
+    );
+  };
+  const ensureSelection = async (subject: MobileSelection) => {
+    const result = await composer.ensureCapture(subject.capture);
+    return result ? { id: result.id, isCurrent: () => selectionCurrent(subject) && result.isCurrent() } : null;
+  };
 
   // Resource actions target this visit; no other mounted reader may consume them.
   const { delivery, claim } = usePaneEntryDelivery();
@@ -131,6 +274,7 @@ export function useAnnotationVerbs(input: {
     const mark = marks.find((candidate) => candidate.id === id);
     const inform = (title: string) => setNotice({ tone: "Neutral", title });
     if (!mark) return inform("this highlight is no longer available");
+    retireSelection();
     setNotice(null);
     setColour(null);
     showBounds(null);
@@ -161,7 +305,7 @@ export function useAnnotationVerbs(input: {
           (error: unknown) => fail(error, "Highlight wasn’t deleted"),
         );
     }
-  }, [claim, composer, delivery, fail, highlightDeleted, marks, openEvidence, publication, reader, showBounds, store]);
+  }, [claim, composer, delivery, fail, highlightDeleted, marks, openEvidence, publication, reader, retireSelection, showBounds, store]);
 
   const closeNoteEdit = useCallback(() => {
     setNoteEdit(null);
@@ -180,6 +324,59 @@ export function useAnnotationVerbs(input: {
     selectionIssue,
     bounds,
     cancelBounds,
+    mobileSelection,
+    selectionVisible: active && isMobile && selectionVisible,
+    captureSelection() {
+      const shown = candidate.current;
+      if (!shown || !selectionVisible || inputHeld.current || !currentSource(shown.capture)) return null;
+      const fresh = reader.captureSelection();
+      if (!fresh || fresh.kind !== "Captured" || !currentSource(fresh)) { retireSelection(); return null; }
+      if (!samePassage(shown.capture, fresh) || shown.capture.quote !== fresh.quote) {
+        activation.current = null; observeSelection(fresh, inputHeld.current); return null;
+      }
+      const highlightId = store.twin(fresh.anchor);
+      const captured = highlightId === shown.highlightId ? shown : { ...shown, highlightId };
+      clearQuiet(); candidate.current = captured; activation.current = captured; setMobileSelection(captured);
+      return captured;
+    },
+    ownSelectionFocus(subject) {
+      if (candidate.current !== subject || !selectionVisible || inputHeld.current || !currentSource(subject.capture)) return false;
+      clearQuiet(); activation.current = subject;
+      return true;
+    },
+    cancelSelectionActivation() {
+      activation.current = null;
+      const fresh = reader.captureSelection();
+      if (fresh?.kind === "Captured" && candidate.current && currentSource(fresh)) observeSelection(fresh, inputHeld.current);
+      else retireSelection();
+    },
+    selectionCurrent,
+    dismissSelection() {
+      retireSelection(); composer.cancelReselection();
+      if (currentBounds.current?.phase === "Selecting") showBounds(null);
+      setSelectionIssue(null);
+    },
+    composeSelection(subject, mode) {
+      if (!selectionCurrent(subject)) return;
+      consumeSelection(); composer.compose(subject.capture, mode);
+    },
+    highlightSelection(subject, color) {
+      if (!selectionCurrent(subject) || subject.highlightId && store.highlight(subject.highlightId)?.color === color) return;
+      consumeSelection(); void composer.highlightCapture(subject.capture, color);
+    },
+    shareSelection(subject, trigger) {
+      if (!selectionCurrent(subject)) return;
+      consumeSelection();
+      void ensureSelection(subject).then(result => {
+        if (result?.isCurrent()) openShare(resourceShareTarget(`highlight:${result.id}`), anchoredShareOpenOptions(trigger, () => null));
+      });
+    },
+    applySelection(subject) {
+      if (!selectionCurrent(subject)) return;
+      const session = currentBounds.current;
+      if (session?.phase === "Selecting") { consumeSelection(); applyBounds(session, subject.capture); }
+      else if (composer.reselection) { consumeSelection(); composer.applyReselection(subject.capture); }
+    },
     relocate(id) {
       const document = reader.getState().document;
       const map = store.getState().map;
@@ -191,6 +388,7 @@ export function useAnnotationVerbs(input: {
         setNotice({ tone: "Neutral", title: "refresh this highlight before relocating it." });
         return;
       }
+      retireSelection();
       composer.dismiss();
       setMenu(null);
       setSelectionIssue(null);
@@ -199,69 +397,52 @@ export function useAnnotationVerbs(input: {
       closeSecondaryPane({ restoreFocus: false });
       reader.focusSource();
     },
-    onSelection(next) {
-      const document = reader.getState().document;
-      if (!active || document.status !== "ready") return;
-      if (document.refreshing || next.identity !== document.doc.identity) {
-        setSelectionIssue("this post changed. select the passage again.");
-        return;
+    onSelection(notice) {
+      if (!isMobile && notice.kind === "Observed") return;
+      const shown = reader.getState().document;
+      if (!active || shown.status !== "ready") return;
+      const next = notice.selection;
+      if (shown.refreshing || next && next.identity !== shown.doc.identity) {
+        retireSelection(); setSelectionIssue("this post changed. select the passage again."); return;
       }
       const session = currentBounds.current;
-      setSelectionIssue(null);
-      if (session?.phase === "Selecting" && session.identity === next.identity) {
-        if (next.kind === "Rejected" || next.anchor.kind !== "text" ||
-          (session.unit !== null && next.anchor.unit !== session.unit) || store.source(next.anchor).mediaId !== session.mediaId) {
-          showBounds({ ...session, issue: session.unit === null
-            ? "select matching text within the highlight’s original document."
-            : "select within the same text section as this highlight." });
+      if (isMobile) {
+        const held = notice.kind === "Observed" ? notice.inputHeld : inputHeld.current;
+        inputHeld.current = held;
+        if (reader.measureBounds() === null) { retireSelection(); return; }
+        // Default focus may collapse the browser range after this control froze
+        // it. Only source activity, cancellation or dismissal retires that press.
+        const owned = activation.current;
+        if (notice.kind === "Observed" && owned && !held && (next === null ||
+          next.kind === "Captured" && samePassage(owned.capture, next) && owned.capture.quote === next.quote)) return;
+        activation.current = null;
+        if (!next) { retireSelection(); inputHeld.current = held; return; }
+        if (session?.phase === "Submitting") { retireSelection(); return; }
+        if (notice.kind === "Observed" && candidate.current === null) return;
+        setSelectionIssue(null);
+        if (next.kind === "Rejected") {
+          retireSelection();
+          if (session?.phase === "Selecting") validBounds(session, next); else rejectedSelection(next);
           return;
         }
-        const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
-        showBounds(submitted);
-        const owns = () => {
-          const document = reader.getState().document;
-          return activeRef.current && currentBounds.current?.id === submitted.id &&
-            document.status === "ready" && document.doc.identity === submitted.identity;
-        };
-        void store.rebound(submitted.highlightId, next.anchor, submitted.version).then(
-          () => { if (owns()) showBounds(null); },
-          (error: unknown) => {
-            if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") {
-              if (owns()) { showBounds(null); setSelectionIssue("this post changed. select the passage again."); }
-              reader.reload();
-            } else if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
-              if (error.details?.reason === "quote_mismatch") {
-                if (owns()) showBounds({ ...submitted, phase: "Selecting",
-                  issue: "select text matching the original quote. the quote and note will stay unchanged." });
-              } else if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
-                store.refresh();
-                if (owns()) {
-                  showBounds(null);
-                  setSelectionIssue("this highlight changed. start again from its evidence row.");
-                }
-              } else if (owns()) showBounds({ ...submitted, phase: "Selecting",
-                issue: "a highlight already covers that passage. select another passage or cancel." });
-            } else {
-              if (owns()) showBounds(null);
-              fail(error, "Highlight wasn’t changed");
-            }
-          },
-        );
+        if (session?.phase === "Selecting") {
+          if (!validBounds(session, next)) { retireSelection(); return; }
+          if (session.issue) showBounds({ ...session, issue: null });
+        }
+        observeSelection(next, held);
         return;
       }
+      if (!next) return;
+      setSelectionIssue(null);
+      if (session?.phase === "Selecting" && session.identity === next.identity) { applyBounds(session, next); return; }
       showBounds(null);
-      if (next.kind === "Rejected") {
-        composer.dismiss();
-        setMenu(null);
-        setSelectionIssue(next.reason === "CrossUnit" ? (document.doc.kind === "text" && document.doc.units.some((unit) => unit.xPost !== null) ? "select text within one post" : "select within one text section.") : "select within one pdf page.");
-        return;
-      }
-      composer.select(next);
-      setMenu(null);
+      if (next.kind === "Rejected") { composer.dismiss(); setMenu(null); rejectedSelection(next); return; }
+      composer.select(next); setMenu(null);
     },
     onMarks(event) {
       if (event.kind === "hover") return setHovered(event.ids[0] ?? null);
       if (currentBounds.current?.phase === "Selecting") return;
+      retireSelection();
       showBounds(null);
       setSelectionIssue(null);
       setFocused(event.marks[0]?.id ?? null);

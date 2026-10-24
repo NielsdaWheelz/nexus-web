@@ -24,6 +24,17 @@
   max-block-size: var(--floating-action-content-max-height);
 }
 
+/* One scrollport keeps enlarged compact commands reachable inside live bounds. */
+.surface[data-strategy="mobile-selection-actions"] {
+  animation-name: floatingActionSurfaceFadeOnly;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.surface[data-strategy="mobile-selection-actions"] > * {
+  max-block-size: none;
+}
+
 .surface[data-strategy="text-selection"][data-placement="above"] {
   --floating-action-enter-y: 4px;
 }

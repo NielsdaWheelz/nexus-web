@@ -14,14 +14,15 @@ import styles from "./media.module.css";
 
 const COLOURS: readonly HighlightColor[] = ["yellow", "green", "blue", "pink", "purple"];
 
-export function Colours({ selected, onSelect, disabledReason = null, persisted = true }: {
+export function Colours({ selected, onSelect, disabledReason = null, persisted = true, size }: {
   readonly selected: HighlightColor | null;
   readonly onSelect: (color: HighlightColor) => void;
   readonly disabledReason?: string | null;
   readonly persisted?: boolean;
+  readonly size?: "comfortable";
 }) {
   const id = useId();
-  return <div className={styles.colours} role="group" aria-label="highlight colours">
+  return <div className={styles.colours} data-size={size} role="group" aria-label="highlight colours">
     {COLOURS.map((color) => {
       const reason = disabledReason ?? (persisted && selected === color ? "this colour is already applied." : null);
       const label = `${color} highlight`;

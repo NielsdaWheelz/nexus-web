@@ -95,7 +95,7 @@ import {
 } from "./hostedReader";
 import SelectionDock from "./SelectionDock";
 import { HostedReaderView, TranscriptChrome, TranscriptState } from "./Transcript";
-import { useAnnotationVerbs } from "./useAnnotationVerbs";
+import { useAnnotationVerbs, type AnnotationVerbs } from "./useAnnotationVerbs";
 import styles from "./media.module.css";
 
 export default function MediaPaneBody() {
@@ -240,6 +240,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
 
   // ---- the reader ----
   const readerRef = useRef<Reader | null>(null);
+  const verbsRef = useRef<{ readonly isMobile: boolean; readonly verbs: AnnotationVerbs } | null>(null);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
   const navigationRuntime = useRef(runtime);
   navigationRuntime.current = runtime;
@@ -264,7 +265,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
             preserveSignal: intent.kind === "Navigate" ? intent.signal : null,
             retireFailure: intent.kind === "Navigate",
           });
-          if (intent.kind === "Navigate") setForkFailure(null);
+          if (intent.kind === "Navigate") {
+            if (verbsRef.current?.isMobile) verbsRef.current.verbs.dismissSelection();
+            setForkFailure(null);
+          }
         }, navigation: {
           href: (destination: ReaderDestination) => readerDestinationHref(id, destination),
           activate: (destination: ReaderDestination, intent: OpenIntent, onDefault: () => void) => {
@@ -560,7 +564,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   }, [clearArrival, requestEvidence, requestSecondarySurface, runtime.visitId]);
   const canQuote = media?.capabilities?.can_quote === true;
   const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
-  const verbs = useAnnotationVerbs({ reader, active: paneActive && paneVisible, store, marks, openEvidence });
+  const verbs = useAnnotationVerbs({ reader, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
+  verbsRef.current = { isMobile, verbs };
 
   const decorations = useMemo<Decorations>(
     () => ({ ...annotations.decorations, focused: verbs.focused, hovered: verbs.hovered }),
@@ -620,16 +625,19 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     const root = map.data.evidence.roots.find((root) => matchesEvidence(root, key));
     return root ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: key } } : null;
   }, [annotations.map, doc]);
-  const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds ? null : <>
+  const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds && !verbs.composer.reselection ? null : <>
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}
     {verbs.bounds ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
-      title: verbs.bounds.phase === "Submitting" ? "updating highlighted passage…"
+      title: verbs.bounds.phase === "Submitting" ? (isMobile ? "applying…" : "updating highlighted passage…")
         : verbs.bounds.issue ?? (verbs.bounds.unit === null
-          ? "select text matching the original quote to relocate it. escape cancels."
-          : "select the new passage in this text section. escape cancels.") }}
+          ? isMobile ? "select text matching the original quote to relocate it." : "select text matching the original quote to relocate it. escape cancels."
+          : isMobile ? "select the new passage in this text section." : "select the new passage in this text section. escape cancels.") }}
       actions={verbs.bounds.phase === "Selecting" ? [{ label: "cancel", onClick: verbs.cancelBounds }] : undefined}
     /> : null}
-  </>, [verbs.bounds, verbs.cancelBounds, verbs.selectionIssue]);
+    {isMobile && verbs.composer.reselection ? <FeedbackNotice announcement="Polite"
+      content={{ tone: "Neutral", title: "select a passage for this draft." }}
+      actions={[{ label: "cancel", onClick: verbs.dismissSelection }]} /> : null}
+  </>, [isMobile, verbs.bounds, verbs.cancelBounds, verbs.composer.reselection, verbs.dismissSelection, verbs.selectionIssue]);
   useMobileChromeHold(isMobile && paneActive && paneVisible && annotationNotice !== null);
   useReaderChrome({
     media,
@@ -805,6 +813,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         store={store}
         isMobile={isMobile}
         canQuote={canQuote}
+        returnFocus={returnFocus}
       />
     </div>
   );

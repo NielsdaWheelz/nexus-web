@@ -26,7 +26,7 @@ import {
   type Positioner,
 } from "./navigator";
 import type { FindSource } from "@/lib/find/find";
-import type { Passage, PassageGeometry } from "./DocumentReader";
+import type { Passage, PassageGeometry, SelectionEvent } from "./DocumentReader";
 import type { ReaderHost, ReaderNavigationPort, ReaderProgressPort, ReaderSource } from "./ports";
 import {
   createProgressSync,
@@ -91,6 +91,8 @@ export interface Reader {
   subscribe(listener: () => void): () => void;
   measurePassage(passage: Passage): PassageGeometry | null;
   measureBounds(): DOMRect | null;
+  /** Capture the current native range through the mounted publication's surface. */
+  captureSelection(): SelectionEvent | null;
   /** Return focus to the source without moving its reading position. */
   focusSource(): void;
   captureView(): ReaderViewSnapshot | null;
@@ -123,6 +125,7 @@ export interface SurfaceHandle extends Positioner {
   readonly find: FindSource<unknown>;
   measurePassage(passage: Passage): PassageGeometry | null;
   measureBounds(): DOMRect | null;
+  captureSelection(): SelectionEvent | null;
   focusSource(): void;
   /** A newer intent retires geometry queued before the navigator admitted work. */
   retireReflow(): void;
@@ -388,6 +391,11 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     measureBounds() {
       return surface && surface.identity === ready()?.doc.identity
         ? surface.measureBounds()
+        : null;
+    },
+    captureSelection() {
+      return surface && surface.identity === ready()?.doc.identity
+        ? surface.captureSelection()
         : null;
     },
     focusSource() {

@@ -69,7 +69,7 @@ workspace to the ports, the primitive never reaches for it.
 
 the runtime is a plain object; react reads it through `subscribe`/`getState`
 (`useSyncExternalStore`). surfaces register a `SurfaceHandle` (`identity`, `capture`,
-`position`, `find`, pdf `setZoom`) and report viewports and input.
+`captureSelection`, `position`, `find`, pdf `setZoom`) and report viewports and input.
 only a surface owning the ready publication may consume restoration or report
 its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 visit capture projects that owned measurement; it does not recapture transient
@@ -329,47 +329,68 @@ is disabled at the actual viewport end, even when a fully visible final page is
 below that line. the pdf.js page keeps its required content-box sizing so canvas
 text and text-layer highlights agree.
 
-**selection.** completed trusted source gestures publish a `SelectionEvent` with
-publication identity and input origin. `Captured` carries one unit's canonical
-range or one pdf page's quads plus `exact`; `Rejected` identifies a cross-unit
-or cross-page selection. the host explains rejection without writing or clipping,
-retires the old foreground composer and retains its draft. collapsed, outside
-and uncapturable selections remain silent. editor selection and unowned
-`selectionchange` never admit a source command. a pointer release admits a range
-only when that gesture changed it or pressed and released within the already
-selected text. an unchanged native range elsewhere does not reopen its composer
-or suppress the click; native clearing keeps its usual meaning. trusted native
-long press also admits its touch session. an admitted native touch session
-continues through handle changes; repeated rejection is deduplicated until a
-fresh gesture or valid capture. focus dimming is suspended during live selection.
+**selection.** the browser owns its native range; `useReaderSelection` observes
+and validates it. every reader binding receives `SelectionNotice`: `Observed`
+carries a fresh `SelectionEvent | null` and `inputHeld`, while `Admitted` retains
+the existing trusted gesture rule. `Captured` holds one unit's canonical range or
+one pdf page's quads and quote; `Rejected` retains cross-unit/cross-page reasons.
+collapsed, foreign, editable and uncapturable ranges observe null. observation
+alone never starts a source session, and editor selection never admits one.
 
-the composer keeps its rich textbox below an icon command row. explicit names
-appear on hover and keyboard focus, including unavailable reasons. the split
-highlighter applies yellow in one activation on a fresh passage; a saved mark
-shows its persisted colour with the primary inactive. its disclosure opens a
-local anchored palette without reflowing or remounting the editor. palette
-selection applies only to that passage; the next fresh passage starts yellow.
-the picker reuses the overlay owner's dismissal, return focus and tab
-continuation. a passive tooltip press preserves existing composer ownership;
-actual focus moves and outside presses keep their usual ownership rules.
+observations cover range changes, source scrolling, source pointer begin/matching
+end/cancel and selection-extension chords. `inputHeld` records observed source
+input, never inferred native handle contact. a pointer release admits only a
+changed range or a press and release within the already selected text. completed
+selection gestures consume only their matching click, so preserving or clearing
+a selection cannot activate an underlying link or mark. trusted native long
+press admits its touch session; later handle changes remain observable. local
+`onSelecting` painting describes range existence, and suspends focus dimming.
 
-bounds editing retains the original unit, publication and observed highlight
-version in one reader-local session. it focuses the source and shows an owned
-instruction/cancel notice while selecting. another unit is rejected before a
-request. the media host publishes bounds and selection-rejection feedback in
-the reader chrome's existing navigation slot, where the pane measures its
-height and reserves source clearance. an active visible mobile pane holds that
-chrome open while the notice exists; cancel uses the shared large button and
-inherits the chrome's coarse-pointer target size. the notice neither scrolls
-away nor floats over selectable source content.
-a valid range synchronously enters submitting, freezes unit/offsets and
-version, and joins the tab's existing write fifo. submitting has no cancel
-claim; source retirement hides its presentation without cancelling a sent write.
-only its own still-active session handles completion. unit/version conflicts
-refresh and require reopening; duplicate ranges return to selection. the
-annotation acknowledgement map publishes quote/colour/ownership/version with
-paint until a read begun after acknowledgement replaces them, so older map data
-cannot replace an acknowledged command's observed state.
+`Reader.captureSelection()` synchronously delegates to the mounted surface of the
+current publication and this same validation/capture path. it returns null for
+absent, collapsed, foreign, editable or stale ranges and retains typed rejection.
+`PassageGeometry.lines` stays in source order before clipping or visual sorting;
+its first and last rectangles are the actual passage endpoints, including when
+offscreen. current source geometry is measured again at reveal and placement.
+
+`useAnnotationVerbs` consumes only admission on desktop, preserving the anchored
+composer, editor and gesture policy. on mobile it owns a provisional candidate
+and one 250 ms quiet timer. range changes, source scrolling and observed input
+hide the actions; input end restarts quiet, and an observed blocker prevents
+reveal. quiet recaptures and measures the current valid passage. collapse,
+outside selection, dismissal, source replacement, inactive/hidden pane, body
+disposal, document hiding, blur and viewport-policy changes retire the candidate.
+no provisional selection enters the journal, browser storage or `ReaderState`.
+
+mobile actions explicitly open the shared composer in `MobileSheet`; a saved mark
+is another explicit entry. commands prepare one frozen capture and await its
+existing slot/journal through the existing writes. copy and opening more do not
+author. presentation and save/send semantics belong to
+[highlight](highlight.md#reader-presentation).
+
+controls freeze a fresh capture before pointer focus or keyboard transfer and
+execute only their matching semantic activation. direct accessibility focus owns
+that rendered control's exact candidate. cancelled, moved or abandoned presses,
+new source input/range, outside dismissal and source retirement invalidate it.
+its own focus collapse cannot unmount the pressed control. the more owner
+outlives the passive row; closing returns to a surviving trigger or the reader.
+no failed capture uses an unrelated last-valid passage.
+
+mobile bounds and draft reselection retain an owned source session and require
+explicit `apply selection`; invalid/collapsed ranges keep cancel and never reuse
+an old valid proposal. apply uses the capture frozen before button focus. bounds
+retain unit/media/version constraints and relocation's exact-quote rule;
+reselection names the authored draft and source publication. desktop bounds
+admission remains immediate. [highlight](highlight.md#reader-presentation) owns
+submission, recovery and draft preservation. the host's existing `Navigate`
+intent retires selection sessions before explicit navigation; ordinary source
+scrolling and automatic reflow remain available while choosing a passage.
+
+compact action placement is opt-in and never resizes, reflows or scrolls source
+text. large selections still retain their commands; enlarged text wraps within
+one bounded scrollport. endpoint neighborhoods approximate unavailable native
+handle hit regions, and quiet time does not establish finger release. the
+placement owner is [overlays](overlays.md#reader-action-placement).
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
 it only after restore. `useFind` receives the pane's required `ownerKey`.
@@ -563,11 +584,12 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
 | `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `AnnotationStore`: one document-map read → marks of every visible highlight (topmost first), note refs, rail markers, evidence; writes paint at once from their acknowledgement through a pending ledger that a map read issued after the write settles; a failed read keeps the last map painted; `twin` finds the viewer's own highlight of an exact extent (a library-mate's never blocks theirs) |
-| `useAnnotationVerbs.ts` | admitted selection/rejection, canonical mark verbs, cancellable bounds sessions and highlight pane entries scoped to this reader visit |
-| `SelectionDock.tsx` | one passage composer with an icon command row, focused rich editor, canonical resource actions and retained note conflict/retry controls; overlap chooser, recolour dialog and chat chooser |
+| `useAnnotationVerbs.ts` | desktop admission; mobile provisional candidate, quiet timer and activation ownership; canonical mark verbs, confirmed bounds sessions and highlight pane entries scoped to this reader visit |
+| `useSelectionComposer.ts`, `selectionDrafts.ts` | one source-bound preparation path, explicit capture commands, authored visit branches, journal/retry ownership and draft reselection sessions |
+| `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
-| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
+| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
