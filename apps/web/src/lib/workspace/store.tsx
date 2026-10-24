@@ -15,7 +15,7 @@ import {
 import { hello } from "@/lib/native/client";
 import { installedApp } from "@/lib/native/admission";
 import { useHostPolicy } from "@/lib/host/policy";
-import { overlayOwnsHistoryTraversal } from "@/lib/ui/overlay";
+import { overlayOwnsHistoryTraversal, recordOverlayHistoryProjection } from "@/lib/ui/overlay";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
@@ -204,6 +204,7 @@ function createWorkspaceStore(
 
   function project(replace = false): void {
     const href = find(data.state.active_primary_pane_id)?.current_visit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
+    recordOverlayHistoryProjection(href);
     if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) projectHref(href, replace);
   }
 
