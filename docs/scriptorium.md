@@ -180,12 +180,9 @@ Sequencing honesty — parked work that predates all dreaming:
    ~30k lines, green, unmerged; both it and main now claim migration 0168.
    Every week it sits, the rebase worsens. Nothing in this document should be
    built before this branch has a verdict.
-2. **The LI dossier surface.** Three migrations of substrate shipped for a
-   product surface that was never built. Either build it as the first face of
-   One Press or fold its spec into §V and close it.
-3. **First-paint streaming.** Fully specified, measured baselines, zero lines
+2. **First-paint streaming.** Fully specified, measured baselines, zero lines
    written, user-facing on every load.
-4. **Source provenance.** Uploaded originals carry a required
+3. **Source provenance.** Uploaded originals carry a required
    `media_files.source_sha256`; extraction verifies it before parser entry, and
    schema convergence rejects the removed `file_sha256` residue.
 

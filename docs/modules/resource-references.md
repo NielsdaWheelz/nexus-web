@@ -216,7 +216,7 @@ cannot locate: an invisible ref is `unavailable{source_unavailable}`; a publicat
 that moves during the read is `unavailable{location_unavailable}` with the source's
 activation. 404 is only for a quote, citation or retrieval key naming nothing the
 viewer can read; a malformed `resource_ref` is 400. a citation key reads for whoever
-can read what cites it (a shared dossier's members, not only the edge's owner).
+can read what cites it, not only the edge's owner.
 
 a frozen location is current only while its offsets still name the same normalized
 words (`locations.current_locator`): notes also by body version, else a unique

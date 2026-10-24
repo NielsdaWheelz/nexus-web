@@ -271,7 +271,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | reader python: read model | 3,412 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 · #670 +34 · reader connections +24 · ingest follow-ups -3 | reader python read (13b, deferred) |
 | consumption history and stats | 3,183 | reauthored #417 #595 | x threads +1 · shift-open -11 · collection loading -4 · podcast collection +7 · durable writing +0 · native control cutover | keep |
 | browse | 2,403 | reauthored #543 #546 | #578 -100 · shift-open +63 · resource insertion +5 · #702 +1 · unsaved work +27 · collection loading -244 · media controls -75 · libraries retention +28 · dropdown primitives +1 · native control cutover · podcast libraries -463 · compact actions -1 · bounded indexes +3 | keep |
-| dossiers | 3,178 | reauthored #514 | 4 more -61 · shift-open -8 · resource insertion +5 · empty-resource lifecycle +33 · unsaved work +50 · podcast details -2 · libraries retention +55 · native control cutover | keep |
+| dossiers | 0 | removed | articles, instructions, builds, ideas, ui, routes, resource identities and owned storage deleted; shared inspector and media intelligence retained | deleted |
 | sharing: members, invitations, grants | 3,121 | reauthored #409 #591 | x threads +13 · shift-open +1 · #700 -12 · python auth -12 · db substrate -1 · collection loading -3 · durable writing +89 · dropdown primitives -67 · native control cutover | keep |
 | one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
 | firefox extension | 3,139 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 · libraries retention +182 · dropdown primitives +5 · native control cutover | keep |

@@ -54,9 +54,8 @@ selected owners receive one best child in the same snapshot, including children
 outside the global window; enrichment reuses admitted neighbours.
 
 the browser kinds are documents, notes, highlights, conversations, people, web,
-libraries, readings, dossiers and saved passages. highlights does not implicitly
-add annotation notes. dossier discovery uses the visible artifact head, not a
-second artifact result. libraries/readings/dossiers are global-only. web snapshots
+libraries, readings and saved passages. highlights does not implicitly
+add annotation notes. libraries/readings are global-only. web snapshots
 are external resources; links and citations are relationships, not extra results.
 
 scopes are all, media, library and conversation, not generic ancestry. each row

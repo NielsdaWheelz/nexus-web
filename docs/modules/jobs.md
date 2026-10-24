@@ -43,7 +43,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 
 | lane | kinds |
 |---|---|
-| interactive (in process) | `chat_run`, `dossier_build`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
+| interactive (in process) | `chat_run`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
 | background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `suggestion_shortlist_refresh`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `empty_resource_cleanup` (weekly, resumable in 100-resource batches), `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
 
 A handler is `fn(*, payload, context) -> JobResult` in its owner:
@@ -78,7 +78,7 @@ Hooks (by path in the registry):
 - `on_dead(db, job)` runs in the transaction that makes the job dead:
   `chat.worker.on_dead_letter` (ends the run `interrupted`, or `cancelled` when a
   stop was asked), `generation.ledger.on_dead_letter` (closes the open generation;
-  dossier, metadata, oracle, connection scans),
+  metadata, oracle, connection scans),
   `podcasts.sync.dead_letter` (settles the sync Failed),
   `source_publication.on_dead_letter` (a resource-limited or podcast
   transcript attempt publishes its terminal failure), and the four statements in
@@ -209,11 +209,10 @@ serialization failure or deadlock (40001, 40P01), a `TransactionRestart`, or a
 violation of a name in `RETRYABLE_UNIQUE_CONSTRAINTS` (a first-sight race) runs
 `op` again; the last such failure raises `DatabaseRetryExhaustedError`, which
 the edge answers 500. Anything else propagates after the rollback. `op` must
-reload its working rows and commit on each call. explicit row locks in note/page mutations and dossier
-publication coordinate with read-committed retention cleanup; serializable
+reload its working rows and commit on each call. explicit row locks in note/page mutations coordinate with read-committed
+retention cleanup; serializable
 isolation alone does not serialize those writers with the collector. the retry
-owner is used by bootstrap, identity writes, notes and dossier head/build
-mutations.
+owner is used by bootstrap, identity writes and notes.
 
 ## The generation envelope inside the worker
 
@@ -231,7 +230,7 @@ job's open rows `interrupted` (only a dead attempt leaves one), so a retry after
 a dead worker generates again from scratch (repaying the call). The `on_dead`
 hook `generation.ledger.on_dead_letter` closes a dead job's open row
 (`enrich_metadata`, `media_unit_build`, `oracle_reading_generate`,
-`connection_discovery_scan`, `dossier_build`), and `revoke_jobs_by_dedupe_keys`
+`connection_discovery_scan`), and `revoke_jobs_by_dedupe_keys`
 closes a revoked job's. The domain row of a dead background job is not touched by
 that hook, except a media unit's (`dead_letters.media_unit_build` fails its head)
 ([ticket](../issues/dead-background-jobs-leave-domain-rows-pending.md)). A
@@ -249,26 +248,6 @@ metadata research uses an explicit requester and the generation owner's admitted
 codex authority. its research prompt requests four read/search tools. see
 [media metadata](media-metadata.md) for domain acceptance, date ownership and
 source-only maintenance.
-
-`dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
-Contributor, Page, Note, and internal Idea subjects; its payload is the build id.
-One attempt (`services/dossier/run.py`) reads the active build, fails it
-`InputsChanged` if the requester can no longer see the subject, then ensures
-media intelligence (Media and the aggregates reschedule every 5 s while a
-projection is pending), collects inputs (the Idea gathers research and
-reschedules while a page ingests, at most 10 minutes per page), synthesizes, and
-publishes or fails. A build that is no longer active makes the attempt a no-op. A
-document that fails HTML acceptance or citation grounding is a modeled build
-failure (the generation's decode rejection) the user regenerates from.
-
-The synthesis outcome is `Published | Failed | Stopped`. A cancel or purge stops
-the running generation through its stop poll. Stopped fails the build
-`RuntimeUnavailable` unless a cancel or purge settled it first, so no active
-build outlives its job. Idea research keeps its one billed call, the three web
-searches, as `payload.web_picks`, so the build's reschedules never search again;
-a crash before the picks are kept searches again. Nexus search reruns per
-attempt and page acceptance is idempotent by key. Dead `dossier_build` rows are
-never pruned.
 
 `chat_run` runs its run's one generation and the final publication. An attempt
 that finds its run's generation already started knows an earlier attempt died:

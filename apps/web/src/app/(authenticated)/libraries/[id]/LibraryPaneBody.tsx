@@ -254,7 +254,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   );
   useResourceInspector({
     scheme: "library",
-    handle: library ? id : null,
+    handle: library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
     bodies: {
       members: members ? <LibraryMembers state={members} /> : undefined,
       linkedItems: useMemo(

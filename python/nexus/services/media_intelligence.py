@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -58,19 +57,15 @@ class Candidate:
     text: str
 
 
-_HEADS_SQL = """
-    SELECT id, media_id, status, summary_md, model_name, content_fingerprint
-    FROM media_summaries WHERE media_id = ANY(:ids)
-"""
-
-
-def _head(db: Session, media_id: UUID) -> Any:
-    return db.execute(text(_HEADS_SQL), {"ids": [media_id]}).first()
-
-
 def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
     """Permission-free: the current unit, or why there is none."""
-    head = _head(db, media_id)
+    head = db.execute(
+        text("""
+            SELECT id, status, summary_md, model_name, content_fingerprint
+            FROM media_summaries WHERE media_id = :media_id
+        """),
+        {"media_id": media_id},
+    ).first()
     if head is None:
         return NotReady.Missing
     if head.status != "ready":

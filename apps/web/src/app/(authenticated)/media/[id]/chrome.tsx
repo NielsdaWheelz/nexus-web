@@ -64,7 +64,7 @@ export function useReaderChrome(input: {
 
   useResourceInspector({
     scheme: "media",
-    handle: media?.id ?? null,
+    handle: input.failed ? null : media?.id ?? null,
     bodies: { contents: input.contents, linkedItems: input.evidence },
   });
   const navigation = useMemo(

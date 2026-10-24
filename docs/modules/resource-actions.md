@@ -137,11 +137,11 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
 - destination links and create commands carry explicit opening intent through
   `ActionSelectDetail`. bound links retain full targets and own pointer/keyboard
   handling; shared presenters classify commands and suppress new-pane return focus.
-- `Chat`, `LearnHighlight` and message repeat use the shared `openAsyncResult`
+- `Chat` and message repeat use the shared `openAsyncResult`
   landing contract ([workspace](workspace.md#target-activation)). later input,
   including wheel, source departure or competing overlay permanently relinquishes
   automatic opening; the initiating layer may remain. success offers its exact
-  named result after departure. accepted dossier builds say `dossier requested`.
+  named result after departure.
 - message repeat uses the shared chat command owner before placement. failure
   creates no pane. success names the returned assistant endpoint; ordinary
   placement retains bare-conversation reuse, while shift always forks.
@@ -193,4 +193,4 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
 - visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
   actions read and the item read agree on `missing`; a podcast is a public catalog row (any
   persisted show is visible, as its pane reads it). routing decides no visibility.
-- a passage, highlight, note or message is labelled by its words; a dossier by its subject.
+- a passage, highlight, note or message is labelled by its words.

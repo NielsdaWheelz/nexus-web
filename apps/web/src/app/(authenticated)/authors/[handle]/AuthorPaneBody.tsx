@@ -316,7 +316,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   );
   useResourceInspector({
     scheme: "contributor",
-    handle: detail.status === "ready" ? detail.data.handle : null,
+    handle: detail.status === "ready" && detail.error?.status !== 403 && detail.error?.status !== 404 ? detail.data.handle : null,
     bodies: { linkedItems },
   });
   const { refetch: refetchDetail } = detail;
