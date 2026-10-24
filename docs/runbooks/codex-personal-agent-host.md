@@ -1,7 +1,8 @@
 # codex personal agent host
 
 `nexus-codex-agent-host` runs one stock codex `0.160.0` app-server signed into
-the owner's chatgpt subscription and serves it on a unix socket. the api reads
+the owner's chatgpt subscription. production/local overlays use unix sockets;
+shared live labs use authenticated websockets. the api reads
 its model catalog; workers run turns on it and execute every tool themselves.
 the host holds the only copy of the account state and reaches nothing but two
 openai names.
@@ -9,15 +10,18 @@ openai names.
 ## composition
 
 production composition is declared in `deploy/hetzner/docker-compose.yml`.
-the local counterpart is the explicit `docker/docker-compose.codex.yml`
-overlay over stores and worker definitions; see local enrollment below.
+the local unix counterpart is the explicit `docker/docker-compose.codex.yml`
+overlay over stores and worker definitions. disposable live labs instead attach
+to the shared websocket host below.
 
 - `python -m apps.codex_agent.main` requires `auth.json` mode `0600`, prepares
-  `home/` and `tmp/` in the account directory and `cwds/` in the socket volume,
-  removes a stale socket path, writes the startup model catalog, and starts
+  `home/` and `tmp/` in the account directory and the explicit cwd root,
+  removes a stale unix socket path, writes the startup model catalog, and starts
   codex with an explicit environment (`CODEX_HOME` is the account directory; no
-  `*_API_KEY`, so subscription work never bills an api key). it exits 0 when
-  stopped and 1 when codex exits on its own.
+  `*_API_KEY`, so subscription work never bills an api key). native stderr goes
+  to account-owned `native-stderr.log` (mode 0600), truncated per launch; an
+  unexpected exit names that private file without publishing its contents. it
+  exits 0 when stopped and 1 when codex exits on its own.
 - host, api and workers run as uid/gid `10001` and share the socket volume
   `nexus_codex_run` at `/tmp/codex-daemon-10001` (mode `0700`); the api mounts
   it read-only. codex creates the socket `0600`.
@@ -132,11 +136,9 @@ make local-runtime-identity
 export NEXUS_LOCAL_SOURCE_SHA="$(git rev-parse HEAD)"
 export NEXUS_LOCAL_WORKER_IMAGE="$(python/.venv/bin/python python/scripts/worker_checkout_image.py)"
 export NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$PWD/.nexus-local/runtime-identity.json"
-export NEXUS_LOCAL_CODEX_ACCOUNT_DIR="$PWD/.nexus-local/codex/codex-personal"
 export COMPOSE_PROJECT_NAME="${LOCAL_COMPOSE_PROJECT:-nexus-local}"
 export COMPOSE_FILE=docker/docker-compose.yml:docker/docker-compose.worker.yml:docker/docker-compose.codex.yml
 export COMPOSE_ENV_FILES=.dev-ports
-sudo install -d -o 10001 -g 10001 -m 0700 "$NEXUS_LOCAL_CODEX_ACCOUNT_DIR"
 compose_local() {
   docker compose "$@"
 }
@@ -153,14 +155,15 @@ enrollment writes `auth.json` mode `0600` and refuses to replace an existing fil
 use a separate local login; never copy production account state. re-enrollment
 requires stopping the host and retiring its old local file first.
 
-the bind defaults to `../.nexus-local/codex/codex-personal` relative to the first
-compose file. `create_host_path: false` makes explicitly requested native startup
-fail if that directory is absent; ordinary worker startup does not require it.
+the local account is the compose-owned `nexus_codex_account` native volume at
+`/var/lib/nexus-codex`; the image creates its mount directory as uid/gid 10001,
+mode 0700. this retires the mac account bind and its ownership mismatch. an old
+bind is neither copied nor deleted: enroll the dedicated volume explicitly.
 the shared socket volume and both networks belong to the compose project. the
 private subnet defaults to `172.31.0.0/24`; another concurrent local stack sets
 `NEXUS_LOCAL_CODEX_SUBNET_PREFIX` to a different unused /24 prefix. literal host
 entries point only the two allowed names to the local proxy, whose own dns still
-resolves their public upstreams. no host socket bind, tcp bridge or published port.
+resolves their public upstreams. the local unix overlay publishes no port.
 local services use docker's ordinary logging, not the production journald driver.
 
 `compose_local logs nexus-codex-agent-host codex-egress-policy` explains host/proxy
@@ -170,14 +173,74 @@ metadata operation with the exact model/effort and actual search/read executions
 missing tool keys or host availability produce visible research failure; repair
 that dependency, then deliberately retry the affected metadata operation.
 
+## shared live labs
+
+`./scripts/lab-codex enroll` prepares the immutable worker image and dedicated
+native account volume, then runs device login. complete its browser sign-in;
+it refuses existing credentials. it never reads personal codex state. the
+separate private transport capability lives under
+`${XDG_STATE_HOME:-~/.local/state}/nexus-lab/codex/`; never print or copy it.
+
+```sh
+./scripts/lab-codex enroll
+./scripts/lab-codex up
+./scripts/lab-codex status
+./scripts/lab --live-codex -- COMMAND ARG
+./scripts/lab-codex down
+```
+
+ordinary live attachment starts the enrolled compatible host when stopped and
+holds shared lifecycle access through worker/session teardown. both worker lanes
+stay in linux; the api reaches the authenticated native websocket through a raw
+tcp listener on the existing nginx peer, published only on host loopback. nginx
+passes bytes to the daemon unchanged; native codex still owns bearer authentication
+and websocket protocol. workers connect directly to the daemon and share the
+internal client network and cwd volume, with separate run/session directories.
+only the daemon/enrollment mount `nexus-lab-codex-account` at
+`/var/lib/nexus-codex`, containing `auth.json`; `nexus-lab-codex-cwds` mounts at
+`/tmp/codex-daemon-10001`. both mount directories are baked uid/gid 10001,
+mode 0700. the daemon receives only the transport token's sha256 verifier through
+native `--ws-auth capability-token --ws-token-sha256`; clients receive the raw
+token as secret configuration.
+the daemon's networks remain internal; the additional client network grants no
+outbound route. the existing nginx peer carries both raw tcp ingress and the
+allowlisted tls egress. Docker Desktop suppresses host port publication for a
+container with only internal networks, so the peer owns the loopback publication;
+the daemon has no published port. fake/core labs never attach or receive the
+account capability.
+
+`NEXUS_CODEX_ENDPOINT` is `unix:///absolute/path` or `ws(s)://host:port`.
+websocket clients require `NEXUS_CODEX_TRANSPORT_TOKEN`; unix clients forbid it.
+`NEXUS_CODEX_CWD_ROOT` is separate from the endpoint and temporary runtime state.
+live workers receive `/tmp/codex-daemon-10001/cwds/<run_id>` explicitly.
+health qualifies the authenticated catalog and pinned contract without a paid
+turn. setup errors stop before the driver. transport loss fails affected work
+without resubmission or shared-host restart. cleanup retains a run cwd when remote
+closure cannot be established; finish/recover its workers and sessions explicitly.
+
+`down` gracefully stops the host, retaining image, stopped containers, account,
+transport capability, networks and cwd volume. enrollment, stop and replacement
+refuse active shared-lock holders or running workers mounting the shared cwd
+volume, including workers whose runner crashed. finish/recover those labs first.
+
+upgrades are deliberate: drain labs, run `down`, then `up` from the qualified new
+checkout. ordinary attach never replaces an installation or reconciles it against
+mutable checkout source. the retained service references its immutable image id;
+deleting its initiating checkout leaves it usable from another checkout.
+re-enrollment follows the stopped-host credential-retirement rule above, inside
+the dedicated account volume. never copy production/personal auth or relax
+permissions. real token refresh remains separately unqualified below.
+
 ## diagnostics
 
 - why the host exited: `journalctl CONTAINER_NAME=nexus-nexus-codex-agent-host-1`
-  (`codex app-server exited with status <n>`, `... must be mode 0600`).
+  (`codex app-server exited with status <n>; private diagnostics: <path>`,
+  `... must be mode 0600`). read `native-stderr.log` inside the daemon-only
+  account volume for the vendor cause; keep its contents private.
 - probe results and restarts: `docker inspect -f '{{json .State.Health}}
   {{.RestartCount}}' nexus-nexus-codex-agent-host-1`.
 - codex's own log: table `logs` of `logs_2.sqlite` in the account directory.
-  read it in place; it stays inside the encrypted volume.
+  read it in place; production keeps its copy inside the encrypted volume.
 - a dropped sni: `journalctl CONTAINER_NAME=nexus-codex-egress-policy-1` shows
   `connect() failed ... upstream: "127.0.0.1:1"`, without the name.
 
