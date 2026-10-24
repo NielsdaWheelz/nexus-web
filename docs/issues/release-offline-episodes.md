@@ -3,8 +3,8 @@
 pair backend, packaged interface and apk. wire revision 15 already covers the
 unreleased cutover; do not advance it again before that release. migration
 `0315_consumption_observation` follows `0314` and initializes the account observation
-watermark to 1 without changing progress, overrides or membership. rehearse it on
-the newest production backup before merge. catalog format 2 requires a successful
+watermark to 1 without changing progress, overrides or membership. apply it through
+the normal stopped-writer paired release. catalog format 2 requires a successful
 online rebuild before claiming the new offline projection contract.
 
 hard-cut both old native bridge names and audio-only readiness. convert released native
