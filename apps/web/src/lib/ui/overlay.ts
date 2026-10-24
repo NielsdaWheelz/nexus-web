@@ -282,11 +282,6 @@ export function overlayOwnsHistoryTraversal(): boolean {
   return marked || popping !== null;
 }
 
-/** Explicit workspace projection supersedes the address retained by pending cleanup. */
-export function recordOverlayHistoryProjection(href: string): void {
-  if (popping !== null) popping = href;
-}
-
 // One entry while any modal is open. After the last closes, traverse it off;
 // if the address moved meanwhile (a navigating close), the landed entry keeps it.
 function syncHistory(): void {
@@ -311,10 +306,11 @@ function syncHistory(): void {
 
 function onPopState(): void {
   if (popping !== null) {
-    // Keep ownership through popstate/hashchange and restore the latest projection
-    // after the router has seen the traversal. Intermediate addresses never navigate a pane.
+    const address = popping;
+    // Keep ownership through popstate/hashchange and restore after the router
+    // has seen the traversal. Neither intermediate address navigates a pane.
     requestAnimationFrame(() => {
-      if (popping !== null && here() !== popping) history.replaceState(null, "", popping);
+      if (here() !== address) history.replaceState(null, "", address);
       popping = null;
       syncHistory();
     });
