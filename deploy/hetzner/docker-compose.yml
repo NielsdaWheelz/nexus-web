@@ -98,7 +98,8 @@ services:
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
     environment:
-      NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_ENDPOINT: unix:///tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
       MEMORY_CLIENT_CONFIG_PATH: /run/secrets/nexus-memory-client.json
     depends_on:
       postgres:
@@ -157,7 +158,8 @@ services:
       WORKER_LANE: interactive
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
-      NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_ENDPOINT: unix:///tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
       MEMORY_CLIENT_CONFIG_PATH: /run/secrets/nexus-memory-client.json
     depends_on:
       postgres:
@@ -210,7 +212,8 @@ services:
       BACKGROUND_PROCESS_TERM_GRACE_SECONDS: "5"
       BACKGROUND_PROCESS_RESULT_MAX_BYTES: "1048576"
       BACKGROUND_PROCESS_OOM_SCORE_ADJ: "750"
-      NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_ENDPOINT: unix:///tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
     depends_on:
       postgres:
         condition: service_healthy
@@ -289,7 +292,8 @@ services:
     user: "10001:10001"
     environment:
       NEXUS_CODEX_CREDENTIAL_FILE: /var/lib/nexus-codex/codex/codex-personal/auth.json
-      NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_ENDPOINT: unix:///tmp/codex-daemon-10001/app-server.sock
+      NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
     depends_on:
       codex-egress-policy:
         condition: service_healthy
