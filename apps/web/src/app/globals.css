@@ -4,7 +4,7 @@
    `[data-theme="dark"]` joins `:root` rather than repeating it: that is what
    lets a nested element (a Settings doorway) enter the Press, as one enters
    the Study or the Solar. Rooms redefine colour, shadow, grain, hairline,
-   body size and tracking only. */
+   body size, tracking and the section-title font only. */
 :root,
 [data-theme="dark"] {
   --font-sans:
@@ -32,6 +32,9 @@
   --leading-normal: 1.5;
   --leading-relaxed: 1.6;
   --leading-loose: 1.75;
+
+  --pane-section-title-font:
+    normal 600 var(--text-lg) / var(--leading-snug) var(--font-sans);
 
   --tracking-tight: -0.02em;
   --tracking-normal: 0;
@@ -169,6 +172,9 @@
 
 /* The Study. */
 [data-theme="light"] {
+  --pane-section-title-font:
+    normal 500 var(--text-2xl) / var(--leading-tight) var(--font-eb-garamond),
+    Charter, Georgia, "Times New Roman", serif;
   --surface-canvas: #faf8f3;
   --surface-1: #ffffff;
   --surface-2: #f4f4f0;
@@ -268,6 +274,8 @@
   /* Cormorant 300: only at --text-xl and above. */
   --font-display:
     var(--font-cormorant), var(--font-eb-garamond), Georgia, serif;
+  --pane-section-title-font:
+    normal 300 var(--text-2xl) / var(--leading-tight) var(--font-display);
   --gilt-a: #6b4a20;
   --gilt-b: #c99a4a;
   --gilt-hi: #f4e0b0;

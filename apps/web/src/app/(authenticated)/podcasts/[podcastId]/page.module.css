@@ -7,6 +7,7 @@
   display: grid;
   min-width: 0;
   gap: var(--space-3);
+  overflow-wrap: anywhere;
 }
 
 .identity {
@@ -33,12 +34,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-.detailContent {
-  overflow-wrap: anywhere;
-}
-
-.detailContent p {
+.description {
   margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
   white-space: pre-wrap;
 }
 

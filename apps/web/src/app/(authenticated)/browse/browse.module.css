@@ -54,13 +54,13 @@
 .lead {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: var(--space-4);
 }
 
 .image {
-  width: 100%;
+  width: min(8rem, 100%);
   height: auto;
   aspect-ratio: 1;
   border-radius: var(--radius-md);
@@ -74,12 +74,8 @@
   border-radius: var(--radius-md);
 }
 
-@media (max-width: 360px) {
-  .lead {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .image {
-    width: min(8rem, 45vw);
+@container primaryPane (min-width: 22.5rem) {
+  .lead:has(> .image) {
+    grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
   }
 }
