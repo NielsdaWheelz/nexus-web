@@ -34,10 +34,15 @@ progress stay. exact already-restored replay is inert and proves a postcondition
 not which request caused it. revision rows and old epochs are never restored.
 
 the existing account consumption owner retains exact request bytes and received
-inverse receipts across pane navigation, without a timer. account teardown/reload
-ends them. `withProgressFence` flushes and pauses all matching holders before
-apply/undo; failed preparation sends nothing. successful prepared pairs reconcile
-afterward. conflicts require another review; no recapture or rebase is implicit.
+inverse receipts across pane navigation. the eight-second shortcut is separate
+from retained activity and collection-menu availability. each inverse has its own
+`${applyKey}:undo` identity, named verb, acknowledged count and frozen scope;
+disjoint inverses remain distinct. discard removes only an available inverse.
+busy same-command offer/condition handoff preserves the action node and clock.
+account teardown/reload ends them. `withProgressFence` flushes and pauses all
+matching holders before apply/undo; failed preparation sends nothing. successful
+prepared pairs reconcile afterward. conflicts require another review; no recapture
+or rebase is implicit.
 known overlapping state effects retire entire older inverse offers. received
 revisions order those effects: late older acknowledgements cannot replace a newer
 inverse; inert choices and equal-version postconditions preserve valid offers. an unused
@@ -79,4 +84,4 @@ accepted membership intent records one durable suggestion input change, includin
 a nonempty no-op; acknowledgement publishes lectern. the originating review closes
 synchronously through its identity-gated acknowledgement callback before the
 account owner settles its feedback condition with the exact added count. unrelated
-work or another modal retains the shared feedback policy's normal suppression.
+work remains in activity; another modal suppresses the peripheral receipt.

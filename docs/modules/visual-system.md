@@ -63,43 +63,60 @@ uses the same restrained anatomy in every room.
 plain-text content and tone tokens. no severity label, coloured card or custom
 feature renderer. the complete fact and first action are visible; detail,
 diagnostics and a second action expand on demand. navigation remains a link.
-inline disclosure pushes layout; the reader and workspace opt into the existing
-anchored surface. native menu and player controls retain their widget semantics.
+inline disclosure pushes layout; the reader opts into the existing anchored
+surface. native menu and player controls retain their widget semantics.
 
-one account-scoped in-flow workspace slot shows the highest-priority current
-condition, then optional offers. conditions rank write, action, status; offers
-follow. `+n` opens all current items. hover, focus and disclosure freeze order.
-owners project conditions through `useWorkspaceCondition`; they alone decide
-settlement and retry, except that content needing a page reload (a stale
-build) offers only reload. optional `offer` handles update/withdraw one exact
-publication, and cannot resurrect a dismissed/replaced occurrence. busy offers
-cannot be dismissed. required recovery has no dismiss control.
+workspace feedback has two presentations. one passive floating receipt acknowledges
+an action without allocating layout space. activity lists current conditions and
+optional offers; it is not notification history. `FeedbackProvider` owns both
+above writing readiness and workspace failure containment. `workspaceSignals.ts`
+retains token-fenced publications; domain owners retain commands, exact receipts,
+validity, settlement and recovery.
 
-an actionless `receipt` gets five visible seconds only when the slot is empty.
-there is no queue or history. consequential work and a modal suppress receipts;
-they never replay. account departure retires presentation. an active modal
-suppresses unrelated workspace controls and live announcements; its own failures
-stay inside the modal.
+an actionless receipt lasts five visible seconds. an initial exact-undo shortcut
+or new intervention heads-up lasts eight. clocks start after eligible placement,
+use monotonic time and pause while hovered, focused, pressed, busy or hidden.
+there is one slot and no queue. engagement protects the exact command from later
+events. popup close/expiry never discard undo. menus, pickers, modals, phone text
+entry and insufficient geometry retire peripheral presentation without replay;
+retained activity survives. hidden documents pause an existing receipt and admit
+no new one. other retained offers do not suppress routine acknowledgments.
 
-an acknowledged command may `settleCondition` with its unique condition key and
-receipt content. the feedback owner atomically removes that condition before
-applying the same receipt admission; other work or a modal still suppresses it.
-late hook withdrawal cannot remove a newer occurrence. no scheduling or replay is
-needed to bridge command settlement and react presentation cleanup.
+owners explicitly project `needsAttention`; tone and priority cannot infer it.
+independent recovery tasks use separate condition keys; one task's admission
+change disables another task's retained action without replacing its node.
+a new key or false-to-true transition requests one heads-up; retry retains the
+same episode. `offer` requires an explicit undo invitation/retention classification
+and nullable discard callback. exact command keys preserve the action and remaining
+clock across offer/condition promotion. updates and owner withdrawal do not invoke
+discard. activity dismissal checks the current token and busy state before removing
+an optional offer and calling its discard callback. an inverse's visible control
+says `remove undo`; popup close never invokes it. required conditions have no
+generic dismissal.
 
-only short facts enter separate live regions. local `FeedbackNotice` owners may
-supply an occurrence and exact-occurrence dismissal; other recovery surfaces
-retain their existing contract. controls remain mounted; local announcement
-identity does not replace workspace action identity. replacing a local occurrence
-keeps the live region empty for a rendered frame before publishing even identical
-text; supersession cancels its captured frames. inactive panes stay silent.
-actions stay mounted and focusable while busy, with guarded activation;
-successful removal returns to an explicit owner destination, then the shell.
-`FeedbackScope` supplies a pane's focus destination and announcement permission
-without a new state owner. disabled reasons remain visible. compact targets are
-32px, 44px with a coarse pointer; required text wraps. all rooms, forced colours
-and reduced motion share the same contract. the cutover plan in #650
-owns the complete api and behavior requirements.
+`ActivityControl` reserves rail/header space even when empty. its fixed badge
+shows attention count, otherwise an available-undo dot; the accessible name gives
+all current counts. `ActivityList` groups attention, other conditions, available
+undo and other offers under one flat keyed parent. engagement freezes order;
+command nodes survive classification changes. desktop activity uses `Dialog`,
+phone activity uses `MobileSheet`, and nexus renders the same list inside its
+existing host. opening activity clears the popup. navigation closes its host;
+row removal keeps focus within the list. close returns to a visible opener,
+visible activity control or the workspace destination, never hidden reader chrome.
+
+`WorkspaceFeedback.tsx` owns passive placement: desktop upper-right inside the
+active pane content/workspace/visual-viewport intersection; phone below the
+stationary header/control endpoints at `--mobile-feedback-top`. it never registers
+as chrome or an interaction-owning overlay. the complete wrapping card must fit;
+otherwise presentation retires. it uses shared surface, edge, shadow, radius and
+control tokens, with no severity ornament or countdown. it sits above chrome and
+below popovers. escape closes only from within the card.
+
+short facts use separate live regions with semantic occurrence identity; identical
+deliberate events announce once each. controls never enter live regions. unrelated
+interaction owners suppress peripheral speech. local `FeedbackScope` continues to
+supply pane focus destinations and inactive-pane silence. all rooms, forced colours,
+reduced motion and coarse targets retain the same contracts.
 
 ## ownership
 
