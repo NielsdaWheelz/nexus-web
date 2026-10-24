@@ -26,7 +26,9 @@ import { remoteReady } from "@/lib/native/admission";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
+import ResourceMetadata from "@/components/resources/ResourceMetadata";
+import { bibliographyMetadata } from "@/lib/resources/metadata";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
@@ -187,7 +189,9 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   const subject = { kind: "Stored" as const, summary };
   return <div className={styles.stateScrollport}><div className={styles.state}>
     <h1><MediaTitle subject={subject} /></h1>
-    <MediaIdentity subject={subject} />
+    <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
+    <p><MediaFacts summary={summary} /></p>
+    {summary.processing_status === "failed" ? <FeedbackStatus content={{ tone: "Warning", title: "processing failed" }} announcement="None" /> : null}
     {!remoteReady() ? <FeedbackNotice content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />
       : record.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
       : <PaneLoadingState label="loading item…" announcement="Polite" />}

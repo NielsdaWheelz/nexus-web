@@ -8,8 +8,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-bounded index rows against `c21c0a76d`: -199 authored runtime lines (640 added,
-839 deleted). one row shell and bounded bibliography replace competing media/nonmedia
+bounded index rows against `c21c0a76d`: -195 authored runtime lines (646 added,
+841 deleted). one row shell and bounded bibliography replace competing media/nonmedia
 grids, wrapping index/panel plumbing, recursive search results, extra queue action
 rows and feed-date substitution. catalog, listing and fresh queue order share the
 original-publication facts. scoped area deltas below retain earlier counts and
@@ -260,7 +260,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | podcasts | 7,077 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 · playback settings +212 · podcast details +221 · pane headers +0 · collection loading +10 · media controls -59 · podcast collection +172 · durable writing +0 · libraries retention +88 · native control cutover · podcast libraries +1229 · playback queue +32 · podcast action parity · offline catalog +133 · bounded indexes +4 | keep |
 | reader python: epub | 3,658 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +7 | read-path functions with 13b |
 | resource graph, links, citations | 4,886 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 · collection loading +7 · notes re-slice (server) +43 · durable writing +392 · dropdown primitives -20 · native control cutover | re-slice |
-| media core | 4,079 | reauthored #621 | #650 +665 · x threads +111 · #670 +29 · shift-open +16 · resource metadata +16 · resource insertion +1 · #700 -2 · #702 -2 · unsaved work -366 · db substrate +4 · ingest follow-ups +8 · podcast details +3 · media controls +270 · podcast collection +2 · durable writing +7 · libraries retention +2 · podcast libraries +47 · playback queue +19 · compact actions +43 · author editing -7 · offline catalog +2 · bounded indexes -20 | keep |
+| media core | 4,079 | reauthored #621 | #650 +665 · x threads +111 · #670 +29 · shift-open +16 · resource metadata +16 · resource insertion +1 · #700 -2 · #702 -2 · unsaved work -366 · db substrate +4 · ingest follow-ups +8 · podcast details +3 · media controls +270 · podcast collection +2 · durable writing +7 · libraries retention +2 · podcast libraries +47 · playback queue +19 · compact actions +43 · author editing -7 · offline catalog +2 · bounded indexes -16 | keep |
 | imports pane and history | 3,857 | reauthored #553 #641 | #650 -38 · x threads +2 · #670 +64 · shift-open +1 · resource insertion +11 · #700 +1 · #702 +2 · collection loading -39 · media controls +2 · durable writing +0 · libraries retention +30 · native control cutover · compact actions -46 · bounded indexes -5 | keep |
 | model tools, assistant writes, memory tool | 3,973 | reauthored #561 | #572 +149 · x threads +223 · resource-first search -3 · connection actions -3 · db substrate -2 · collection loading +8 · durable writing +1 · libraries retention +85 · native control cutover · podcast libraries +61 | keep (#647 re-sliced by chat web) |
 | authors | 3,637 | reauthored #549 | #670 +8 · resource insertion +11 · #700 -7 · unsaved work -43 · collection loading -14 · media controls +20 · durable writing +0 · dropdown primitives -220 · native control cutover · author editing -932 · bounded indexes +3 | keep |
