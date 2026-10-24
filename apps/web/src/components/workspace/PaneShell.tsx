@@ -318,7 +318,7 @@ function PaneView({
   });
   const header = resolvePaneHeaderModel({
     route: route.header,
-    title: body?.displayTitle ?? (body?.mediaActions?.subject.kind === "Stored" ? body.mediaActions.subject.summary.title
+    title: body?.displayTitle ?? (body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
       : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label),
     publication: body?.header,
   });
@@ -395,7 +395,7 @@ function PaneView({
       projection={isMobile ? "Mobile" : "Desktop"}
       header={header}
       identityId={identityId}
-      mediaActions={body?.mediaActions}
+      resourceActions={body?.resourceActions}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
       paneActions={paneActions}
@@ -635,10 +635,10 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
     ready: resourceRef !== null,
     sourceIdentity: resourceRef,
     apply: async (target, context) => {
-      if (target.kind !== "source" || target.source.location.kind !== "resource") return false;
+      if (target.kind !== "source" || target.source.location.kind !== "resource") return "Unavailable";
       if (context.mayFocus()) paneRef.current?.focus({ preventScroll: true });
-      return true;
+      return "Applied";
     },
   });
-  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement="Polite" /> : null;
+  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
 }

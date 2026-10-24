@@ -32,7 +32,6 @@ import {
   Trash2,
   Undo2,
   Upload,
-  Users,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -141,6 +140,7 @@ export const ACTION_CATALOG = {
   },
   SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
   UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
+  PodcastLibraries: { label: "libraries…", icon: Library, group: "Organize" },
   ImportPodcastEpisodes: { label: "import available episodes…", icon: Download, group: "Organize" },
   Chat: {
     label: "Chat about this…",
@@ -231,7 +231,6 @@ export const ACTION_CATALOG = {
     icon: CircleCheck,
     group: "Manage",
   },
-  EditAuthors: { label: "Edit authors…", icon: Users, group: "Manage" },
   LibrarySettings: {
     label: "Library settings…",
     icon: Settings,

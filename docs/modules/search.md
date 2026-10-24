@@ -145,13 +145,17 @@ composition/repeat guards, shift opening and the two-cell keyboard grid remain.
 
 urls own query, kinds, filters, scope and view. omit the default resources view
 and all-kinds selection; `kinds=` means none. switching views preserves criteria,
-resets paging and hides old-view rows. clear filters preserves query/view; reset
+resets paging and clears preceding-query rows and metadata. clear filters preserves query/view; reset
 returns empty resources. unsupported passage kinds stay unsupported, with controls
-to return to resources or clear kinds. counts describe loaded rows only.
+to return to resources or clear kinds. automatic pagination exposes no rolling
+count or completion receipt; initial query waiting and failures remain explicit.
 
 one `useServerList` owns page data and semantic status together, including empty
 pages and restored visits. active collections publish each page and exhaust
-sequentially; zero local matches never halt continuation. search retains its
+sequentially; zero local matches never halt continuation. a changed server key
+clears results immediately; same-key refresh keeps usable rows. browse also uses
+the exact read key for immediate row replacement in `CollectionView`. picker
+raw/settled admission remains necessary before choices are selectable. search retains its
 fixed-candidate-set assumption across offset requests; refresh reconciles live
 changes rather than promising a frozen snapshot. source titles open the whole work; child excerpts open
 their exact occurrence. notes retain selectable prose and their existing opening

@@ -9,6 +9,7 @@ import { installedApp, remoteReady, remoteGeneration } from "@/lib/native/admiss
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
+import type { PodcastActionFocus } from "./inlineActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
 type ReadState =
@@ -22,7 +23,7 @@ type ReadState =
  * visible lifetime; abort, replacement and departure cancel and forget the read.
  * Projection uses current runtime availability; this reader owns no menu or timer.
  */
-export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void) {
+export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void, focus?: PodcastActionFocus) {
   const { ctx, run } = useActionRuntime();
   const source = usePlaybackSource();
   const pane = usePaneRuntime();
@@ -98,7 +99,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
             throw new ApiError(409, "E_ACTION_FACTS_STALE", "reopen actions to check current availability");
           return command.execute();
         },
-      }), pane?.paneId ?? null, state.source).map(action => {
+      }), pane?.paneId ?? null, state.source, focus).map(action => {
         const transcript = state.facts.actions.find(item => item.kind === "Transcript");
         const tracked = action.id !== "Transcript" || transcript?.kind !== "Transcript" || !["ready", "partial", "queued", "running"].includes(transcript.state);
         if (!installedApp || !resourceActionRequiresRemote(action.id, tracked) || ctx.online && state.generation === remoteGeneration()) return action;

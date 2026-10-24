@@ -20,6 +20,7 @@ import {
   FeedbackState,
   FeedbackStatus,
   type FeedbackAnnouncement,
+  type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -38,6 +39,8 @@ import { unresolvedPosition } from "./progress";
 import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
+import type { NavigationFailure } from "./navigator";
 
 export type {
   Reader,
@@ -142,6 +145,7 @@ export interface DocumentReaderViewProps {
   readonly renderPostActions?: (unit: TextUnit) => ReactNode;
   /** false when the host already presents the source title; capture facts remain. */
   readonly showCaptureTitle?: boolean;
+  /** Host content preceding publication content, including loading/failure feedback. */
   readonly before?: ReactNode;
   readonly end?: ReactNode;
 }
@@ -215,6 +219,7 @@ export default function DocumentReaderView(
   // Every Reader is the runtime useDocumentReader made.
   const runtime = props.reader as ReaderRuntime;
   const publication = useReaderState(runtime, (state) => state.document);
+  const navigationFailure = useReaderState(runtime, (state) => state.navigation.failure);
   const tracked = useReaderState(runtime, (state) => state.progress !== null);
   const positionNeedsReload = useReaderState(runtime, (state) => state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument");
   const frame = useRef<HTMLDivElement>(null);
@@ -224,17 +229,20 @@ export default function DocumentReaderView(
     () => frame.current?.querySelector<HTMLElement>("[data-pane-content]") ?? frame.current,
     [],
   );
+  useActionFocusRecovery(frame, returnFocus);
   const announcement = props.announcement ?? "Polite";
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
+        {props.before}
         <FeedbackState content={{ tone: "Neutral", title: "opening document…" }} announcement={announcement} />
       </div>
     );
   } else if (publication.status === "failed") {
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
+        {props.before}
         <FeedbackState
           content={{ tone: "Danger", title: "couldn’t open this document" }}
           announcement={announcement}
@@ -276,6 +284,17 @@ export default function DocumentReaderView(
     >
       <div ref={feedback} className={styles.statusStack}>
         {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
+        {navigationFailure ? (
+          <div className={`${styles.status} ${styles.feedback}`}>
+            <FeedbackNotice
+              content={navigationFailureContent(navigationFailure)}
+              occurrence={navigationFailure}
+              onDismiss={() => runtime.dismissNavigationFailure(navigationFailure)}
+              announcement={announcement}
+              returnFocus={returnFocus}
+            />
+          </div>
+        ) : null}
         {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
           <div className={`${styles.status} ${styles.feedback}`}>
             <FeedbackNotice
@@ -301,15 +320,23 @@ export default function DocumentReaderView(
   );
 }
 
-const FAILURE: Record<
-  NonNullable<ReaderState["navigation"]["failure"]>,
-  string
-> = {
-  CaptureUnavailable: "couldn't hold your reading spot. try again.",
-  TargetUnavailable: "couldn't open that passage.",
-  SourceChanged: "your reading spot is unavailable in this version.",
-  PositioningFailed: "couldn't open that passage.",
+const NAVIGATION_TITLES: Record<NavigationFailure["operation"], string> = {
+  Open: "couldn’t open that passage",
+  Restore: "couldn’t restore your reading position",
+  Return: "couldn’t return to your held place",
+  Reflow: "couldn’t keep this passage in view",
+  Continue: "couldn’t set your reading position here",
 };
+
+/** Copy follows the failed intention; capture has its own explanation except on adoption. */
+function navigationFailureContent(failure: NavigationFailure): FeedbackContent {
+  return {
+    tone: "Warning",
+    title: failure.operation !== "Continue" && failure.reason === "CaptureUnavailable"
+      ? "couldn’t hold your current place"
+      : NAVIGATION_TITLES[failure.operation],
+  };
+}
 
 /** Where the held spot is: its section, its page, or how far through. */
 function originLabel(state: ReaderState): string | null {
@@ -354,7 +381,6 @@ function StatusStrip({ reader, announcement, returnFocus }: {
       : navigation.origin
         ? `place held${label ? ` · ${label}` : ""}`
         : "inspecting this passage";
-  const error = navigation.failure && FAILURE[navigation.failure];
   const resolve = async (choice: "Canonical" | "Device", trigger: HTMLButtonElement) => {
     if (ready?.saving) return;
     const heldFocus = document.activeElement === trigger;
@@ -363,7 +389,7 @@ function StatusStrip({ reader, announcement, returnFocus }: {
       returnFocus()?.focus({ preventScroll: true });
   };
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
-  if (!unresolved && !title && !error && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
+  if (!unresolved && !title && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
   return (
     <div className={`${styles.status} ${styles.feedback}`} role="group" aria-label="reading position">
       {unresolved ? <>
@@ -388,7 +414,6 @@ function StatusStrip({ reader, announcement, returnFocus }: {
           ]}
         />
       ) : !unresolved && title ? <ReadingOptions reader={reader} title={title} announcement={announcement} returnFocus={returnFocus} /> : null}
-      {error ? <FeedbackNotice content={{ tone: "Warning", title: error }} announcement={announcement} /> : null}
       {handoff ? (
         <div className={styles.choice}>
           <FeedbackNotice content={{ tone: "Warning", title: "a newer reading place is available" }} announcement={announcement} returnFocus={returnFocus} />

@@ -8,19 +8,17 @@ import { FeedbackStatus } from "@/components/feedback/Feedback";
 import CanonicalNoteEditor from "./CanonicalNoteEditor";
 import PageTitleEditor from "./PageTitleEditor";
 import OutlineSurface from "./OutlineSurface";
+import { outlineFilterFields } from "./outlineFilterFields";
 import type { NoteInspection } from "./NoteEditor";
 import { WritingStatus } from "./NoteNotices";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { OutlineSessionScope } from "@/components/resources/ResourceOutlineList";
-import type { Row } from "@/lib/notes/outline";
-import { readText } from "@/lib/notes/texts";
 import type { Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
   type PaneFilterRowsStatus as FilterRowsStatus,
 } from "@/lib/panes/paneFilterRows";
@@ -31,18 +29,6 @@ import type {
 } from "@/lib/workspace/targetActivation";
 import styles from "./OutlineEditor.module.css";
 
-const rowFields = (row: Row): string[] => {
-  const node = row.link.target;
-  if (node.content.kind === "note") {
-    const value = readText(node.item.ref)?.value;
-    return [typeof value === "object" ? value.body_text : node.content.body_text];
-  }
-  return [
-    node.item.label.trim() || node.item.ref.split(":")[0]!.replaceAll("_", " "),
-    node.item.preview.source?.title ?? "",
-  ];
-};
-
 /** The local filter counts loaded depth-zero items; completion follows the bounded read. */
 export function useOutlineFilter(
   outline: Outline,
@@ -50,7 +36,7 @@ export function useOutlineFilter(
   inputLabel: string,
 ) {
   const fields = JSON.stringify(
-    outline.rows.filter((row) => row.depth === 0).map(rowFields),
+    outline.rows.filter((row) => row.depth === 0).map(outlineFilterFields),
   );
   const status = outline.status;
   const complete = outline.complete;
@@ -102,15 +88,13 @@ export function useOutlineFilter(
           status={{
             placement: "Inline",
             id: statusId,
-            visible: paneFilterRowsStatusVisible({
-              status: rowStatus,
-              filtering: query.trim() !== "",
-            }),
+            visible: false,
             content: (
               <PaneFilterRowsStatus
                 id={statusId}
                 status={rowStatus}
                 query={query}
+                announceQueryChanges={status === "ready"}
               />
             ),
           }}
@@ -127,6 +111,7 @@ export function useOutlineFilter(
       query,
       rowStatus,
       statusId,
+      status,
     ],
   );
   return { query, queryControls };
@@ -152,6 +137,7 @@ export default function OutlineEditor({
   const prefix = outline.occurrencePrefix;
   const insertion = endpointForResource(source.item.ref);
   const filtering = filter.trim() !== "";
+  const noMatches = filtering && !outline.rows.some((row) => row.depth === 0 && matchesPaneFilterQuery(filter, outlineFilterFields(row)));
   useEffect(() => {
     if (session.focus?.key === "" && source.content.kind === "page")
       titleRef.current?.focus();
@@ -214,6 +200,10 @@ export default function OutlineEditor({
             announcement="Polite"
           />
         ) : null}
+        {noMatches && outline.status === "ready" ? <FeedbackStatus
+          content={{ tone: "Neutral", title: outline.complete ? "no items match this filter." : "no matching item found so far." }}
+          announcement="None"
+        /> : null}
         <OutlineSurface
           session={session}
           rows={outline.rows}
@@ -228,9 +218,12 @@ export default function OutlineEditor({
           onRevealRoot={() => session.reveal({ kind: "root" })}
         />
         {!outline.complete ? (
-          <Button type="button" onClick={outline.more}>
-            show more
-          </Button>
+          <div>
+            {filtering && outline.status !== "failed" ? <p>filter applies to loaded items. show more to include the rest.</p> : null}
+            <Button type="button" onClick={outline.more}>
+              show more
+            </Button>
+          </div>
         ) : null}
       </section>
     </OutlineSessionScope>

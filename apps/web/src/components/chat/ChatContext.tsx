@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
+import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useConnectionAttachments } from "@/components/connections/useConnectionAttachments";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import ResourceList from "@/components/ui/ResourceList";
@@ -22,6 +26,8 @@ const VISIT = definePaneVisitDataKey<Visit<Schema<"ContextOut">>>("Chat.Context"
 
 /** Future prompt membership is an index; removal uses the supplied aggregate version. */
 export default function ChatContext({ conversationId, refreshKey }: { conversationId: string; refreshKey: number }) {
+  const root = useRef<HTMLElement>(null);
+  const paneId = usePaneRuntime()?.paneId;
   const selfRef = `conversation:${conversationId}`;
   const attachments = useConnectionAttachments(selfRef);
   const [revision, setRevision] = useState(0);
@@ -33,22 +39,39 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
     key: `/conversations/${conversationId}/context`, stale: `${refreshKey}:${revision}:${metadata}`, visit: VISIT,
     load: async (signal) => (await apiFetch<ApiJson<"/conversations/{conversation_id}/context", "get">>(`/api/conversations/${conversationId}/context`, { signal })).data,
   });
-  const failure = context.status === "failed" ? context.error : context.status === "ready" ? context.error : null;
-  return <section aria-label="Chat context" {...attachments.dropProps}>
+  const entries = context.status === "ready" ? context.data.items : [];
+  const actionFacts = usePodcastActionFacts({ scope: `Chat.Context:${conversationId}`,
+    targets: entries.flatMap(entry => entry.item.ref.startsWith("podcast:") ? [{ kind: "Canonical" as const, podcast_id: entry.item.ref.slice(8) }] : []),
+    refresh: `${refreshKey}:${revision}:${metadata}:${context.status === "ready" ? context.generation : ""}`,
+  });
+  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
+  const failure = context.status === "loading" ? null : context.error;
+  const podcastFor = (item: Schema<"ContextOut">["items"][number]["item"]): PodcastActionSubject | undefined => item.ref.startsWith("podcast:") ? {
+    target: { kind: "Canonical", podcast_id: item.ref.slice(8) }, title: item.label,
+    facts: failure !== null
+      ? { kind: "Failed", error: failure, retry: context.refetch, retrying: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }
+      : context.status !== "ready" || context.refreshing ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: item.ref.slice(8) }),
+  } : undefined;
+  return <section ref={root} aria-label="Chat context" {...attachments.dropProps}>
     <div className={styles.tools}><ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "add to future context", onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
     {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…" }} announcement="Polite" /> : null}
     <p className={styles.metadata}>available to future replies</p>
     {context.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading context…" }} announcement="Polite" /> : null}
     {failure ? <FeedbackNotice content={{ tone: "Warning", title: context.status === "ready" ? "couldn’t refresh connections" : "context couldn’t be loaded", requestId: failure.requestId }} announcement="Assertive" actions={[{ label: context.status === "ready" ? "retry refresh" : "retry", onClick: context.refetch, busy: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }]} /> : null}
+    {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
+      actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
     {context.status === "ready" ? <ResourceList ariaLabel="Chat context">
-      {context.data.items.map((entry) => <ContextIndexItem key={entry.item.ref} entry={entry} conversationId={conversationId} onChanged={context.refetch} />)}
+      {entries.map((entry, index) => <ContextIndexItem key={entry.item.ref} entry={entry} podcastSubject={podcastFor(entry.item)}
+        afterRemoval={() => entries.slice(index + 1).map(next => root.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(next.item.ref)}"] [data-row-focusable]`)).find(element => element !== null && element !== undefined) ?? findPaneLandmarkFocusTarget(paneId)}
+        conversationId={conversationId} onChanged={context.refetch} />)}
       {context.data.items.length === 0 ? <li><FeedbackStatus content={{ tone: "Neutral", title: "no context yet" }} announcement="None"  /></li> : null}
     </ResourceList> : null}
     {adding ? <ResourceComposer source={{ kind: "resource", ref: selfRef }} occurrenceKey={`context:${selfRef}`} label="add to future context" onSaved={context.refetch} /> : null}
   </section>;
 }
 
-function ContextIndexItem({ entry, conversationId, onChanged }: {
+function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, afterRemoval }: {
+  podcastSubject?: PodcastActionSubject; afterRemoval: () => HTMLElement | null;
   entry: Schema<"ContextOut">["items"][number]; conversationId: string; onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -96,7 +119,7 @@ function ContextIndexItem({ entry, conversationId, onChanged }: {
     setStale(false);
     setFailure(null);
   }, [entry.mutation, stale]);
-  return <ResourceIndexRow item={entry.item} occurrenceKey={`${conversationId}/${entry.item.ref}`}
+  return <ResourceIndexRow item={entry.item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     primaryControl={entry.mutation ? <Button className={styles.remove} ref={removeButton} aria-disabled={busy || stale}
       aria-label={`remove from future context: ${entry.item.label}`} onClick={() => { void remove(); }}>remove</Button> : undefined}
     nestedContent={failure ? <FeedbackNotice content={failure} announcement="Polite"

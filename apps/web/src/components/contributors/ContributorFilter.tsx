@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -81,6 +81,12 @@ export default function ContributorFilter({
     ? search.items.filter((item) => !selectedHandles.includes(item.handle))
     : [];
   const failure = live && search.failure?.op !== "More" ? search.failure : null;
+  const emptyTitle = search.complete ? "no other authors match this search." : "no other matching authors found so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null,
+    outcome: suggestions.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   return (
     <div className={styles.filter}>
       <label className={styles.label}>
@@ -117,7 +123,10 @@ export default function ContributorFilter({
           ))}
         </div>
       ) : null}
-      {live ? <CollectionExhaustionNotice list={search} unit={{ singular: "author", plural: "authors" }} returnFocus={() => inputRef.current} /> : null}
+      {live && search.current && failure === null && suggestions.length === 0 ? <FeedbackStatus
+        content={{ tone: "Neutral", title: emptyTitle }} announcement="None" /> : null}
+      {live ? readFeedback.notice : null}
+      {readFeedback.announcement}
     </div>
   );
 }

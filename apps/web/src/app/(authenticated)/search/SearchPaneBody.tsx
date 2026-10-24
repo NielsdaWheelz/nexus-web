@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
+import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
+import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
@@ -13,7 +16,7 @@ import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive, usePaneIsVisible, usePaneRuntime, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -24,12 +27,11 @@ import styles from "./page.module.css";
 
 type Response = ApiJson<"/search", "get">;
 type Row = Response["results"][number];
-type Metadata = Pick<Response, "view" | "semantic_status">;
+type Metadata = Pick<Response, "semantic_status">;
 const VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Results");
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"];
 const FAILED = {
   Load: "search couldn’t be completed",
-  More: "more results couldn’t be loaded",
   Refetch: "results couldn’t be refreshed",
 };
 
@@ -65,6 +67,8 @@ function InvalidSearch() {
 /** The URL owns criteria; the server owns result identity, grouping and order. */
 function SearchResults({ query }: { query: SearchQuery }) {
   const router = usePaneRouter();
+  const paneId = usePaneRuntime()?.paneId;
+  const root = useRef<HTMLDivElement>(null);
   const visible = usePaneIsVisible();
   const active = usePaneIsActive();
   const { inputRef, focusInput } = usePaneQueryInput();
@@ -90,29 +94,44 @@ function SearchResults({ query }: { query: SearchQuery }) {
     visit: VISIT,
     id: (row) => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
-      if (idle) return { items: [], next_cursor: null, metadata: { view: query.view, semantic_status: "not_requested" } };
+      if (idle) return { items: [], next_cursor: null, metadata: { semantic_status: "not_requested" } };
       const page = await fetchSearchResultPage(query, { limit, cursor, signal });
       return {
         items: page.results,
         next_cursor: page.page.next_cursor,
-        metadata: { view: page.view, semantic_status: page.semantic_status },
+        metadata: { semantic_status: page.semantic_status },
       };
     },
   });
-  // Retained rows from a different query are useful only within the same view.
-  const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
+  const results = list.items;
+  const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
+    targets: results.flatMap(row => row.item.ref.startsWith("podcast:") ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
+    refresh: `${list.current}:${list.running}:${list.requestedKey}`,
+  });
+  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
+  const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") ? {
+    target: { kind: "Canonical", podcast_id: row.item.ref.slice(8) }, title: row.item.label,
+    facts: list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
+      : !list.fresh || list.running !== null ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: row.item.ref.slice(8) }),
+  } : undefined;
+  const afterRemoval = (following: readonly Row[]) => () => following.map(row =>
+    root.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(row.item.ref)}"] [data-row-focusable]`)).find(element => element !== null && element !== undefined)
+    ?? findPaneLandmarkFocusTarget(paneId);
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
-  const unit = query.view === "passages" ? count === 1 ? "passage" : "passages" : count === 1 ? "result" : "results";
-  const status = blank
-    ? "ready to search."
-    : !list.current
-      ? count > 0
-        ? `${count} ${unit} retained from the previous search; ${failure ? "update failed" : "updating"}.`
-        : failure ? "results unavailable." : "searching…"
-      : `${count}${list.complete ? "" : " loaded"} ${unit}${list.complete ? "." : "; results incomplete."}`;
+  const emptyTitle = list.complete
+    ? unsupported ? "no passages for these content types" : "no results found"
+    : "no results found so far.";
+  const feedback = useCollectionReadFeedback({
+    list,
+    unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" },
+    waiting: searching,
+    outcome: idle ? null : count > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
+  const status = blank ? "ready to search." : searching ? "searching…" : "";
   usePaneReturnReady(list.current || failure !== null);
   usePaneChrome({
     query: {
@@ -133,44 +152,47 @@ function SearchResults({ query }: { query: SearchQuery }) {
     { key: "saved", label: "saved passages", rows: results.filter((row) => "section" in row && row.section === "saved") },
     { key: "inside", label: "inside sources", rows: results.filter((row) => "section" in row && row.section === "inside") },
   ];
-  return <div data-pane-return-scope="Search.Results">
-    {failure ? <FeedbackNotice
+  return <div ref={root} data-pane-return-scope="Search.Results">
+    {failure && failure.op !== "More" ? <FeedbackNotice
       content={failureContent(failure.error, failure.op)} announcement="Polite"
       actions={UNFIXABLE.includes(failure.error.code) ? undefined : failure.error.code === "E_EMBEDDING_PROVIDER_UNAVAILABLE"
         ? [{ label: "retry", onClick: list.retry, busy: list.running !== null }, { label: "restart search", onClick: () => { void list.refetch().catch(() => {}); }, busy: list.running !== null }]
         : [{ label: "retry", onClick: list.retry, busy: list.running !== null }]}
     /> : null}
+    {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check podcast subscriptions", requestId: factsError.requestId }} announcement="Polite"
+      actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
     {searching ? <FeedbackNotice content={{ tone: "Info", title: "searching…" }} announcement="None" /> : null}
     {list.current && list.metadata?.semantic_status === "unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }} announcement="Polite" /> : null}
     {query.view === "resources" ? resourceSections.filter((section) => section.rows.length > 0).map((section) => <section className={styles.section} key={section.key} aria-label={section.label}>
       <h2 className={styles.sectionHeading}>{section.label}</h2>
       <ResourceList ariaLabel={section.label} busy={searching}>
-        {section.rows.map((row) => <SearchResult key={row.item.ref} row={row} />)}
+        {section.rows.map((row, index) => <SearchResult key={row.item.ref} row={row} podcastSubject={podcastFor(row)} afterRemoval={afterRemoval(section.rows.slice(index + 1))} />)}
       </ResourceList>
     </section>) : <ResourceList ariaLabel="Passages" busy={searching}>
-      {results.map((row) => <SearchResult key={row.item.ref} row={row} />)}
+      {results.map((row, index) => <SearchResult key={row.item.ref} row={row} podcastSubject={podcastFor(row)} afterRemoval={afterRemoval(results.slice(index + 1))} />)}
     </ResourceList>}
     {count === 0 && !failure ? blank && !unsupported ? <FeedbackNotice
       content={{ tone: "Info", title: query.view === "passages" ? "search inside your sources" : "search your nexus", message: query.view === "passages" ? "type text to find individual passages." : "type a name or text, or open filters to narrow by format or author." }} announcement="None"
-    /> : list.current && list.complete ? <div className={styles.empty}>
-      <FeedbackNotice content={{ tone: "Neutral", title: unsupported ? "no passages for these content types" : "no results found" }} announcement="None" />
-      {unsupported ? <div className={styles.emptyActions}>
+    /> : list.current ? <div className={styles.empty}>
+      <FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />
+      {list.complete && unsupported ? <div className={styles.emptyActions}>
         <Button onClick={() => commit({ ...query, view: "resources" })}>Show resources</Button>
         <Button onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
       </div> : filtered ? <Button onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
     </div> : null : null}
-    <CollectionExhaustionNotice list={list} unit={query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }} returnFocus={() => inputRef.current} />
+    {feedback.notice}
+    {feedback.announcement}
   </div>;
 }
 
-function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
+function SearchResult({ row, parentOccurrenceKey, podcastSubject, afterRemoval }: { row: Row; parentOccurrenceKey?: string; podcastSubject?: PodcastActionSubject; afterRemoval?: () => HTMLElement | null }) {
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
   return <ResourceIndexRow
-    item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
+    item={item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
     nestedContent={passage ? <div className={styles.matchingPassage}>

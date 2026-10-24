@@ -6,9 +6,10 @@
 // last placement; a host's range read that fails later ends the open with
 // Retry. Marks are page-space quads drawn under the text layer. That layer's
 // focusability belongs to reading; its interactive descendants own their clicks.
-import { createPortal } from "react-dom";
+// Link preparation owns availability, never action feedback. Busy activation is
+// consumed; unavailable activation enters the same navigator as resolved links.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
-import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackState } from "@/components/feedback/Feedback";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type * as PdfJs from "pdfjs-dist";
@@ -42,6 +43,10 @@ interface Live {
   readonly viewer: PDFViewer;
   readonly pdf: PDFDocumentProxy;
 }
+type PdfLink =
+  | { readonly kind: "Preparing" }
+  | { readonly kind: "Ready"; readonly destination: ReaderDestination }
+  | { readonly kind: "Unavailable"; readonly signal: AbortSignal };
 
 const MARK = "data-reader-mark";
 const PASSAGE = "data-reader-passage";
@@ -135,8 +140,7 @@ export default function PdfSurface({
   const cachedPlacement = useRef<Placement | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const live = useRef<Live | null>(null);
-  const destinations = useRef(new WeakMap<HTMLAnchorElement, ReaderDestination | null>());
-  const [locationUnavailable, setLocationUnavailable] = useState(false);
+  const destinations = useRef(new WeakMap<HTMLAnchorElement, PdfLink>());
   const viewRef = useRef(view);
   viewRef.current = view;
   const hovered = useRef("");
@@ -268,7 +272,7 @@ export default function PdfSurface({
       state,
     );
   }, [capture, doc.identity, pdfState, runtime]);
-  const geometryChanged = useScrollport(container, runtime, measure, {
+  const { geometryChanged, retireReflow } = useScrollport(container, runtime, measure, {
     placement: cachedPlacement,
     change() {
       const viewer = live.current?.viewer;
@@ -366,6 +370,7 @@ export default function PdfSurface({
       links.goToPage = (page) =>
         void runtime.inspect({
           target: { kind: "pdf", page: Number(page), view: { kind: "page_top", zoom: chosenZoom(viewer) } },
+          signal,
         });
       const named = links.executeNamedAction.bind(links);
       links.executeNamedAction = (action) => {
@@ -380,6 +385,7 @@ export default function PdfSurface({
         else
           void runtime.inspect({
             target: { kind: "pdf", page, view: { kind: "page_top", zoom: chosenZoom(viewer) } },
+            signal,
           });
       };
       const find = createPdfFind(lib, eventBus, runtime);
@@ -406,18 +412,23 @@ export default function PdfSurface({
           if (!anchor.isConnected) { prepared.delete(anchor); continue; }
           const destination = { source_identity: doc.identity, target: target(sourceView) };
           const href = runtime.navigation?.href(destination);
-          destinations.current.set(anchor, destination);
+          destinations.current.set(anchor, { kind: "Ready", destination });
           anchor.setAttribute("data-workspace-rich-target", "true");
           anchor.removeAttribute("aria-busy");
+          anchor.removeAttribute("aria-disabled");
           if (href) anchor.href = href;
           else if (runtime.navigation) anchor.removeAttribute("href");
         }
       };
       links.goToDestination = async (raw) => {
-        const target = await preparePdfDestination(pdf, raw);
-        if (signal.aborted) return;
-        if (target) void runtime.inspect({ target: target({ ...sourceView, zoom: chosenZoom(viewer) }) });
-        else setLocationUnavailable(true);
+        const source = { ...sourceView, zoom: chosenZoom(viewer) };
+        await runtime.inspect({
+          signal,
+          target: async () => {
+            const target = await preparePdfDestination(pdf, raw);
+            return target?.(source) ?? null;
+          },
+        });
       };
       eventBus.on("updateviewarea", ({ location }: { location: { left: number; top: number } }) => {
         sourceView = { zoom: chosenZoom(viewer), left: location.left, top: location.top };
@@ -429,8 +440,12 @@ export default function PdfSurface({
         const anchors = [...page.querySelectorAll<HTMLAnchorElement>("[data-internal-link] a")];
         const original = new Map(anchors.map((anchor) => [anchor, anchor.getAttribute("href")]));
         for (const anchor of anchors) {
-          destinations.current.set(anchor, null);
+          prepared.delete(anchor);
+          destinations.current.set(anchor, { kind: "Preparing" });
           anchor.removeAttribute("href");
+          anchor.setAttribute("role", "link");
+          anchor.tabIndex = 0;
+          anchor.removeAttribute("aria-disabled");
           anchor.setAttribute("aria-busy", "true");
         }
         void pdf.getPage(pageNumber).then((page) => page.getAnnotations({ intent: "display" })).then(async (annotations: unknown[]) => {
@@ -458,13 +473,22 @@ export default function PdfSurface({
               const href = original.get(anchor);
               if (!runtime.navigation && href) anchor.setAttribute("href", href);
             } else {
+              destinations.current.set(anchor, { kind: "Unavailable", signal });
               anchor.removeAttribute("aria-busy");
               anchor.setAttribute("aria-disabled", "true");
             }
           }
           refreshLinks();
         }).catch((error: unknown) => {
-          if (!signal.aborted) { console.error("pdf_destination_failed", error); setLocationUnavailable(true); }
+          if (signal.aborted) return;
+          console.error("pdf_destination_failed", error);
+          refreshLinks();
+          for (const anchor of anchors) {
+            if (destinations.current.get(anchor)?.kind !== "Preparing") continue;
+            destinations.current.set(anchor, { kind: "Unavailable", signal });
+            anchor.removeAttribute("aria-busy");
+            anchor.setAttribute("aria-disabled", "true");
+          }
         });
       });
       try {
@@ -582,6 +606,7 @@ export default function PdfSurface({
 
     const handle: Omit<SurfaceHandle, "find"> = {
       identity: doc.identity,
+      retireReflow,
       measurePassage(passage) {
         const bounds = measureScrollport(container.current);
         if (!bounds || passage.identity !== doc.identity || passage.anchor.kind !== "pdf") return null;
@@ -728,7 +753,7 @@ export default function PdfSurface({
       live.current = null;
       void task?.destroy();
     };
-  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged]);
+  }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime, geometryChanged, retireReflow]);
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {
@@ -780,17 +805,20 @@ export default function PdfSurface({
     // pdf.js installs a target onclick that drops modifiers. Preserve the anchor's native default,
     // but never let that handler run after this owner has classified the event.
     event.stopPropagation();
-    const destination = destinations.current.get(anchor);
-    if (destination) activateReaderDestination(runtime, destination, event);
+    const link = destinations.current.get(anchor);
+    if (link?.kind === "Ready") activateReaderDestination(runtime, link.destination, event);
     else {
-      const activation = workspaceTargetActivationIntent(event);
-      if (activation.kind !== "Unowned") { event.preventDefault(); if (activation.kind === "Open") setLocationUnavailable(true); }
+      const activation = workspaceTargetActivationIntent(event, "activate");
+      if (activation.kind !== "Unowned") {
+        event.preventDefault();
+        if (activation.kind === "Open" && link?.kind === "Unavailable")
+          void runtime.inspect({ target: () => null, signal: link.signal });
+      }
     }
   }
 
   return (
     <div className={styles.pdfFrame}>
-      {locationUnavailable && feedback.current ? createPortal(<FeedbackNotice content={{ tone: "Danger", title: "location unavailable" }} announcement={view.announcement ?? "Polite"} />, feedback.current) : null}
       {position ? <p
         className={styles.live}
         role={view.announcement === "None" ? undefined : "status"}

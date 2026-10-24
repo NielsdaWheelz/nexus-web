@@ -6,7 +6,7 @@
 
 import { useId, useState } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -41,6 +41,9 @@ export default function LibraryInvitations({ returnFocus }: {
     visit: VISIT,
     id: (invitation) => invitation.id,
     fetchPage: viewerInvitationsPage,
+  });
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null, returnFocus,
   });
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
@@ -140,6 +143,7 @@ export default function LibraryInvitations({ returnFocus }: {
         ))}
       </div>
     </section> : null}
-    <CollectionExhaustionNotice list={list} unit={{ singular: "invitation", plural: "invitations" }} returnFocus={returnFocus} />
+    {readFeedback.notice}
+    {readFeedback.announcement}
   </>;
 }

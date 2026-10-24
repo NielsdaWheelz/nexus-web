@@ -172,7 +172,6 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 completed_at=row["completed_at"],
                 changed_fields=result["changed_fields"],
                 unresolved_fields=result["unresolved_fields"],
-                retained_manual_authors=result["retained_manual_authors"],
             )
             return MetadataCompletedOperation(**common, outcome=outcome)
         case "no_findings":

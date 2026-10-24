@@ -336,8 +336,6 @@ class Media(Base):
     language: Mapped[str | None]
     description: Mapped[str | None]
     metadata_enriched_at: Mapped[datetime | None]
-    # author pin: automatic lanes never replace the author slice, even an empty one.
-    authors_manually_managed: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 

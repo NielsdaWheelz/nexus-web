@@ -13,7 +13,10 @@ import {
 import {
   useFeedback,
   type FeedbackContextValue,
+  useWorkspaceCondition,
 } from "@/components/feedback/Feedback";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useMediaContinuationOwner } from "@/lib/actions/mediaContinuation";
@@ -62,7 +65,6 @@ import {
 
 /** The one overlay a verb can open; it loads its own facts by id. */
 export type Overlay =
-  | { readonly kind: "Authors"; readonly mediaId: string }
   | {
       readonly kind: "Metadata";
       readonly mediaId: string;
@@ -71,6 +73,7 @@ export type Overlay =
     }
   | { readonly kind: "LibrarySettings"; readonly libraryId: string }
   | { readonly kind: "PodcastSettings"; readonly podcastId: string }
+  | { readonly kind: "PodcastLibraries"; readonly target: PodcastTarget; readonly title: string; readonly successFocus?: ReturnFocusTarget }
   | { readonly kind: "SubscribePodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
   | { readonly kind: "ImportPodcastEpisodes"; readonly target: PodcastTarget; readonly title: string }
   | { readonly kind: "UnsubscribePodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly successFocus?: ReturnFocusTarget }
@@ -112,17 +115,18 @@ export interface ActionContext {
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
-  readonly overlays: { readonly open: (overlay: Overlay) => void };
+  readonly podcastLibraryCreation: ReturnType<typeof useDestinationCreation>;
+  readonly overlays: { readonly open: (overlay: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => void };
 }
 
 /** Server-only commands are fenced at invocation, including after confirmation.
  * Player/queue/download and authored journal operations retain their own policies. */
 const REMOTE_ACTIONS = new Set<string>([
   "MediaMetadata", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
-  "SubscribePodcast", "UnsubscribePodcast", "ImportPodcastEpisodes", "RemovePodcastEpisodes",
+  "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "ImportPodcastEpisodes", "RemovePodcastEpisodes",
   "RefreshPodcast", "Chat", "LearnHighlight", "RegenerateArtifact", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
-  "ReviewMetadataResult", "EditAuthors", "LibrarySettings", "PodcastSettings", "RemoveUpload",
+  "ReviewMetadataResult", "LibrarySettings", "PodcastSettings", "RemoveUpload",
   "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
 ]);
 export function resourceActionRequiresRemote(id: string, tracked = true): boolean {
@@ -234,23 +238,37 @@ export default function ResourceActionsProvider({
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
   const podcastSettings = usePodcastSettingsOwner(accountId, setDefect);
+  const [destinationCreation] = useState(createDestinationCreation);
+  const podcastLibraryCreation = useDestinationCreation(`podcast-libraries:${accountId}`, destinationCreation);
+  const workGuard = useWorkGuard();
+  useLayoutEffect(() => workGuard.register({ id: "podcast-library-creation", scope: { kind: "account" },
+    subscribe: destinationCreation.subscribe,
+    read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
+  }), [workGuard, destinationCreation]);
+  useWorkspaceCondition("podcast-library-creation", !podcastLibraryCreation.status && podcastLibraryCreation.error === null ? null : {
+    priority: "Write", announcement: "Polite",
+    content: podcastLibraryCreation.error?.content ?? { tone: "Neutral", title: podcastLibraryCreation.status ?? "creating library…" },
+    actions: podcastLibraryCreation.error?.retry ? [{ label: "retry library creation", onClick: podcastLibraryCreation.error.retry,
+      busy: podcastLibraryCreation.error.busy, commandKey: podcastLibraryCreation.error.commandKey }] : undefined,
+  });
   const [overlay, setOverlay] = useState<
-    (Overlay & { key: number; open: boolean; opener: HTMLElement | null; fallback: ReturnFocusTarget }) | null
+    (Overlay & { key: number; open: boolean; anchor: ReturnFocusTarget; focusFallback: ReturnFocusTarget }) | null
   >(null);
 
   // One overlay at a time; the metadata overlay closes through its exit.
-  const open = useCallback((next: Overlay) => {
+  const open = useCallback((next: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => {
     const opener =
-      document.activeElement instanceof HTMLElement
+      options !== undefined ? null : document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
     const section = opener?.closest<HTMLElement>("section[tabindex]") ?? null;
     const paneId = opener?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? null;
-    const fallback = () => section?.isConnected ? section : findPaneLandmarkFocusTarget(paneId);
+    const anchor = options?.anchor ?? (() => opener);
+    const focusFallback = options?.returnFocusFallback ?? (() => section?.isConnected ? section : findPaneLandmarkFocusTarget(paneId));
     setOverlay((current) =>
       current?.open
         ? current
-        : { ...next, key: (current?.key ?? 0) + 1, open: true, opener, fallback },
+        : { ...next, key: (current?.key ?? 0) + 1, open: true, anchor, focusFallback },
     );
   }, []);
   const close = useCallback(
@@ -291,6 +309,7 @@ export default function ResourceActionsProvider({
       podcastSettings: podcastSettings.commands,
       mediaContinuations,
       observeChatCommand,
+      podcastLibraryCreation,
       overlays: { open },
     }),
     [
@@ -314,6 +333,7 @@ export default function ResourceActionsProvider({
       podcastSettings.commands,
       mediaContinuations,
       observeChatCommand,
+      podcastLibraryCreation,
       open,
     ],
   );

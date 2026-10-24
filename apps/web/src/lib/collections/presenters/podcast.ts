@@ -1,11 +1,13 @@
-/** One followed-podcast row, shared by the podcasts and library panes. */
+/** One podcast row. Null facts publish metadata only; the containing card owns its scoped controls. */
 
+import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import type { Schema } from "@/lib/api/wire";
 import type { CollectionRowView, PositiveCount } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export interface PodcastPresenterItem {
+  readonly facts: PodcastActionSubject["facts"] | null;
   readonly id: string;
   readonly title: string;
   readonly imageUrl: string | null;
@@ -19,6 +21,7 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
   return {
     id: item.id,
     kind: "podcast",
+    ...(item.facts === null ? {} : { resourceActions: { kind: "Podcast" as const, subject: { target: { kind: "Canonical" as const, podcast_id: item.id }, title: item.title, facts: item.facts } } }),
     primary: {
       kind: "link",
       href: `/podcasts/${item.id}`,

@@ -25,12 +25,14 @@ import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { focusableElements } from "@/lib/ui/overlay";
 
 function followingRowIds(root: HTMLElement, target: HTMLElement): string[] {
-  const row = target.closest("[data-collection-row-id]");
+  const row = target.closest<HTMLElement>("[data-collection-row-id]");
+  if (row === null) return [];
   const all = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-  return all.slice(all.indexOf(row as HTMLElement) + 1).map((item) => item.dataset.collectionRowId!);
+  return all.slice(all.indexOf(row) + 1).map((item) => item.dataset.collectionRowId!);
 }
 
 export interface CollectionViewRowRenderProps {
+  readonly afterRemoval: () => HTMLElement | null;
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
   readonly panel?: ReactNode;
@@ -169,7 +171,15 @@ export default function CollectionView({
     row: CollectionRowView,
     as?: "li" | "div",
   ) => {
+    const following = rowsForRender.slice(rowsForRender.indexOf(row) + 1).map(item => item.id);
     const props: CollectionViewRowRenderProps = {
+      afterRemoval: () => {
+        const root = returnScopeRef.current;
+        const remaining = Array.from(root?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
+        return following.map(id => remaining.find(item => item.dataset.collectionRowId === id)?.querySelector<HTMLElement>("[data-row-focusable]")).find(item => item !== undefined && item !== null)
+          ?? root?.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]')
+          ?? findPaneChromeFocusTarget(root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+      },
       row,
       as,
       panel: rowPanels?.[row.id],

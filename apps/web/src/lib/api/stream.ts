@@ -8,6 +8,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import {
   ApiError,
   isApiError,
+  isSameSystemApiDefect,
   readResponse,
   WIRE_HEADER,
   type ApiPath,
@@ -61,8 +62,9 @@ const jittered = (ms: number) =>
 /**
  * Opens one stream. Hosted 401 and every other 4xx but 429,
  * a non-event-stream answer, a malformed or oversized event and a throwing
- * decode or onEvent are final. Network failures, 5xx and 429 back off and
- * reconnect. A clean end after an event (the planned cut) resumes at once; one
+ * decode or onEvent, and same-system api defects are final. Network failures,
+ * modeled 5xx and 429 back off and reconnect; exhaustion retains the last
+ * attempt's error. A clean end after an event (the planned cut) resumes at once; one
  * without an event counts as a failure. The cursor advances only after decode
  * and onEvent returned (I6). The returned function stops it; nothing fires
  * after a stop.
@@ -107,8 +109,8 @@ export function openStream<E, P = unknown>(
     show();
   });
 
-  // One connection; true when it delivered an event.
-  const connect = async (): Promise<boolean> => {
+  // One connection; null after delivery, otherwise the detected empty-stream failure.
+  const connect = async (): Promise<ApiError | null> => {
     const query = cursor ? `?after=${encodeURIComponent(cursor)}` : "";
     const response = await fetch(`${options.path}${query}`, {
       headers: {
@@ -120,44 +122,55 @@ export function openStream<E, P = unknown>(
     if (!response.ok) {
       const error = await readResponse<never>(response).catch(asError);
       const transient =
-        isApiError(error) && (error.status >= 500 || error.status === 429);
+        isApiError(error) && !isSameSystemApiDefect(error) &&
+        (error.status === 0 || error.status >= 500 || error.status === 429);
       throw transient ? error : new Fatal(error);
     }
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.startsWith("text/event-stream") || !response.body) {
       throw new Fatal(new Error("Not an event stream"));
     }
+    const requestId = response.headers.get("x-request-id") ?? undefined;
     let delivered = false;
-    await readEvents(response.body, (id, type, data) => {
-      if (signal.aborted) return true;
-      try {
-        // justify-type-assertion: the same deploy validated this event's public payload.
-        const event = options.decode(type, data as P, id);
-        suspended = null;
-        options.onEvent(event);
-        terminal = options.isTerminal(event);
-      } catch (error) {
-        throw new Fatal(asError(error));
+    try {
+      await readEvents(response.body, (id, type, data) => {
+        if (signal.aborted) return true;
+        try {
+          // justify-type-assertion: the same deploy validated this event's public payload.
+          const event = options.decode(type, data as P, id);
+          suspended = null;
+          options.onEvent(event);
+          terminal = options.isTerminal(event);
+        } catch (error) {
+          throw new Fatal(asError(error));
+        }
+        if (id) cursor = id;
+        delivered = true;
+        failures = 0;
+        return terminal;
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new ApiError(0, "E_NETWORK", "Stream lost", requestId);
       }
-      if (id) cursor = id;
-      delivered = true;
-      failures = 0;
-      return terminal;
-    });
-    return delivered;
+      throw error;
+    }
+    return delivered ? null : new ApiError(0, "E_NETWORK", "Stream lost", requestId);
   };
 
   const run = async (): Promise<void> => {
     while (!signal.aborted) {
+      let failure: ApiError;
       try {
         await admitted();
         if (signal.aborted) return;
-        const delivered = await connect();
+        const empty = await connect();
         if (terminal) return options.onComplete?.();
-        if (delivered) {
+        if (empty === null) {
           await jittered(PLANNED_CUT_RESUME_MS);
           continue;
         }
+        failure = empty;
       } catch (error) {
         if (signal.aborted) return;
         if (error instanceof Fatal) {
@@ -171,19 +184,19 @@ export function openStream<E, P = unknown>(
           handleUnauthenticatedApiError(reason);
           return options.onError(reason);
         }
-        if (installedApp && (error instanceof TypeError || (isApiError(error) && error.status === 0))) {
-          const failure = isApiError(error) ? error : new ApiError(0, "E_NETWORK", "Stream lost");
+        if (!isApiError(error) && !(error instanceof TypeError)) {
+          return options.onError(asError(error));
+        }
+        failure = isApiError(error) ? error : new ApiError(0, "E_NETWORK", "Stream lost");
+        if (installedApp && failure.status === 0) {
           observeRemoteFailure(0);
           suspended = failure;
           options.onSuspended(failure);
           continue;
         }
-        if (!isApiError(error) && !(error instanceof TypeError)) {
-          return options.onError(asError(error));
-        }
       }
       if (failures >= maxReconnects) {
-        return options.onError(new ApiError(0, "E_NETWORK", "Stream lost"));
+        return options.onError(failure);
       }
       failures += 1;
       options.onReconnect?.(failures);

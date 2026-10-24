@@ -3,7 +3,7 @@
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { useCollectionLayout } from "@/lib/ui/collection";
-import { useKeyboardReport } from "@/lib/ui/useKeyboardInset";
+import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./MobileSheet.module.css";
 
@@ -30,6 +30,7 @@ export default function MobileSheet({
   ariaLabel,
   scrim = "default",
   panelId,
+  heightLimit,
   children,
   handleLabel,
   renderHeader,
@@ -41,6 +42,8 @@ export default function MobileSheet({
   readonly scrim?: "default" | "soft";
   /** The panel's id; also its interaction scope. */
   readonly panelId?: string;
+  /** Fit natural content within the unobscured viewport, without a preferred cap. */
+  readonly heightLimit?: "available";
   readonly children: ReactNode;
 }) {
   const content = useRef<HTMLDivElement>(null);
@@ -52,6 +55,7 @@ export default function MobileSheet({
     moved: boolean;
   } | null>(null);
   const suppressClick = useRef(false);
+  const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
   useKeyboardReport(active);
   useEffect(() => {
     if (!active) {
@@ -71,8 +75,9 @@ export default function MobileSheet({
       label={ariaLabel}
       id={panelId}
       scope={panelId}
-      backdropClassName={scrim === "soft" ? styles.softBackdrop : styles.backdrop}
-      className={styles.panel}
+      backdropClassName={[scrim === "soft" ? styles.softBackdrop : styles.backdrop, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
+      backdropStyle={heightLimit === "available" ? { top: visualViewportTopPx, bottom: keyboardBottomInsetPx } : undefined}
+      className={[styles.panel, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
     >
       {(requestDismiss) => (
         <>

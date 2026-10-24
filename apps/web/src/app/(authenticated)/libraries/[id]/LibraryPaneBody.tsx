@@ -8,7 +8,7 @@
 
 import { useCallback, useId, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import CollectionView from "@/components/collections/CollectionView";
@@ -48,7 +48,7 @@ import {
 } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { OrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
+import { renderOrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   entriesPage,
@@ -61,7 +61,7 @@ import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   ENTRY_TYPES,
-  EmptyEntries,
+  emptyEntriesFeedback,
   entrySorts,
   offered,
   projections,
@@ -74,7 +74,7 @@ import {
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { usePaneChrome, type PanePrimaryAction, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
+import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import {
   usePaneIsActive,
   usePaneParam,
@@ -155,9 +155,10 @@ function LibraryPane({ id }: { readonly id: string }) {
     fetchPage: (cursor, limit, signal) =>
       entriesPage(id, pageQuery(query, cursor, limit), signal),
   });
+  const showsStale = `${useChangeStamp("Podcasts", "Entries", "Libraries")}:${useRefreshStamp(active && remoteReady(), 60_000)}`;
   const rawShows = useServerValue({
     key: rawDetail.status === "ready" || catalog.data?.libraries.has(id) === true ? `library-podcasts:${ctx.accountId}:${id}` : null,
-    stale: `${useChangeStamp("Podcasts", "Entries", "Libraries")}:${useRefreshStamp(active && remoteReady(), 60_000)}`,
+    stale: showsStale,
     visit: SHOWS, catalog: savedShows,
     load: signal => getLibraryPodcasts(id, signal),
   });
@@ -185,7 +186,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   };
   const list: typeof rawList = !showingSaved ? rawList : {
     ...rawList, source: saved.source, status: "ready", items: saved.entries.items,
-    shownKey: `/libraries/${id}/entries?${query}`, metadata: saved.entries.metadata ?? null,
+    fresh: false, metadata: saved.entries.metadata ?? null,
     current: true, complete: true, orderRevision: saved.entries.order_revision ?? null,
   };
   const shows: ServerValue<PodcastSection> = !showingSaved ? rawShows : {
@@ -336,6 +337,16 @@ function LibraryPane({ id }: { readonly id: string }) {
         }),
     }
     : undefined;
+  const emptyFeedback = emptyEntriesFeedback({ params, isAll, change: recover });
+  const emptyTitle = text
+    ? list.complete ? "no entries match this filter." : "no matching entry found so far."
+    : list.complete ? emptyFeedback.content.title : "no entries loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list, unit: UNIT,
+    waiting: library !== null && !invalidView && list.status === "loading",
+    outcome: ordered.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   if (live && remoteReady() && library?.can_leave) {
     menuActions.push({
@@ -373,11 +384,8 @@ function LibraryPane({ id }: { readonly id: string }) {
           status={{
             placement: "Inline",
             id: queryStatusId,
-            visible: paneFilterRowsStatusVisible({
-              status: filterRows.rowStatus,
-              filtering: text !== "" || chips.length > 0,
-            }),
-            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+            visible: false,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
           }}
           actions={orderingStatus ? <span>{orderingStatus}</span> : undefined}
           onReset={canReset ? () => {
@@ -397,6 +405,8 @@ function LibraryPane({ id }: { readonly id: string }) {
 
   if (missing) {
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={{
           tone: "Danger",
@@ -405,12 +415,14 @@ function LibraryPane({ id }: { readonly id: string }) {
         }}
         announcement="Assertive"
       />
+      </>
     );
   }
   if (library === null) {
     const failure = detail.status === "failed" ? detail.error : null;
-    return failure ? (
-      <FeedbackNotice
+    return <>
+      {readFeedback.announcement}
+      {failure ? <FeedbackNotice
         content={
           libraryErrorFeedback(failure, "Library couldn’t be loaded", throwDefect) ?? {
             tone: "Danger",
@@ -419,13 +431,13 @@ function LibraryPane({ id }: { readonly id: string }) {
         }
         announcement="Assertive"
         actions={[{ label: "Retry", onClick: detail.refetch, busy: detail.status === "failed" && detail.retrying }]}
-      />
-    ) : (
-      <PaneLoadingState label="Loading library…" announcement="Polite" />
-    );
+      /> : <PaneLoadingState label="Loading library…" announcement="Polite" />}
+    </>;
   }
   if (invalidView) {
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid library view" }}
         announcement="Assertive"
@@ -440,25 +452,18 @@ function LibraryPane({ id }: { readonly id: string }) {
           },
         ]}
       />
+      </>
     );
   }
 
   const name = libraryDisplayName(library);
   const loadFailure =
     list.failure !== null && list.failure.op !== "More" ? list.failure.error : null;
-  const empty = text ? (
-    <FeedbackNotice
-      content={{
-        tone: "Neutral",
-        title: list.complete
-          ? "No entries match this filter."
-          : "No matching entry found so far.",
-      }}
-      announcement="Polite"
-    />
-  ) : list.status !== "ready" ? null : list.complete ? (
-    <EmptyEntries params={params} isAll={isAll} change={recover} />
-  ) : null;
+  const empty = <FeedbackNotice
+    content={{ tone: "Neutral", title: emptyTitle }}
+    announcement="None"
+    actions={!text && list.complete ? emptyFeedback.actions : undefined}
+  />;
   const firstLoad =
     list.status === "failed" && loadFailure !== null
       ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
@@ -474,80 +479,81 @@ function LibraryPane({ id }: { readonly id: string }) {
   };
 
   return (
-    <PaneSurface
-      state={
-        feedback || leaving || loadFailure || summaries.error || ordering !== undefined ? (
-          <>
-            {ordering !== undefined ? <OrderNotice order={order.state} active={active} paneId={runtime?.paneId ?? null} /> : null}
-            {leaving ? (
-              <FeedbackNotice
-                content={{
-                  tone: "Warning",
-                  title: `Leave “${name}”?`,
-                  message: "You lose access to what only it files. An admin can invite you again.",
-                }}
-                announcement="Assertive"
-                actions={[
-                  { label: "Leave library", onClick: () => void leave() },
-                  { label: "Cancel", onClick: () => setLeaving(null) },
-                ]}
-              />
-            ) : null}
-            {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
-            {list.status === "ready" ? (
-              <MediaSummaryNotice
-                error={loadFailure ?? summaries.error}
-                busy={summaries.retrying || list.running !== null}
-                retry={() => {
-                  if (summaries.error !== null) summaries.retry();
-                  if (loadFailure !== null) list.retry();
-                }}
-              />
-            ) : null}
-          </>
-        ) : null
-      }
-    >
-      <LibraryPodcastsSection library={library} active={active} source={shows} />
-      <PlaybackSourceContext.Provider value={capture}>
-      <CollectionView
-        returnScope="Library.Entries"
-        rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry),
-          id: entry.entry_id ?? libraryEntryId(entry) }))}
-        empty={empty}
-        status={list.status === "failed" ? "error" : list.status}
-        error={
-          firstLoad ? (
+    <>
+      {readFeedback.announcement}
+      <PaneSurface
+        state={<>
+          {ordering !== undefined ? renderOrderNotice({ order: order.state, active, paneId: runtime?.paneId ?? null }) : null}
+          {leaving ? (
             <FeedbackNotice
-              content={firstLoad}
+              content={{
+                tone: "Warning",
+                title: `Leave “${name}”?`,
+                message: "You lose access to what only it files. An admin can invite you again.",
+              }}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
+              actions={[
+                { label: "Leave library", onClick: () => void leave() },
+                { label: "Cancel", onClick: () => setLeaving(null) },
+              ]}
             />
-          ) : null
-        }
-        ariaLabel={name}
-        rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
-        rowActionsAvailable={list.current}
-        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "entry", plural: "entries" }} returnFocus={() => inputRef.current} />}
-        collectionBusy={!list.current || !list.complete}
-        surface={false}
-        order={ordering}
-      />
-      </PlaybackSourceContext.Provider>
-      {live ? <SuggestionsSection
-          destination={suggestionDestination}
-          suggestions={suggestions}
-          returnScope="Library.Suggestions"
-          accept={async (target) => {
-            if (target.kind === "Podcast") {
-              ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
-                onAccepted: () => suggestions.acknowledge(target.ref) });
-              return "Retained";
-            }
-            const accepted = await addToLibrary({ kind: "Media", id: suggestionTargetId(target) }, id);
-            return accepted ? "Accepted" : "Retained";
-          }}
-        /> : null}
-    </PaneSurface>
+          ) : null}
+          {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
+          {list.status === "ready" && (loadFailure !== null || summaries.error !== null) ? (
+            <MediaSummaryNotice
+              error={loadFailure ?? summaries.error}
+              busy={summaries.retrying || list.running !== null}
+              retry={() => {
+                if (summaries.error !== null) summaries.retry();
+                if (loadFailure !== null) list.retry();
+              }}
+            />
+          ) : null}
+        </>}
+      >
+        <LibraryPodcastsSection library={library} active={active} source={shows} sourceStale={showsStale} />
+        <PlaybackSourceContext.Provider value={capture}>
+        <CollectionView
+          returnScope="Library.Entries"
+          rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry),
+            id: entry.entry_id ?? libraryEntryId(entry) }))}
+          empty={empty}
+          status={list.status === "failed" ? "error" : list.status}
+          error={
+            firstLoad ? (
+              <FeedbackNotice
+                content={firstLoad}
+                announcement="Assertive"
+                actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
+              />
+            ) : null
+          }
+          ariaLabel={name}
+          rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+          rowActionsAvailable={list.current}
+          notice={text && list.current && !list.complete && list.failure === null && ordered.length > 0
+            ? <p>filter applies to loaded items.</p> : null}
+          footer={readFeedback.notice}
+          collectionBusy={!list.current || !list.complete}
+          surface={false}
+          order={ordering}
+        />
+        </PlaybackSourceContext.Provider>
+        {live ? <SuggestionsSection
+            destination={suggestionDestination}
+            suggestions={suggestions}
+            returnScope="Library.Suggestions"
+            accept={async (target) => {
+              if (target.kind === "Podcast") {
+                ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
+                  onAccepted: () => suggestions.acknowledge(target.ref) });
+                return "Retained";
+              }
+              const accepted = await addToLibrary({ kind: "Media", id: suggestionTargetId(target) }, id);
+              return accepted ? "Accepted" : "Retained";
+            }}
+          /> : null}
+      </PaneSurface>
+    </>
   );
 }

@@ -12,6 +12,7 @@ import threading
 from collections.abc import AsyncIterator
 
 import psycopg
+from anyio import CancelScope
 from psycopg import sql
 
 from nexus.config import get_settings
@@ -47,14 +48,17 @@ class Listener:
             yield
 
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        _release()
-        try:
-            await self._conn.close()
-        except Exception:
-            logger.warning("stream.listen.close_failed", channel=self._channel, exc_info=True)
+        """Idempotent, shielded cleanup; capacity returns after connection close settles."""
+        with CancelScope(shield=True):
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                await self._conn.close()
+            except Exception:
+                logger.warning("stream.listen.close_failed", channel=self._channel, exc_info=True)
+            finally:
+                _release()
 
 
 async def open_listener(channel: str, key: str) -> Listener:

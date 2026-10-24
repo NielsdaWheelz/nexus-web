@@ -17,6 +17,24 @@ unsubscribes everywhere from loaded aggregate facts. the default destination is
 excluded only from card rows, never from subscription state. library changes
 invalidate these names immediately within the tab.
 
+library podcast cards and the podcast index share the native `browse podcasts`
+plus link. browse has no destination context: discovery and canonical subscribe
+both use the personal default; named placement requires explicit selection.
+browsing remains available in readable, read-only libraries. all promotes global
+unsubscribe; named cards promote local removal with the same projector as the
+show's libraries card. confirmed rows remain during failed/refreshing reads, with
+their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
+warnings and import progress remain.
+local removal uses the permission from the same current section read as its rows.
+
+at row content widths at or below 479px the shortcut moves into more. named menus
+contain distinct local occurrence removal and canonical global unsubscribe; all
+contains the canonical action once. hiding a focused shortcut returns focus to
+more. removal captures displayed successor ids at selection; acknowledged success
+focuses the next surviving title, then the card's browse/picker control, then its
+section or pane. cancellation restores the opener. list refresh does not own
+acknowledgement or this success target.
+
 import and destructive cleanup are separate menu commands. cleanup chooses one
 named affected library or everywhere, including while subscribed and for
 episode-only destinations. changing scope remounts the review and reads fresh
@@ -130,6 +148,38 @@ no app data or admission drafts enter browser storage. add modes, scope, counts,
 coverage errors and keep/remove consequences are explicit. global removal remains
 available on show detail after unsubscribing when saved episodes remain.
 
+the subscriptions index, discovery results, live search/context rows and pane
+headers share subscription and libraries shortcuts with their complete menus.
+global subscribe uses the actual default library; global
+unsubscribe reviews every destination and keeps arrived episodes. libraries
+manages named subscriptions, including checked, locked read-only memberships.
+one choice opens the existing exact subscription or scoped removal review;
+cancel or acknowledgement closes the whole flow. finite import remains separate.
+
+`POST /podcasts/action-facts/resolve` is an authenticated, read-only snapshot of
+1–100 distinct canonical/sealed discovery targets, in input order. canonical
+visibility matches detail: catalog existence. discovery decoding resolves local
+provider identity even when unsubscribed; a valid local miss is `Discovery`,
+not provider availability. missing ids and invalid signed targets are explicit
+unavailable results. malformed requests fail validation. resolution performs one
+catalog batch and reuses aggregate `podcast_states`; it contacts no provider and
+acquires nothing.
+
+`usePodcastActionFacts` belongs to the containing view. its account/scope/target
+set owns one cancellable read, sequential chunks of at most 100 and publication
+only after all chunks succeed. the last canonical observation supplies every
+alias's subscription state. changed target sets clear facts; same-key refresh
+retains disabled presentation. podcast/library changes and foreground observation
+reread local facts without repeating directory content reads. failed or refreshing
+facts authorize no new shortcut. sealed row identity and admitted command identity
+never migrate when local resolution becomes canonical.
+
+the account action owner retains one scoped library-creation helper and loss
+guard. creation retries preserve the exact uuid/name. only the originating live
+chooser can advance to subscription review; dismissal leaves an empty created
+library and never subscribes or reopens. account feedback retains recovery after
+dismissal. checks always describe acknowledged subscription, never proposed choice.
+
 the podcast overview uses one visit-local expansion state for its panel and
 existing disclosure button: `show more` with a right chevron when closed,
 `show less` with a down chevron when open. shared button anatomy owns the
@@ -220,10 +270,14 @@ all ⟨state⟩" forecasts a count and a selection fingerprint, then queues the 
 recomputed selection or nothing (409 `E_SELECTION_CHANGED`): the forecast is the
 exactness guard, not vestigial. A video's request imports its YouTube captions.
 
-the episode pane displays only `transcribe` before admission, then truthful queued,
-running, failed or unavailable states. its mounted processing stream owns updates.
+the episode's transcript admission area displays only `transcribe` before admission,
+then truthful queued, running, failed or unavailable states. its mounted processing
+stream owns updates.
 readable full/partial text mounts the shared reader and tools; failed document reads
-remain reader retries. notes are a pane-visit disclosure. playback remains in the
+remain reader retries. available publisher notes occupy one expanded `show notes`
+card before transcript content, including document loading and failure. absent notes
+omit the card. notes use the existing content scrollport and surrounding typography
+and palette; restored reading destinations retain precedence. playback remains in the
 canonical header action; body playback explanations and chapter inventories are gone.
 
 - **Current transcript publication — `transcripts.current`.** This is the single,

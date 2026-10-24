@@ -8,6 +8,7 @@ import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type Feedbac
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
+import PaneSection from "@/components/ui/PaneSection";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, type ApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -184,15 +185,13 @@ function showNotes(media: MediaDetail, hrefForTime: (ms: number) => string | nul
   return root.innerHTML;
 }
 
-/** Publisher notes stay a visit-owned disclosure; video retains its embed behavior. */
-export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, notesOpen, onNotesOpen, transcriptReaderKey }: {
+/** Publisher notes remain expanded host content; video retains its embed behavior. */
+export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, transcriptReaderKey }: {
   readonly media: MediaDetail;
   readonly paneActive: boolean;
   readonly videoAt: number | null;
   readonly onSeek: (ms: number) => void;
   readonly reader: Reader;
-  readonly notesOpen: boolean;
-  readonly onNotesOpen: (open: boolean) => void;
   readonly transcriptReaderKey: string | null;
 }) {
   const identity = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc.identity : null);
@@ -259,7 +258,7 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, n
     {(media.kind === "video" || !media.playerDescriptor) && (source?.source_url || media.canonical_source_url) ?
       <a href={source?.source_url || media.canonical_source_url!} target="_blank" rel="noopener noreferrer" className={styles.textButton}>open in source</a> : null}
     {media.kind === "podcast_episode" && identity !== null ? <PlaybackPosition mediaId={media.id} reader={reader} transcriptReaderKey={transcriptReaderKey} /> : null}
-    {notes ? <details open={notesOpen} onToggle={(event) => onNotesOpen(event.currentTarget.open)}
+    {notes ? <PaneSection title="show notes" className={styles.showNotes}
       onClick={(event) => {
         const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
         if (ms) openTime(event, Number(ms));
@@ -268,8 +267,7 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, n
         const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
         if (ms) openTime(event, Number(ms));
       }}>
-      <summary>show notes</summary>
-      <HtmlRenderer htmlSanitized={notes} headingLevelOffset={2} />
-    </details> : null}
+      <HtmlRenderer htmlSanitized={notes} headingLevelOffset={2} className={styles.showNotesBody} />
+    </PaneSection> : null}
   </div>;
 }

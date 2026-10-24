@@ -55,22 +55,22 @@ export default function NotePaneBody() {
     ready: !deleted && outline.status === "ready" && bodyVersion !== null,
     sourceIdentity: bodyVersion === null ? null : `${ref}:${bodyVersion}`,
     apply: async (arrival, context) => {
-      if (arrival.kind !== "source") return false;
+      if (arrival.kind !== "source") return "Unavailable";
       const result = arrival.source;
       const text = readText(ref);
       if (result.location.kind === "resource") {
         if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
-        return true;
+        return "Applied";
       }
-      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return false;
+      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return "Unavailable";
       const locator = result.location.locator;
       const saved = text?.acked;
       const shown = text?.value;
       if (!saved || typeof saved.value === "string" || typeof shown !== "object" ||
           locator.block_id !== blockId || locator.body_version !== saved.version ||
-          shown.body_text !== saved.value.body_text) return false;
+          shown.body_text !== saved.value.body_text) return "Unavailable";
       const exact = Array.from(shown.body_text).slice(locator.start_offset, locator.end_offset).join("");
-      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return false;
+      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return "Unavailable";
       setInspection({ bodyText: shown.body_text, version: saved.version, view: {
         startOffset: locator.start_offset, endOffset: locator.end_offset,
         activationId: context.activationId, signal: context.signal,
@@ -79,7 +79,7 @@ export default function NotePaneBody() {
       context.signal.addEventListener("abort", () => {
         setInspection((current) => current?.view.activationId === context.activationId ? null : current);
       }, { once: true });
-      return true;
+      return "Applied";
     },
   });
 
@@ -118,7 +118,7 @@ export default function NotePaneBody() {
   return (
     <div ref={sourceView} tabIndex={-1}>
       {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
-      <SourceArrivalNotice textRef={ref} inspected={inspection !== null} failure={arrival.failure} />
+      <SourceArrivalNotice textRef={ref} inspected={inspection !== null} failure={arrival.failure?.title ?? null} />
       <OutlineEditor
         outline={outline}
         filter={query}

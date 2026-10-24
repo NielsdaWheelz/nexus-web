@@ -87,8 +87,13 @@ applying the same receipt admission; other work or a modal still suppresses it.
 late hook withdrawal cannot remove a newer occurrence. no scheduling or replay is
 needed to bridge command settlement and react presentation cleanup.
 
-only changed short facts enter separate live regions. inactive panes stay
-silent. actions stay mounted and focusable while busy, with guarded activation;
+only short facts enter separate live regions. local `FeedbackNotice` owners may
+supply an occurrence and exact-occurrence dismissal; other recovery surfaces
+retain their existing contract. controls remain mounted; local announcement
+identity does not replace workspace action identity. replacing a local occurrence
+keeps the live region empty for a rendered frame before publishing even identical
+text; supersession cancels its captured frames. inactive panes stay silent.
+actions stay mounted and focusable while busy, with guarded activation;
 successful removal returns to an explicit owner destination, then the shell.
 `FeedbackScope` supplies a pane's focus destination and announcement permission
 without a new state owner. disabled reasons remain visible. compact targets are
@@ -135,9 +140,14 @@ adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
 
-transient results have a six-row preferred budget (32px fine, 44px coarse), not
-a result-count limit. full workspaces retain their larger area. essential names
-wrap. `lib/ui/collection.ts` owns scoped reveal and constrained-body measurement;
+search/catalog results use `compactViewport`'s six-row preferred budget (32px
+fine, 44px coarse), not a result-count limit. actions and standalone chapters use
+`contentViewport`: intrinsic height, capped by anchored bounds and the parent's
+flex allocation, without a measured collection ceiling or minimum viewport row.
+short lists do not stretch. full workspaces retain `fillViewport`'s larger area.
+essential names wrap. `lib/ui/collection.ts` owns constrained-body measurement
+and reveals retained focus after resize within the owned list/body, without
+moving focus or scrolling the host;
 [overlays](overlays.md#surfaces) owns available geometry and dismissal.
 
 `lib/ui/searchOptions.ts` supplies controlled bindings and keyed reconciliation.

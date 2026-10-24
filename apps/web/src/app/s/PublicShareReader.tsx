@@ -198,10 +198,6 @@ function SharedDocument({
   const identity = useReaderState(reader, (state) =>
     state.document.status === "ready" ? state.document.doc.identity : null,
   );
-  const missed = useReaderState(
-    reader,
-    (state) => state.restored && state.navigation.failure !== null,
-  );
   const epub = useReaderState(
     reader,
     (state) =>
@@ -245,10 +241,7 @@ function SharedDocument({
           <span>Shared highlight</span>
           {highlight.quote !== null ? (
             <blockquote>{highlight.quote}</blockquote>
-          ) : (
-            <p>The highlighted area is shown in the document below.</p>
-          )}
-          {missed ? <FeedbackStatus content={{ tone: "Warning", title: "highlight location unavailable", message: "the shared source is shown below." }} announcement="Polite" /> : null}
+          ) : null}
         </aside>
       ) : null}
       <main

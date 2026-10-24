@@ -2,6 +2,7 @@
 
 // Collection geometry stays within its owned body. When fixed controls cannot
 // leave one row, the body scrolls instead of nesting two scrolling regions.
+// Resizing keeps the owned focused item visible without moving focus.
 import { useLayoutEffect, type RefObject } from "react";
 
 export function revealCollectionItem(viewport: HTMLElement, item: HTMLElement): void {
@@ -51,6 +52,8 @@ export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: 
       body.scrollLeft = bodyScroll.left;
       viewport.scrollTop = listScroll.top;
       viewport.scrollLeft = listScroll.left;
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && viewport.contains(focused)) revealCollectionItem(viewport, focused);
     };
     const resize = new ResizeObserver(measure);
     resize.observe(body);

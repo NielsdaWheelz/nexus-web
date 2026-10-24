@@ -3,7 +3,7 @@
 /** Fixed subscription or finite import. A single dialog owns destination choice
  * and review; canonical admission reads the exact selected relationship.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -26,6 +26,7 @@ interface Props {
   readonly mode: "follow" | "current_episodes";
   readonly libraryId: string | null;
   readonly onAccepted?: () => void;
+  readonly createdLibrary?: boolean;
   readonly returnFocusTo?: ReturnFocusTarget;
   readonly returnFocusFallback?: ReturnFocusTarget;
   readonly onClose: () => void;
@@ -49,10 +50,13 @@ export default function PodcastAcquisitionDialog(props: Props) {
     </div>
   </Dialog>;
 }
-function AcquisitionReview({ target, title, mode, libraryId, onAccepted, onClose, onChangeDestination }: Props & { readonly onChangeDestination: () => void }) {
+function AcquisitionReview({ target, title, mode, libraryId, onAccepted, createdLibrary, onClose, onChangeDestination }: Props & { readonly onChangeDestination: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
+  const live = useRef(false);
+  useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [refused, setRefused] = useState(false);
+  const [dispatched, setDispatched] = useState(false);
   const stamp = useChangeStamp("Podcasts", "Entries", "Libraries");
   const source = usePaneFreeServerValue({ key: `podcast-admission:${JSON.stringify([libraryId, target])}`, stale: stamp,
     load: async signal => {
@@ -82,14 +86,19 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, onClose
   const submit = async () => {
     if (source.error !== null || source.refreshing || blocked || pending !== null || sending || refused) return;
     const guards = { target, expected_order_revision: facts.order_revision, expected_removal_revision: facts.removal_revision };
+    setDispatched(true);
     setSending(true);
-    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, onAccepted: mode === "follow" ? onAccepted : undefined, command: mode === "follow"
+    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, onAccepted: () => {
+      if (mode === "follow") onAccepted?.();
+      if (live.current) onClose();
+    }, command: mode === "follow"
       ? { kind: "Admission", libraryId: id, mode, body: { ...guards, id: crypto.randomUUID(), import_id: crypto.randomUUID() } }
       : { kind: "Admission", libraryId: id, mode, body: { ...guards, id: crypto.randomUUID() } } });
     setSending(false);
-    if (accepted) onClose(); else setRefused(true);
+    if (!accepted && live.current) setRefused(true);
   };
   return <>
+    {createdLibrary && (!dispatched || pending?.phase === "Refused") ? <p>library created; subscription not started</p> : null}
     <p>{mode === "follow" ? `subscribe to ${title} in ${destination}.` : `import available episodes once to ${destination}. subscriptions stay unchanged.`}</p>
     {mode === "follow" ? <p>add available episodes now and new episodes automatically.</p> : null}
     <p className={styles.note}>history is limited to what the publisher makes available. this does not download audio or request transcripts.</p>

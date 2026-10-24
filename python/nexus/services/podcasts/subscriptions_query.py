@@ -2,7 +2,8 @@
 
 Section guards, relationships and progress come from one SQL snapshot. Catalog
 metadata is hydrated in batches. Reads acquire nothing and never expand show roots
-into episode placements.
+into episode placements. Action facts resolve sealed identities locally, using the
+same authenticated catalog existence rule as detail; they never contact a provider.
 """
 
 from collections.abc import Mapping, Sequence
@@ -14,10 +15,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
 from nexus.services import libraries, library_entries
+from nexus.services.browse.targets import PodcastIndexPodcastTarget, unseal_target
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
@@ -70,6 +72,68 @@ def podcast_states(
         {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     )
     return {row.id: PodcastState(row.subscribed, row.has_episodes) for row in rows}
+
+
+def action_facts(
+    db: Session, *, viewer_id: UUID, targets: list[wire.PodcastCommitTarget]
+) -> wire.PodcastActionFactsOut:
+    """Resolve a validated batch and aggregate subscription state in the caller's snapshot."""
+    canonical_ids: list[UUID] = []
+    discovery_refs: dict[str, str] = {}
+    invalid_handles: set[str] = set()
+    for target in targets:
+        if isinstance(target, wire.PodcastCanonicalCommitTarget):
+            canonical_ids.append(target.podcast_id)
+            continue
+        try:
+            decoded = unseal_target(target.target)
+        except InvalidRequestError as exc:
+            if exc.code != ApiErrorCode.E_INVALID_DISCOVERY_TARGET:
+                raise
+            invalid_handles.add(target.target)
+            continue
+        if isinstance(decoded, PodcastIndexPodcastTarget):
+            discovery_refs[target.target] = decoded.podcast_ref
+        else:
+            invalid_handles.add(target.target)
+
+    rows = db.execute(
+        text("""
+        SELECT id,provider,provider_podcast_id FROM podcasts
+        WHERE id=ANY(CAST(:ids AS uuid[]))
+           OR (provider='podcast_index' AND provider_podcast_id=ANY(CAST(:refs AS text[])))
+    """),
+        {"ids": canonical_ids, "refs": list(set(discovery_refs.values()))},
+    ).all()
+    found_ids = {row.id for row in rows}
+    by_ref = {row.provider_podcast_id: row.id for row in rows if row.provider == "podcast_index"}
+    states = podcast_states(db, viewer_id=viewer_id, podcast_ids=list(found_ids))
+    items: list[wire.PodcastActionResultOut] = []
+    for target in targets:
+        if isinstance(target, wire.PodcastCanonicalCommitTarget):
+            podcast_id = target.podcast_id if target.podcast_id in found_ids else None
+        else:
+            if target.target in invalid_handles:
+                items.append(
+                    wire.PodcastActionResultOut(
+                        target=target,
+                        resolution=wire.PodcastActionUnavailableResolutionOut(
+                            reason="InvalidDiscoveryTarget"
+                        ),
+                    )
+                )
+                continue
+            podcast_id = by_ref.get(discovery_refs[target.target])
+        if podcast_id is not None:
+            resolution = wire.PodcastActionCanonicalResolutionOut(
+                podcast_id=podcast_id, subscribed=states[podcast_id].subscribed
+            )
+        elif isinstance(target, wire.PodcastCanonicalCommitTarget):
+            resolution = wire.PodcastActionUnavailableResolutionOut(reason="NotFound")
+        else:
+            resolution = wire.PodcastActionDiscoveryResolutionOut()
+        items.append(wire.PodcastActionResultOut(target=target, resolution=resolution))
+    return wire.PodcastActionFactsOut(items=items)
 
 
 def hydrate_compact_podcast_targets(

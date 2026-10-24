@@ -1,8 +1,8 @@
-"""Readability of a media's text, plus the readiness and author-edit predicates.
+"""readability of a media's text, plus readiness predicates.
 
-The same predicates shape the wire capabilities and re-authorize each reader, highlight
-and author write, so the advertised action and the enforced rule cannot diverge. Recovery
-is read, not decided here: the source and search owners make the offer.
+the same predicates shape wire capabilities and reader and highlight authorization,
+so advertised actions and enforced rules cannot diverge. recovery is read, not
+decided here: the source and search owners make the offer.
 """
 
 from typing import Literal
@@ -29,11 +29,6 @@ _SAME_SOURCE_TERMINAL_ERROR_CODES = frozenset(
         "E_SOURCE_TOO_LARGE",
     }
 )
-
-
-def can_edit_media_authors(*, can_read: bool, is_creator: bool) -> bool:
-    """Readable and created by the viewer, whatever its processing (I4)."""
-    return can_read and is_creator
 
 
 def is_document_status_ready(processing_status: str) -> bool:

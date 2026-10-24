@@ -395,20 +395,12 @@ button.primary:disabled {
 }
 
 @container mediaRow (max-width: 479px) {
-  .mediaControls :global([data-media-action-id]:not([data-media-action-id="Playback"])),
-  .mediaControls :global([data-media-actions]:not(:has([data-media-action-id="Playback"]))) {
+  .mediaControls :global([data-action-control-key]:not([data-action-control-key="Playback"])),
+  .mediaControls :global([data-resource-actions]:not(:has([data-action-control-key="Playback"]))) {
     display: none;
   }
 }
 
-.mediaRow .mediaControls > * {
-  --overflow-menu-inline-size: 32px;
-  --overflow-menu-block-size: 32px;
-}
-
-@media (any-pointer: coarse) {
-  .mediaRow .mediaControls > * {
-    --overflow-menu-inline-size: 44px;
-    --overflow-menu-block-size: 44px;
-  }
+:global([data-mobile="true"]) .mediaRow .mediaControls > * {
+  --control-min-size: 48px;
 }

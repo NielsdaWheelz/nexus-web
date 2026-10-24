@@ -31,7 +31,7 @@ import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { Lectern } from "@/lib/lectern/api";
 import { remoteReady } from "@/lib/native/admission";
-import { OrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
+import { renderOrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
@@ -50,7 +50,6 @@ import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { paneFilterText } from "@/lib/panes/paneFilterText";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -160,7 +159,7 @@ export default function LecternPaneBody() {
   const ordering = source.kind === "live" ? presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
     complete: lectern.status === "ready" }) : undefined;
-  const orderingStatus = ordering === undefined || ordering.state.kind === "Refreshing" ? null : orderStatus(ordering);
+  const orderingStatus = orderStatus(ordering);
   const change = useCallback(
     (changes: ViewChanges) =>
       router.replace(viewHref("/lectern", params, changes), {
@@ -203,12 +202,10 @@ export default function LecternPaneBody() {
               status={{
                 placement: "Inline",
                 id: queryStatusId,
-                visible: paneFilterRowsStatusVisible({
-                  status: filterRows.rowStatus,
-                  filtering: query !== "",
-                }),
+                visible: false,
                 content: (
                   <PaneFilterRowsStatus
+                    announceQueryChanges={lectern.status === "ready" && lectern.error === null}
                     id={queryStatusId}
                     status={filterRows.rowStatus}
                     query={filterRows.query}
@@ -233,7 +230,7 @@ export default function LecternPaneBody() {
 
   return (
     <PaneSurface
-      state={liveShown ? <OrderNotice order={order.state} active={isActive} paneId={runtime?.paneId ?? null} /> : null}
+      state={liveShown ? renderOrderNotice({ order: order.state, active: isActive, paneId: runtime?.paneId ?? null }) : null}
     >
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (

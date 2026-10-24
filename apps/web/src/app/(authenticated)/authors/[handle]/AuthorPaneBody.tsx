@@ -6,7 +6,7 @@
 // loaded prefix; the list footer owns explicit continuation.
 
 import { useCallback, useId, useMemo } from "react";
-import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -61,7 +61,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
-  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -127,7 +126,8 @@ function presentWork(work: ContributorWork): CollectionRowView {
       ...row,
       id: work.href,
       primary: { ...row.primary, href: browsePreviewHref(work.target) },
-      media: {
+      resourceActions: {
+        kind: "Media",
         subject: {
           kind: "External",
           target: work.target,
@@ -257,6 +257,16 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   }, [clearQuery, inputRef, setView]);
   const invalidView =
     works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
+  const visible = matches(text);
+  const emptyTitle = text
+    ? complete ? "no works match this filter." : "no matching work found so far."
+    : complete ? "no works yet." : "no works loaded so far.";
+  const readFeedback = useCollectionReadFeedback({
+    list: works, unit: { singular: "work", plural: "works" },
+    waiting: detail.status === "ready" && !invalidView && works.status === "loading",
+    outcome: visible.length > 0 ? "results updated." : emptyTitle,
+    returnFocus: () => inputRef.current,
+  });
   const canReset = view.length > 0;
   const headerMeta: PaneHeaderMeta = invalidView
     ? { kind: "None" }
@@ -274,11 +284,8 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       status={{
         placement: "Inline",
         id: queryStatusId,
-        visible: paneFilterRowsStatusVisible({
-          status: filterRows.rowStatus,
-          filtering: text !== "",
-        }),
-        content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+        visible: false,
+        content: <PaneFilterRowsStatus announceQueryChanges={works.current && works.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}
       onReset={canReset ? resetView : undefined}
     />,
@@ -337,11 +344,14 @@ function AuthorPane({ handle }: { readonly handle: string }) {
 
   if (invalidView) {
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid works view" }}
         announcement="Assertive"
         actions={[{ label: "Reset view", onClick: resetView }]}
       />
+      </>
     );
   }
   const failure =
@@ -356,6 +366,8 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       if (works.status === "failed") works.retry();
     };
     return (
+      <>
+      {readFeedback.announcement}
       <FeedbackNotice
         content={authorError(failure, "This author couldn’t be loaded")}
         announcement="Assertive"
@@ -365,80 +377,87 @@ function AuthorPane({ handle }: { readonly handle: string }) {
             : [{ label: "retry", onClick: retry, busy: (detail.status === "failed" && detail.retrying) || works.running !== null }]
         }
       />
+      </>
     );
   }
   if (detail.status !== "ready") {
     return (
+      <>
+      {readFeedback.announcement}
       <PaneSurface
         state={
           <PaneLoadingState label="Loading author…" announcement="Polite" />
         }
       />
+      </>
     );
   }
 
   const { other_names: otherNames } = detail.data;
   return (
-    <PaneSurface>
-      <div className={styles.detail}>
-        {otherNames.length > 0 ? (
-          <section className={styles.otherNames}>
-            <h2 className={styles.sectionHeading}>Other names</h2>
-            <p className={styles.otherNamesList}>
-              {otherNames.map((name, index) => (
-                <span key={`${name}-${index}`}>
-                  {index > 0 ? ", " : null}
-                  <span dir="auto">{name}</span>
-                </span>
-              ))}
-            </p>
+    <>
+      {readFeedback.announcement}
+      <PaneSurface>
+        <div className={styles.detail}>
+          {otherNames.length > 0 ? (
+            <section className={styles.otherNames}>
+              <h2 className={styles.sectionHeading}>Other names</h2>
+              <p className={styles.otherNamesList}>
+                {otherNames.map((name, index) => (
+                  <span key={`${name}-${index}`}>
+                    {index > 0 ? ", " : null}
+                    <span dir="auto">{name}</span>
+                  </span>
+                ))}
+              </p>
+            </section>
+          ) : null}
+          <section aria-label="Works">
+            <CollectionView
+              returnScope="Author.Works"
+              rows={visible}
+              status={works.status === "loading" ? "loading" : "ready"}
+              ariaLabel="Works"
+              rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+              collectionBusy={works.running !== null}
+              surface={false}
+              notice={<>
+                {works.status === "ready" &&
+                works.failure !== null &&
+                works.failure.op !== "More" ? (
+                  <FeedbackNotice
+                    content={authorError(works.failure.error, "Works couldn’t be loaded")}
+                    announcement="Polite"
+                    actions={[{ label: "Retry", onClick: works.retry, busy: works.running !== null }]}
+                  />
+                ) : (
+                  <MediaSummaryNotice
+                    error={summaries.error}
+                    retry={summaries.retry}
+                  busy={summaries.retrying}
+                  />
+                )}
+                {text && works.current && !complete && works.failure === null && visible.length > 0
+                  ? <p>filter applies to loaded items.</p> : null}
+              </>}
+              footer={readFeedback.notice}
+              empty={
+                text ? (
+                  <FeedbackNotice
+                    content={{
+                      tone: "Neutral",
+                      title: emptyTitle,
+                    }}
+                    announcement="None"
+                  />
+                ) : (
+                  <p className={styles.empty}>{emptyTitle}</p>
+                )
+              }
+            />
           </section>
-        ) : null}
-        <section aria-label="Works">
-          <CollectionView
-            returnScope="Author.Works"
-            rows={matches(text)}
-            status={works.status === "loading" ? "loading" : "ready"}
-            ariaLabel="Works"
-            rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
-            collectionBusy={works.running !== null}
-            surface={false}
-            notice={
-              works.status === "ready" &&
-              works.failure !== null &&
-              works.failure.op !== "More" ? (
-                <FeedbackNotice
-                  content={authorError(works.failure.error, "Works couldn’t be loaded")}
-                  announcement="Polite"
-                  actions={[{ label: "Retry", onClick: works.retry, busy: works.running !== null }]}
-                />
-              ) : (
-                <MediaSummaryNotice
-                  error={summaries.error}
-                  retry={summaries.retry}
-                busy={summaries.retrying}
-                />
-              )
-            }
-            footer={<CollectionExhaustionNotice list={works} unit={{ singular: "work", plural: "works" }} returnFocus={() => inputRef.current} />}
-            empty={
-              text ? (
-                <FeedbackNotice
-                  content={{
-                    tone: "Neutral",
-                    title: complete
-                      ? "No works match this filter."
-                      : "No matching work found so far.",
-                  }}
-                  announcement="None"
-                />
-              ) : (
-                <p className={styles.empty}>{complete ? "no works yet." : "no works loaded so far."}</p>
-              )
-            }
-          />
-        </section>
-      </div>
-    </PaneSurface>
+        </div>
+      </PaneSurface>
+    </>
   );
 }

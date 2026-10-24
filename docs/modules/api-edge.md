@@ -58,7 +58,11 @@ server components: callFastAPI ────────────────�
   once it held still: a search reads by its settled text and shows results
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
-  way (architecture §8.12), automatically exhausting active collections. strict
+  way (architecture §8.12), exposing only the requested key’s rows and metadata
+  from the first render and automatically exhausting active collections quietly.
+  same-key refresh retains its usable snapshot; a different key exposes loading
+  until its own snapshot exists. `requestedKey` names that requested scope, even
+  before a response; initial-wait feedback uses it to retire abandoned queries. private exact-key visit snapshots remain valid. strict
   refresh supersedes; periodic `revalidate()` waits behind admitted reads and
   coalesces observations. `usePagePrefix` belongs only to explicit authored
   outline branches.
@@ -70,15 +74,18 @@ server components: callFastAPI ────────────────�
   see [installed catalog](offline-catalog.md) and
   [device startup](device-startup.md) for local access and apk-update recovery.
 - `stream.ts`: `openStream({path: "/api/stream/…", after?, decode, isTerminal,
-  onEvent, onError, onComplete?, onReconnect?, signal?, maxReconnects = 8,
+  onEvent, onError, onSuspended, onComplete?, onReconnect?, signal?, maxReconnects = 8,
   maxBackoffMs = 30 s})` returns a stop function. Resume is `?after=<id>` only.
-  A 401 sends the tab to login (`handleUnauthenticatedApiError`), never to
-  `onError`. Every other 4xx but 429, a non-event-stream answer, a malformed or
+  hosted 401 starts sign-in (`handleUnauthenticatedApiError`) before `onError`.
+  every other 4xx but 429, a non-event-stream answer, a malformed or
   oversized (256 K characters) event and a throwing `decode`/`onEvent` are final
-  (`onError` once). Network failures, 5xx and 429 back off from 1 s doubling to
+  (`onError` once). same-system api defects are final before retry classification.
+  modeled network failures, upstream 5xx and 429 back off from 1 s doubling to
   `maxBackoffMs` with jitter and fire `onReconnect`. A clean end after an event
   (the bff's planned cut) resumes after ~250 ms without counting; a clean end
-  without one counts as a failure. A delivered event resets the count.
+  without one counts as a failure. A delivered event resets the count. exhaustion
+  retains the final normalized error, including its code and available request id.
+  installed admission suspends the same owner/cursor without spending its budget.
 - `proxy.ts` (server only): `proxySession(request, path, lane)`,
   `proxyShare`, `proxyExtension`. The session lane refuses a cross-origin
   mutation (403), resolves the session before reading a body (ended → 401 and
@@ -140,10 +147,16 @@ server components: callFastAPI ────────────────�
   writing is an account revision stream: initial/changed `state {revision}`,
   with a fresh committed revision read on each existing 15-second timeout even
   if a postgres notification was lost. the browser probes only watched lanes.
-  the first read happens before any byte; every wake re-reads committed state in a
-  fresh session; a keepalive comment follows 15 s of quiet; an entity gone
+  snapshot setup acquires LISTEN before its initial read and accepts that snapshot
+  before response construction, so refusal is structured json. the first wake
+  consumes that snapshot; later wakes re-read committed state in a fresh session.
+  a keepalive comment follows 15 s of quiet; an entity gone
   mid-stream closes it cleanly. `db/listen.py` holds one autocommit LISTEN
-  connection per stream.
+  connection per stream. setup owns cleanup until response construction; the
+  response's `__call__` finally owns it afterward, including failed header sends.
+  listener close shields its complete idempotent cleanup and releases capacity
+  after connection closure settles. synchronous preflight queries retain their
+  existing cancellation/settlement semantics.
 
 ## wire revision
 

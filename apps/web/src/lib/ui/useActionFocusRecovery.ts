@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 /**
- * A focused shortcut that CSS removes hands focus to its surviving presenter.
+ * A focused control removed from layout hands focus to its surviving presenter.
  * Observe only that control; a real focus transfer relinquishes the capture.
  */
 export function useActionFocusRecovery(
