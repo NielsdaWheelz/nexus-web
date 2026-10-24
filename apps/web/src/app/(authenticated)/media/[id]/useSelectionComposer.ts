@@ -141,6 +141,10 @@ export function useSelectionComposer(input: {
       const source = current.current;
       if (!source) return;
       if (event.type === "pointerdown" && event.target instanceof Element && event.target.closest("[data-passive-tooltip]")) return;
+      // the sheet may focus its panel before this interaction's editor is ready.
+      if (event.type === "focusin" && source.focus && event.target instanceof Element &&
+        event.target.matches('[role="dialog"]') &&
+        event.target.querySelector("[data-selection-composer]")?.getAttribute("data-selection-composer") === source.id) return;
       const inside = event.target instanceof Element && event.target.closest("[data-selection-composer]") !== null;
       if (source.focus || source.ownsFocus !== inside) show({ ...source, focus: false, ownsFocus: inside });
     };

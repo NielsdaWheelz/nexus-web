@@ -360,7 +360,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
       : selected?.snapshot.kind === "Failed" ? "couldn’t load chat" : null;
     return (
-      <div data-selection-composer="true" data-mobile={isMobile} className={styles.selectionComposer}>
+      <div data-selection-composer={opening.id} data-mobile={isMobile} className={styles.selectionComposer}>
         <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
         {unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: sourceChanged
           ? "the source changed. your words are kept; select the passage again."
@@ -453,7 +453,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     {isMobile ? <MobileSheet active={draft !== null && opening !== null}
       ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}
       heightLimit="available" onDismiss={composer.dismiss} focusKey={opening?.id}
-      initialFocus={(panel) => panel} returnFocusTo={() => { const element = returnFocus(); return element ? { element, preventScroll: true } : null; }}>
+      initialFocus={(panel) => opening?.focus ? panel.querySelector<HTMLElement>('[data-selection-composer] [role="textbox"][contenteditable="true"]') ?? panel : panel}
+      returnFocusTo={() => { const element = returnFocus(); return element ? { element, preventScroll: true } : null; }}>
       {renderComposer(true, false)}
     </MobileSheet> : draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
