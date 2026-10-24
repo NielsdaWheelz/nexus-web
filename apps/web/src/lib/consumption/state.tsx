@@ -97,7 +97,7 @@ export interface ConsumptionUndo {
 }
 
 function undoFailure(error: unknown, title: string): FeedbackContent | null {
-  if (error instanceof ProgressPreparationError) return { tone: "Warning", title: `progress couldn’t be saved · ${title}`, message: "this attempt sent no state change. resolve the player or reader save before trying again." };
+  if (error instanceof ProgressPreparationError) return { tone: "Warning", title: `progress isn’t ready for this change · ${title}`, message: "this attempt sent no state change. resolve the player or reader position before trying again." };
   if (!isApiError(error) || isSameSystemApiDefect(error)) return null;
   if (error.code === "E_RESOURCE_CONFLICT") return { tone: "Warning", title: `this item changed; undo is no longer available · ${title}`, requestId: error.requestId };
   if (error.code === "E_LIMIT") return { tone: "Warning", title: `couldn’t undo finish · ${title}`, message: "lectern is full.", requestId: error.requestId };

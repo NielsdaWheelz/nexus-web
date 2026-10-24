@@ -177,7 +177,7 @@ export function createCollectionCommands({ accountId, guard, feedback, fail, sup
       if (!sent) {
         entry.failure = admissionLost
           ? { tone: "Neutral", title: "requires a connection", message: "this attempt sent no state change. review again after reconnecting." }
-          : { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt sent no state change. resolve the player or reader save before reviewing again." };
+          : { tone: "Warning", title: "progress isn’t ready for this change", message: "this attempt sent no state change. resolve the player or reader position before reviewing again." };
       } else if (isRefusal(error)) {
         const title = error.code === "E_RESOURCE_CONFLICT"
           ? entry.kind === "Undo" ? "these items changed; this attempt changed nothing." : "selected items changed; this attempt changed nothing."

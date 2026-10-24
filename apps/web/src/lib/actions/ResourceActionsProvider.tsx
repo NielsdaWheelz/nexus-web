@@ -401,7 +401,7 @@ export default function ResourceActionsProvider({
             return;
           }
           if (error instanceof ProgressPreparationError) {
-            offerFailure({ tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." });
+            offerFailure({ tone: "Warning", title: "progress isn’t ready for this change", message: "this attempt did not send the state change. resolve the player or reader position before trying again." });
             return;
           }
           if (handleUnauthenticatedApiError(error)) return;
