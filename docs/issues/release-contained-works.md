@@ -41,6 +41,10 @@ a separate import issue.
 discovery uses the existing pinned authenticated codex personal host; provision
 it through [the existing runbook](../runbooks/codex-personal-agent-host.md). a newer
 shared daemon does not satisfy a different pinned host contract.
+merge [provider-runtime #48](https://github.com/NielsdaWheelz/llm-calling/pull/48)
+and its matching [kernel pin #20](https://github.com/NielsdaWheelz/llm-agent-kernel/pull/20)
+before this release. these client dependencies remove the redundant native event-count
+limit while retaining the pending-payload bound; the host daemon does not change.
 
 live repair uses the normal creator commands or exact, backed-up owner repair;
 never rewrite shared source offsets or introduce production test seams. rollback

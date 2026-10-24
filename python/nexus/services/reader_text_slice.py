@@ -135,6 +135,8 @@ def clip_reader_fragment(
     if start_cut not in edges or end_cut not in edges:
         raise ValueError("Slice cut has no retained element")
     start, end = edges[start_cut], edges[end_cut]
+    if start == end and start_offset == end_offset:
+        return ReaderTextSlice("", "", start_offset)
     if start >= end:
         raise ValueError("Slice cuts are not in document order")
 
