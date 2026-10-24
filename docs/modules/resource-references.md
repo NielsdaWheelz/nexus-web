@@ -91,6 +91,8 @@ compacts earlier. each visible name retains at least an ellipsis-sized slot;
 year/count keep their own slots. hidden names leave the tab order; focused hidden
 links/shortcuts return to that row's surviving more/title. no surname inference or
 author-only control.
+source/evidence links own their ellipsizing boxes; bounded metadata/excerpt links
+draw focus rings inside those boxes so line clipping never hides the indicator.
 
 search uses one literal evidence line: a matching passage wins over an item's own
 match, and its link retains that passage's exact activation. prose titles identify

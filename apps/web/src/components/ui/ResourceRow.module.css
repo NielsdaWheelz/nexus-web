@@ -92,6 +92,19 @@ a.primary:hover { text-decoration: underline; }
   line-height: var(--leading-normal);
 }
 
+/* single-line clips contain the link's own focus indicator. */
+.metadata a:focus-visible,
+.excerpt a:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.excerpt > a:only-child {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: inherit;
+}
+
 .controls {
   position: relative;
   display: inline-flex;
