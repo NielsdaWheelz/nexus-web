@@ -45,6 +45,8 @@ merge [provider-runtime #48](https://github.com/NielsdaWheelz/llm-calling/pull/4
 and its matching [kernel pin #20](https://github.com/NielsdaWheelz/llm-agent-kernel/pull/20)
 before this release. these client dependencies remove the redundant native event-count
 limit while retaining the pending-payload bound; the host daemon does not change.
+their required audits are blocked by [filelock](upstream-filelock-audit.md) and
+[opentelemetry](upstream-opentelemetry-audit.md) dependencies; resolve those before merging.
 
 live repair uses the normal creator commands or exact, backed-up owner repair;
 never rewrite shared source offsets or introduce production test seams. rollback

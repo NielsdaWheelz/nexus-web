@@ -1003,9 +1003,9 @@ def list_parts(
             MediaPartCandidate.source_media_id == source_media_id,
             MediaPartCandidate.source_generation == proof.navigation.generation,
             text(
-                "(finding->>'verdict') IS DISTINCT FROM 'not_independent' OR part_id IS NOT NULL OR user_decision IS NOT NULL"
+                "((finding->>'verdict') IS DISTINCT FROM 'not_independent' OR part_id IS NOT NULL OR user_decision IS NOT NULL)"
             ),
-            text(":creator OR part_id IN (" + visible_media_ids_cte_sql() + ")"),
+            text("(:creator OR part_id IN (" + visible_media_ids_cte_sql() + "))"),
             MediaPartCandidate.id > after if after is not None else text("TRUE"),
         )
         .order_by(MediaPartCandidate.id)
