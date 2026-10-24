@@ -8,8 +8,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-feedback activity against `b83aae99f`: +689 authored runtime lines (1,298 added,
-609 deleted), all in web source. passive receipts and one shared activity list
+feedback activity against `b83aae99f`: +695 authored runtime lines (1,323 added,
+628 deleted), all in web source. passive receipts and one shared activity list
 replace the in-flow footer, feedback chrome measurements, competing suppression
 rules and orphaned generic action failures. consumption owners expose named exact
 inverses and recheck send admission after progress preparation; receipt expiry

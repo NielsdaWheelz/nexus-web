@@ -134,7 +134,9 @@ destination). the last modal's restore runs again after its history traversal
 if focus fell to the body. an inert-uncover retry retires when another control
 claims focus, even if that control later detaches. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
-opener. nexus supplies its search input as invocation context. escape returns
+opener. a menu that skips returning focus passes its stable trigger through
+`requestNexusOpen` metadata, including queued and guarded requests.
+nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
 and clicked-highlight composition use `FloatingActionSurface` on desktop;
 mobile composition explicitly opens the shared body in `MobileSheet`.
