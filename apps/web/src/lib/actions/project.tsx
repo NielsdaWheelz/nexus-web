@@ -30,11 +30,6 @@ import {
 } from "@/lib/chat/conversationIndex";
 import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
-import {
-  artifactPaneHref,
-  createDossierBuild,
-  learnDossier,
-} from "@/lib/dossiers/dossierApi";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
 import { deleteLibrary, leaveLibrary } from "@/lib/libraries/api";
@@ -220,7 +215,7 @@ function metadataSubject(parsed: ResourceRef): MetadataSubject {
     case "library": return { kind: "Library", libraryId: parsed.id };
     case "evidence_span": case "content_chunk": case "highlight": case "page": case "note_block":
     case "fragment": case "conversation": case "message": case "oracle_reading": case "oracle_passage_anchor":
-    case "artifact": case "artifact_revision": case "external_snapshot": case "contributor":
+    case "external_snapshot": case "contributor":
     case "reader_apparatus_item": case "passage_anchor": throw new Error(`metadata has no subject for ${parsed.scheme}`);
     default: return assertNever(parsed.scheme);
   }
@@ -667,28 +662,6 @@ export function projectResourceActions(
         } });
       });
     }, "/notes"),
-    LearnHighlight: [
-      ({ openIntent }) =>
-        openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, create: async () => {
-          const learned = await learnDossier(ref, crypto.randomUUID());
-          return {
-            target: { href: artifactPaneHref(learned.artifact_ref), labelHint: "Dossier" },
-            title: {
-              BuildAccepted: "dossier requested",
-              Opened: "dossier available",
-            }[learned.kind],
-            openLabel: "open dossier",
-          };
-        } }),
-    ],
-    RegenerateArtifact: [
-      () =>
-        createDossierBuild(
-          { kind: "Artifact", artifactRef: ref },
-          null,
-          crypto.randomUUID(),
-        ),
-    ],
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
     EditNoteBody: entry({ kind: "EditNoteBody", noteBlockId: id }),
     EditHighlight: entry({ kind: "EditHighlight", highlightId: id }),

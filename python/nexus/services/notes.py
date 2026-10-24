@@ -252,7 +252,6 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> WritingAck:
 
 def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     """Lock the root before its canonical teardown. Flush only; its notes stay."""
-    from nexus.services.dossier import engine as dossier_engine
 
     page = db.scalar(
         select(Page)
@@ -267,7 +266,6 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
     if page is None:
         return
     ref = page_ref(page_id)
-    dossier_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(delete(DailyPageBinding).where(DailyPageBinding.page_id == page_id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)

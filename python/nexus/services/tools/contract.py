@@ -210,9 +210,7 @@ class ResourceReadInput(_Closed):
 
 class ResourceReadSuccess(_Closed):
     evidence: NexusEvidence
-    kind: Literal[
-        "quote", "section", "page_range", "full", "artifact", "oracle_reading", "conversation"
-    ]
+    kind: Literal["quote", "section", "page_range", "full", "oracle_reading", "conversation"]
     text: Annotated[str, Field(max_length=READ_DOCUMENT_MAX_CHARS)]
     uri: Annotated[str, Field(max_length=_URI)]
     next_cursor: Annotated[str | None, Field(max_length=16_384)]

@@ -633,7 +633,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   useMobileChromeHold(isMobile && paneActive && paneVisible && annotationNotice !== null);
   useReaderChrome({
     media,
-    failed: record.status === "failed",
+    failed: record.status === "failed" || (record.status === "ready" && (record.error?.status === 403 || record.error?.status === 404)),
     reader,
     find,
     readable,

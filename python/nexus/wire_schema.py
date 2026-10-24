@@ -32,7 +32,6 @@ from nexus.schemas.conversation import (
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
-from nexus.schemas.dossier import DossierBuildOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.suggestions import SuggestionObservationOut
@@ -53,7 +52,6 @@ SSE_PAYLOADS = (
     ChatRunDoneEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
-    DossierBuildOut,
     SuggestionObservationOut,
 )
 

@@ -1,6 +1,5 @@
 import {
   ArrowUpRight,
-  BookOpenText,
   Captions,
   CircleCheck,
   CircleX,
@@ -166,11 +165,6 @@ export const ACTION_CATALOG = {
       Present: { label: "Edit note…", icon: NotebookPen },
     },
   },
-  LearnHighlight: {
-    label: "Learn from this",
-    icon: BookOpenText,
-    group: "CreateTransform",
-  },
   EditHighlightBounds: {
     label: "Edit bounds",
     icon: SquareDashedText,
@@ -195,11 +189,6 @@ export const ACTION_CATALOG = {
   EditNoteBody: {
     label: "Edit note",
     icon: FilePenLine,
-    group: "CreateTransform",
-  },
-  RegenerateArtifact: {
-    label: "Regenerate",
-    icon: Sparkles,
     group: "CreateTransform",
   },
   Share: { label: "Share…", icon: Share2, group: "ShareExport" },

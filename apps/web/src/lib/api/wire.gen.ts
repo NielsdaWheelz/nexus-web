@@ -4,108 +4,6 @@
 export const WIRE_REVISION = 15;
 
 export interface paths {
-    "/artifact-builds/{artifact_build_id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Cancel Dossier Build */
-        post: operations["cancel_dossier_build_artifact_builds__artifact_build_id__cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/dossiers/learn": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Learn Dossier */
-        post: operations["learn_dossier_artifacts_dossiers_learn_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/dossiers/{subject_scheme}/{subject_handle}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Dossier */
-        get: operations["get_dossier_artifacts_dossiers__subject_scheme___subject_handle__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/dossiers/{subject_scheme}/{subject_handle}/builds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Dossier Build */
-        post: operations["create_dossier_build_artifacts_dossiers__subject_scheme___subject_handle__builds_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/{artifact_ref}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Dossier By Ref */
-        get: operations["get_dossier_by_ref_artifacts__artifact_ref__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/{artifact_ref}/builds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Regenerate Dossier */
-        post: operations["regenerate_dossier_artifacts__artifact_ref__builds_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/assistant-writes": {
         parameters: {
             query?: never;
@@ -3041,26 +2939,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/stream/artifact-builds/{artifact_build_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Artifact Build Events
-         * @description The build on each change; ``done`` once it is not Active.
-         */
-        get: operations["stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/stream/chat-runs/{run_id}/events": {
         parameters: {
             query?: never;
@@ -4268,9 +4146,9 @@ export interface components {
             /** Origins */
             origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant")[] | null;
             /** Source Schemes */
-            source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
+            source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Target Schemes */
-            target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
+            target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
         };
         /**
          * ConnectionOut
@@ -4798,11 +4676,6 @@ export interface components {
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
         };
-        /** Data[Annotated[Union[LearnDossierOpenedOut, LearnDossierBuildAcceptedOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Data */
-            data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
-        };
         /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderTranscriptDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTextDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -4949,14 +4822,6 @@ export interface components {
         /** Data[DailyPageOut] */
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
-        };
-        /** Data[DossierBuildCreatedOut] */
-        Data_DossierBuildCreatedOut_: {
-            data: components["schemas"]["DossierBuildCreatedOut"];
-        };
-        /** Data[DossierHeadOut] */
-        Data_DossierHeadOut_: {
-            data: components["schemas"]["DossierHeadOut"];
         };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
@@ -5333,7 +5198,7 @@ export interface components {
             label: string;
         };
         /** @enum {string} */
-        DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "dossiers" | "saved_passages";
+        DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "saved_passages";
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
             /**
@@ -5487,94 +5352,6 @@ export interface components {
             status: "present" | "malformed" | "absent";
             /** Value */
             value: string | null;
-        };
-        /** DossierBuildCreatedOut */
-        DossierBuildCreatedOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /** Build Handle */
-            build_handle: string;
-            /** Created */
-            created: boolean;
-        };
-        /**
-         * DossierBuildOut
-         * @description One build; also the SSE snapshot. ``phase`` is set only while Active.
-         */
-        DossierBuildOut: {
-            failure_code: components["schemas"]["DossierFailureCode"] | null;
-            /** Handle */
-            handle: string;
-            /** Instruction */
-            instruction: string | null;
-            phase: components["schemas"]["DurableExecutionPhase"] | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "Active" | "Succeeded" | "Failed" | "Cancelled";
-        };
-        /** DossierCoverageOut */
-        DossierCoverageOut: {
-            /** Included */
-            included: number;
-            /** Omitted */
-            omitted: number;
-            /**
-             * Unit
-             * @enum {string}
-             */
-            unit: "claim" | "media" | "episode" | "work" | "source";
-        };
-        /**
-         * DossierFailureCode
-         * @enum {string}
-         */
-        DossierFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
-        /** DossierGenerateRequest */
-        DossierGenerateRequest: {
-            /** Instruction */
-            instruction: string | null;
-        };
-        /**
-         * DossierHeadOut
-         * @description ``artifact_ref`` null: never generated (a head read never inserts a head).
-         */
-        DossierHeadOut: {
-            active_build: components["schemas"]["DossierBuildOut"] | null;
-            /** Artifact Ref */
-            artifact_ref: string | null;
-            last_failure: components["schemas"]["DossierBuildOut"] | null;
-            media_abstract: components["schemas"]["MediaAbstractOut"] | null;
-            revision: components["schemas"]["DossierRevisionOut"] | null;
-            subject_activation: components["schemas"]["ResourceActivationOut"] | null;
-            /** Title */
-            title: string;
-        };
-        /** DossierRevisionOut */
-        DossierRevisionOut: {
-            /** By Viewer */
-            by_viewer: boolean;
-            /** Citations */
-            citations: components["schemas"]["CitationOut"][];
-            /** Content Html */
-            content_html: string;
-            coverage: components["schemas"]["DossierCoverageOut"];
-            /**
-             * Generated At
-             * Format: date-time
-             */
-            generated_at: string;
-            /** Instruction */
-            instruction: string | null;
-            /** Model */
-            model: string | null;
-            /** Revision Ref */
-            revision_ref: string;
-            /** Stale */
-            stale: boolean;
-            /** Total Tokens */
-            total_tokens: number | null;
         };
         /**
          * DownloadAction
@@ -6556,33 +6333,6 @@ export interface components {
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
         };
-        /** LearnDossierBuildAcceptedOut */
-        LearnDossierBuildAcceptedOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /** Build Handle */
-            build_handle: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "BuildAccepted";
-        };
-        /** LearnDossierOpenedOut */
-        LearnDossierOpenedOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Opened";
-        };
-        /** LearnDossierRequest */
-        LearnDossierRequest: {
-            /** Highlight Ref */
-            highlight_ref: string;
-        };
         /** LecternItemOut */
         LecternItemOut: {
             /** Activation */
@@ -7237,16 +6987,6 @@ export interface components {
             target_kind: "library_entry" | "note_block" | "highlight" | "resource_edge" | "queue_item";
             /** Tool Position */
             tool_position: number;
-        };
-        /** MediaAbstractOut */
-        MediaAbstractOut: {
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "Building" | "Ready" | "Stale" | "Failed";
-            /** Summary Md */
-            summary_md: string | null;
         };
         /** MediaActivityBreakdownOut */
         MediaActivityBreakdownOut: {
@@ -8127,7 +7867,7 @@ export interface components {
         };
         /**
          * NoteContentOut
-         * @description ``places`` counts cross-owner retaining graph facts and saved dossier heads.
+         * @description ``places`` counts cross-owner retaining graph facts.
          */
         NoteContentOut: {
             /** Body Pm Json */
@@ -10972,7 +10712,7 @@ export interface components {
             source: components["schemas"]["SourceAttributionOut"] | null;
         };
         /** @enum {string} */
-        ResourceScheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
+        ResourceScheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
         /** ResourceShareSnapshotOut */
         ResourceShareSnapshotOut: {
             /** Authenticated Href */
@@ -11426,7 +11166,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
+            kind: "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -12836,7 +12576,7 @@ export interface components {
              * Active Surface Id
              * @enum {string}
              */
-            active_surface_id: "resource-contents" | "resource-members" | "resource-connections" | "resource-forks" | "resource-dossier" | "import-detail";
+            active_surface_id: "resource-contents" | "resource-members" | "resource-connections" | "resource-forks" | "import-detail";
             /**
              * Group Id
              * @enum {string}
@@ -13171,208 +12911,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    cancel_dossier_build_artifact_builds__artifact_build_id__cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_build_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    learn_dossier_artifacts_dossiers_learn_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LearnDossierRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_dossier_artifacts_dossiers__subject_scheme___subject_handle__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                subject_scheme: string;
-                subject_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierHeadOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_dossier_build_artifacts_dossiers__subject_scheme___subject_handle__builds_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                subject_scheme: string;
-                subject_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DossierGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierBuildCreatedOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_dossier_by_ref_artifacts__artifact_ref__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierHeadOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    regenerate_dossier_artifacts__artifact_ref__builds_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                artifact_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DossierGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierBuildCreatedOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_assistant_writes_assistant_writes_get: {
         parameters: {
             query?: {
@@ -19117,37 +18655,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchPreviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_build_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

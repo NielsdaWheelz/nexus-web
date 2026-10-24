@@ -26,7 +26,7 @@ ScopeKind = Literal["all", "media", "library", "conversation"]
 
 SEARCH_KINDS: tuple[SearchKind, ...] = get_args(SearchKind)
 SEARCH_FORMATS: tuple[MediaFormat, ...] = get_args(MediaFormat)
-DiscoveryKind = Literal[SearchKind, "libraries", "readings", "dossiers", "saved_passages"]
+DiscoveryKind = Literal[SearchKind, "libraries", "readings", "saved_passages"]
 DISCOVERY_KINDS: tuple[DiscoveryKind, ...] = get_args(DiscoveryKind)
 DISCOVERY_FAMILIES: dict[DiscoveryKind, tuple[str, ...]] = {
     "documents": ("media", "podcast", "content_chunk", "fragment", "reader_apparatus_item"),
@@ -37,7 +37,6 @@ DISCOVERY_FAMILIES: dict[DiscoveryKind, tuple[str, ...]] = {
     "web": ("web_result",),
     "libraries": ("library",),
     "readings": ("oracle_reading",),
-    "dossiers": ("dossier",),
     "saved_passages": ("passage_anchor",),
 }
 
@@ -54,7 +53,7 @@ KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
     ),
     "notes": ("page", "note_block"),
     "highlights": ("highlight",),
-    "conversations": ("conversation", "message", "artifact"),
+    "conversations": ("conversation", "message"),
     "people": ("contributor",),
     "web": ("web_result",),
 }

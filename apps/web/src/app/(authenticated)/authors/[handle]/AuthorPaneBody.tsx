@@ -47,7 +47,7 @@ import {
   contributorRoleLabel,
   selectMediaAuthors,
 } from "@/lib/contributors/credits";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -316,7 +316,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   );
   useResourceInspector({
     scheme: "contributor",
-    handle: detail.status === "ready" ? detail.data.handle : null,
+    handle: detail.status === "ready" && detail.error?.status !== 403 && detail.error?.status !== 404 ? detail.data.handle : null,
     bodies: { linkedItems },
   });
   const { refetch: refetchDetail } = detail;

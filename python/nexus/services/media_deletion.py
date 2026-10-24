@@ -168,7 +168,6 @@ def remove_podcast_workspace_access_locked(
     viewer markers hide their paths until an explicit fresh acquisition clears them.
     """
     from nexus.services.consumption import lectern
-    from nexus.services.dossier import engine as dossier
 
     projections = resource_grants.annotation_visibility(
         db, user_ids={viewer_id}, media_ids=set(media_ids)
@@ -181,7 +180,6 @@ def remove_podcast_workspace_access_locked(
         )
         lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
     resource_grants.invalidate_annotation_visibility(db, projections)
-    dossier.on_visibility_lost(db, user_id=viewer_id)
 
 
 def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -197,7 +195,6 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         reconcile_document_embed_edges_for_viewer,
         reconcile_document_embed_parent_edges_for_viewer,
     )
-    from nexus.services.dossier import engine as dossier_engine
 
     with transaction(db):
         # The lectern's lock order, as teardown takes it: the viewer before the media.
@@ -294,7 +291,6 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
             db, viewer_id=viewer_id, target_media_id=media_id
         )
         reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
-        dossier_engine.on_visibility_lost(db, user_id=viewer_id)
         record_input_change(db)
 
 
@@ -345,13 +341,11 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     hooks before the rows they own, the content index before the media (claims cite its
     spans), highlight children before their roots. Returns the objects it leaves unowned."""
     from nexus.services import media_upload_sessions
-    from nexus.services.dossier import engine as dossier_engine
     from nexus.services.reader_publication import delete_reader_publication
 
     paths = _storage_paths(db, media_id)
     _run(db, "UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m", m=media_id)
     metadata_operations.delete_media_reviews(db, media_id=media_id)
-    dossier_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
     _run(db, "DELETE FROM document_embeds WHERE media_id = :m", m=media_id)
     _run(db, "DELETE FROM document_embed_artifact_states WHERE media_id = :m", m=media_id)

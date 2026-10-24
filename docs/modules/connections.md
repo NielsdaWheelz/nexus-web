@@ -25,8 +25,8 @@ retirement and account teardown stop remaining browser work. retries use the
 same ids. uploaded media and links already admitted to the shared write queue
 remain server/tab-owned. the common work guard protects actual task loss.
 
-the librarian is the presentation role for discretionary connections and dossier
-preparation, never a stored actor or command authority. routine linked-by prose
+the librarian is the presentation role for discretionary connections,
+never a stored actor or command authority. routine linked-by prose
 is omitted; relationship details retain useful provenance. shared row metadata
 attributes the rationale, never the quoted source passage. rationales retain
 inline machine text. original
@@ -121,10 +121,10 @@ completed branches through bounded reads, without traversing its attachments.
 
 `resource_items/capabilities.py` gives each scheme one symmetric `link_mode`:
 `direct` (media, library, highlight, page, note_block, conversation, message,
-oracle_reading, artifact, contributor, podcast, passage_anchor),
+oracle_reading, contributor, podcast, passage_anchor),
 `materialize_passage` (content_chunk, evidence_span, fragment,
 oracle_passage_anchor, reader_apparatus_item: confirmation creates a durable
-`passage_anchors` row) or `none` (artifact_revision, external_snapshot).
+`passage_anchors` row) or `none` (external_snapshot).
 relationship ids are never targets. a link grants no ownership or edit right.
 `search/pickers.py` alone owns target admission, visibility,
 exclusion, dedupe and cursors (one bounded pass, see [search](search.md)); a

@@ -452,12 +452,8 @@ def _read(
         return "quote", loaded.quote.exact, citation, None
     if ref.scheme == "passage_anchor":
         return "quote", loaded.body or "", citation, None
-    kind = {
-        "artifact_revision": "artifact",
-        "artifact": "artifact",
-        "oracle_reading": "oracle_reading",
-    }
-    return kind.get(ref.scheme, "section"), loaded.body or "", citation, None
+    kind = "oracle_reading" if ref.scheme == "oracle_reading" else "section"
+    return kind, loaded.body or "", citation, None
 
 
 def inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:

@@ -59,8 +59,8 @@ def query_connections(
             if ref.scheme in ("media", "note_block"):
                 owner_ids.setdefault(ref.scheme, []).append(ref.id)
                 continue
-            # Page graph closure and an artifact's current revision have their
-            # own expansion semantics; neither is an endpoint-to-work mapping.
+            # Page graph closure has its own expansion semantics, distinct
+            # from an endpoint-to-work mapping.
             for child in expand_owned_child_refs(db, viewer_id=viewer_id, ref=ref):
                 refs.setdefault(child.uri, child)
     ids_by_scheme: dict[str, list[UUID]] = {}

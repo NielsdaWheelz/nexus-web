@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { BookOpenText, Copy, Save, Share2 } from "lucide-react";
+import { Copy, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
@@ -29,17 +29,16 @@ import styles from "./media.module.css";
 const COMPOSER_ACTIONS = new Set(["Chat", "HighlightNote", "EditHighlight"]);
 
 /** One local projection preserves command state, native navigation and unavailable help. */
-function SelectionAction({ action, blockedReason = null, help }: {
+function SelectionAction({ action, blockedReason = null }: {
   readonly action: Exclude<ActionDescriptor, { kind: "custom" }>;
   readonly blockedReason?: string | null;
-  readonly help?: string;
 }) {
   const reasonId = useId();
   const runtime = usePaneRuntime();
   if (!action.icon) throw new Error(`Selection action ${action.id} has no icon`);
   const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
   const reason = blockedReason ?? (action.disabled ? action.disabledReason ?? "this action is unavailable." : null);
-  const description = help ?? control.menuLabel;
+  const description = control.menuLabel;
   // A blocked control stops activation before this runs.
   const activate = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     if (action.kind === "link") {
@@ -89,8 +88,7 @@ function HighlightActions({ id, blockedReason }: { readonly id: string; readonly
   return <>
     {state.options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
       if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {}, presentation: "bar" })}</div>;
-      return <SelectionAction key={action.id} action={action} blockedReason={blockedReason}
-        help={action.id === "LearnHighlight" ? "create a dossier from this passage" : undefined} />;
+      return <SelectionAction key={action.id} action={action} blockedReason={blockedReason} />;
     })}
   </>;
 }
@@ -170,8 +168,6 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
                 icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />
               {draft.highlightId ? <HighlightActions id={draft.highlightId} blockedReason={blockedReason} /> : <>
-                <SelectionAction blockedReason={blockedReason} help="create a dossier from this passage"
-                  action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => verbs.learn(openIntent) }} />
                 <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
                   onSelect: ({ triggerEl }) => verbs.share(triggerEl) }} />
               </>}

@@ -465,8 +465,6 @@ the dom is never rewritten (`text/paint.ts`).
   re-sorts it with fresh `Highlight` objects): webkit 26 crashes painting a
   highlight registered after one of higher priority, and empties a `Highlight`
   that leaves the registry.
-- **shadow roots.** a surface inside a shadow root (the dossier) needs the rules in
-  its adopted sheet; `components/dossier/dossierSheet.ts` carries the find rules.
 - **focus mode** (`reader-focus`): paragraph dims everything near but the block at
   the reading line; sentence dims all but the `Intl.Segmenter` sentence there.
 - selection offsets come from the untouched dom (`resolveDomRangeOffsets`).

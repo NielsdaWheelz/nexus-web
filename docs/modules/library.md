@@ -86,7 +86,7 @@ owns account-scoped per-library queues, frozen commands and unknown recovery.
 only acknowledged local predecessors may supply dependent revisions. external
 changes require a new choice. closing presentation preserves accepted work.
 
-canonical media/show relations feed search scopes, atlas, dossiers and suggestions.
+canonical media/show relations feed search scopes, atlas and suggestions.
 `library_listing` owns media lenses and paging. `library_members` owns invitations,
 leaving/transfer; passive membership changes acquire nothing. resource grants,
 consumption and suggestions retain their own owners.

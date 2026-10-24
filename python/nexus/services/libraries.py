@@ -288,7 +288,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     preventing an old create-and-file command from recreating the deleted id.
     """
     from nexus.services import library_entries, media_upload_sessions, users
-    from nexus.services.dossier import engine as dossier
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
@@ -338,22 +337,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             held = library_entries.media_ids_in_library(db, library_id)
             if not set(held) <= set(media_ids):
                 raise TransactionRestart("library media set grew")
-            members = list(
-                db.scalars(
-                    text("""
-                        SELECT user_id FROM memberships WHERE library_id = :id
-                        ORDER BY user_id FOR UPDATE
-                    """),
-                    {"id": library_id},
-                )
-            )
-            # The whole dossier head union, once, before any cleanup takes a head lock.
-            dossier.lock_heads(
-                db,
-                subjects=[ref, *(ResourceRef(scheme="media", id=m) for m in held)],
-                user_ids=members,
-            )
-            dossier.on_subject_deleted(db, ref)
             delete_edges_for_deleted_resource(db, ref=ref)
             media_upload_sessions.delete_library_destination_support_in_current_transaction(
                 db, library_id=library_id
@@ -378,8 +361,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             library_entries.delete_library_entries(db, library_id)
             delete_suggestion_feeds(db, library_id=library_id)
             db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
-            for user_id in members:
-                dossier.on_visibility_lost(db, user_id=user_id)
             record_input_change(db)
 
     retry_read_committed(db, "delete_library", attempt, retries=5)

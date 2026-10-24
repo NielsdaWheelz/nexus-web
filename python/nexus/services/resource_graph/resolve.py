@@ -90,8 +90,6 @@ def load_resource_batch(
             found = _library(db, ids, viewer_id)
         elif scheme == "highlight":
             found = _highlight(db, ids, viewer_id)
-        elif scheme == "artifact" or scheme == "artifact_revision":
-            found = _dossiers(db, scheme, ids, viewer_id)
         else:
             sql, build = _LOADERS[scheme]
             rows = db.execute(text(sql), {"ids": ids, "viewer_id": viewer_id})
@@ -232,59 +230,6 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
                 quote.exact,
                 fetch_hint=f'nexus__resource__read("{uri}")',
                 quote=quote,
-            )
-        )
-    return out
-
-
-def _dossiers(
-    db: Session, scheme: ResourceScheme, ids: list[UUID], viewer_id: UUID
-) -> list[ResolvedResource]:
-    """An artifact and an artifact revision both read their head row; the subject title
-    covers every persisted subject scheme, ``idea`` included."""
-    key = "id" if scheme == "artifact" else "revision_id"
-    rows = db.execute(
-        text(f"""
-        SELECT a.{key} AS id, a.subject_scheme, a.subject_id, a.content_text,
-            COALESCE(
-                m.title, c.title, CASE WHEN l.is_default THEN 'All' ELSE l.name END,
-                p.title, co.display_name, pg.title,
-                CASE WHEN nb.id IS NOT NULL THEN 'Note' END, idea.display_title
-            ) AS subject_title
-        FROM artifacts a
-        LEFT JOIN media m ON a.subject_scheme = 'media' AND m.id = a.subject_id
-        LEFT JOIN conversations c ON a.subject_scheme = 'conversation' AND c.id = a.subject_id
-        LEFT JOIN libraries l ON a.subject_scheme = 'library' AND l.id = a.subject_id
-        LEFT JOIN podcasts p ON a.subject_scheme = 'podcast' AND p.id = a.subject_id
-        LEFT JOIN contributors co ON a.subject_scheme = 'contributor' AND co.id = a.subject_id
-        LEFT JOIN pages pg ON a.subject_scheme = 'page' AND pg.id = a.subject_id
-        LEFT JOIN note_blocks nb ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
-        LEFT JOIN artifact_idea_subjects idea
-            ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
-        WHERE a.{key} = ANY(:ids)
-        """),
-        {"ids": ids, "viewer_id": viewer_id},
-    ).all()
-    out = []
-    for row in rows:
-        uri = f"{scheme}:{row.id}"
-        subject = str(row.subject_title or "Dossier")
-        body = row.content_text
-        search = (
-            f'; nexus__search(scopes=["library:{row.subject_id}"], query=...) to search the library'
-            if row.subject_scheme == "library"
-            else ""
-        )
-        label = "Dossier" if scheme == "artifact" else "Dossier revision"
-        out.append(
-            ResolvedResource(
-                uri,
-                f"{label} — {subject}",
-                _first_line(body or "") or f"Dossier for {subject}",
-                inline_body=body if body and len(body) < INLINE_THRESHOLD_CHARS else None,
-                fetch_hint=f'nexus__resource__read("{uri}") for the full synthesis{search}',
-                body=body,
-                title=subject,
             )
         )
     return out

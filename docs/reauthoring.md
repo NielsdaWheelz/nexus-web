@@ -101,15 +101,15 @@ public/pdf warnings and full-state navigation snapshots are deleted. the touched
 rows record these deltas; historical counts and aggregate bases remain unchanged.
 docs, generated files and temporary qualification cases are excluded.
 
-resource menu parity against `24332eb20`: +1,160 authored runtime lines
+resource menu parity against `27f8bed6f`: +1,160 authored runtime lines
 (1,840 added, 680 deleted, rename-aware). metadata and finite collection state,
 exact undo and lectern actions extend the existing resource projection and account
 owners. podcast-only consumption routes/types, pane-owned state preparation,
 add-only destination picking and duplicate preview links/body controls are deleted.
-main's inline action contracts, offline catalog, author-editing removal and shared
-index layout remain. the touched rows identify this feature delta; historical area
-counts and aggregate bases retain their stated revisions. generated wire, docs and
-temporary qualification cases are excluded.
+main's inline action contracts, offline catalog, author-editing and dossier removal,
+and shared index layout remain. the touched rows identify this feature delta;
+historical area counts and aggregate bases retain their stated revisions. generated
+wire, docs and temporary qualification cases are excluded.
 
 authored runtime is every `python/nexus/**/*.py`, `apps/{api,worker,codex_agent}/**/*.py`, `node/ingest/**/*.mjs`, `apps/android/app/src/main/**/*.{kt,xml}` and `apps/web/src/**/*.{ts,tsx,css,html,svg}` file except five generated ones (web `lib/api/wire.gen.ts`, `lib/resources/resourceCapabilities.ts`, `lib/chat/toolContractProjection.ts`, `lib/brand.ts`, `app/brand.css`), in raw physical lines (`str.splitlines()`), unformatted. migrations, tests, scripts, deploy, docs and generated files are outside it. ordered path rules put each file in exactly one area (first match wins; every file matches).
 
@@ -281,7 +281,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | reader python: read model | 3,412 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 · #670 +34 · reader connections +24 · ingest follow-ups -3 | reader python read (13b, deferred) |
 | consumption history and stats | 3,183 | reauthored #417 #595 | x threads +1 · shift-open -11 · collection loading -4 · podcast collection +7 · durable writing +0 · native control cutover | keep |
 | browse | 2,403 | reauthored #543 #546 | #578 -100 · shift-open +63 · resource insertion +5 · #702 +1 · unsaved work +27 · collection loading -244 · media controls -75 · libraries retention +28 · dropdown primitives +1 · native control cutover · podcast libraries -463 · compact actions -1 · bounded indexes +3 · resource menu parity | keep |
-| dossiers | 3,178 | reauthored #514 | 4 more -61 · shift-open -8 · resource insertion +5 · empty-resource lifecycle +33 · unsaved work +50 · podcast details -2 · libraries retention +55 · native control cutover | keep |
+| dossiers | 0 | removed | articles, instructions, builds, ideas, ui, routes, resource identities and owned storage deleted; shared inspector and media intelligence retained | deleted |
 | sharing: members, invitations, grants | 3,121 | reauthored #409 #591 | x threads +13 · shift-open +1 · #700 -12 · python auth -12 · db substrate -1 · collection loading -3 · durable writing +89 · dropdown primitives -67 · native control cutover | keep |
 | one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
 | firefox extension | 3,139 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 · libraries retention +182 · dropdown primitives +5 · native control cutover | keep |

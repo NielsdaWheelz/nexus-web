@@ -229,13 +229,11 @@ SimpleActionKind = Literal[
     "RegenerateMessage",
     "DeleteMessage",
     "EditHighlight",
-    "LearnHighlight",
     "EditHighlightBounds",
     "DeleteHighlight",
     "EditPageTitle",
     "DeletePage",
     "EditNoteBody",
-    "RegenerateArtifact",
 ]
 
 

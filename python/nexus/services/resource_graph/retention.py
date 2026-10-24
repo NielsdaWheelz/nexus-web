@@ -1,9 +1,9 @@
 """Page/note retention and its transaction-held writer pins.
 
 A cross-owner graph fact retains every live or captured page/note owner, independent
-of origin and viewer. Saved dossier heads retain their subject. Derived rows alone
-retain nothing. Mutators pin before visibility checks and touch only changed saved
-content, order or retaining facts; hydration never pins or touches. Flush-only.
+of origin and viewer. Derived rows alone retain nothing. Mutators pin before visibility
+checks and touch only changed saved content, order or retaining facts; hydration never
+pins or touches. Flush-only.
 """
 
 from __future__ import annotations
@@ -183,9 +183,7 @@ def retainer_counts(
             )
             SELECT t.scheme || ':' || t.id AS ref,
                 (SELECT count(DISTINCT e.id) FROM endpoints e JOIN retaining r USING (id)
-                    WHERE e.owner_ref = t.scheme || ':' || t.id)
-                + (SELECT count(*) FROM artifacts a
-                    WHERE (a.subject_scheme, a.subject_id) = (t.scheme, t.id)) AS retainers
+                    WHERE e.owner_ref = t.scheme || ':' || t.id) AS retainers
             FROM targets t
         """),
         {

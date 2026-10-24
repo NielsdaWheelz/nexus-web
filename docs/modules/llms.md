@@ -106,14 +106,13 @@ resolves one of:
 
 on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
 `ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
-additive writes. dossiers publish `NoModelTools`; idea research calls the web
-search provider itself before the model turn. metadata enrichment selects codex
+additive writes. metadata enrichment selects codex
 personal and freezes exactly `web.search`, `web.read`, `nexus.document.search`,
 and `nexus.resource.read`.
 
 codex freezes `CodexCallbacks` authority using the same operation-selected
 portable declarations as `ProviderFunctions`. metadata publishes exactly the four
-research tools above; no-model-tool helpers publish none. chat and dossiers retain
+research tools above; no-model-tool helpers publish none. chat retains
 their selected scope/effect policy. prompts cannot broaden an operation grant.
 
 both routes hand every call to the one callback, `tools.run.run_tool(ToolRun, id,
@@ -153,7 +152,7 @@ Jarvis stamps the configured owner/client into the tagged Nexus note producer.
 identical retries return the original receipt; conflicting reuse fails. Nexus
 notes remain agent-authored, with supporting provenance, rather than fabricating
 a native machine/account or archive conversation. no Nexus conversation is
-automatically captured. no metadata, dossier or automated helper gains memory.
+automatically captured. no metadata or automated helper gains memory.
 
 the standalone universal-memory library owns the shared input/result schemas,
 tool declarations and note append contract. Nexus owns its private client,
@@ -223,7 +222,7 @@ Codex catalog fetch is retried after 10 s (a good one is kept 60 s). a decode
 rejection is `invalid_output` in the same terminal write. a stop that the tool
 fence catches first is still `Cancelled`. anything unexpected closes the row
 `defect` and goes on to the queue's retry. each consumer owns its total map from
-these codes (chat failure, metadata, oracle, dossier).
+these codes (chat failure, metadata, oracle).
 
 native cumulative usage limits and subscription `CapacityPaused` machinery are
 removed. nexus generation deadlines and per-operation bounds remain; 64,000/8,000

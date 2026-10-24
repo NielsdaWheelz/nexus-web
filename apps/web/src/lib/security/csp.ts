@@ -1,7 +1,6 @@
 // the per-request content security policies, built by middleware.ts (the
 // static header suite is ./headers.ts). runtime-agnostic: web crypto and btoa
-// only, so it runs on the edge. dossier articles render in the app document
-// (a shadow root): never add 'unsafe-inline' without a nonce, or
+// only, so it runs on the edge. never add 'unsafe-inline' without a nonce, or
 // 'unsafe-hashes', to script-src.
 import { YOUTUBE_EMBED_ORIGINS } from "./youtube";
 
