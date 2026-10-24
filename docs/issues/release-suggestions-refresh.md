@@ -1,6 +1,6 @@
 # quiet suggestions release
 
-status: implemented on `codex/quiet-suggestions`; local qualification in progress.
+status: implemented on `codex/quiet-suggestions`; local qualification complete.
 paired release and hosted/installed qualification remain outstanding.
 
 the cutover removes explicit force-generation admission. both suggestions
