@@ -128,7 +128,7 @@ class MainActivity : AppCompatActivity() {
                 webView,
                 store,
                 object : OfflineBridge.Host {
-                    override fun showDownloads() = webView.loadUrl(SHELF_URL)
+                    override fun openReader(mediaId: java.util.UUID) = webView.loadUrl("$SHELF_URL#open=$mediaId")
 
                     override fun openHosted(path: String) {
                         webView.loadUrl(BuildConfig.NEXUS_BASE_URL.trimEnd('/') + path)
@@ -481,6 +481,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        connectPlayerController()
         playerBridge.setForeground(true)
     }
 
@@ -496,8 +497,11 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (Build.VERSION.SDK_INT >= 34) {
-            OfflineJobs.schedule(this)
-            OfflineJobs.scheduleSync(this, 0)
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                OfflineStore.get(this@MainActivity).initialize()
+                OfflineJobs.schedule(this@MainActivity)
+                OfflineJobs.scheduleSync(this@MainActivity, 0)
+            }
         }
         webView.onResume()
         webView.resumeTimers()
@@ -609,6 +613,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     playerControllerFuture = null
                     if (connected == null) {
+                        playerBridge.onControllerUnavailable()
                         return@runOnUiThread
                     }
                     playerController = connected

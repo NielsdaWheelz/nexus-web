@@ -13,7 +13,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -25,10 +24,10 @@ private const val TICK_MS = 15_000L
 private val RETRY_MS = longArrayOf(2_000, 5_000, 15_000, 60_000)
 
 /**
- * Records listening positions (epoch-fenced, newest sample wins), activity
- * spans and natural ends with the WebView's cookies, without needing the page.
- * Activity spans keep their outbox; the ordered position/settle lane commits
- * in the account playback envelope alongside queue transitions. Every method and callback runs on the service's main thread.
+ * The native consumption writer. Absolute samples retry under their captured reset
+ * epoch; natural ends retain their override fence. A sequence identifies only the
+ * local fact being settled and never crosses the origin boundary. Every fact,
+ * receipt and queue continuation commits through the same playback envelope.
  */
 internal class ListeningRecorder(
     context: Context,
@@ -36,69 +35,48 @@ internal class ListeningRecorder(
     private val origin: NexusOriginClient,
     private val outbox: ActivityOutbox,
     private val sample: () -> Sample,
-    private val onAdopt: (position: JSONObject) -> Unit,
+    private val onAdopt: (observation: JSONObject) -> Unit,
     private val onAccepted: () -> Unit,
     private val onSynced: (Boolean) -> Unit,
     private val onTerminal: (saveLane: (JSONObject) -> Unit) -> Unit,
     private val onRefused: (mediaId: UUID) -> Unit,
-    private val onOnline: () -> Unit,
+    private val onSaveFailed: () -> Unit,
 ) {
     data class Sample(val positionMs: Long, val durationMs: Long?)
-
     private class Episode(val mediaId: UUID, var resetEpoch: Long, var overrideRevision: Long?) {
-        var rate: Double? = null // set by the listener this session; absent keeps the stored rate
-        var span: Span? = null // open while playing
+        var rate: Double? = null
+        var span: Span? = null
         var fenced = false
         var active = false
         var ended = false
     }
-
     private class Span(val startElapsed: Long, val startPositionMs: Long)
-
-    /** A listening PUT or a natural-end settle, sent in order, one at a time. */
-    private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean)
-
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val wallOffsetMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()
     private var account: UUID? = null
     private var episode: Episode? = null
     private var tick: Job? = null
     private var store: PlaybackStore? = null
-    private val lane = ArrayDeque<Write>()
     private var sending: Job? = null
     private var uploading: Job? = null
     private var retry: Job? = null
     private var failures = 0
     private var synced = true
-    private val factRevisions = mutableMapOf<UUID, Long>()
-    private val authorityRevisions = mutableMapOf<UUID, Long>()
-
     private val network = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) scope.launch { kick(); onOnline() }
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) scope.launch { kick() }
         }
     }
+    init { connectivity.registerDefaultNetworkCallback(network) }
 
-    init {
-        connectivity.registerDefaultNetworkCallback(network)
-    }
-
-    /** Cookies may change only after unbind has suspended delivery and retained the old account file. */
     suspend fun bind(accountId: UUID, playback: PlaybackStore) {
         if (account == accountId) return kick()
         unbind()
         store = playback
         account = accountId
-        val saved = playback.value.getJSONArray("lane")
-        for (i in 0 until saved.length()) {
-            val item = saved.getJSONObject(i)
-            lane.addLast(Write(accountId, UUID.fromString(item.getString("media_id")),
-                item.getJSONObject("body"), item.getBoolean("settle")))
-        }
         outbox.retain(accountId)
         kick()
     }
-
     suspend fun unbind() {
         tick?.cancel()
         account = null
@@ -106,71 +84,69 @@ internal class ListeningRecorder(
         uploading?.cancelAndJoin()
         retry?.cancel()
         episode = null
-        if (store != null && !persistLane()) throw IOException("listening checkpoint was not persisted")
-        lane.clear()
-        factRevisions.clear()
-        authorityRevisions.clear()
         store = null
     }
-
     fun start(mediaId: UUID, resetEpoch: Long, overrideRevision: Long?) {
         episode = Episode(mediaId, resetEpoch, overrideRevision)
     }
-
+    fun checkpoint() { episode?.takeIf { it.active && !it.fenced && !it.ended }?.let(::write) }
     fun pinRate(rate: Double) {
         val ep = episode ?: return
         ep.rate = rate
         if (ep.active && !ep.fenced) write(ep)
     }
-
-    /** Whether this device holds a listening sample of the episode that the server may not have. */
-    fun pending(): Boolean {
-        val ep = episode ?: return false
-        return ep.span != null || lane.any { !it.settle && it.mediaId == ep.mediaId }
-    }
-
+    fun pending(): Boolean = episode?.let { hasPending(it.mediaId) } == true
     fun attached(): Boolean = episode != null
     fun resetEpoch(): Long? = episode?.resetEpoch
     fun overrideRevision(): Long? = episode?.overrideRevision
-    fun authorityRevision(mediaId: UUID): Long = authorityRevisions[mediaId] ?: 0L
-    fun retireAuthority(mediaId: UUID) { authorityRevisions[mediaId] = authorityRevision(mediaId) + 1 }
-    fun factRevision(mediaId: UUID): Long = factRevisions[mediaId] ?: 0L
-    fun hasPending(mediaId: UUID): Boolean = lane.any { it.mediaId == mediaId } ||
+    fun hasPending(mediaId: UUID): Boolean = store?.value?.let { PlaybackStore.facts(it) }
+        ?.any { it.getString("media_id") == mediaId.toString() } == true ||
         episode?.let { it.mediaId == mediaId && it.span != null } == true
-    private fun changedFact(mediaId: UUID) { factRevisions[mediaId] = factRevision(mediaId) + 1 }
     fun fenced(): Boolean = episode?.fenced == true
+    fun refresh(overrideRevision: Long?) { episode?.overrideRevision = overrideRevision }
 
-    /** A resume in place under the server's descriptor: its override revision is the end's fence. */
-    fun refresh(overrideRevision: Long?) {
-        episode?.overrideRevision = overrideRevision
+    /** Canonical resets retire old facts; they never relabel them under a new epoch. */
+    fun observe(observations: List<JSONObject>) {
+        store?.observe(observations)
+        refreshEpisode()
     }
-
-    /** A reset elsewhere: later writes carry the new epoch, queued ones are stale. */
-    fun adopt(position: JSONObject) {
+    private fun refreshEpisode() {
         val ep = episode ?: return
-        changedFact(ep.mediaId)
-        ep.resetEpoch = position.getLong("reset_epoch")
-        ep.overrideRevision = position.nullableLong("consumption_override_revision")
-        ep.active = false
-        ep.fenced = false
-        lane.removeAll { !it.settle && it.mediaId == ep.mediaId }
-        queueChanged()
+        val current = store?.record(ep.mediaId)?.optJSONObject("observed") ?: return
+        val state = current.getJSONObject("state")
+        ep.overrideRevision = state.nullableLong("consumption_override_revision")
+        if (ep.resetEpoch != state.getLong("reset_epoch")) {
+            tick?.cancel()
+            closeSpan(ep)
+            ep.resetEpoch = state.getLong("reset_epoch")
+            ep.active = false
+            ep.fenced = false
+            ep.ended = false
+            onAdopt(current)
+        }
     }
-
-    /** The service pauses first, then drains and retires every old write of this episode. */
+    fun adopt(observation: JSONObject) {
+        observe(listOf(observation))
+        episode?.takeIf { it.mediaId.toString() == observation.getString("media_id") }?.apply { fenced = false; active = false }
+    }
+    fun retry(mediaId: UUID) {
+        val playback = store ?: return
+        playback.update { envelope ->
+            val record = PlaybackStore.record(envelope, mediaId.toString())
+            record.put("source_unavailable", false)
+            record.optJSONObject("local")?.put("disposition", "Pending")
+        }
+        kick()
+    }
     suspend fun fence(): Boolean {
         val ep = episode ?: return true
         ep.fenced = true
         tick?.cancel()
         closeSpan(ep)
-        sending?.join()
-        lane.removeAll { !it.settle && it.mediaId == ep.mediaId }
+        // Already dispatched samples retain their epoch; a later reset refuses them without blocking local commands.
         ep.active = false
-        val saved = persistLane()
-        if (!saved) retryLater()
-        return saved
+        return true
     }
-
     fun playing(on: Boolean) {
         val ep = episode ?: return
         if (ep.fenced) return
@@ -185,14 +161,15 @@ internal class ListeningRecorder(
                     delay(TICK_MS)
                     closeSpan(ep)
                     ep.span = openSpan()
-                    write(ep)
+                    try { write(ep) } catch (_: IOException) {
+                        // justify-ignore-error: pause and expose the unsaved local checkpoint for explicit retry.
+                        onSaveFailed()
+                        return@launch
+                    }
                 }
             }
-        } else if (ep.active) {
-            write(ep)
-        }
+        } else if (ep.active) write(ep)
     }
-
     fun seeked(fromMs: Long) {
         val ep = episode ?: return
         if (ep.fenced) return
@@ -203,207 +180,140 @@ internal class ListeningRecorder(
         if (playing) ep.span = openSpan()
         write(ep)
     }
-
-    /** Settles the end with the terminal position, fenced by the epoch and the override revision seen at load. */
     fun ended(): Boolean {
         val ep = episode ?: return false
-        val accountId = account ?: return false
+        if (account == null) return false
         if (ep.ended) return true
         tick?.cancel()
         closeSpan(ep)
-        val body = JSONObject()
-            .put("terminal_listening", listening(ep))
+        val body = JSONObject().put("terminal_listening", listening(ep))
             .put("expected_override_revision", ep.overrideRevision ?: JSONObject.NULL)
-        val write = Write(accountId, ep.mediaId, body, settle = true)
-        lane.addLast(write)
-        changedFact(ep.mediaId)
         return try {
-            // The service includes the next cursor in THIS atomic recorder save.
-            onTerminal { envelope -> saveLane(envelope) }
+            onTerminal { envelope -> addFact(envelope, ep, body, true) }
             ep.active = false
             ep.ended = true
             setSynced(false)
             send()
             true
         } catch (error: IOException) {
-            lane.remove(write)
             setSynced(false)
             Log.w(TAG, "terminal playback state not persisted", error)
+            onSaveFailed()
             false
         }
     }
-
-    /**
-     * The episode's last write, awaited for at most 2 s (offline it stays in the saved lane).
-     * Then no episode is recorded.
-     * A paused episode's position is already written or queued; writing it again would undo a newer position
-     * another device wrote since.
-     */
     suspend fun stop(): Boolean {
-        val ep = episode ?: return store == null || persistLane()
+        val ep = episode ?: return true
         tick?.cancel()
         val playing = ep.span != null
         closeSpan(ep)
         if (playing) write(ep)
         episode = null
-        withTimeoutOrNull(2_000) { sending?.join() }
-        return persistLane()
+        // Local activation never waits for a remote write or network timeout.
+        return true
     }
-
-    /** Explicit sign-out retires every pending effect before its files are purged. */
     suspend fun retire() {
-        tick?.cancel()
-        retry?.cancel()
-        sending?.cancel()
-        uploading?.cancel()
-        sending?.join()
-        uploading?.join()
-        account = null
-        episode = null
-        lane.clear()
-        factRevisions.clear()
-        authorityRevisions.clear()
-        store = null
+        unbind()
         outbox.clear()
     }
-
-    fun close() {
-        connectivity.unregisterNetworkCallback(network)
-        tick?.cancel()
+    fun close() { connectivity.unregisterNetworkCallback(network); tick?.cancel() }
+    private fun kick() { send(); upload() }
+    private fun addFact(envelope: JSONObject, ep: Episode, body: JSONObject, settle: Boolean) {
+        val facts = PlaybackStore.facts(envelope).toMutableList()
+        val sample = if (settle) body.getJSONObject("terminal_listening") else body
+        val completed = PlaybackStore.record(envelope, ep.mediaId.toString()).optJSONObject("local")?.optBoolean("completed") == true ||
+            PlaybackStore.record(envelope, ep.mediaId.toString()).optJSONObject("observed")?.getJSONObject("state")?.nullableString("consumption_override_status") == "finished"
+        val crossing = PlaybackStore.threshold(sample) && !completed
+        // Preserve the threshold sample until its own receipt, including across backwards seeks.
+        val last = facts.lastOrNull()
+        if (!settle && last != null && !last.getBoolean("settle") && !last.getBoolean("barrier") &&
+            last.getString("media_id") == ep.mediaId.toString()) facts.removeAt(facts.lastIndex)
+        val sequence = envelope.getLong("fact_sequence") + 1
+        envelope.put("fact_sequence", sequence)
+        val fact = JSONObject().put("sequence", sequence).put("media_id", ep.mediaId.toString())
+            .put("body", body).put("settle", settle).put("barrier", settle || crossing)
+        facts.add(fact)
+        envelope.put("lane", JSONArray(facts))
+        PlaybackStore.projectFact(envelope, fact)
     }
-
-    private fun kick() {
-        send()
-        upload()
-    }
-
     private fun write(ep: Episode) {
-        val accountId = account ?: return
-        // newest wins: a queued sample of the same episode is replaced, never reordered past a settle
-        if (lane.lastOrNull()?.let { !it.settle && it.mediaId == ep.mediaId } == true) lane.removeLast()
-        lane.addLast(Write(accountId, ep.mediaId, listening(ep), settle = false))
-        changedFact(ep.mediaId)
-        queueChanged()
-    }
-
-    private fun queueChanged() {
+        val playback = store ?: return
+        playback.update { addFact(it, ep, listening(ep), false) }
         setSynced(false)
-        if (persistLane()) send() else retryLater()
+        send()
     }
-
-    private fun saveLane(envelope: JSONObject) {
-        val saved = JSONArray()
-        val descriptors = envelope.getJSONObject("descriptors")
-        for (write in lane) {
-            saved.put(JSONObject().put("media_id", write.mediaId.toString())
-                .put("body", write.body).put("settle", write.settle))
-            val retained = descriptors.optJSONObject(write.mediaId.toString()) ?: continue
-            val listening = if (write.settle) write.body.getJSONObject("terminal_listening") else write.body
-            if (retained.getLong("reset_epoch") <= listening.getLong("expected_reset_epoch")) {
-                retained.put("local_listening", JSONObject(listening.toString()))
-                    .put("locally_completed", write.settle)
-            }
-        }
-        envelope.put("lane", saved)
-    }
-
-    private fun persistLane(): Boolean {
-        val playback = store ?: return false
-        return try {
-            playback.update(::saveLane)
-            true
-        } catch (error: IOException) {
-            // justify-ignore-error: keep the in-memory lane, but do not send or acknowledge its fence.
-            setSynced(false)
-            Log.w(TAG, "listening writes not persisted", error)
-            false
-        }
-    }
-
     private fun send() {
-        if (sending?.isActive == true || account == null) return
-        if (lane.isNotEmpty()) setSynced(false)
-        if (!persistLane()) return retryLater()
+        val playback = store ?: return
+        val accountId = account ?: return
+        if (sending?.isActive == true) return
         sending = scope.launch {
-            while (true) {
-                val write = lane.firstOrNull() ?: break
-                if (!deliver(write)) {
+            while (store === playback && account == accountId) {
+                val fact = PlaybackStore.facts(playback.value).firstOrNull {
+                    playback.record(UUID.fromString(it.getString("media_id")))?.getBoolean("source_unavailable") != true
+                } ?: break
+                if (!deliver(accountId, playback, JSONObject(fact.toString()))) {
                     setSynced(false)
                     return@launch retryLater()
                 }
-                if (lane.firstOrNull() === write) lane.removeFirst() // unless a newer sample replaced it
-                if (!persistLane()) return@launch retryLater()
                 failures = 0
             }
-            setSynced(true)
+            setSynced(PlaybackStore.facts(playback.value).isEmpty())
         }
     }
-
-    /** True when the write is done with (delivered or refused), false to keep it queued and retry. */
-    private suspend fun deliver(write: Write): Boolean {
-        if (account != write.accountId) return true
+    private suspend fun deliver(accountId: UUID, playback: PlaybackStore, fact: JSONObject): Boolean {
+        val mediaId = UUID.fromString(fact.getString("media_id"))
+        val sequence = fact.getLong("sequence")
+        val settle = fact.getBoolean("settle")
+        val body = fact.getJSONObject("body")
         try {
-            if (!write.settle) {
-                val position = origin.putListening(write.mediaId, write.body)
-                if (account != write.accountId) return true
-                val epoch = position.getLong("reset_epoch")
-                val override = position.get("consumption_override_revision")
-                episode?.takeIf { it.mediaId == write.mediaId && it.resetEpoch == epoch }?.overrideRevision =
-                    position.nullableLong("consumption_override_revision")
-                // Its own preceding heartbeat may have just completed it. The end retains
-                // its captured epoch, so unread/reset still supersede the queued event.
-                for (queued in lane) {
-                    if (queued.settle && queued.mediaId == write.mediaId &&
-                        queued.body.getJSONObject("terminal_listening").getLong("expected_reset_epoch") == epoch) {
-                        queued.body.put("expected_override_revision", override)
-                    }
+            val observation = if (settle) origin.settleNaturalEnd(mediaId, body) else origin.putListening(mediaId, body)
+            if (store !== playback || account != accountId) return true
+            PlaybackStore.validateObservation(observation)
+            playback.update { envelope ->
+                val current = PlaybackStore.record(envelope, mediaId.toString()).optJSONObject("observed")
+                val state = observation.getJSONObject("state")
+                val epoch = state.getLong("reset_epoch")
+                val receiptCurrent = current == null || current.getString("consumption_revision").toBigInteger() <= observation.getString("consumption_revision").toBigInteger()
+                val lane = PlaybackStore.facts(envelope).filter { it.getLong("sequence") != sequence }
+                if (!settle && receiptCurrent) for (queued in lane) {
+                    if (queued.getLong("sequence") > sequence && queued.getString("media_id") == mediaId.toString() &&
+                        queued.getBoolean("settle") && PlaybackStore.sample(queued).getLong("expected_reset_epoch") == epoch)
+                        queued.getJSONObject("body").put("expected_override_revision", state.get("consumption_override_revision"))
                 }
-                store?.update { envelope ->
-                    envelope.getJSONObject("descriptors").optJSONObject(write.mediaId.toString())
-                        ?.takeIf { it.getLong("reset_epoch") == epoch }
-                        ?.put("consumption_override_revision", override)
-                }
-                if (!persistLane()) return false
-                changedFact(write.mediaId)
-                onAccepted()
-                return true
+                envelope.put("lane", JSONArray(lane))
+                val record = PlaybackStore.record(envelope, mediaId.toString())
+                if (record.optJSONObject("local")?.getString("sequence")?.toLong() == sequence && settle && receiptCurrent)
+                    record.getJSONObject("local").getJSONObject("terminal").put("expected_override_revision", state.get("consumption_override_revision"))
+                PlaybackStore.adoptObservation(envelope, observation)
+                if (sequence > record.getLong("ack_sequence")) record.put("ack_sequence", sequence).put("ack_revision", observation.getString("consumption_revision"))
             }
-            origin.settleNaturalEnd(write.mediaId, write.body)
-            if (account != write.accountId) return true
-            val epoch = write.body.getJSONObject("terminal_listening").getLong("expected_reset_epoch")
-            val revision = (write.body.nullableLong("expected_override_revision") ?: 0L) + 1
-            store?.update { envelope ->
-                envelope.getJSONObject("descriptors").optJSONObject(write.mediaId.toString())
-                    ?.takeIf { it.getLong("reset_epoch") == epoch }
-                    ?.put("consumption_override_revision", revision)
-            }
-            episode?.takeIf { it.mediaId == write.mediaId && it.resetEpoch == epoch }?.overrideRevision = revision
-            changedFact(write.mediaId)
+            refreshEpisode()
             onAccepted()
             return true
         } catch (error: NexusOriginError) {
+            if (store !== playback || account != accountId) return true
             if (retryable(error.status)) return false
-            val current = error.details?.optJSONObject("current")
-            val ep = episode
-            if (error.status == 409 && current != null && !write.settle && ep?.mediaId == write.mediaId) {
-                // a reset elsewhere: adopt the server's epoch and position
-                val fenced = ep.fenced
-                adopt(current)
-                ep.fenced = fenced
-                lane.removeAll { it !== write && !it.settle && it.mediaId == write.mediaId }
-                onAdopt(current)
-            } else {
-                if (write.settle || error.status == 409) try {
-                    onRefused(write.mediaId)
-                    if (!write.settle) lane.removeAll { it !== write && !it.settle && it.mediaId == write.mediaId &&
-                        it.body.getLong("expected_reset_epoch") == write.body.getLong("expected_reset_epoch") }
+            if (error.status in setOf(403, 404, 410)) {
+                playback.update { envelope ->
+                    val record = PlaybackStore.record(envelope, mediaId.toString()).put("source_unavailable", true)
+                    record.optJSONObject("local")?.put("disposition", "SourceUnavailable")
                 }
-                catch (_: IOException) { return false } // justify-ignore-error: retain the terminal record until authority retirement is durable.
-                Log.w(TAG, "dropped a refused ${if (write.settle) "settle" else "listening write"}", error)
+                onRefused(mediaId)
+                return true
             }
+            val current = error.details?.optJSONObject("current")
+            if (error.status != 409 || current == null) throw error
+            PlaybackStore.validateObservation(current)
+            // Refusal observation and exact fact retirement share the same durable publication.
+            playback.update { envelope ->
+                PlaybackStore.adoptObservation(envelope, current)
+                envelope.put("lane", JSONArray(PlaybackStore.facts(envelope).filter { it.getLong("sequence") != sequence }))
+            }
+            refreshEpisode()
+            Log.w(TAG, "refused listening fact", error)
             return true
         } catch (_: IOException) {
-            // justify-ignore-error: offline or unreachable; the write stays queued and is retried.
+            // justify-ignore-error: retain the exact durable fact for retry; newer facts keep their own identities.
             return false
         }
     }

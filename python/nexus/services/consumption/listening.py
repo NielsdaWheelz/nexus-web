@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.schemas.consumption import ListeningIn
+from nexus.services.consumption import observation
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,17 +31,6 @@ _COLUMNS = "position_ms, duration_ms, playback_speed, reset_epoch"
 
 def _listening(row) -> Listening:
     return Listening(row.position_ms, row.duration_ms, row.playback_speed, row.reset_epoch)
-
-
-def load(db: Session, *, viewer_id: UUID, media_id: UUID) -> Listening | None:
-    row = db.execute(
-        text(f"""
-            SELECT {_COLUMNS} FROM podcast_listening_states
-            WHERE user_id = :viewer_id AND media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    ).one_or_none()
-    return None if row is None else _listening(row)
 
 
 def write(db: Session, *, viewer_id: UUID, media_id: UUID, sample: ListeningIn) -> Listening | None:
@@ -78,6 +68,8 @@ def write(db: Session, *, viewer_id: UUID, media_id: UUID, sample: ListeningIn) 
             """),
             params,
         ).one_or_none()
+    if row is not None:
+        observation.advance(db, viewer_id)
     return None if row is None else _listening(row)
 
 
@@ -87,7 +79,7 @@ def install_preview(
     """Install only when no listening row exists; an owned zero bookmark wins."""
     if position_ms == 0:
         return False
-    return (
+    installed = (
         db.execute(
             text("""
                 INSERT INTO podcast_listening_states (user_id, media_id, position_ms,
@@ -101,6 +93,9 @@ def install_preview(
         ).one_or_none()
         is not None
     )
+    if installed:
+        observation.advance(db, viewer_id)
+    return installed
 
 
 def fence(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
@@ -114,11 +109,12 @@ def fence(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )
+    observation.advance(db, viewer_id)
 
 
 def reset(db: Session, *, viewer_id: UUID, media_id: UUID) -> Listening:
     """Position zero under the next epoch, no engagement; rate and duration stay."""
-    return _listening(
+    heard = _listening(
         db.execute(
             text(f"""
                 INSERT INTO podcast_listening_states (user_id, media_id, reset_epoch)
@@ -132,3 +128,6 @@ def reset(db: Session, *, viewer_id: UUID, media_id: UUID) -> Listening:
             {"viewer_id": viewer_id, "media_id": media_id},
         ).one()
     )
+
+    observation.advance(db, viewer_id)
+    return heard

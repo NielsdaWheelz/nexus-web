@@ -24,7 +24,7 @@ export default function PodcastDestinationChooser({ target, onChoose }: {
     load: async signal => {
       const [catalog, detail, personalId] = await Promise.all([
         libraryDestinations(signal),
-        target.kind === "Canonical" ? getPodcastDetail(target.podcast_id, signal) : Promise.resolve(null),
+        target.kind === "Canonical" ? getPodcastDetail(target.podcast_id, signal).then(read => read.data) : Promise.resolve(null),
         getDefaultPodcastLibrary(signal),
       ]);
       return { catalog, detail, personalId };

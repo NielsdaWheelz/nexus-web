@@ -68,20 +68,23 @@ export async function withProgressFence<T>(mediaIds: readonly string[], write: (
   }
 }
 
-/** 204 settled, 409 superseded (a later unread, reset or finish), 404 gone; others throw. */
+/** 200 settled (with the canonical observation), 409 superseded (a later unread, reset or
+ * finish), 404 gone; others throw. */
 export async function settleNaturalEnd(
   mediaId: string,
   body: Schema<"NaturalEndIn">,
 ): Promise<"Settled" | "Superseded" | "Gone"> {
   const observers = [...stateSettled];
+  let revision: number | null;
   try {
-    await apiFetch<void>(`/api/media/${mediaId}/natural-end`, { method: "POST", body: JSON.stringify(body) });
+    revision = (await apiFetch<ApiJson<"/media/{media_id}/natural-end", "post">>(`/api/media/${mediaId}/natural-end`, { method: "POST", body: JSON.stringify(body) }))
+      .data.state.consumption_override_revision;
   } catch (error) {
     if (isApiError(error) && error.status === 409) return "Superseded";
     if (isApiError(error) && error.status === 404) return "Gone";
     throw error;
   }
-  for (const listener of observers) if (stateSettled.has(listener)) listener({ mediaId, revision: (body.expected_override_revision ?? 0) + 1 });
+  if (revision !== null) for (const listener of observers) if (stateSettled.has(listener)) listener({ mediaId, revision });
   publishChange("Consumption", "Podcasts", "Lectern");
   return "Settled";
 }

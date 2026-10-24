@@ -3,6 +3,7 @@ package app.nexus.android
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import app.nexus.android.offline.RESERVE_BYTES
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -22,6 +23,7 @@ import okio.Buffer
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
+import java.io.File
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -191,7 +193,36 @@ internal class NexusOriginClient(
     /** Complete metadata only; the caller owns staging and atomic publication. */
     suspend fun catalog(destination: OutputStream) {
         checkStatus(execute(Request.Builder().url(api("offline-catalog")).get(), catalogClient,
-            destination = destination))
+            destination = destination, destinationLimit = MAX_CATALOG_BYTES))
+    }
+
+    /** Immutable capture; mutable progress is a separate canonical observation. */
+    suspend fun episodeDownload(mediaId: UUID): JSONObject =
+        data(Request.Builder().url(api("media", mediaId.toString(), "episode-download")).get())
+
+    /** Exact pinned transcript bytes; only this fixed operation admits an 8-mib body. */
+    suspend fun episodeDownloadTranscript(mediaId: UUID, sourceKey: String, sha256: String, into: File) {
+        fun <T> save(action: () -> T): T = try { action() } catch (_: IOException) {
+            throw LocalStateError("E_LOCAL_CONTENT_IO", "downloaded transcript could not be saved")
+        }
+        val file = save { into.outputStream() }
+        val destination = object : OutputStream() {
+            override fun write(value: Int) = save {
+                if (into.usableSpace - 1 < RESERVE_BYTES) throw IOException("storage reserve reached")
+                file.write(value)
+            }
+            override fun write(bytes: ByteArray, offset: Int, length: Int) = save {
+                if (into.usableSpace - length < RESERVE_BYTES) throw IOException("storage reserve reached")
+                file.write(bytes, offset, length)
+            }
+            override fun close() = save { file.close() }
+        }
+        destination.use { output ->
+            checkStatus(execute(Request.Builder().url(api("media", mediaId.toString(), "episode-download", "transcript")
+                .newBuilder().addQueryParameter("source_key", sourceKey).addQueryParameter("sha256", sha256).build()).get(),
+                catalogClient, destination = output, destinationLimit = 8L * 1024 * 1024))
+            save { file.fd.sync() }
+        }
     }
 
     /** A fresh offline reading copy `{url, expires_at, generation}`; the url needs no credentials. */
@@ -213,11 +244,11 @@ internal class NexusOriginClient(
                 .put(body.toString().toRequestBody(JSON)),
         )
 
-    /** The episode's player descriptor now: where a play starts, its reset epoch and override revision. */
+    /** Fresh activation: presentation descriptor and canonical consumption observation. */
     suspend fun player(mediaId: UUID): JSONObject =
         data(Request.Builder().url(api("media", mediaId.toString(), "player")).get())
 
-    /** Accepted position and fences; a stale epoch returns the same tuple in `details.current`. */
+    /** Canonical observation; an accessible stale fence returns it in `details.current`. */
     suspend fun putListening(mediaId: UUID, body: JSONObject): JSONObject =
         data(Request.Builder().url(api("media", mediaId.toString(), "listening-state"))
             .put(body.toString().toRequestBody(JSON)))
@@ -227,11 +258,10 @@ internal class NexusOriginClient(
         call(Request.Builder().url(api("consumption", "activity")).post(body.toString().toRequestBody(JSON)))
     }
 
-    /** The terminal listening sample and override fence; 204, with no next-row result. */
-    suspend fun settleNaturalEnd(mediaId: UUID, body: JSONObject) {
-        call(Request.Builder().url(api("media", mediaId.toString(), "natural-end"))
+    /** Receipt observes the terminal sample; local queue continuation has its own owner. */
+    suspend fun settleNaturalEnd(mediaId: UUID, body: JSONObject): JSONObject =
+        data(Request.Builder().url(api("media", mediaId.toString(), "natural-end"))
             .post(body.toString().toRequestBody(JSON)))
-    }
 
     private fun api(vararg segments: String): HttpUrl =
         base.newBuilder().addPathSegment("api").apply { segments.forEach { addPathSegment(it) } }.build()
@@ -268,6 +298,7 @@ internal class NexusOriginClient(
         sendCookies: Boolean = true,
         capturedCookie: String? = null,
         destination: OutputStream? = null,
+        destinationLimit: Long = MAX_ORIGIN_RESPONSE_BYTES,
     ): NexusOriginResponse = suspendCancellableCoroutine { continuation ->
         if (current == null && sendCookies && DeviceSession.current()?.remotelyAdmitted() != true) {
             continuation.resumeWithException(NexusOriginError(503, "E_REMOTE_UNAVAILABLE"))
@@ -299,7 +330,7 @@ internal class NexusOriginClient(
                 override fun onResponse(call: Call, response: Response) {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            val result = response.use { decodeResponse(it, current, unlimited, destination) }
+                            val result = response.use { decodeResponse(it, current, unlimited, destination, destinationLimit) }
                             if (continuation.isActive) {
                                 continuation.resume(result)
                             }
@@ -314,7 +345,7 @@ internal class NexusOriginClient(
         )
     }
 
-    private suspend fun decodeResponse(response: Response, current: (() -> Boolean)?, unlimited: Boolean, destination: OutputStream?): NexusOriginResponse {
+    private suspend fun decodeResponse(response: Response, current: (() -> Boolean)?, unlimited: Boolean, destination: OutputStream?, destinationLimit: Long): NexusOriginResponse {
         val setCookies = if (current != null) response.headers("Set-Cookie") else emptyList()
         for (setCookie in setCookies) {
             if (current?.invoke() != true) throw IOException("retired credential operation")
@@ -324,8 +355,9 @@ internal class NexusOriginClient(
             cookies.flush()
         }
         if (destination != null && response.isSuccessful) {
-            val body = response.body ?: throw IOException("origin answered without catalog")
-            if (body.contentLength() > MAX_CATALOG_BYTES) throw LocalStateError("E_CATALOG_TOO_LARGE", "catalog exceeds this device’s size limit")
+            val body = response.body ?: throw IOException("origin answered without content")
+            val limitCode = if (destinationLimit == MAX_CATALOG_BYTES) "E_CATALOG_TOO_LARGE" else "E_EPISODE_TRANSCRIPT_TOO_LARGE"
+            if (body.contentLength() > destinationLimit) throw LocalStateError(limitCode, "saved content exceeds this device’s size limit")
             body.byteStream().use { input ->
                 val buffer = ByteArray(64 * 1024)
                 var bytes = 0L
@@ -333,9 +365,10 @@ internal class NexusOriginClient(
                     val count = input.read(buffer)
                     if (count == -1) break
                     bytes += count
-                    if (bytes > MAX_CATALOG_BYTES) throw LocalStateError("E_CATALOG_TOO_LARGE", "catalog exceeds this device’s size limit")
+                    if (bytes > destinationLimit) throw LocalStateError(limitCode, "saved content exceeds this device’s size limit")
                     destination.write(buffer, 0, count)
                 }
+                if (body.contentLength() >= 0 && bytes != body.contentLength()) throw IOException("origin content length mismatch")
             }
             return NexusOriginResponse(response.code, "")
         }

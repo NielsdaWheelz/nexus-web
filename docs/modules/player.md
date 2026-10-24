@@ -44,6 +44,10 @@ quick reads and suggestions own no playback sequence. browse owns previews;
    (the next revision, back in the prior status, the fact gone) succeeds.
 4. Listening writes are fenced by `reset_epoch` alone: last writer wins within
    an epoch, a reset wins across epochs. Unread, reset and undo bump the epoch.
+   completion is monotone within an epoch: any write that can move finished to
+   unread or in progress changes `reset_epoch`, so a same-epoch override change
+   cannot undo finished. device projections rely on this to retire stale local
+   completion by epoch alone.
 5. a natural end is fenced on the captured override revision and terminal
    sample's reset epoch. retry succeeds only at the next finished revision,
    the same epoch and absent lectern membership. later unread, reset or re-add
@@ -126,8 +130,15 @@ inverses. inert collection choices preserve still-valid earlier offers.
   states (`Unread | InProgress | Finished`), engagement recency and anchors,
   `player_descriptors`. A descriptor's `position_ms` is 0 when the episode is
   finished by override; `playback_rate` is the episode rate ?? the
-  viewer/show default ?? 1; `podcast_id` is present when independent playback
-  settings exist, whether or not the viewer still subscribes.
+  viewer/show default ?? 1; `podcast_id` identifies the episode’s show independently
+  of settings or subscription. `remaining_time_rows_sql` composes raw reader
+  seconds and stored physical listening position/duration for library ordering.
+- `observation.py` — owns account `consumption_revision` advancement and canonical
+  episode observations. mutation owners advance under the viewer lock in their
+  own transaction; reads and already-settled natural-end retries only observe.
+  positions and durations are raw listening values, including null versus zero;
+  feed duration remains source metadata. targeted library/podcast/lectern reads
+  carry the same-snapshot watermark and returned episode states.
 - `reader_cursor.py`, `activity.py`, `stats.py` — see
   [reader-implementation.md](reader-implementation.md) and
   [consumption-activity.md](consumption-activity.md).
@@ -143,12 +154,26 @@ POST   /media/{id}/finish             {leave_lectern} -> Finish
 POST   /media/{id}/finish/undo        Finish -> {override_revision}
 POST   /media/{id}/unread             -> {override_revision}
 POST   /media/{id}/progress/reset     -> {override_revision}
-POST   /media/{id}/natural-end        {terminal_listening, expected_override_revision} -> 204
-GET    /media/{id}/player             -> PlayerDescriptor (404 when not playable)
-PUT    /media/{id}/listening-state    ListeningIn -> ListeningPositionOut
+POST   /media/{id}/natural-end        {terminal_listening, expected_override_revision} -> EpisodeConsumptionObservation
+GET    /media/{id}/player             -> PlayerActivationOut{descriptor, observation} (404 when not playable)
+PUT    /media/{id}/listening-state    ListeningIn -> EpisodeConsumptionObservation
 POST   /media/{id}/preview-position   {position_ms, duration_ms} -> 204
 GET    /lectern/suggestions, /lectern/quick-reads   (suggestions)
 ```
+
+the player/read-write results use `Data`; the lectern read keeps `data` and adds
+`consumption_revision` and `episode_consumption`. accessible listening/natural-end
+conflicts expose the current full observation in `details.current`; inaccessible
+media expose no state.
+
+`GET /media/{id}/episode-download` captures source rendition, sanitized published
+notes with image placeholders, canonical baseline and optional transcript metadata
+under one repeatable-read snapshot. `services/episode_download.py` hashes canonical
+rendition/notes separately from exact serialized `Data[ReaderTranscriptDocumentOut]`
+bytes. the fixed transcript subroute returns those bytes only when both captured
+identities still match; otherwise it returns `E_EPISODE_DOWNLOAD_CHANGED`. notes
+over 512 kib or transcript over 8 mib are explicitly unavailable supplements.
+these authenticated reads are private/no-store and write no download archive.
 
 `api/routes/consumption.py` owns the Lectern, its suggestions and the
 read-state writes; `api/routes/playback.py` the player read, the listening
@@ -224,8 +249,12 @@ finish, undo, unread, reset and settle publish `Consumption`.
   source snapshot. list owners capture the complete matching source; detail,
   search and suggestion starts create singleton queues. preparation resolves
   before replacement; cancellation before commit preserves the prior queue.
-  a sent commit must settle. known descriptors permit outage/offline playback;
-  authoritative refusal cannot fall back to them. `pendingPlayback` exposes
+  a sent commit must settle. the browser engine reads `/player` (bounded) before
+  replacement; known descriptors permit its outage playback and authoritative
+  refusal cannot fall back to them. android never awaits a web descriptor read:
+  native resolves each activation from a ready package's lease, else its own read,
+  so a downloaded start works offline or behind an unresponsive api. offline list
+  owners capture from their complete saved catalog view. `pendingPlayback` exposes
   admitted intent separately from observed audio, and pause retires pending
   activation immediately. `positionMs: null` resumes; a number starts at that exact
   source time. timed play on the live current occurrence seeks in place, preserves
@@ -306,9 +335,14 @@ finish, undo, unread, reset and settle publish `Consumption`.
   an internal resume/retry reload binds its new load subject to the same current
   queue occurrence, never merely to another occurrence of the same media.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusQueueSession` (below); an unanswered bounded request shows "Player
-  unavailable" until the next frame arrives. preference commands resolve after
-  application and snapshot publication. expired replies are ignored; live
+  `window.nexusPlayer` (below). frames are decoded strictly at this boundary and
+  snake snapshots map onto the engine state; `source.package_id` identifies a
+  downloaded recording (`packageId`). an unanswered bounded request or the
+  service's `{unavailable: true}` frame shows "Player unavailable", never an empty
+  player, until the next frame arrives. `listening_revision` invalidates the
+  listening facts below; observations and explicit delivery retry use its
+  `observe_consumption`/`retry_listening` operations. preference commands resolve
+  after application and snapshot publication. expired replies are ignored; live
   replies cannot replace an intervening confirmed load. real pushes from the
   current controller remain authoritative. preference admission refuses while
   unavailable; recovery preserves failed intent for explicit retry.
@@ -324,6 +358,17 @@ finish, undo, unread, reset and settle publish `Consumption`.
   owned focus to the rail and closes desktop pickers without changing playback.
   explicit desktop play/resume reveals without moving focus; mobile commands
   preserve the desktop choice. tabs keep independent ongoing choices.
+- `lib/consumption/listening.ts` — android's committed listening facts: rereads
+  the fixed account-bound `/_nexus/device/listening.json` after a newer
+  `listening_revision`, decodes strictly and drops older or other-account reads.
+  `local` is unacknowledged activity only; an acknowledgement is `observed`. it
+  forwards canonical observations (live read stamps, the saved catalog) for media
+  native retains, in frames of at most 100 observations and 32 kib, and owns the
+  one pure presentation projection of the consumption rules over dated sources:
+  a newer observation replaces the source; local activity applies within its reset
+  epoch, clears unread and makes completion sticky; its natural end applies at its
+  captured override revision and leaves the lectern. duration is the activity's,
+  else the observed listening record's, else the dated feed's; zero stays unknown.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
   sheet, desktop playback/chapter pickers and shared presentational fields.
   the authenticated workspace keeps one mounted player and live-region owner.
@@ -332,7 +377,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   or engine/queue/preference-application failure without forcing reopen.
   a retained stopped queue
   remains reachable with resume/up next even when the engine is absent.
-  exhausted and empty queues are distinct; restoration never starts audio.
+  exhausted and empty queues are distinct; before queue authority is known,
+  the player shows loading or its read failure, never “nothing queued”;
+  restoration never starts audio.
   `Loaded` retains identity, transport and stop while load-scoped preferences
   initialize; preference-dependent controls require the current settings subject.
   `Unavailable` exposes the actual warning and android update link only when
@@ -424,74 +471,76 @@ the [podcast module](podcast.md) owns saved nullable defaults and their form.
 
 ## android ownership and bridge
 
-`NexusPlaybackService` owns the queue, audio, listening and os transport without
-requiring a webview. `PlaybackStore` owns one atomic envelope per account:
-queue/revision, the recorder's pending position/end lane, known descriptors and
-current occurrence checkpoint. activity outbox and downloaded-file leases keep
-their existing owners. native does not replicate a server queue. process
-recreation restores paused; reconnecting a webview to a live service preserves
-its authority and current playback.
+`NexusPlaybackService` owns the queue, media3 engine, listening and os transport
+without a webview. `PlaybackStore` shares one synchronized atomic envelope per
+account with the fixed-route reader. queue/cursor, pending facts, canonical
+observations, exact receipts, resume/settings and occurrence checkpoints commit
+before publication. resume survives queue replacement and audio removal.
+activity spans and acquired packages retain their separate owners. recreation
+restores paused; a controller reconnect does not reset the process clocks.
 
-`window.nexusQueueSession` carries the existing request/result/pushed-snapshot grammar.
-keyed audio controls retain `expected_load_id`; every installation, including
-same-media replacement, gets a fresh nullable `load_id` exposed as the web's
-`playbackSubject`. source identity and load identity fence different things.
-queue commands carry queue identity, captured revision and occurrence ids.
-replies acknowledge atomic save; desired-state retries are inert. every bridge
-operation remains within its message bound; backend, web and android ship as one
-wire cutover. `nexusQueueSession` rejects both the released `nexusPlayback`
-object and the intermediate `nexusAudioSession` contract, which has no queue
-operations. no alias or protocol fallback exists.
+local activation first takes `OfflineStore.openEpisode`: one lease pins matching
+package audio, rendition, baseline and committed artwork. it installs immediately
+without an origin read or delivery wait. the baseline initializes only facts and
+settings not superseded locally. source title/chapters/artwork stay attached to
+the loaded recording. pause retains its lease; replacement or dismissal closes
+it. removal prevents new leases and waits for current leases to close.
 
-`seekAndPlay{key, expected_load_id, position_ms}` applies an acknowledged in-place
-seek and play request. queue selection carries nullable `position_ms` so a timed
-start installs its fresh descriptor and requested position together. playback,
-pause and os controls share native load ordering; dispatch captures the current
-activation generation before work waits for that lock. a newer intent prevents
-an older continuation from starting audio, without losing a valid terminal fact.
-private snapshots carry process-monotone `snapshot_id`; the web adapter strips it
-before publication and rejects older clocks/preferences. uuid `load_id` remains
-the sole engine subject; seeking in place preserves it.
+streaming preflight reads `/player` outside the playback mutation lock. its
+response captures account, activation generation and candidate media. application
+reenters the lock and checks queue, occurrence and load before installation. a
+newer local start can pass an unanswered older origin read. unavailable queue
+occurrences remain selected with explicit skip; they are never silently pruned.
 
-queue transfer uses memory-only `queue_begin`/`queue_chunk` staging, followed by
-`queue_commit` or `queue_cancel`. chunks/pages carry at most 100 entries and
-queue messages at most 32 kib. staging binds to the actual controller/document
-generation; disconnect retires uncommitted input. commit checks completeness and
-captured revision, saves the whole queue paused, then separate fresh intent may
-activate it. `queue_read` returns a compact header; revision-bound `queue_page`
-reads entries without whole-queue snapshots or binder-sized messages. unknown
-commit reconciles its saved identity and remains paused until fresh play.
-large descriptor chapters use bounded transfer/pages rather than bloating routine
-source snapshots. `PlayerBridge` remains the sole owned-origin transport.
+`window.nexusPlayer` is the sole owned-origin playback transport. snake_case
+snapshot fields include process-monotone `snapshot_id`, `listening_revision` and
+source `package_id` (null for streaming). `load_id` identifies each engine
+installation; keyed controls retain `expected_load_id`, and queue commands retain
+queue/revision/occurrence fences. first connection and failure remain distinct
+from an observed empty queue. the bridge retains hello for controller recovery
+and emits explicit unavailability when binding fails.
 
-natural end atomically stores the recorder's terminal fact and next cursor
-before advancing. recorder delivery invokes consumption's natural-end owner
-later; reconciliation never advances a second time. prepared downloaded episodes
-can continue without network/webview. preparation intersects queued ids with
-ready audio files, fetches current descriptors at most four at a time and keeps
-real reset/override fences. replacement/account change cancels obsolete work.
-activation refreshes online; authoritative refusal retires retained authority.
-missing file/descriptor stops visibly. recorder facts update retained resume data,
-including acknowledged samples for offline use. fresh online authority wins unless
-the recorder holds a newer or pending local fact. repeated unfinished media resumes
-that position; completed media starts over. cold restoration uses its checkpoint
-only under matching reset epoch and override revision. authoritative reconciliation
-retires the affected media's retained authority without moving another occurrence.
+queue transfer uses document/controller-owned `queue_begin`/`queue_chunk`, then
+`queue_commit` or `queue_cancel`. at most 100 entries fit each 32-kib queue frame;
+commit validates completeness and saves paused. `queue_read` and revision-bound
+`queue_page` avoid whole-queue frames. chapters use bounded pages. other frames
+remain within 64 kib. `seekAndPlay` and timed selection name the episode/load
+and install the requested source time before acknowledgement.
 
-explicit sign-out/account switch unbinds before download purge or cookie change:
-cancel preparation/starts, pause, checkpoint, suspend recorder delivery and clear
-active account. its saved envelope remains account scoped. ordinary document
-port detach does none of this. a failed stop/checkpoint uses existing sign-out
-retry/cancel feedback and never restarts audio.
+`ListeningRecorder` writes absolute samples under their captured reset epoch.
+its durable sequence identifies only the local fact being settled; it never
+enters an api request. a receipt atomically removes that exact sequence and
+adopts only newer canonical observations, preserving newer pending activity.
+only a preceding same-media/same-epoch receipt can update a dependent terminal
+fence. a threshold-crossing sample remains a coalescing barrier until settled;
+95% completion stays finished after a backward seek. natural end is a separate
+barrier committed with the next cursor before continuation. refusal never rewinds
+that cursor, invents an override revision or revokes downloaded bytes.
 
-unread/reset/undo preparation drains the loaded recorder before the write;
-reconciliation drains before reading fresh authority, even after timeout.
-unavailability retains the saving gate. each acknowledged listening write
-advances `consumptionRevision` so hosted summaries refresh from accepted facts.
-media3 owns native processing and clock; positions, transcript/chapter seeks and
-listening samples remain in original-media time. pause shortening uses the
-load's explicit override, then podcast default, then off. os/device volume stays
-outside the application command surface.
+403/404/410 suspends delivery for that media while other media continue; explicit
+`retry_listening` checks access/fences again. auth/transport loss retains pending
+facts under existing admission and retry rules. newer reset observations retire
+old-epoch facts and pause only the affected loaded episode. override changes can
+supersede terminal completion while ordinary epoch-valid samples remain valid.
+local persistence failure pauses playback and refuses the command receipt.
+periodic checkpoints bound uninterrupted process-death loss to fifteen seconds;
+pause, seek, settings and natural end are durable before acknowledgement.
+
+`ListeningPublication` exposes account-bound, no-store, wire-checked
+`/_nexus/device/listening.json`, bounded to 16 mib. it contains the latest
+canonical observation and unacknowledged local projection per episode. settled
+activity is represented by its observation; internal resume/receipt state survives
+until a durably published catalog covers it. bounded `observe_consumption`
+frames (100 observations and 32 kib) adopt newer catalog/live observations without
+granting resource access. committed changes invalidate the fixed reader; engine
+ticks do not. explicit account retirement closes registered streams and removes
+the shared store owner before another account is exposed.
+
+explicit sign-out pauses/checkpoints, cancels delivery and releases packages
+before purge or cookie change. ordinary document detach preserves playback.
+media3 owns processing and clock; positions, chapter/transcript seeks and samples
+remain in original-media time. pause shortening uses the load's explicit choice,
+then the captured/default setting, then off. volume belongs to the os/device.
 
 ## Boundary with podcast sync
 

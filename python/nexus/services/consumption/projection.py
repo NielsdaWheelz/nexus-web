@@ -23,8 +23,29 @@ from nexus.schemas.media_summary import ConsumptionState, MediaDurationOut
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.consumption import reader_cursor
 from nexus.services.playback_source import episode_playback_source
+from nexus.services.reading_time import reading_time_rows_sql
 
 FINISHED_PROGRESSION = 0.95
+
+
+def remaining_time_rows_sql() -> str:
+    """Raw seconds at the stored physical position for library/catalog ordering.
+
+    Text uses its reader owner's estimate; episode duration prefers a stored
+    listening duration. Nonpositive/absent durations yield no sortable value.
+    """
+    duration = _duration_sql("pls", "pe")
+    return f"""
+        SELECT media_id, remaining_seconds FROM ({reading_time_rows_sql()}) reading
+        UNION ALL
+        SELECT pe.media_id,
+               CASE WHEN {duration} > 0
+                    THEN GREATEST(0, {duration} - COALESCE(pls.position_ms, 0))::float8 / 1000
+                    ELSE NULL::float8 END AS remaining_seconds
+        FROM podcast_episodes pe
+        LEFT JOIN podcast_listening_states pls
+          ON pls.media_id = pe.media_id AND pls.user_id = :viewer_id
+    """
 
 
 def _duration_sql(listening_alias: str, episode_alias: str) -> str:
@@ -193,7 +214,7 @@ def player_descriptors(
                         THEN 0 ELSE COALESCE(pls.position_ms, 0) END AS position_ms,
                    co.revision AS override_revision,
                    COALESCE(pls.playback_speed, ps.default_playback_speed, 1.0) AS rate,
-                   ps.podcast_id, ps.pause_shortening_mode
+                   pe.podcast_id, ps.pause_shortening_mode
             FROM media m
             JOIN podcast_episodes pe ON pe.media_id = m.id
             LEFT JOIN podcasts p ON p.id = pe.podcast_id

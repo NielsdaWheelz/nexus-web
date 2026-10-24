@@ -32,7 +32,7 @@ export default function PodcastSettingsOverlay(props: Props) {
   const source = usePaneFreeServerValue({
     key: `podcast-detail:${accountId}:${podcastId}`,
     stale: stamp,
-    load: signal => getPodcastDetail(podcastId, signal),
+    load: async signal => (await getPodcastDetail(podcastId, signal)).data,
   });
   return source.status === "ready" ? (
     <SettingsForm key={`${accountId}:${podcastId}`} {...props} source={source.data} readError={source.error} retryRead={source.refetch} />

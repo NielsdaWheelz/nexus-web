@@ -11,6 +11,7 @@ import android.util.Base64
 import android.webkit.CookieManager
 import androidx.core.util.AtomicFile
 import app.nexus.android.offline.OfflineStore
+import app.nexus.android.playback.ListeningPublication
 import app.nexus.android.offline.OfflineJobService
 import app.nexus.android.playback.ActivityOutbox
 import app.nexus.android.playback.PlaybackStore
@@ -122,6 +123,7 @@ internal class DeviceSession private constructor(private val context: Context) {
 
     /** A null binding is a durable cleanup obligation, completed before any account is exposed. */
     suspend fun initialize() = withContext(Dispatchers.IO) {
+        OfflineStore.get(context).initialize()
         files.withLock {
             if (!loaded) {
                 loadError = null
@@ -442,6 +444,7 @@ internal class DeviceSession private constructor(private val context: Context) {
         withContext(Dispatchers.Main.immediate) { playbackStop?.invoke() }
         credentials.withLock {
             val cookie = origin.capturedCookies()
+            account?.let(ListeningPublication::retire)
             files.withLock {
                 persist(JSONObject().put("format_version", 1).put("binding", JSONObject.NULL))
                 account = null

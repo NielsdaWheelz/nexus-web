@@ -71,12 +71,13 @@ build and packaging command.
   Android Media3 player, Media Session, native Consumption recording, and
   player notification lifecycle.
 - `apps/android/app/src/main/java/.../playback/PlayerBridge.kt` owns the
-  main-frame, owned-origin `nexusQueueSession` WebKit bridge and adapts it to the
+  main-frame, owned-origin `nexusPlayer` WebKit bridge and adapts it to the
   service-owned MediaController.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
   may call only its fixed player-descriptor, listening-state, consumption-command,
-  Consumption-activity, `me`, reading-copy, reader-state, offline-catalog, bootstrap, handoff and
+  Consumption-activity, `me`, reading-copy, reader-state, episode-download,
+  pinned episode transcript, offline-catalog, bootstrap, handoff and
   account-setting BFF paths with
   WebView cookies, the exact owned Origin and `X-Nexus-Wire`; it accepts no
   arbitrary URL, path, headers, or credentials.
@@ -87,8 +88,8 @@ build and packaging command.
   the offline owner below.
 - `apps/android/app/src/main/java/.../offline/` owns offline
   ([module](../modules/offline.md)): the store, the transfer and sync jobs, the
-  `nexusDownloads` bridge and the shelf router. Its only direct calls are the
-  episode's https enclosure and the signed storage url a reading copy names;
+  `nexusLocalContent` bridge and the shelf router. Its only direct calls are the
+  captured episode's https enclosure/artwork and the signed storage url a reading copy names;
   it accepts no renderer-supplied URL,
   path, headers, credentials, or filesystem location.
 - `apps/android/app/src/main/java/.../ShareActivity.kt` owns the
@@ -99,9 +100,9 @@ build and packaging command.
   configuration.
 - Android product api/auth calls belong to `NexusOriginClient`'s fixed paths,
   including bootstrap, handoff, google minting and account settings. offline may
-  make only its two direct download calls above. AndroidX WebKit exposes the
-  main-frame `nexusApp` and `nexusQueueSession` listeners on the owned origin and
-  `nexusDownloads` on the owned and shelf origins.
+  make only its direct download calls above. AndroidX WebKit exposes the
+  main-frame `nexusApp` and `nexusPlayer` listeners on the owned origin and
+  `nexusLocalContent` on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
   OAuth/PKCE exchange remains server-side.

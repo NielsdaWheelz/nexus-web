@@ -39,10 +39,10 @@ export default function PodcastStopDialog(props: StopProps) {
   const sending = ctx.podcasts.pending(`stop:${props.podcastId}`)?.phase === "Sending";
   const stamp = useChangeStamp("Libraries", "Podcasts", "Entries");
   const library = usePaneFreeServerValue({ key: !cleanup && libraryId !== null ? `podcast-stop-library:${libraryId}` : null, stale: stamp,
-    load: signal => {
+    load: async signal => {
       // justify-defect: the null key disables this loader when no local library exists.
       if (libraryId === null) throw new Error("a local unsubscribe requires a library");
-      return getLibrary(libraryId, signal);
+      return (await getLibrary(libraryId, signal)).data;
     },
   });
   const scopes = usePaneFreeServerValue({ key: cleanup ? `podcast-cleanup-scopes:${props.podcastId}` : null, stale: stamp,

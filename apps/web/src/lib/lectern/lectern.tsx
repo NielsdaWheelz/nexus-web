@@ -128,6 +128,8 @@ interface Lane extends MoveEntry {
 }
 interface Context {
   readonly read: ServerValue<Lectern>;
+  /** The shown read's consumption revision, for lectern group promotion. */
+  readonly consumptionRevision: string | null;
   readonly commands: LecternCommands;
   readonly order: CollectionOrder;
 }
@@ -145,12 +147,14 @@ const floorOf = (lane: Lane, read: OrderRevision | null) =>
 
 export function LecternProvider({ children }: { readonly children: ReactNode }) {
   const [defect, fail] = useState<{ error: unknown } | null>(null);
-  const read = usePaneFreeServerValue({
+  const stamped = usePaneFreeServerValue({
     key: "/lectern",
     stale: `${useChangeStamp("Lectern", "Metadata")}|${useRefreshStamp(true, 60_000)}`,
     load: readLectern,
     onDefect: fail,
   });
+  const read: ServerValue<Lectern> = stamped.status === "ready" ? { ...stamped, data: stamped.data.data } : stamped;
+  const consumptionRevision = stamped.status === "ready" ? stamped.data.consumption_revision : null;
   const workspace = useLatestWorkspace();
   const feedback = useFeedback();
   const guard = useWorkGuard();
@@ -173,7 +177,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const revision = floorOf(lane, readRevision);
   const [collectionListeners] = useState(() => new Set<() => void>());
   const emit = () => { setVersion(value => value + 1); for (const listener of collectionListeners) listener(); };
-  const current = async (signal: AbortSignal) => (await readLectern(signal)).order_revision;
+  const current = async (signal: AbortSignal) => (await readLectern(signal)).data.order_revision;
 
   function finish(request: Request, outcome: LecternOutcome) {
     lane.requests.delete(request.mediaId);
@@ -440,6 +444,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const value = useMemo<Context>(
     () => ({
       read,
+      consumptionRevision,
       commands: {
         defect,
         revision: lane.collection === null ? revision : null,
@@ -496,7 +501,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     }),
     // The lane is mutable and `version` is its change; the closures read it live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [read, revision, readRevision, version, defect],
+    [stamped, revision, readRevision, version, defect],
   );
   return (
     <LecternContext.Provider value={value}>
@@ -580,6 +585,7 @@ function useLecternContext(): Context {
 
 /** The shared read; ready rows stay shown while a reread runs. */
 export const useLectern = (): ServerValue<Lectern> => useLecternContext().read;
+export const useLecternConsumptionRevision = (): string | null => useLecternContext().consumptionRevision;
 export const useLecternCommands = (): LecternCommands => useLecternContext().commands;
 export const useLecternOrder = (): CollectionOrder => useLecternContext().order;
 

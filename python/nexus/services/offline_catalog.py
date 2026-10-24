@@ -24,7 +24,7 @@ from nexus.schemas.podcast import PodcastEpisodeCountsOut
 from nexus.services import libraries, library_entries, library_listing, media, notes
 from nexus.services.chat.conversations import conversation_index_rows_sql
 from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, SortKey, order_by_sql
-from nexus.services.consumption import lectern
+from nexus.services.consumption import lectern, observation
 from nexus.services.podcasts import episodes, subscriptions_query
 
 
@@ -126,6 +126,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
     )
     media_ids = sorted(root_media_ids | {row["media_id"] for row in episode_rows})
     summaries = media.media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
+    consumption = observation.states(db, viewer_id, media_ids)
     media_rows = _ranked(
         db,
         library_listing.entry_fact_rows_sql(
@@ -184,11 +185,12 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
     page_rows = _ranked(db, notes.page_index_rows_sql(), updated_plans, params)
     chat_rows = _ranked(db, conversation_index_rows_sql(), updated_plans, params)
     return wire.OfflineCatalogOut(
-        format_version=1,
+        format_version=2,
         wire_revision=WIRE_REVISION,
         account_id=viewer_id,
         snapshot_id=uuid4(),
         captured_at=captured_at,
+        consumption_revision=observation.revision(db, viewer_id),
         libraries=[
             wire.CatalogLibraryOut(
                 value=library.out(viewer_id), order=_order(row, wire.LibraryIndexOrder)
@@ -199,6 +201,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
             wire.CatalogMediaOut(
                 summary=summaries[row["media_id"]],
                 is_unfiled=row["media_id"] in unfiled_ids,
+                remaining_seconds=row["remaining_seconds"],
                 order=_order(row, wire.MediaOrder),
             )
             for row in media_rows
@@ -227,6 +230,8 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
                 podcast_id=row["podcast_id"],
                 transcript_state=TranscriptState(row["transcript_state"] or "not_requested"),
                 episode_state=row["episode_state"],
+                consumption=consumption[row["media_id"]],
+                source_duration_ms=row["source_duration_ms"],
                 order=_order(row, wire.EpisodeOrder),
             )
             for row in episode_rows

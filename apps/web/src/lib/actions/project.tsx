@@ -43,7 +43,7 @@ import {
   submitMetadataResultReview,
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
-import { offlineCall } from "@/lib/offline/bridge";
+import { localMutation, type LocalItem } from "@/lib/offline/localContent";
 import type { PlaybackSource } from "./playbackSource";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
@@ -191,15 +191,19 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
   const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
   const pausing = phase === "Playing" || phase === "Buffering";
   const state = ACTION_CATALOG.Playback.states[phase];
+  // Native plays a ready download from its own package; nothing remote gates that start.
+  const downloaded = ctx.offline.kind === "Ready" && ctx.offline.items.some(item =>
+    item.media_id === mediaId && item.kind === "podcast_episode" && item.state === "Ready" && item.package_id !== null);
+  const needsRemote = installedApp && !loaded && !pending && !downloaded && descriptor === null;
   const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
     : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio"
-    : installedApp && !ctx.online && !loaded && !pending && descriptor === null ? "requires a connection" : undefined;
+    : needsRemote && !ctx.online ? "requires a connection" : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
     icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
     onSelect: () => {
-      if (installedApp && !remoteReady() && !loaded && !pending && descriptor === null) return;
+      if (needsRemote && !remoteReady()) return;
       run({
         ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
         confirmation: null, tracked: false,
@@ -682,79 +686,10 @@ export function projectResourceActions(
     DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),
   };
 
-  const download = (
-    action: Extract<Action, { kind: "Download" }>,
-  ): ActionDescriptor => {
-    const states = ACTION_CATALOG.Download.states;
-    // Android answers on the bridge; its modeled refusal is an advisory.
-    const call =
-      (op: string, args: Record<string, unknown> = {}) =>
-      async () => {
-        try {
-          await offlineCall(op, { mediaId: id, ...args });
-        } catch (error) {
-          if (!ctx.isActive()) return;
-          const code = error instanceof Error ? error.message : "";
-          throw new ResourceActionFailure({
-            tone: "Danger",
-            title: `${code === "Storage" ? "not enough device storage for this download"
-              : code === "Unsupported" ? "this episode’s audio can’t be downloaded"
-              : "the download couldn’t be changed; try again"} · ${facts.label}`,
-          });
-        }
-      };
-    const enqueue = call("enqueue", {
-      kind: action.media_kind,
-      title: action.title,
-      url: action.audio_url,
-    });
-    const { offline } = ctx;
-    if (offline.kind !== "Ready")
-      return make("Download", action.blocked, enqueue, {
-        blocked: offline.kind === "Loading" ? "Loading" : "UnsupportedOnDevice",
-      });
-    const requiresOnline = ctx.online ? undefined : "RequiresOnline";
-    const item = offline.items.find((candidate) => candidate.mediaId === id);
-    switch (item?.state) {
-      case undefined:
-        return make("Download", action.blocked, enqueue, {
-          blocked: requiresOnline,
-          confirmation:
-            action.media_kind === "web_article"
-              ? {
-                  title: "Download text-only copy?",
-                  body: "Downloaded web articles include readable text but not images.",
-                }
-              : undefined,
-        });
-      case "Queued":
-      case "Downloading":
-        return make("Download", action.blocked, call("cancel"), {
-          state: states.Downloading,
-        });
-      case "Ready":
-        return make("Download", action.blocked, call("remove"), {
-          state: states.Ready,
-          confirmation:
-            item.progress !== null && item.progress.kind !== "Canonical"
-              ? {
-                  title: "Remove downloaded copy?",
-                  body: "Remove this copy and its position saved on this device. That position has not reached Nexus.",
-                }
-              : undefined,
-        });
-      case "Failed":
-        return make("Download", action.blocked, call("retry"), {
-          state: states.Failed,
-          blocked: requiresOnline,
-        });
-      case "Removing":
-        return make("Download", action.blocked, call("remove"), {
-          state: states.Ready,
-          blocked: "Busy",
-        });
-    }
-  };
+  // A present download's commands are device actions, composed beside these remote facts.
+  const download = (action: Extract<Action, { kind: "Download" }>): ActionDescriptor | null =>
+    ctx.offline.kind === "Ready" && ctx.offline.items.some(item => item.media_id === id) ? null
+      : projectDownloadActions({ mediaId: id, title: facts.label, ctx, busy, run, server: action })[0] ?? null;
 
   const pendingAdmission = (
     kind: "SourceRefresh" | "MetadataResearch",
@@ -779,7 +714,7 @@ export function projectResourceActions(
     });
   };
 
-  const project = (action: Action): ActionDescriptor => {
+  const project = (action: Action): ActionDescriptor | null => {
     const { blocked } = action;
     switch (action.kind) {
       case "OpenSource":
@@ -955,9 +890,9 @@ export function projectResourceActions(
 
   // Catalog order is menu order; a separator starts each new group.
   const byId = new Map(
-    facts.actions.map((action) => {
+    facts.actions.flatMap((action) => {
       const descriptor = project(action);
-      return [descriptor.id, descriptor] as const;
+      return descriptor === null ? [] : [[descriptor.id, descriptor] as const];
     }),
   );
   const playback = facts.actions.find(action => action.kind === "Playback");
@@ -1001,4 +936,88 @@ export function projectConsumptionUndoActions(target: ActionContext["consumption
       onSelect: () => { if (disabledReason === undefined && item.phase !== "Sending") ctx.consumption.undo(item.commandKey); },
     };
   });
+}
+
+/**
+ * Download commands. A present item's commands (cancel, retry, remove) are device
+ * actions from the current local index and need no remote facts; only acquiring an
+ * absent item uses the server's `Download` fact and current admission. The native
+ * owner resolves the episode's audio itself; the title is only a provisional label.
+ */
+export function projectDownloadActions(input: {
+  readonly mediaId: string;
+  readonly title: string;
+  readonly ctx: ActionContext;
+  readonly busy: ReadonlySet<ActionId>;
+  readonly run: (command: ActionCommand) => void;
+  readonly server: Extract<Action, { kind: "Download" }> | null;
+}): Extract<ActionDescriptor, { kind: "command" }>[] {
+  const { mediaId, title, ctx, busy, run, server } = input;
+  const states = ACTION_CATALOG.Download.states;
+  const command = (
+    state: { readonly label: string; readonly icon: LucideIcon },
+    execute: () => Promise<void>,
+    options: { readonly id?: string; readonly confirmation?: Confirmation; readonly disabledReason?: string; readonly tone?: "danger" } = {},
+  ): Extract<ActionDescriptor, { kind: "command" }> => {
+    const disabledReason = busy.has("Download") ? BLOCKED_COPY.Busy : options.disabledReason;
+    return {
+      kind: "command", id: options.id ?? "Download", label: state.label, icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+      tone: options.tone ?? "default", disabled: disabledReason !== undefined || undefined, disabledReason,
+      onSelect: () => run({ ref: `media:${mediaId}`, id: "Download", label: state.label, title,
+        confirmation: options.confirmation ?? null, tracked: true, execute }),
+    };
+  };
+  // Android answers on the bridge; its modeled refusal is an advisory.
+  const mutate = (op: string, args: Record<string, unknown>) => async () => {
+    try {
+      await localMutation(op, args);
+    } catch (error) {
+      if (!ctx.isActive()) return;
+      const code = error instanceof Error ? error.message : "";
+      throw new ResourceActionFailure({ tone: "Danger",
+        title: `${code === "Storage" ? "not enough device storage for this download"
+          : code === "Unsupported" ? "this item can’t be downloaded"
+          : code === "Scheduler" ? "android couldn’t schedule this download; try again"
+          : "the download couldn’t be changed; try again"} · ${title}` });
+    }
+  };
+  const { offline } = ctx;
+  if (offline.kind !== "Ready") {
+    if (server === null) return [];
+    return [command(ACTION_CATALOG.Download, async () => {}, {
+      disabledReason: offline.kind === "Loading" ? BLOCKED_COPY.Loading : BLOCKED_COPY.UnsupportedOnDevice })];
+  }
+  const item: LocalItem | undefined = offline.items.find(candidate => candidate.media_id === mediaId);
+  const remove = mutate("remove", { media_id: mediaId });
+  switch (item?.state) {
+    case undefined: {
+      if (server === null) return [];
+      const subject = server.media_kind === "podcast_episode"
+        ? { kind: "Episode", media_id: mediaId, title: server.title }
+        : { kind: "ReadingCopy", media_id: mediaId, media_kind: server.media_kind, title: server.title };
+      const reason = server.blocked !== null ? BLOCKED_COPY[server.blocked] : !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
+      return [command(ACTION_CATALOG.Download, mutate("enqueue", { subject }), {
+        disabledReason: reason,
+        confirmation: server.media_kind === "web_article"
+          ? { title: "Download text-only copy?", body: "Downloaded web articles include readable text but not images." } : undefined,
+      })];
+    }
+    case "Queued":
+    case "Downloading":
+      return [command(states.Downloading, mutate("cancel", { media_id: mediaId }))];
+    case "Ready":
+      return [command(states.Ready, remove, { tone: "danger",
+        confirmation: item.progress !== null && item.progress.kind !== "Canonical" ? {
+          title: "Remove downloaded copy?",
+          body: "Remove this copy and its position saved on this device. That position has not reached Nexus.",
+        } : undefined })];
+    case "Failed":
+      return [
+        command(states.Failed, mutate("retry", { media_id: mediaId })),
+        command(states.Ready, remove, { id: "Download.Remove", tone: "danger" }),
+      ];
+    case "Removing":
+      return [command(states.Ready, remove, { disabledReason: item.kind === "podcast_episode"
+        ? "removal pending · episode still open" : "removal pending · copy still open" })];
+  }
 }

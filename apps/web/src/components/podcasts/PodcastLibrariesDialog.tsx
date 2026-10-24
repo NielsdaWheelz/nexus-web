@@ -39,7 +39,7 @@ export default function PodcastLibrariesDialog({ target, title, returnFocusTo, r
   const stamp = useChangeStamp("Libraries", "Podcasts", "Entries");
   const source = usePaneFreeServerValue({ key: `podcast-library-manager:${ctx.accountId}:${scope}`, stale: stamp,
     load: async signal => {
-      const [catalog, detail] = await Promise.all([libraryDestinations(signal), target.kind === "Canonical" ? getPodcastDetail(target.podcast_id, signal) : Promise.resolve(null)]);
+      const [catalog, detail] = await Promise.all([libraryDestinations(signal), target.kind === "Canonical" ? getPodcastDetail(target.podcast_id, signal).then(read => read.data) : Promise.resolve(null)]);
       return { catalog, detail };
     },
   });

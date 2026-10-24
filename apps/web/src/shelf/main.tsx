@@ -7,7 +7,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import { NavigationIdentity } from "@/lib/host/policy";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { connectOffline } from "@/lib/offline/bridge";
+import { connectLocalContent } from "@/lib/offline/localContent";
 import Shelf from "./Shelf";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 
@@ -21,7 +21,7 @@ function ShelfFrame() {
   return <NavigationIdentity value={href}><Shelf /></NavigationIdentity>;
 }
 
-connectOffline();
+connectLocalContent({ accountId: null, indexPath: "/shelf/downloads.json" });
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MobileViewportProvider><ShelfFrame /></MobileViewportProvider>

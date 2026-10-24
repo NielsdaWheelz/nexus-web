@@ -6,7 +6,7 @@
 // completion and hands them to the server, which validates and combines them;
 // the text filter stays local.
 
-import { useCallback, useId, useMemo, useRef } from "react";
+import { useCallback, useId, useMemo } from "react";
 import { Plus } from "lucide-react";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
@@ -27,8 +27,10 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { PlaybackSourceContext, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
-import { useCatalogRead, useCatalogState } from "@/lib/catalog/provider";
+import { PlaybackSourceContext, captureSavedView, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
+import { paneFilterText } from "@/lib/panes/paneFilterText";
+import { useCatalogRead, useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
+import { oldestRevision, unstamped, type ConsumptionStamp as Stamp, type StampedRead } from "@/lib/consumption/listening";
 import { catalogLibrary, catalogEntries, catalogLibraryShows } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
 import { getLibraryPodcasts, type PodcastSection } from "@/lib/podcasts/api";
@@ -90,9 +92,9 @@ import {
   usePaneScrollRetention,
 } from "@/lib/workspace/paneReturnMemento";
 
-const DETAIL = definePaneVisitDataKey<Visit<Library>>("Library.Detail");
-const SHOWS = definePaneVisitDataKey<Visit<PodcastSection>>("Library.Podcasts");
-const ENTRIES = definePaneVisitDataKey<ListSnapshot<LibraryEntry>>("Library.Entries");
+const DETAIL = definePaneVisitDataKey<Visit<StampedRead<Library>>>("Library.Detail");
+const SHOWS = definePaneVisitDataKey<Visit<StampedRead<PodcastSection>>>("Library.Podcasts");
+const ENTRIES = definePaneVisitDataKey<ListSnapshot<LibraryEntry, Stamp>>("Library.Entries");
 const UNIT = { singular: "entry", plural: "entries" };
 const VIEW_KEYS = ["sort", "entry_type", "projection", "completion"];
 
@@ -120,13 +122,24 @@ function LibraryPane({ id }: { readonly id: string }) {
   ).toString();
 
   const catalog = useCatalogState();
-  const savedDetail = useCatalogRead(value => catalogLibrary(value, id));
-  const savedEntries = useCatalogRead(value => catalogEntries(value, id, new URLSearchParams(query)));
-  const savedShows = useCatalogRead(value => catalogLibraryShows(value, id));
+  // Heading, entries and subscriptions are one consumption group.
+  const group = useLiveGroup(`${id}?${query}`);
+  const savedDetail = useCatalogRead(value => {
+    const library = catalogLibrary(value, id);
+    return library === null ? null : { data: library, consumption_revision: value.value.consumption_revision };
+  });
+  const savedEntries = useCatalogRead(value => {
+    const page = catalogEntries(value, id, new URLSearchParams(query));
+    return page === null ? null : { ...page, metadata: { consumption_revision: value.value.consumption_revision } };
+  });
+  const savedShows = useCatalogRead(value => {
+    const shows = catalogLibraryShows(value, id);
+    return shows === null ? null : { data: shows, consumption_revision: value.value.consumption_revision };
+  });
   const rawDetail = useServerValue({
     catalog: savedDetail,
     key: `/libraries/${id}`,
-    stale: useChangeStamp("Libraries"),
+    stale: `${useChangeStamp("Libraries")}|${group.stale}`,
     visit: DETAIL,
     load: (signal) => getLibrary(id, signal),
   });
@@ -136,14 +149,16 @@ function LibraryPane({ id }: { readonly id: string }) {
     params.has("projection") ||
     params.has("completion") ||
     (params.get("sort") ?? "").startsWith("remaining");
-  const rawList = useServerList<LibraryEntry>({
+  const rawList = useServerList<LibraryEntry, Stamp>({
     catalog: savedEntries,
+    foldMetadata: oldestRevision,
     key: `/libraries/${id}/entries?${query}`,
     stale: [
       useChangeStamp("Entries"),
       followsConsumption ? consumption : "-",
       useMediaQueryRevision(),
       useRefreshStamp(active && remoteReady(), 60_000),
+      group.stale,
     ].join("|"),
     pageSize: 100,
     active: active && (rawDetail.status === "ready" || catalog.data?.libraries.has(id) === true),
@@ -155,16 +170,16 @@ function LibraryPane({ id }: { readonly id: string }) {
   const showsStale = `${useChangeStamp("Podcasts", "Entries", "Libraries")}:${useRefreshStamp(active && remoteReady(), 60_000)}`;
   const rawShows = useServerValue({
     key: rawDetail.status === "ready" || catalog.data?.libraries.has(id) === true ? `library-podcasts:${ctx.accountId}:${id}` : null,
-    stale: showsStale,
+    stale: `${showsStale}|${group.stale}`,
     visit: SHOWS, catalog: savedShows,
     load: signal => getLibraryPodcasts(id, signal),
   });
-  const groupKey = `${id}?${query}`;
-  const promoted = useRef({ key: groupKey, live: false });
-  if (promoted.current.key !== groupKey) promoted.current = { key: groupKey, live: false };
-  if (rawDetail.status === "ready" && rawDetail.source.kind === "live" && rawDetail.error === null &&
-      rawList.source.kind === "live" && rawList.complete && rawList.failure === null &&
-      rawShows.status === "ready" && rawShows.source.kind === "live" && rawShows.error === null) promoted.current.live = true;
+  // Relevance is the library's unfiltered saved membership, never the shown rows.
+  const relevantMediaIds = useMemo(() => new Set(catalog.raw?.value.library_media.flatMap(row => row.library_id === id ? [row.media_id] : []) ?? []), [catalog.raw, id]);
+  usePromoteLiveGroup(group, rawDetail.status === "ready" && rawDetail.source.kind === "live" && rawDetail.error === null &&
+    rawList.source.kind === "live" && rawList.complete && rawList.failure === null && rawList.metadata !== null &&
+    rawShows.status === "ready" && rawShows.source.kind === "live" && rawShows.error === null
+    ? [rawDetail.data.consumption_revision, rawList.metadata.consumption_revision, rawShows.data.consumption_revision] : null, relevantMediaIds);
   const saved = useMemo(() => {
     if (catalog.data === null) return null;
     try {
@@ -175,8 +190,8 @@ function LibraryPane({ id }: { readonly id: string }) {
         source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
     } catch (error) { if (isApiError(error)) return null; throw error; }
   }, [catalog.data, id, query]);
-  const showingSaved = !promoted.current.live && saved !== null;
-  const detail: ServerValue<Library> = !showingSaved ? rawDetail : {
+  const showingSaved = !group.live && saved !== null;
+  const detail: ServerValue<Library> = !showingSaved ? unstamped(rawDetail) : {
     status: "ready", data: saved.library, source: saved.source, generation: 0,
     error: rawDetail.status === "loading" ? null : rawDetail.error,
     refreshing: rawDetail.status === "ready" && rawDetail.refreshing, refetch: rawDetail.refetch,
@@ -186,7 +201,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     fresh: false, metadata: saved.entries.metadata ?? null,
     current: true, complete: true, orderRevision: saved.entries.order_revision ?? null,
   };
-  const shows: ServerValue<PodcastSection> = !showingSaved ? rawShows : {
+  const shows: ServerValue<PodcastSection> = !showingSaved ? unstamped(rawShows) : {
     status: "ready", data: saved.shows, source: saved.source, generation: 0,
     error: rawShows.status === "loading" ? null : rawShows.error,
     refreshing: rawShows.status === "ready" && rawShows.refreshing, refetch: rawShows.refetch,
@@ -441,13 +456,15 @@ function LibraryPane({ id }: { readonly id: string }) {
       ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
       : null;
 
-  const capture: PlaybackSource = selected_media_id => {
-    if (!live || !remoteReady() || !list.current || order.state.pending !== null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current library before starting this queue");
+  const capture: PlaybackSource = async selected_media_id => {
     const sourceSort = (["title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"] as const).find(value => value === sort) ?? null;
     const entry_type = (["web_article", "epub", "pdf", "video", "podcast_episode"] as const).find(value => value === type) ?? null;
     const sourceProjection = (["unfiled", "in_progress"] as const).find(value => value === projection) ?? null;
-    return capturePlaybackSource({ source: { kind: "Library", library_id: id, query: text,
-      sort: sourceSort, entry_type, projection: sourceProjection, completion: hideFinished ? "unfinished" : null }, selected_media_id });
+    const view = { library_id: id, sort: sourceSort, entry_type, projection: sourceProjection, completion: hideFinished ? "unfinished" as const : null };
+    if (list.source.kind === "catalog")
+      return captureSavedView(visible.map(entry => entry.media_summary), selected_media_id, { kind: "Library", label: name, query: paneFilterText(text), ...view });
+    if (!live || !remoteReady() || !list.current || order.state.pending !== null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current library before starting this queue");
+    return capturePlaybackSource({ source: { kind: "Library", query: text, ...view }, selected_media_id });
   };
 
   return (

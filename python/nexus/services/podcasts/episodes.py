@@ -40,7 +40,7 @@ def episode_rows_sql() -> str:
     )
     return f"""
         WITH visible_media AS ({visible_media_ids_cte_sql()})
-        SELECT pe.media_id, pe.podcast_id, pe.published_at,
+        SELECT pe.media_id, pe.podcast_id, pe.published_at, pe.duration_seconds * 1000 AS source_duration_ms,
                COALESCE(pe.duration_seconds, 0) AS duration_sort,
                (pe.published_at IS NULL)::int AS published_missing,
                (pe.duration_seconds IS NULL)::int AS duration_missing,

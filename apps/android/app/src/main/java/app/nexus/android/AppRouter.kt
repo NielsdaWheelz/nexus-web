@@ -2,21 +2,26 @@ package app.nexus.android
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.util.Base64
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import androidx.webkit.WebViewAssetLoader
 import app.nexus.android.webkit.OwnedOrigin
+import app.nexus.android.offline.OfflineStore
+import app.nexus.android.playback.ListeningPublication
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.security.SecureRandom
+import java.util.UUID
 
 /**
  * Installed interface delivery at the exact configured origin. Reserved misses
  * terminate locally; only ordinary GET app documents receive the installed
  * entry. Auth, public documents and API requests remain explicit remote routes.
- * Downloaded content belongs exclusively to ShelfRouter's separate origin.
+ * Fixed device reads expose account-bound content; non-episode reading copies
+ * keep ShelfRouter's isolated document origin.
  */
 internal class AppRouter(private val context: Context, private val session: DeviceSession) {
     private val origin = OwnedOrigin(BuildConfig.NEXUS_BASE_URL)
@@ -43,32 +48,51 @@ internal class AppRouter(private val context: Context, private val session: Devi
         val uri = request.url
         if (!isOwned(uri)) return null
         val path = uri.path ?: "/"
-        if (path == "/_nexus/device/catalog.json") {
+        if (path.startsWith("/_nexus/device/")) {
             if (request.requestHeaders.entries.firstOrNull { it.key.equals("X-Nexus-Wire", true) }?.value != BuildConfig.NEXUS_WIRE.toString()) {
                 return response(426, "Upgrade Required", "application/json", "{\"error\":{\"code\":\"E_WIRE_MISMATCH\",\"message\":\"update nexus\"}}".toByteArray())
             }
             if (request.method != "GET") return response(405, "Method Not Allowed", "text/plain", ByteArray(0))
             return try {
-                val stream = runBlocking { session.initialize(); session.catalog.open() }
+                runBlocking { session.initialize() }
+                if (path == "/_nexus/device/startup.json") {
+                    val snapshot = runBlocking { session.startup() }
+                    return if (snapshot == null) response(204, "No Content", "application/json", ByteArray(0))
+                    else response(200, "OK", "application/json", snapshot.toString().toByteArray(Charsets.UTF_8))
+                }
+                val account = session.accountId()
+                    ?: throw LocalStateError("E_LOCAL_STATE_UNBOUND", "sign in first")
+                var mime = "application/json"
+                val stream = when (path) {
+                    "/_nexus/device/catalog.json" -> runBlocking { session.catalog.open() }
+                    "/_nexus/device/listening.json" -> ListeningPublication.open(context, account)
+                    "/_nexus/device/downloads.json" -> {
+                        if (Build.VERSION.SDK_INT < 34) return response(404, "Not Found", "application/json", ByteArray(0))
+                        OfflineStore.get(context).openDownloads()
+                    }
+                    else -> {
+                        if (Build.VERSION.SDK_INT < 34) return response(404, "Not Found", "application/json", ByteArray(0))
+                        val parts = path.removePrefix("/_nexus/device/").split('/')
+                        if (parts.size != 4 || parts[0] != "episodes" || parts[3] !in setOf("episode.json", "transcript.json", "artwork"))
+                            return response(404, "Not Found", "application/json", ByteArray(0))
+                        val mediaId = try { UUID.fromString(parts[1]) } catch (_: IllegalArgumentException) { return response(404, "Not Found", "application/json", ByteArray(0)) }
+                        val packageId = try { UUID.fromString(parts[2]) } catch (_: IllegalArgumentException) { return response(404, "Not Found", "application/json", ByteArray(0)) }
+                        val component = OfflineStore.get(context).openEpisodeComponent(mediaId, packageId, parts[3])
+                            ?: return response(404, "Not Found", "application/json", ByteArray(0))
+                        mime = component.mime
+                        component.input
+                    }
+                }
                 if (stream == null) response(204, "No Content", "application/json", ByteArray(0))
-                else WebResourceResponse("application/json", "utf-8", 200, "OK",
+                else WebResourceResponse(mime, if (mime == "application/json") "utf-8" else null, 200, "OK",
                     mapOf("Cache-Control" to "private, no-store", "X-Content-Type-Options" to "nosniff"), stream)
             } catch (error: java.io.IOException) {
-                val body = JSONObject().put("error", JSONObject().put("code", (error as? LocalStateError)?.code ?: "E_CATALOG_IO").put("message", error.message)).toString()
-                response(500, "Internal Server Error", "application/json", body.toByteArray(Charsets.UTF_8))
-            }
-        }
-        if (path == "/_nexus/device/startup.json") {
-            if (request.requestHeaders.entries.firstOrNull { it.key.equals("X-Nexus-Wire", true) }?.value != BuildConfig.NEXUS_WIRE.toString()) {
-                return response(426, "Upgrade Required", "application/json", "{\"error\":{\"code\":\"E_WIRE_MISMATCH\",\"message\":\"update nexus\"}}".toByteArray())
-            }
-            if (request.method != "GET") return response(405, "Method Not Allowed", "text/plain", ByteArray(0))
-            return try {
-                val snapshot = runBlocking { session.startup() }
-                if (snapshot == null) response(204, "No Content", "application/json", ByteArray(0))
-                else response(200, "OK", "application/json", snapshot.toString().toByteArray(Charsets.UTF_8))
-            } catch (error: java.io.IOException) {
-                val body = JSONObject().put("error", JSONObject().put("code", (error as? LocalStateError)?.code ?: "E_LOCAL_STATE_IO").put("message", error.message)).toString()
+                val code = when (error) {
+                    is LocalStateError -> error.code
+                    is ListeningPublication.Error -> error.code
+                    else -> "E_LOCAL_STATE_IO"
+                }
+                val body = JSONObject().put("error", JSONObject().put("code", code).put("message", error.message)).toString()
                 response(500, "Internal Server Error", "application/json", body.toByteArray(Charsets.UTF_8))
             }
         }

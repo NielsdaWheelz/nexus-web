@@ -2,19 +2,22 @@
 import { useEffect, useState } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useCatalogState } from "@/lib/catalog/provider";
+import { retryListeningRead, useListening } from "@/lib/consumption/listening";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { useRemoteAdmission } from "./admissionHooks";
 import type { SignInResult } from "./contracts";
 import { sessionCheck, sessionSignIn } from "./client";
-/** Admission and catalog conditions own independent recovery controls. Required
- * account/build recovery is an Action; connectivity and catalog work are Status.
+/** Admission, catalog and listening conditions own independent recovery controls.
+ * Account/build and listening recovery are Actions; connectivity/catalog are Status.
  * Each episode remains attention through its own retry until clean settlement,
  * including overlapping session checks. The custom tab keeps work owners. */
 export function DeviceSessionNotice() {
   const admission = useRemoteAdmission();
   const catalog = useCatalogState();
+  const listening = useListening();
+  const [readingListening, setReadingListening] = useState(false);
   const { calendarTimeZone } = useAuthenticatedAccount();
   const environment = useRenderEnvironment();
   const snapshot = catalog.status?.snapshot ?? (catalog.data === null ? null : catalog.data.value);
@@ -77,5 +80,16 @@ export function DeviceSessionNotice() {
       disabledReason: admission === "Ready" ? undefined : "connect before retrying",
       onClick: () => { if (admission === "Ready" && !catalogRefreshing && !catalog.loading) void catalog.refresh(); } }] : undefined,
   } : null);
+  useWorkspaceCondition("device-listening", listening.error === null ? null : {
+    needsAttention: true,
+    priority: "Action",
+    content: { tone: "Warning", title: "listening progress couldn’t be read",
+      message: "saved progress has been kept. lists may be out of date." },
+    announcement: "Polite",
+    actions: [{ label: "retry", busy: readingListening, onClick: () => {
+      setReadingListening(true);
+      void retryListeningRead().finally(() => setReadingListening(false));
+    } }],
+  });
   return null;
 }

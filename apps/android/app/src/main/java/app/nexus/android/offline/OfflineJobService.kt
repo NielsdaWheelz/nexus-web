@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import app.nexus.android.MainActivity
 import app.nexus.android.DeviceSession
 import app.nexus.android.NexusOriginClient
+import app.nexus.android.NexusOriginError
 import app.nexus.android.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.Dns
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -48,27 +50,35 @@ internal object OfflineJobs {
     private var transferRun: JobParameters? = null
     private var syncRun: JobParameters? = null
     private var syncAgain = false
+    private val transfers = java.util.IdentityHashMap<JobParameters, Transfer>()
 
     /**
      * The user-initiated transfer job, persisted, on the policy's network.
      * Leaves a live drain alone unless `replace` (a policy change), which
      * stops it so its item requeues under the new constraint.
      */
-    fun schedule(context: Context, replace: Boolean = false) {
-        if (Build.VERSION.SDK_INT < 34) return
+    fun schedule(context: Context, replace: Boolean = false): Boolean {
+        if (Build.VERSION.SDK_INT < 34) return false
         synchronized(this) {
             val store = OfflineStore.get(context)
             val running = transferRun != null
             val idle = if (replace) !running && !store.hasQueued() else running || !store.hasQueued()
-            if (idle) return
+            if (idle) return true
             val network = if (store.policy == Policy.AnyConnected) JobInfo.NETWORK_TYPE_ANY else JobInfo.NETWORK_TYPE_UNMETERED
-            context.getSystemService(JobScheduler::class.java).schedule(
+            val accepted = try { context.getSystemService(JobScheduler::class.java).schedule(
                 JobInfo.Builder(TRANSFER_JOB_ID, ComponentName(context, OfflineJobService::class.java))
                     .setUserInitiated(true)
                     .setPersisted(true)
                     .setRequiredNetworkType(network)
                     .build(),
-            )
+            ) == JobScheduler.RESULT_SUCCESS
+            } catch (error: IllegalStateException) {
+                android.util.Log.w("NexusDownloads", "transfer schedule rejected", error); false
+            } catch (error: SecurityException) {
+                android.util.Log.w("NexusDownloads", "transfer schedule refused", error); false
+            }
+            if (!accepted) store.scheduleRejected()
+            return accepted
         }
     }
 
@@ -104,10 +114,18 @@ internal object OfflineJobs {
     fun ended(run: JobParameters): Boolean {
         synchronized(this) {
             if (transferRun === run) transferRun = null
+            transfers.remove(run)
             if (syncRun !== run) return false
             syncRun = null
             return syncAgain.also { syncAgain = false }
         }
+    }
+
+    fun stopped(run: JobParameters, store: OfflineStore, byUser: Boolean) = synchronized(this) {
+        val owned = transferRun === run
+        val transfer = transfers.remove(run)
+        ended(run)
+        if (owned || transfer != null) store.stopActive(transfer, byUser && owned)
     }
 
     /** The drain's next transfer, past the items this run already requeued; null ends the run. */
@@ -115,7 +133,8 @@ internal object OfflineJobs {
         synchronized(this) {
             if (transferRun !== run) return null
             val transfer = store.startNext(skip)
-            if (transfer == null) transferRun = null
+            if (transfer == null) { transferRun = null; transfers.remove(run) }
+            else transfers[run] = transfer
             return transfer
         }
     }
@@ -125,15 +144,17 @@ internal object OfflineJobs {
 class OfflineJobService : JobService() {
     companion object {
         @Volatile private var current: OfflineJobService? = null
+        private val workers = ConcurrentHashMap.newKeySet<Job>()
         suspend fun stopForSignOut(context: Context) {
             val scheduler = context.getSystemService(JobScheduler::class.java)
             scheduler.cancel(TRANSFER_JOB_ID)
             scheduler.cancel(SYNC_JOB_ID)
-            val service = current ?: return
-            val running = service.runs.values.toList()
-            running.forEach { (job, http) -> job.cancel(); http.dispatcher.cancelAll() }
-            running.forEach { (job, _) -> job.join() }
-            service.runs.clear()
+            val service = current
+            service?.runs?.values?.forEach { it.http.dispatcher.cancelAll() }
+            val running = workers.toList()
+            running.forEach { it.cancel() }
+            running.forEach { it.join() }
+            service?.runs?.clear()
         }
     }
     override fun onCreate() {
@@ -142,7 +163,9 @@ class OfflineJobService : JobService() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val runs = ConcurrentHashMap<Int, Pair<Job, OkHttpClient>>()
+    private data class Run(val params: JobParameters, val job: Job, val http: OkHttpClient)
+    private val runs = ConcurrentHashMap<Int, Run>()
+    private val retiring = ConcurrentHashMap<Int, MutableSet<Job>>()
     private val store by lazy { OfflineStore.get(this) }
 
     override fun onStartJob(params: JobParameters): Boolean {
@@ -165,46 +188,56 @@ class OfflineJobService : JobService() {
             setNotification(params, NOTIFICATION_ID, notification(showAccount = false), JOB_END_NOTIFICATION_POLICY_REMOVE)
         }
         val job = scope.launch {
-            val device = DeviceSession.get(this@OfflineJobService)
+            var reschedule = false
             try {
+                // Policy replacement reuses a resumable package. Its prior writer
+                // must quiesce before this run opens the same staging files.
+                retiring[params.jobId]?.toList()?.forEach { it.join() }
+                currentCoroutineContext().ensureActive()
+                val device = DeviceSession.get(this@OfflineJobService)
                 device.initialize()
+                store.initialize()
                 device.checkSession()
-            } catch (_: IOException) {
-                OfflineJobs.ended(params)
-                jobFinished(params, false)
-                return@launch
+                if (!device.remotelyAdmitted() || device.accountId() != store.account) return@launch
+                reschedule = if (transfer) drain(params, http, origin) else syncPositions(store, origin)
+            } catch (error: IOException) {
+                android.util.Log.e("NexusDownloads", "download job could not finish", error)
+                reschedule = store.hasQueued()
+            } finally {
+                val again = OfflineJobs.ended(params)
+                runs[params.jobId]?.takeIf { it.params === params }?.let { runs.remove(params.jobId, it) }
+                if (isActive) jobFinished(params, reschedule || again)
             }
-            if (!device.remotelyAdmitted() || device.accountId() != store.account) {
-                OfflineJobs.ended(params)
-                jobFinished(params, false)
-                return@launch
-            }
-            val reschedule = if (transfer) {
-                drain(params, http, origin)
-            } else {
-                val retry = syncPositions(store, origin)
-                OfflineJobs.ended(params) || retry
-            }
-            if (isActive) jobFinished(params, reschedule)
         }
-        runs[params.jobId] = job to http
+        workers += job
+        job.invokeOnCompletion { workers.remove(job) }
+        runs[params.jobId] = Run(params, job, http)
         return true
     }
 
     @RequiresApi(34)
     override fun onStopJob(params: JobParameters): Boolean {
         val byUser = params.stopReason == JobParameters.STOP_REASON_USER
-        OfflineJobs.ended(params)
-        if (params.jobId == TRANSFER_JOB_ID) store.stopActive(byUser)
-        runs.remove(params.jobId)?.let { (job, http) ->
-            job.cancel()
-            http.dispatcher.cancelAll()
+        // stop callbacks carry a separate parcel; internal ownership belongs to the captured run.
+        val run = runs[params.jobId] ?: return !byUser
+        runs.remove(params.jobId, run)
+        val stopped = retiring.computeIfAbsent(params.jobId) { ConcurrentHashMap.newKeySet() }
+        stopped += run.job
+        run.job.invokeOnCompletion { stopped.remove(run.job) }
+        try {
+            if (params.jobId == TRANSFER_JOB_ID) OfflineJobs.stopped(run.params, store, byUser)
+            else OfflineJobs.ended(run.params)
+        } catch (error: IOException) {
+            android.util.Log.e("NexusDownloads", "download interruption could not be saved", error)
+        } finally {
+            run.job.cancel(); run.http.dispatcher.cancelAll()
         }
         return !byUser
     }
 
     override fun onDestroy() {
         if (current === this) current = null
+        runs.values.forEach { it.http.dispatcher.cancelAll() }
         scope.cancel()
         super.onDestroy()
     }
@@ -229,17 +262,47 @@ class OfflineJobService : JobService() {
                 }
                 val retry = try {
                     if (transfer.kind == AUDIO) {
-                        fetchAudio(transfer.url!!, transfer.staging, http, onProgress)
-                        store.publish(transfer, 0, null)
+                        val capture = transfer.capture ?: origin.episodeDownload(transfer.mediaId).also {
+                            if (it.getJSONObject("rendition").getString("stream_url").toHttpUrlOrNull()?.isHttps != true) throw TransferFailure("Invalid", false)
+                            localCommit { if (!store.capture(transfer, it)) throw IOException("transfer superseded") }
+                        }
+                        if (!transfer.ready) {
+                            val audio = fetchAudio(this@OfflineJobService, capture.getJSONObject("rendition").getString("stream_url"), transfer.staging, http, onProgress)
+                            if (!localCommit { store.publishEpisode(transfer, capture, audio) }) continue
+                        }
+                        for (name in store.pendingExtras(transfer)) {
+                            currentCoroutineContext().ensureActive()
+                            if (!transfer.staging.isDirectory && !transfer.staging.mkdirs()) throw TransferFailure("Storage", false)
+                            val staged = java.io.File(transfer.staging, "$name.part")
+                            try {
+                                val extra = if (name == "transcript") fetchTranscript(transfer, capture, staged, origin)
+                                    else fetchArtwork(capture.getJSONObject("rendition").getString("artwork_url"), staged, http)
+                                localCommit { store.publishExtra(transfer, name, staged, extra.mime, extra.sha256) }
+                            } catch (failure: TransferFailure) {
+                                localCommit { store.failExtra(transfer, name, failure.reason) }
+                            } catch (_: IOException) {
+                                // justify-ignore-error: optional transfer interruption leaves playable audio intact.
+                                localCommit { store.failExtra(transfer, name, "Network") }
+                            } finally { staged.delete() }
+                        }
+                        store.finish(transfer)
                     } else {
-                        val copy = fetchCopy(transfer.mediaId, store.account, transfer.staging, http, origin, onProgress)
-                        store.publish(transfer, copy.generation, copy.baseline)
+                        val copy = fetchCopy(transfer.mediaId, transfer.account, transfer.staging, http, origin, onProgress)
+                        localCommit { store.publish(transfer, copy.generation, copy.baseline) }
                     }
                     false
                 } catch (failure: TransferFailure) {
                     store.fail(transfer, failure.reason, failure.retryable)
+                } catch (error: NexusOriginError) {
+                    val reason = when (error.status) {
+                        401 -> "AuthorizationRequired"
+                        403, 404, 410 -> "SourceUnavailable"
+                        409 -> "Changed"
+                        else -> "Server"
+                    }
+                    store.fail(transfer, reason, error.status >= 500 || error.status == 426)
                 } catch (_: IOException) {
-                    // justify-ignore-error: an interrupted body is a retryable Network failure.
+                    // justify-ignore-error: an interrupted network body is retryable; local writes have a separate boundary.
                     store.fail(transfer, "Network", true)
                 }
                 if (retry) requeued += transfer.mediaId
@@ -247,6 +310,11 @@ class OfflineJobService : JobService() {
         } finally {
             unsubscribe()
         }
+    }
+
+    private inline fun <T> localCommit(commit: () -> T): T = try { commit() } catch (_: IOException) {
+        // justify-ignore-error: a local publication/intent failure is storage, not a network retry.
+        throw TransferFailure("Storage", false)
     }
 
     private fun notification(showAccount: Boolean = true): Notification {

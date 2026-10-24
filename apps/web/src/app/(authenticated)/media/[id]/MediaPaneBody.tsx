@@ -15,6 +15,7 @@ import {
   type FocusEvent,
 } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch, apiTransportFeedback, isStaleBuild, STALE_BUILD_FEEDBACK, type ApiError } from "@/lib/api/client";
@@ -22,7 +23,9 @@ import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteReady, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { localContentAvailable } from "@/lib/offline/localContent";
+import DownloadedEpisode, { useSavedEpisode } from "./DownloadedEpisode";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -150,7 +153,15 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
 }
 
 function MediaRoute({ id }: { readonly id: string }) {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "MediaRoute");
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, () => "Ready" as const);
+  const admitted = admission === "Ready";
   const catalog = useCatalogState();
+  const saved = useSavedEpisode(id);
+  const view = runtime.searchParams.get("view");
+  const [openedOffline, setOpenedOffline] = useState(false);
+  const [interacted, setInteracted] = useState(false);
+  const pinSaved = useCallback(() => setInteracted(true), []);
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
     stale: "",
@@ -160,14 +171,47 @@ function MediaRoute({ id }: { readonly id: string }) {
         id,
       ),
   });
-  usePaneReturnReady(record.status === "failed" || !remoteReady() && !catalog.loading && record.status !== "ready");
-  if (record.status === "ready") return <MediaPane id={id} record={record} />;
+  usePaneReturnReady(record.status === "failed" || !admitted && !catalog.loading && record.status !== "ready");
   const failure = record.status === "loading" ? null : record.error;
-  if (failure !== null && [403, 404, 426].includes(failure.status)) return <FeedbackState
+  const savedReady = saved.kind === "Ready";
+  useEffect(() => {
+    if (savedReady && view !== "live" && (admission === "Unavailable" || admission === "SignInRequired" || admission === "UpdateRequired")) setOpenedOffline(true);
+  }, [admission, savedReady, view]);
+  const showSaved = savedReady && (view === "downloaded" || record.status !== "ready" || !admitted || view !== "live" && (openedOffline || interacted));
+  const switchView = (next: "live" | "downloaded") => {
+    const query = new URLSearchParams(runtime.searchParams); query.set("view", next);
+    runtime.router.push(`/media/${id}?${query}`);
+  };
+  if (showSaved && saved.kind === "Ready") return <div className={styles.layout}>
+    <div className={styles.savedSwitch}>
+      <span>downloaded copy</span>
+      <Button onClick={() => switchView("live")}>view current version</Button>
+    </div>
+    {failure !== null && [403, 404, 410].includes(failure.status) ? <FeedbackNotice
+      content={{ tone: "Warning", title: "original no longer available · downloaded copy kept" }} announcement="Polite" /> : null}
+    {view === "live" && record.status !== "ready" ? <FeedbackNotice content={{ tone: record.status === "failed" ? "Warning" : "Neutral",
+      title: !admitted ? "connect to view the current version" : record.status === "failed" ? "current version couldn’t open · downloaded copy kept" : "opening current version · downloaded copy kept" }} announcement="Polite"
+      actions={record.status === "failed" && admitted ? [{ label: "retry current version", onClick: record.refetch, busy: record.retrying }] : undefined} /> : null}
+    <DownloadedEpisode key={saved.manifest.package_id} saved={saved} onIntent={pinSaved} />
+  </div>;
+  if (view === "downloaded" && !savedReady) return saved.kind === "Loading"
+    ? <PaneLoadingState label="opening downloaded copy…" announcement="Polite" />
+    : <FeedbackState content={{ tone: "Warning", title: saved.kind === "Failed" ? saved.message : "this episode is not downloaded" }} announcement="Polite"
+      actions={saved.kind === "Failed" ? [{ label: "retry downloaded copy", onClick: saved.retry }, { label: "view current version", onClick: () => switchView("live") }]
+        : [{ label: "view current version", onClick: () => switchView("live") }]} />;
+  if (record.status === "ready") return <div className={styles.layout}>
+    {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
+    <MediaPane id={id} record={record} />
+  </div>;
+  if (localContentAvailable && saved.kind === "Loading") return <PaneLoadingState label="opening saved content…" announcement="Polite" />;
+  if (localContentAvailable && saved.kind === "Failed") return <FeedbackState content={{ tone: "Warning", title: saved.message,
+    message: "downloaded content needs repair. this does not remove saved files or listening history." }} announcement="Polite"
+    actions={[{ label: "retry downloaded copy", onClick: saved.retry }, { label: "manage downloads", href: "/downloads" }]} />;
+  if (failure !== null && [403, 404, 410, 426].includes(failure.status)) return <FeedbackState
     content={{ tone: "Warning", title: failure.status === 426 ? "update nexus to open this item" : "this item is no longer available" }} announcement="Polite" />;
   const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
   if (summary !== null) return <SavedMedia summary={summary} record={record} />;
-  if (!remoteReady() && !catalog.loading) return <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />;
+  if (!admitted && !catalog.loading) return <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />;
   return record.status === "failed" ? <FeedbackState content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
     : <PaneLoadingState label="loading item…" announcement="Polite" />;
 }

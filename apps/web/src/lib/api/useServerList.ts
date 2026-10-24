@@ -72,7 +72,7 @@ export interface ServerList<T, M = null> {
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
   readonly orderRevision: string | null;
-  /** Current-key metadata from the latest committed response, including an empty page. */
+  /** Current-key metadata from the committed traversal (`foldMetadata`), including an empty page. */
   readonly metadata: M | null;
   readonly running: Op | null;
   readonly failure: { readonly op: Op; readonly error: ApiError } | null;
@@ -112,6 +112,8 @@ interface ListInput<T, M> {
   readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
   readonly id: (item: T) => string;
+  /** Combines one traversal's page metadata, earliest first; absent, the latest page's wins. */
+  readonly foldMetadata?: (earlier: M, later: M) => M;
   readonly fetchPage: (
     cursor: string | null,
     limit: number,
@@ -176,7 +178,9 @@ function useList<T, M>(
   });
   const run = useCallback(
     function run(requested: Op) {
-      const { key, stale, pageSize, fetchPage, id, catalog } = latest.current;
+      const { key, stale, pageSize, fetchPage, id, catalog, foldMetadata } = latest.current;
+      const fold = (earlier: M | null, later: M | null) =>
+        earlier === null || later === null || foldMetadata === undefined ? later : foldMetadata(earlier, later);
       let base = shownRef.current?.key === key ? shownRef.current : null;
       if (latestAccount.current !== accountId || key === null || flight.current !== null) return;
       if (requested === "More" && base?.cursor == null) return;
@@ -214,7 +218,7 @@ function useList<T, M>(
             const page = await fetchPage(cursor, pageSize, signal);
             cursors.push(cursor);
             validateCursor(page, cursors);
-            metadata = page.metadata ?? null;
+            metadata = cursors.length === 1 ? page.metadata ?? null : fold(metadata, page.metadata ?? null);
             const revision = page.order_revision ?? null;
             if (cursor === null) orderRevision = revision;
             else if (revision !== orderRevision) throw new Error("list pages returned different order revisions");
@@ -230,7 +234,7 @@ function useList<T, M>(
             validateCursor(page, cursors);
             const orderRevision = page.order_revision ?? null;
             if (orderRevision !== base.orderRevision) throw new Error("list continuation returned a different order revision");
-            return { items: page.items, cursor: page.next_cursor, cursors, orderRevision, metadata: page.metadata ?? null, continuation: true };
+            return { items: page.items, cursor: page.next_cursor, cursors, orderRevision, metadata: fold(base.metadata, page.metadata ?? null), continuation: true };
           }
           return await walk();
         } catch (error) {

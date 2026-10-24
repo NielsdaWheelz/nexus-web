@@ -3,7 +3,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { usePlaybackSource, type PlaybackSource } from "./playbackSource";
-import { projectResourceActions, type ResourceActions } from "@/lib/actions/project";
+import { projectConsumptionUndoActions, projectDownloadActions, projectPlaybackAction, projectResourceActions, type ResourceActions } from "@/lib/actions/project";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useActionRuntime, useBusyActionIds, resourceActionRequiresRemote } from "@/lib/actions/ResourceActionsProvider";
 import { installedApp, remoteReady, remoteGeneration } from "@/lib/native/admission";
 import { ApiError, apiFetch } from "@/lib/api/client";
@@ -11,7 +13,6 @@ import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import type { PodcastActionFocus } from "./inlineActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 type ReadState =
   | null
@@ -108,4 +109,26 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
       }),
     } : state,
   };
+}
+
+/**
+ * Actions from client-owned facts: exact inverses retain their remote admission
+ * requirements; media also composes current download/player actions. Commands needing
+ * server action facts stay with `useResourceActions`.
+ */
+export function useClientActions(ref: string | null, title: string): ActionDescriptor[] {
+  const { ctx, run } = useActionRuntime();
+  const busy = useBusyActionIds(ref);
+  const source = usePlaybackSource();
+  const resource = ref === null ? null : parseResourceRef(ref);
+  const target = resource?.scheme === "media" ? { kind: "Media" as const, mediaId: resource.id }
+    : resource?.scheme === "library" ? { kind: "Library" as const, library_id: resource.id }
+    : resource?.scheme === "podcast" ? { kind: "Podcast" as const, podcast_id: resource.id } : null;
+  const undo = target === null ? [] : projectConsumptionUndoActions(target, ctx);
+  if (resource === null || resource.scheme !== "media") return undo;
+  const mediaId = resource.id;
+  const downloads = projectDownloadActions({ mediaId, title, ctx, busy, run, server: null });
+  const downloaded = ctx.offline.kind === "Ready" && ctx.offline.items.some(item =>
+    item.media_id === mediaId && item.kind === "podcast_episode" && item.state === "Ready" && item.package_id !== null);
+  return downloaded ? [projectPlaybackAction({ mediaId, title, descriptor: null, blocked: null, playbackSource: source, ctx, run }), ...downloads, ...undo] : [...downloads, ...undo];
 }
