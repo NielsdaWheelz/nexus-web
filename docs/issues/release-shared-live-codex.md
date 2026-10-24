@@ -19,11 +19,12 @@ account with `./scripts/lab-codex enroll`, then use `up` and `status` before the
 first lab. the host loopback publication belongs to the existing nginx peer,
 which forwards tcp unchanged to the native authenticated listener; the daemon
 stays on internal networks with no directly published port. never copy personal
-or production auth. a pin upgrade requires drained
-labs, explicit `down`, then `up` from the qualified new checkout. no automatic
+or production auth. a pin upgrade requires drained labs, explicit `down`, then
+`up` from the qualified new checkout. no automatic
 credential migration or downgrade is authorized.
 
-resolved when deployment accepts the unix endpoint/cwd settings and local
-composition uses the enrolled native volume; qualify shared websocket lifecycle
-and account migration on the exact installed provider pin. real refresh remains
-tracked in `codex-auth-refresh-not-qualified.md`.
+resolve the rollout record after deployed unix services use the endpoint/cwd
+settings and local operators enroll the new native volume where needed. future
+native pin upgrades require qualification of account-state migration before use;
+never infer migration safety from catalog readiness. real refresh remains tracked
+in `codex-auth-refresh-not-qualified.md`.

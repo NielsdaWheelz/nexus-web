@@ -322,7 +322,7 @@ def _catalog(environment: dict[str, str], *, timeout: float, diagnostics: bool =
     raise RuntimeError("shared codex authenticated catalog unavailable")
 
 
-def _start(container: dict[str, Any], token: str, deadline: float) -> dict[str, Any]:
+def _start(container: dict[str, Any], token: str, deadline: float) -> str:
     _drained(deadline=deadline)
     proxy = _inspect(PROXY, deadline=deadline)
     if proxy is None:
@@ -336,11 +336,10 @@ def _start(container: dict[str, Any], token: str, deadline: float) -> dict[str, 
                 "shared codex stopped during startup; inspect private diagnostics and run ./scripts/lab-codex enroll if account recovery is needed"
             )
         try:
-            _catalog(
+            return _catalog(
                 _host_environment(token, deadline=deadline),
                 timeout=_remaining(deadline, 8),
             )
-            return container
         except (RuntimeError, subprocess.TimeoutExpired):
             time.sleep(0.2)
     raise TimeoutError(
@@ -532,13 +531,7 @@ def _compose(environment: dict[str, str], *arguments: str, interactive: bool = F
         _run(argv, env=environment, timeout=180)
 
 
-def _install(token: str) -> dict[str, Any]:
-    existing = _inspect(DAEMON)
-    if existing and existing["State"]["Running"]:
-        raise RuntimeError(
-            "shared codex is running; ./scripts/lab-codex down before explicit installation changes"
-        )
-    _drained()
+def _install(existing: dict[str, Any] | None, token: str) -> dict[str, Any]:
     expected = _expected()
     if existing:
         observed_version = (existing["Config"]["Labels"] or {}).get(
@@ -642,21 +635,14 @@ def _install(token: str) -> dict[str, Any]:
                 CLIENT_NETWORK,
             ]
         )
-    environment = _environment() | {
-        "NEXUS_LAB_CODEX_IMAGE": image_id,
-        "NEXUS_LAB_CODEX_TOKEN_SHA256": hashlib.sha256(token.encode()).hexdigest(),
-        "NEXUS_LAB_CODEX_VERSION": expected["codex_version"],
-        "NEXUS_LAB_CODEX_CATALOG_REVISION": expected["catalog_revision"],
-        "NEXUS_LAB_CODEX_BACKEND_REVISION": expected["backend_contract_revision"],
-    }
-    _compose(environment, "create", "--no-build")
+    _compose(_compose_environment(image_id, token), "create", "--no-build")
     return _installation(token)
 
 
-def _compose_environment(container: dict[str, Any], token: str) -> dict[str, str]:
+def _compose_environment(image_id: str, token: str) -> dict[str, str]:
     expected = _expected()
     return _environment() | {
-        "NEXUS_LAB_CODEX_IMAGE": container["Image"],
+        "NEXUS_LAB_CODEX_IMAGE": image_id,
         "NEXUS_LAB_CODEX_TOKEN_SHA256": hashlib.sha256(token.encode()).hexdigest(),
         "NEXUS_LAB_CODEX_VERSION": expected["codex_version"],
         "NEXUS_LAB_CODEX_CATALOG_REVISION": expected["catalog_revision"],
@@ -755,7 +741,7 @@ def main() -> int:
             except RuntimeError:
                 if existing and existing["State"]["Running"]:
                     raise
-                container = _install(token)
+                container = _install(existing, token)
             if args.command == "enroll":
                 _run(["docker", "start", PROXY])
                 print(
@@ -764,7 +750,7 @@ def main() -> int:
                 )
                 try:
                     _compose(
-                        _compose_environment(container, token),
+                        _compose_environment(container["Image"], token),
                         "run",
                         "--rm",
                         "--no-deps",
@@ -783,8 +769,7 @@ def main() -> int:
             elif container["State"]["Running"]:
                 print(_catalog(_host_environment(token), timeout=15))
             else:
-                container = _start(container, token, time.monotonic() + SETUP_SECONDS)
-                print(_catalog(_host_environment(token), timeout=15))
+                print(_start(container, token, time.monotonic() + SETUP_SECONDS))
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"lab-codex: {exc}", file=sys.stderr)

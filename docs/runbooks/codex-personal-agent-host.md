@@ -1,7 +1,8 @@
 # codex personal agent host
 
 `nexus-codex-agent-host` runs one stock codex `0.160.0` app-server signed into
-the owner's chatgpt subscription and serves it on a unix socket. the api reads
+the owner's chatgpt subscription. production/local overlays use unix sockets;
+shared live labs use authenticated websockets. the api reads
 its model catalog; workers run turns on it and execute every tool themselves.
 the host holds the only copy of the account state and reaches nothing but two
 openai names.
@@ -19,8 +20,8 @@ to the shared websocket host below.
   codex with an explicit environment (`CODEX_HOME` is the account directory; no
   `*_API_KEY`, so subscription work never bills an api key). native stderr goes
   to account-owned `native-stderr.log` (mode 0600), truncated per launch; an
-  unexpected exit names that private file without publishing its contents. it exits 0 when
-  stopped and 1 when codex exits on its own.
+  unexpected exit names that private file without publishing its contents. it
+  exits 0 when stopped and 1 when codex exits on its own.
 - host, api and workers run as uid/gid `10001` and share the socket volume
   `nexus_codex_run` at `/tmp/codex-daemon-10001` (mode `0700`); the api mounts
   it read-only. codex creates the socket `0600`.
@@ -199,12 +200,14 @@ only the daemon/enrollment mount `nexus-lab-codex-account` at
 `/var/lib/nexus-codex`, containing `auth.json`; `nexus-lab-codex-cwds` mounts at
 `/tmp/codex-daemon-10001`. both mount directories are baked uid/gid 10001,
 mode 0700. the daemon receives only the transport token's sha256 verifier through
-native `--ws-token-sha256`; clients receive the raw token as secret configuration.
+native `--ws-auth capability-token --ws-token-sha256`; clients receive the raw
+token as secret configuration.
 the daemon's networks remain internal; the additional client network grants no
 outbound route. the existing nginx peer carries both raw tcp ingress and the
 allowlisted tls egress. Docker Desktop suppresses host port publication for a
 container with only internal networks, so the peer owns the loopback publication;
-the daemon has no published port. fake/core labs never attach or receive the account capability.
+the daemon has no published port. fake/core labs never attach or receive the
+account capability.
 
 `NEXUS_CODEX_ENDPOINT` is `unix:///absolute/path` or `ws(s)://host:port`.
 websocket clients require `NEXUS_CODEX_TRANSPORT_TOKEN`; unix clients forbid it.
@@ -237,7 +240,7 @@ permissions. real token refresh remains separately unqualified below.
 - probe results and restarts: `docker inspect -f '{{json .State.Health}}
   {{.RestartCount}}' nexus-nexus-codex-agent-host-1`.
 - codex's own log: table `logs` of `logs_2.sqlite` in the account directory.
-  read it in place; it stays inside the encrypted volume.
+  read it in place; production keeps its copy inside the encrypted volume.
 - a dropped sni: `journalctl CONTAINER_NAME=nexus-codex-egress-policy-1` shows
   `connect() failed ... upstream: "127.0.0.1:1"`, without the name.
 
