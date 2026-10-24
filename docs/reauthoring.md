@@ -95,7 +95,7 @@ rows record these deltas; historical counts and aggregate bases remain unchanged
 docs, generated files and temporary qualification cases are excluded.
 
 resource menu parity against `c21c0a76d`: +1,160 authored runtime lines
-(1,838 added, 678 deleted, rename-aware). metadata and finite collection state,
+(1,840 added, 680 deleted, rename-aware). metadata and finite collection state,
 exact undo and lectern actions extend the existing resource projection and account
 owners. podcast-only consumption routes/types, pane-owned state preparation,
 add-only destination picking and duplicate preview links/body controls are deleted.

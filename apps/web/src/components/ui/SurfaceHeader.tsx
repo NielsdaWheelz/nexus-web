@@ -5,7 +5,7 @@ import { useCallback, useId, useLayoutEffect, useRef, type KeyboardEvent, type M
 import { podcastTargetKey } from "@/lib/podcasts/api";
 import ResourceActions from "@/components/resources/ResourceActions";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneChrome } from "@/lib/panes/paneChrome";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -96,7 +96,7 @@ export default function SurfaceHeader({
   }, [resourceRef, actionSubjectKey]);
   const returnFocus = () => more.current?.subjectKey === actionSubjectKey && more.current.resourceRef === (resourceRef ?? null) &&
     more.current.element.isConnected && more.current.element.getClientRects().length
-    ? more.current.element : findPaneLandmarkFocusTarget(paneId);
+    ? more.current.element : findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
   const actionFocus = { get trigger() { return more.current?.element ?? null; }, returnFocus, afterRemoval: () => findPaneLandmarkFocusTarget(paneId) };
   const viewport = useMobileViewport();
   const mobileChrome = useMobileChrome();
