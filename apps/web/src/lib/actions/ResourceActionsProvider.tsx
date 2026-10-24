@@ -121,10 +121,10 @@ export interface ActionContext {
 
 /** Server-only commands are fenced at invocation, including after confirmation.
  * Player/queue/download and authored journal operations retain their own policies. */
-const REMOTE_ACTIONS = new Set<string>([
+const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "MediaMetadata", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
   "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "ImportPodcastEpisodes", "RemovePodcastEpisodes",
-  "RefreshPodcast", "Chat", "LearnHighlight", "RegenerateArtifact", "Share", "DownloadOriginal",
+  "RefreshPodcast", "Chat", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
   "ReviewMetadataResult", "LibrarySettings", "PodcastSettings", "RemoveUpload",
   "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
