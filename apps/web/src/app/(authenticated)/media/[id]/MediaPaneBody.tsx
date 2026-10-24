@@ -78,7 +78,6 @@ import {
   inspectionOfLocator,
   targetOfLocator,
   useReaderVisit,
-  useShowNotesVisit,
   readerDestinationHref,
   destinationTarget,
 } from "./hostedReader";
@@ -152,7 +151,6 @@ function MediaPane({ id }: { readonly id: string }) {
   const row = lectern.find((item) => item.media_summary.media_id === id);
   const summaries = useMediaSummaries(row ? [row.media_summary] : []);
   const { playAudio } = usePlayerCommands();
-  const showNotes = useShowNotesVisit();
   const root = useRef<HTMLDivElement>(null);
   const returnFocus = useCallback(
     () => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current,
@@ -640,7 +638,7 @@ function MediaPane({ id }: { readonly id: string }) {
     /> : null;
   const transcriptChrome = transcript ? (
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader}
-      notesOpen={showNotes.open} onNotesOpen={showNotes.change} transcriptReaderKey={snapshot?.transcript_reader_key ?? null} />
+      transcriptReaderKey={snapshot?.transcript_reader_key ?? null} />
   ) : null;
   const captureHint = media.capabilities.can_replace_x_article && media.canonical_source_url
     ? <FeedbackNotice content={{ tone: "Neutral", title: "update saved article",

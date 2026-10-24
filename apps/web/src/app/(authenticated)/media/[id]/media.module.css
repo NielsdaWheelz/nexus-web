@@ -286,6 +286,56 @@
   margin-bottom: var(--space-6);
 }
 
+/* The card shares the text column's measure, while only its body reads as prose. */
+.transcriptChrome .showNotes {
+  --reader-accent-hover: var(--reader-accent, var(--accent-hover));
+  --reader-surface: var(--reader-bg-secondary, var(--surface-2));
+  min-inline-size: 0;
+  inline-size: calc(100% - 2 * var(--space-4));
+  max-inline-size: var(--reader-column-width-ch, 65ch);
+  margin: var(--space-4) auto 0;
+  border-color: var(--reader-border-subtle, var(--edge-subtle));
+  background: var(--reader-bg-secondary, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--reader-font-size-px, var(--text-md));
+}
+
+.showNotes > header {
+  border-bottom-color: var(--reader-border-subtle, var(--edge-subtle));
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+}
+
+.showNotes > header h2 {
+  color: inherit;
+}
+
+.showNotes .showNotesBody {
+  line-height: var(--reader-line-height, var(--leading-normal));
+  overflow-wrap: anywhere;
+}
+
+.showNotesBody table {
+  display: block;
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+.showNotesBody pre {
+  max-inline-size: 100%;
+}
+
+.showNotesBody .seek {
+  color: var(--reader-accent, var(--accent));
+}
+
+.showNotesBody :focus-visible {
+  outline: var(--focus-ring-width) solid var(--reader-accent, var(--ring));
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
 .video {
   width: 100%;
   aspect-ratio: 16 / 9;

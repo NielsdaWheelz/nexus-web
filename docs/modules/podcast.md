@@ -270,10 +270,14 @@ all ⟨state⟩" forecasts a count and a selection fingerprint, then queues the 
 recomputed selection or nothing (409 `E_SELECTION_CHANGED`): the forecast is the
 exactness guard, not vestigial. A video's request imports its YouTube captions.
 
-the episode pane displays only `transcribe` before admission, then truthful queued,
-running, failed or unavailable states. its mounted processing stream owns updates.
+the episode's transcript admission area displays only `transcribe` before admission,
+then truthful queued, running, failed or unavailable states. its mounted processing
+stream owns updates.
 readable full/partial text mounts the shared reader and tools; failed document reads
-remain reader retries. notes are a pane-visit disclosure. playback remains in the
+remain reader retries. available publisher notes occupy one expanded `show notes`
+card before transcript content, including document loading and failure. absent notes
+omit the card. notes use the existing content scrollport and surrounding typography
+and palette; restored reading destinations retain precedence. playback remains in the
 canonical header action; body playback explanations and chapter inventories are gone.
 
 - **Current transcript publication — `transcripts.current`.** This is the single,

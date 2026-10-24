@@ -2,7 +2,7 @@
 
 // Source and cursor ports, source-locator geometry and per-visit reader state.
 // The workspace delivers arrivals; this module never watches a hash or a bus.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
@@ -172,27 +172,4 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
     return () => controller.abort();
   }, [reader, runtime.paneEntryDelivery, runtime.visitId, saved]);
   return saved;
-}
-
-
-const SHOW_NOTES = definePaneVisitDataKey<boolean>("Reader.ShowNotes");
-
-/** The pane visit owns its notes disclosure across provisioning and reader remounts. */
-export function useShowNotesVisit() {
-  const runtime = requirePaneRuntime(usePaneRuntime(), "useShowNotesVisit");
-  const current = useRef(false);
-  const saved = usePaneVisitData(SHOW_NOTES, () => current.current);
-  const write = usePaneVisitDataWriter(SHOW_NOTES);
-  const [open, setOpen] = useState(saved ?? false);
-  current.current = open;
-  useLayoutEffect(() => {
-    current.current = saved ?? false;
-    setOpen(saved ?? false);
-  }, [runtime.visitId, saved]);
-  const change = useCallback((value: boolean) => {
-    current.current = value;
-    setOpen(value);
-    write(value);
-  }, [write]);
-  return { open, change };
 }
