@@ -68,7 +68,7 @@ type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> 
 type Exit =
   | { readonly kind: "Close" }
   | { readonly kind: "Root" }
-  | { readonly kind: "Replace"; readonly intent: NexusOpenIntent; readonly opener?: HTMLElement | null }
+  | { readonly kind: "Replace"; readonly intent: NexusOpenIntent; readonly opener: HTMLElement | null }
   | { readonly kind: "Navigate"; readonly target: NexusTarget; readonly activation: NexusTargetActivation };
 
 export type NexusController = ReturnType<typeof useNexusController>;
@@ -532,7 +532,7 @@ export function useNexusController() {
   }
 
   /** An open request resets to Root or Add. */
-  function openIntent(intent: NexusOpenIntent, trigger: HTMLElement | null = null) {
+  function openIntent(intent: NexusOpenIntent, trigger: HTMLElement | null) {
     if (!open) {
       opener.current = trigger ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
       rootScroll.current = { Overview: 0, Search: 0 };
@@ -629,7 +629,7 @@ export function useNexusController() {
     event.preventDefault();
     if (event.repeat) return;
     if (!open) {
-      requestExit({ kind: "Replace", intent: { kind: "Root" } });
+      requestExit({ kind: "Replace", intent: { kind: "Root" }, opener: null });
       if (viewport.isMobile) {
         rootFocus.current = "Search";
         setRootMode("Search");
@@ -711,7 +711,7 @@ export function useNexusController() {
     back,
     escape,
     close: () => requestExit({ kind: "Close" }),
-    openRoot: () => requestExit({ kind: "Replace", intent: { kind: "Root" } }),
+    openRoot: () => requestExit({ kind: "Replace", intent: { kind: "Root" }, opener: null }),
     /** Native keyboard dismissal precedes this task-owned Back transition. */
     guardClose(): DismissDecision {
       if (page.kind === "Add") return guardExit({ kind: "Close" });
