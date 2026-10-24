@@ -39,6 +39,7 @@ import { unresolvedPosition } from "./progress";
 import styles from "./documentReader.module.css";
 import type { ReaderDestination } from "./location";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import type { NavigationFailure } from "./navigator";
 
 export type {
@@ -144,6 +145,7 @@ export interface DocumentReaderViewProps {
   readonly renderPostActions?: (unit: TextUnit) => ReactNode;
   /** false when the host already presents the source title; capture facts remain. */
   readonly showCaptureTitle?: boolean;
+  /** Host content preceding publication content, including loading/failure feedback. */
   readonly before?: ReactNode;
   readonly end?: ReactNode;
 }
@@ -227,17 +229,20 @@ export default function DocumentReaderView(
     () => frame.current?.querySelector<HTMLElement>("[data-pane-content]") ?? frame.current,
     [],
   );
+  useActionFocusRecovery(frame, returnFocus);
   const announcement = props.announcement ?? "Polite";
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
+        {props.before}
         <FeedbackState content={{ tone: "Neutral", title: "opening document…" }} announcement={announcement} />
       </div>
     );
   } else if (publication.status === "failed") {
     body = (
       <div className={`${styles.feedback} ${styles.readerState}`}>
+        {props.before}
         <FeedbackState
           content={{ tone: "Danger", title: "couldn’t open this document" }}
           announcement={announcement}

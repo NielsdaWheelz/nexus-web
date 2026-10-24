@@ -75,6 +75,13 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 visit capture projects that owned measurement; it does not recapture transient
 layout during host resize or unmount.
 
+`DocumentReaderView.before` is host content preceding the publication, including
+opening and failure feedback in the existing state scrollport. ready surfaces own
+the same slot; it remains outside text units, find and annotations. the surviving
+reader frame uses `useActionFocusRecovery` to return focus from removed controls
+to the current reading area, otherwise the frame, without scrolling. deliberate
+focus transfer or owner unmount releases recovery.
+
 ## server contracts
 
 | route | contract |
@@ -563,7 +570,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
-| `Transcript.tsx` | transcript admission states, visit-owned notes disclosure, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
+| `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
 
