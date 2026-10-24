@@ -29,6 +29,9 @@ internal class AppBridge(
         subscriber?.postMessage(JSONObject().put("kind", "session_changed")
             .put("remote_admission", session.remoteAdmission).toString())
     }
+    private val unsubscribeCatalog = session.catalog.subscribe { status ->
+        subscriber?.postMessage(JSONObject().put("kind", "catalog_changed").put("catalog", status).toString())
+    }
 
     fun install(): Boolean = framing.install()
     fun onPageStarted() {
@@ -39,6 +42,7 @@ internal class AppBridge(
     fun close() {
         onPageStarted()
         unsubscribe()
+        unsubscribeCatalog()
         framing.close()
         scope.cancel()
     }
@@ -66,6 +70,8 @@ internal class AppBridge(
                     "workspace_commit" -> JSONObject().put("workspace_revision", session.workspaceCommit(document,
                         frame.getString("write_id")) { message.documentGeneration == framing.currentDocumentGeneration() })
                     "session_check" -> JSONObject().put("remote_admission", session.checkSession())
+                    "catalog_status" -> JSONObject().put("catalog", session.catalog.status())
+                    "catalog_refresh" -> JSONObject().put("catalog", session.catalog.refresh())
                     "session_sign_in" -> JSONObject().put("result", signIn())
                     "session_sign_out" -> { session.signOut(); JSONObject() }
                     "account_email_change" -> session.accountOperation(op, frame.getString("email"))

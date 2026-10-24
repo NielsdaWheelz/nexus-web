@@ -62,13 +62,16 @@ def _library_entry_media_rows_sql(*, library_param: str = ":library_id") -> str:
     """
 
 
-def library_media_rows_sql(*, library_param: str = ":library_id") -> str:
+def library_media_rows_sql(
+    *, library_param: str = ":library_id", visible_media_sql: str | None = None
+) -> str:
     """Canonical readable media and ordering facts for a named library or own all.
 
     all contains physical non-system memberships only; a default holding supplies
     its date first, otherwise the earliest qualifying entry does. named membership
     has the same physical media boundary and grants no additional access.
     """
+    visible = visible_media_sql if visible_media_sql is not None else visible_media_ids_cte_sql()
     return f"""
         WITH named AS (
             SELECT DISTINCT ON (expanded.media_id) expanded.media_id, expanded.position,
@@ -77,7 +80,7 @@ def library_media_rows_sql(*, library_param: str = ":library_id") -> str:
             JOIN libraries l ON l.id = {library_param} AND NOT l.is_default
             JOIN memberships membership
               ON membership.library_id = l.id AND membership.user_id = :viewer_id
-            WHERE expanded.media_id IN ({visible_media_ids_cte_sql()})
+            WHERE expanded.media_id IN ({visible})
             ORDER BY expanded.media_id, expanded.position, expanded.lane,
                      expanded.published_at DESC NULLS LAST, expanded.source_entry_id
         )
@@ -94,7 +97,7 @@ def library_media_rows_sql(*, library_param: str = ":library_id") -> str:
               AND EXISTS (SELECT 1 FROM libraries destination
                   WHERE destination.id = {library_param} AND destination.is_default
                     AND destination.system_key IS NULL AND destination.owner_user_id = :viewer_id)
-              AND le.media_id IN ({visible_media_ids_cte_sql()})
+              AND le.media_id IN ({visible})
             ORDER BY le.media_id, (le.library_id = {library_param}) DESC,
                      le.created_at, le.id
         ) ranked
@@ -997,3 +1000,25 @@ def move_entry(
         libraries.advance_order_revision(db, library_id)
         result = get_library_order(db, viewer_id, library_id)
     return result
+
+
+def catalog_entry_rows_sql() -> str:
+    """Complete non-system member-library edges; visibility is materialized once.
+
+    All's nullable entry id/date and named physical positions retain the listing's
+    canonical membership semantics. The caller ranks these edges per library.
+    """
+    return f"""
+        WITH catalog_visible AS MATERIALIZED ({visible_media_ids_cte_sql()})
+        SELECT catalog_library.id AS library_id, catalog_library.is_default, members.media_id,
+               CASE WHEN catalog_library.is_default THEN NULL::uuid ELSE physical.id END AS entry_id,
+               members.position, members.added_at
+        FROM libraries catalog_library
+        JOIN memberships membership ON membership.library_id=catalog_library.id AND membership.user_id=:viewer_id
+        CROSS JOIN LATERAL (
+            {library_media_rows_sql(library_param="catalog_library.id", visible_media_sql="SELECT media_id FROM catalog_visible")}
+        ) members
+        LEFT JOIN library_entries physical
+          ON NOT catalog_library.is_default AND physical.library_id=catalog_library.id AND physical.media_id=members.media_id
+        WHERE catalog_library.system_key IS NULL
+    """

@@ -33,8 +33,8 @@ server components: callFastAPI ────────────────�
   reaches the pane or workspace boundary, which shows it and reports no client
   defect. The workspace save keeps the workspace up.
 - `serverState.tsx`: the one owner of keyed async reads.
-  `useServerValue({key, stale, visit, load})` and `usePaneFreeServerValue` (no
-  pane visit) answer `loading | failed | ready {data, generation, error,
+  `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
+  pane visit) answer `loading | failed | ready {data, source, generation, error,
   refreshing}` with `refetch()`. A new key loads (a null key waits); a moved
   `stale` refetches over the shown data; invalidation aborts the superseded flight and queues one fresh read.
   invalidation supersedes that read's success and failure; only the
@@ -66,6 +66,13 @@ server components: callFastAPI ────────────────�
   refresh supersedes; periodic `revalidate()` waits behind admitted reads and
   coalesces observations. `usePagePrefix` belongs only to explicit authored
   outline branches.
+  installed catalog loaders are explicit local reads, separate from `apiFetch`.
+  values, lists and retained snapshots identify their live/catalog source; a
+  complete saved result stages a complete live reread before promotion. local
+  coverage misses do not suppress admitted remote work. native admission gates
+  remote reads and retries; catalog failures do not change session admission.
+  see [installed catalog](offline-catalog.md) and
+  [device startup](device-startup.md) for local access and apk-update recovery.
 - `stream.ts`: `openStream({path: "/api/stream/…", after?, decode, isTerminal,
   onEvent, onError, onSuspended, onComplete?, onReconnect?, signal?, maxReconnects = 8,
   maxBackoffMs = 30 s})` returns a stop function. Resume is `?after=<id>` only.

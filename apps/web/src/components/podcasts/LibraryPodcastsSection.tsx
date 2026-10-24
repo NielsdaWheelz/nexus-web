@@ -12,13 +12,13 @@ import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { projectPodcastLibraryRemovalAction, projectPodcastSubscriptionAction } from "@/lib/actions/project";
-import { publishChange, useChangeStamp } from "@/lib/api/changes";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { publishChange } from "@/lib/api/changes";
+import type { ServerValue } from "@/lib/api/serverState";
+import { remoteReady } from "@/lib/native/admission";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { getLibraryPodcasts } from "@/lib/podcasts/api";
+import type { PodcastSection } from "@/lib/podcasts/api";
 import { PODCAST_BROWSE_ACTION } from "@/lib/podcasts/navigation";
 import { podcastErrorMessage } from "@/lib/podcasts/paneState";
-import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { usePaneIsVisible } from "@/lib/panes/paneRuntime";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import type { Library } from "@/lib/libraries/api";
@@ -26,39 +26,38 @@ import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import PodcastImportProgress from "./PodcastImportProgress";
 
-export default function LibraryPodcastsSection({ library, active }: { readonly library: Library; readonly active: boolean }) {
+export default function LibraryPodcastsSection({ library, active, source, sourceStale }: { readonly library: Library; readonly active: boolean; readonly source: ServerValue<PodcastSection>; readonly sourceStale: string }) {
   const { ctx, run } = useActionRuntime();
   const card = useRef<HTMLElement>(null);
   const browse = useRef<HTMLAnchorElement>(null);
   const reasonId = useId();
   const visible = usePaneIsVisible();
-  const stale = `${ctx.accountId}:${library.id}:${useChangeStamp("Podcasts", "Entries", "Libraries")}:${useRefreshStamp(active, 60_000)}`;
-  const source = usePaneFreeServerValue({ key: `library-podcasts:${ctx.accountId}:${library.id}`, stale,
-    load: signal => getLibraryPodcasts(library.id, signal),
-  });
-  const authority = useRef<{ stale: string; generation: number | null }>({ stale, generation: null });
-  if (authority.current.stale !== stale) authority.current = { stale, generation: source.status === "ready" ? source.generation : null };
+  const authority = useRef<{ stale: string; generation: number | null }>({ stale: sourceStale, generation: null });
+  if (authority.current.stale !== sourceStale) authority.current = { stale: sourceStale, generation: source.status === "ready" ? source.generation : null };
   const data = source.status === "ready" ? source.data : null;
-  const blocked = source.status !== "ready" || source.error !== null || source.refreshing || source.generation === authority.current.generation ? "TemporarilyUnavailable" : null;
+  const live = source.status === "ready" && source.source.kind === "live";
+  const manage = live && remoteReady();
+  const blocked = !manage || source.status !== "ready" || source.error !== null || source.refreshing || source.generation === authority.current.generation ? "TemporarilyUnavailable" : null;
   const busy = data !== null && (data.imports.some(operation => operation.state === "pending" || operation.state === "running") || data.subscriptions.some(show => show.recurring.state !== "idle" || show.imports.some(operation => operation.state === "pending" || operation.state === "running")));
   // justify-polling: imports and recurring publication have no client event stream.
-  useIntervalPoll({ enabled: active && visible && busy, pollIntervalMs: 3000, onPoll: () => {
+  useIntervalPoll({ enabled: manage && active && visible && busy, pollIntervalMs: 3000, onPoll: () => {
     if (document.visibilityState === "visible" && source.status === "ready" && !source.refreshing) source.refetch();
   } });
   const observed = useRef<string | null>(null);
   const signature = data === null ? null : JSON.stringify([data.order_revision, data.subscriptions.map(show => [show.podcast.id, show.recurring.last_checked_at, show.imports.map(operation => [operation.id, operation.updated_at])]), data.imports.map(operation => [operation.id, operation.updated_at])]);
   useEffect(() => {
+    if (!live) { observed.current = null; return; }
     if (signature === null || observed.current === signature) return;
     const previous = observed.current; observed.current = signature;
     if (previous !== null) publishChange("Entries");
-  }, [signature]);
+  }, [signature, live]);
   return <PaneSection ref={card} title={`podcasts${data === null ? "" : ` · ${data.subscriptions.length}`}`} aria-label="podcasts" tabIndex={-1}
     actions={<ButtonLink ref={browse} href={PODCAST_BROWSE_ACTION.href} iconOnly icon={PODCAST_BROWSE_ACTION.icon}
       aria-label={PODCAST_BROWSE_ACTION.label} tooltip={{ text: PODCAST_BROWSE_ACTION.label }} />}>
     {source.status !== "loading" && source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t load library podcasts.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch }]} /> : null}
     <CollectionView surface={false} returnScope={`Library.Podcasts:${library.id}`} ariaLabel="subscribed podcasts" status={source.status === "failed" ? "error" : source.status}
-      rows={(data?.subscriptions ?? []).map(show => presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, unplayedCount: null, recurring: show.recurring }))}
-      renderRow={props => {
+      rows={(data?.subscriptions ?? []).map(show => presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, unplayedCount: null, recurring: live ? show.recurring : null }))}
+      renderRow={manage ? props => {
         const { row } = props;
         const focus = {
           trigger: null,
@@ -92,12 +91,13 @@ export default function LibraryPodcastsSection({ library, active }: { readonly l
               onClick={event => { event.stopPropagation(); const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
             {action.disabledReason ? <span className="sr-only" id={descriptionId}>{action.disabledReason}</span> : null}
           </>} />;
-      }}
-      rowPanels={Object.fromEntries((data?.subscriptions ?? []).flatMap(show => show.recurring.error_code !== null || show.recurring.had_coverage_gaps || show.imports.length > 0 ? [[show.podcast.id, <div key={show.podcast.id}>
-        {show.recurring.error_code !== null || show.recurring.had_coverage_gaps ? <p>the last check could not load all available episodes. checking will retry automatically.</p> : null}
-        {show.imports.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={show.podcast.title} following={show.destinations.some(destination => destination.library_id === operation.library_id)} />)}
+      } : undefined}
+      rowPanels={Object.fromEntries((data?.subscriptions ?? []).flatMap(show => !live || show.recurring.error_code !== null || show.recurring.had_coverage_gaps || show.imports.length > 0 ? [[show.podcast.id, <div key={show.podcast.id}>
+        {show.recurring.error_code !== null || show.recurring.had_coverage_gaps ? <p>the last check could not load all available episodes.{live ? " checking will retry automatically." : null}</p> : null}
+        {!live ? <p>at last catalog save</p> : null}
+        {live ? show.imports.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={show.podcast.title} following={show.destinations.some(destination => destination.library_id === operation.library_id)} />) : null}
       </div>]] : []))}
       empty={source.status === "ready" && source.error === null ? <p>no subscribed podcasts.</p> : null} />
-    {data !== null && data.imports.length > 0 ? <section aria-label="episode imports"><h3>episode imports</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} following={data.subscriptions.some(show => show.podcast.id === operation.podcast_id && show.destinations.some(destination => destination.library_id === operation.library_id))} /></div>)}</section> : null}
+    {live && data !== null && data.imports.length > 0 ? <section aria-label="episode imports"><h3>episode imports</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} following={data.subscriptions.some(show => show.podcast.id === operation.podcast_id && show.destinations.some(destination => destination.library_id === operation.library_id))} /></div>)}</section> : null}
   </PaneSection>;
 }

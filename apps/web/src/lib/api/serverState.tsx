@@ -19,6 +19,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
 import { remoteReady } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import {
@@ -41,6 +42,7 @@ import {
 export interface Visit<T> {
   readonly key: string;
   readonly data: T;
+  readonly source: ReadSource;
 }
 type Unready =
   | { readonly status: "loading" }
@@ -50,6 +52,7 @@ export type ServerValue<T> = (
   | {
       readonly status: "ready";
       readonly data: T;
+      readonly source: ReadSource;
       readonly generation: number;
       readonly error: ApiError | null;
       /** A refetch is running over the shown data. */
@@ -61,6 +64,7 @@ type Defect = { readonly error: unknown };
 interface Held<D> {
   readonly key: string | null;
   readonly data: D | null;
+  readonly source: ReadSource;
   readonly generation: number;
   readonly error: ApiError | null;
   readonly running: boolean;
@@ -296,7 +300,7 @@ export function useServerSeed<T>(key: string | null): Visit<T> | null {
   const pane = paneId === undefined ? undefined : seeds?.get(paneId);
   const [seed] = useState(() =>
     key !== null && pane !== undefined && Object.hasOwn(pane, key)
-      ? { key, data: pane[key] as T }
+      ? { key, data: pane[key] as T, source: LIVE_SOURCE }
       : null,
   );
   return seed;
@@ -323,6 +327,7 @@ function arrive<D>(key: string | null, shown: Visit<D> | null): Held<D> {
   return {
     key,
     data,
+    source: shown?.source ?? LIVE_SOURCE,
     generation: 0,
     error: null,
     running: key !== null,
@@ -335,6 +340,7 @@ function useServerState<D>(
   restored: Visit<D> | null,
   load: Load<D>,
   readPolicy: string,
+  catalog?: CatalogRead<D>,
 ) {
   const admissionGeneration = useRemoteGeneration();
   const account = useOptionalAuthenticatedAccount();
@@ -342,15 +348,16 @@ function useServerState<D>(
   const [firstAccount] = useState(accountId);
   const stateKey = key === null ? null : JSON.stringify([accountId, key]);
   const restoredHere = useMemo(() =>
-    stateKey !== null && restored !== null && restored.key === key && accountId === firstAccount
-      ? { key: stateKey, data: restored.data } : null,
-  [stateKey, restored, key, accountId, firstAccount]);
+    stateKey !== null && restored !== null && restored.key === key && accountId === firstAccount &&
+      (restored.source.kind === "live" || restored.source.snapshot_id === catalog?.snapshot_id)
+      ? { key: stateKey, data: restored.data, source: restored.source } : null,
+  [stateKey, restored, key, accountId, firstAccount, catalog?.snapshot_id]);
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
   const seed = useServerSeed<D>(key);
   // A seed paints its key's first arrival, which then skips its fetch.
   const seedHere = stateKey !== null && seed !== null && seed.key === key && accountId === firstAccount
-    ? { key: stateKey, data: seed.data } : null;
+    ? { key: stateKey, data: seed.data, source: LIVE_SOURCE } : null;
   const seeded = useRef(seedHere !== null && restoredHere === null ? key : null);
   const heldRef = useRef<Held<D> | null>(null);
   const [state, setState] = useState(() =>
@@ -362,8 +369,8 @@ function useServerState<D>(
   heldRef.current = held;
   const loadRef = useRef(load);
   loadRef.current = load;
-  const latest = useRef({ key, stale, accountId });
-  latest.current = { key, stale, accountId };
+  const latest = useRef({ key, stale, accountId, catalog });
+  latest.current = { key, stale, accountId, catalog };
   const flight = useRef<{ controller: AbortController; queued: boolean }>(null);
 
   const queueRead = () => {
@@ -374,10 +381,6 @@ function useServerState<D>(
   const run = useCallback(
     async () => {
       if (flight.current !== null) { flight.current.queued = true; return; }
-      if (!remoteReady()) {
-        setState(h => ({ ...h, running: false, error: h.error ?? new ApiError(0, "E_NETWORK", "this view needs a connection") }));
-        return;
-      }
       const controller = new AbortController();
       const current = { controller, queued: true };
       flight.current = current;
@@ -393,6 +396,33 @@ function useServerState<D>(
           const reading = latest.current;
           const generation = owner.generation;
           try {
+            let localError: ApiError | null = null;
+            const held = heldRef.current;
+            if (reading.catalog && (held?.key !== stateKey || held.data === null || held.source.kind === "catalog")) {
+              try {
+                const saved = await reading.catalog.load(controller.signal);
+                if (controller.signal.aborted) return;
+                if (current.queued || generation !== owner.generation || reading.key !== latest.current.key || reading.accountId !== latest.current.accountId) continue;
+                if (saved !== null) {
+                  const next: Held<D> = { key: stateKey, data: saved.data, source: saved.source, error: null, running: remoteReady(), generation: (heldRef.current?.generation ?? 0) + 1 };
+                  heldRef.current = next;
+                  setState(next);
+                } else localError = new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device");
+              } catch (error) {
+                if (controller.signal.aborted) return;
+                if (!isApiError(error)) throw error;
+                localError = error;
+              }
+            }
+            if (localError?.code === "E_CATALOG_COVERAGE" && heldRef.current?.source.kind === "catalog") {
+              const next: Held<D> = { ...heldRef.current, data: null, source: LIVE_SOURCE, error: remoteReady() ? null : localError };
+              heldRef.current = next;
+              setState(next);
+            }
+            if (!remoteReady()) {
+              setState(h => ({ ...h, error: h.data === null ? localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection") : null }));
+              continue;
+            }
             const load = loadRef.current;
             const next = await owner.read("value", signal => requestWithRetry(load, signal), controller.signal);
             if (controller.signal.aborted) return;
@@ -400,6 +430,7 @@ function useServerState<D>(
             setState((h) => ({
               ...h,
               data: next,
+              source: LIVE_SOURCE,
               error: null,
               generation: h.generation + 1,
             }));
@@ -408,6 +439,10 @@ function useServerState<D>(
             if (current.queued || generation !== owner.generation || reading.accountId !== latest.current.accountId || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
             const modeled = modeledApiError(error, fail, signIn);
             if (modeled === null) return;
+            if (modeled.code === "E_NETWORK" && !remoteReady() && heldRef.current?.source.kind === "catalog" && heldRef.current.data !== null) {
+              setState(h => ({ ...h, error: null }));
+              continue;
+            }
             setState((h) => ({ ...h, error: modeled }));
           }
         }
@@ -418,7 +453,7 @@ function useServerState<D>(
         }
       }
     },
-    [fail, signIn, owner, accountId],
+    [fail, signIn, owner, accountId, stateKey],
   );
 
   useEffect(() => {
@@ -433,6 +468,15 @@ function useServerState<D>(
     };
   }, [key, stateKey, restoredHere, run]);
 
+  const catalogSnapshot = catalog?.snapshot_id ?? null;
+  const observedCatalog = useRef(catalogSnapshot);
+  useEffect(() => {
+    if (observedCatalog.current === catalogSnapshot) return;
+    observedCatalog.current = catalogSnapshot;
+    const held = heldRef.current;
+    if (held?.data !== null && held?.source.kind === "live") return;
+    owner.invalidate();
+  }, [catalogSnapshot, owner]);
   const refetch = useCallback(() => owner.invalidate(), [owner]);
   const admittedGeneration = useRef(admissionGeneration);
   useEffect(() => {
@@ -454,6 +498,7 @@ function valueOf<T>(held: Held<T>, refetch: () => void): ServerValue<T> {
   return {
     status: "ready",
     data,
+    source: held.source,
     generation,
     error,
     refreshing: running,
@@ -467,6 +512,7 @@ export function useServerValue<T>(input: {
   readonly visit: PaneVisitDataKey<Visit<T>>;
   readonly load: Load<T>;
   readonly readPolicy?: string;
+  readonly catalog?: CatalogRead<T>;
 }): ServerValue<T> {
   const shown = useRef<Visit<T> | null>(null);
   const restored = useVisitSnapshot(
@@ -474,10 +520,10 @@ export function useServerValue<T>(input: {
     input.key,
     useCallback(() => shown.current, []),
   );
-  const value = useServerState(input.key, input.stale, restored, input.load, input.readPolicy ?? "value:retry3");
+  const value = useServerState(input.key, input.stale, restored, input.load, input.readPolicy ?? "value:retry3", input.catalog);
   shown.current =
     input.key !== null && value.status === "ready"
-      ? { key: input.key, data: value.data }
+      ? { key: input.key, data: value.data, source: value.source }
       : null;
   return value;
 }
@@ -487,8 +533,9 @@ export function usePaneFreeServerValue<T>(input: {
   readonly stale: string;
   readonly load: Load<T>;
   readonly readPolicy?: string;
+  readonly catalog?: CatalogRead<T>;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3");
+  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input.catalog);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

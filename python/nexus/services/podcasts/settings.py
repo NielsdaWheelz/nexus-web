@@ -20,19 +20,33 @@ from nexus.services import users
 def get_settings(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastPlaybackSettingsOut:
     if db.scalar(text("SELECT id FROM podcasts WHERE id=:id"), {"id": podcast_id}) is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-    row = db.execute(
-        text(
-            "SELECT * FROM podcast_playback_settings WHERE user_id=:viewer AND podcast_id=:podcast"
-        ),
-        {"viewer": viewer_id, "podcast": podcast_id},
-    ).first()
-    return wire.PodcastPlaybackSettingsOut(
-        id=row.id if row else None,
-        podcast_id=podcast_id,
-        settings_version=str(row.settings_version) if row else "0",
-        default_playback_speed=row.default_playback_speed if row else None,
-        pause_shortening_mode=row.pause_shortening_mode if row else None,
-    )
+    return get_settings_many(db, viewer_id, [podcast_id])[podcast_id]
+
+
+def get_settings_many(
+    db: Session, viewer_id: UUID, podcast_ids: list[UUID]
+) -> dict[UUID, wire.PodcastPlaybackSettingsOut]:
+    """Defaults for known shows, including absent viewer rows, in one read."""
+    rows = {
+        row.podcast_id: row
+        for row in db.execute(
+            text(
+                "SELECT * FROM podcast_playback_settings WHERE user_id=:viewer AND podcast_id=ANY(:ids)"
+            ),
+            {"viewer": viewer_id, "ids": podcast_ids},
+        )
+    }
+    result = {}
+    for podcast_id in podcast_ids:
+        row = rows.get(podcast_id)
+        result[podcast_id] = wire.PodcastPlaybackSettingsOut(
+            id=row.id if row else None,
+            podcast_id=podcast_id,
+            settings_version=str(row.settings_version) if row else "0",
+            default_playback_speed=row.default_playback_speed if row else None,
+            pause_shortening_mode=row.pause_shortening_mode if row else None,
+        )
+    return result
 
 
 def put_settings(

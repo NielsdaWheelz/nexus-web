@@ -2,6 +2,7 @@
 
 /** Current view facts authorize new intents; retained commands keep their target. */
 import { assertNever } from "@/lib/assertNever";
+import { installedApp } from "@/lib/native/admission";
 import { createElement } from "react";
 import { ACTION_CATALOG } from "./catalog";
 import type { ActionButtonSpec, PodcastActionFocus, PodcastActionSubject } from "./inlineActions";
@@ -49,7 +50,8 @@ export function usePodcastActions(subject: PodcastActionSubject): readonly Actio
 export function usePodcastMenuActions(subject: PodcastActionSubject, focus: PodcastActionFocus): readonly ActionDescriptor[] {
   const { ctx, run } = useActionRuntime();
   const actions: ActionDescriptor[] = project(subject, ctx, run, focus);
-  const ready = subject.facts.kind === "Ready" && subject.facts.resolution.kind !== "Unavailable";
+  const disconnected = installedApp && !ctx.online;
+  const ready = !disconnected && subject.facts.kind === "Ready" && subject.facts.resolution.kind !== "Unavailable";
   actions.push({ kind: "command", id: "ImportPodcastEpisodes", label: ACTION_CATALOG.ImportPodcastEpisodes.label,
     icon: createElement(ACTION_CATALOG.ImportPodcastEpisodes.icon, { size: 16, "aria-hidden": true }),
     disabled: !ready, disabledReason: ready ? undefined : actions[0].disabledReason, restoreFocusOnClose: false,
@@ -58,8 +60,11 @@ export function usePodcastMenuActions(subject: PodcastActionSubject, focus: Podc
       const target: PodcastTarget = subject.facts.kind === "Ready" && subject.facts.resolution.kind === "Canonical"
         ? { kind: "Canonical", podcast_id: subject.facts.resolution.podcast_id } : subject.target;
       const trigger = focus.trigger;
-      ctx.overlays.open({ kind: "ImportPodcastEpisodes", target, title: subject.title },
-        { anchor: () => trigger, returnFocusFallback: focus.returnFocus });
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "ImportPodcastEpisodes",
+        label: ACTION_CATALOG.ImportPodcastEpisodes.label, title: subject.title, tracked: false, confirmation: null,
+        execute: () => ctx.overlays.open({ kind: "ImportPodcastEpisodes", target, title: subject.title },
+          { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
+      });
     },
   });
   const facts = subject.facts;

@@ -22,6 +22,7 @@
 //   no pane visit owns.
 // - Defects throw in render; aborts and 401s are not failures.
 
+import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
 import { remoteReady } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -49,6 +50,7 @@ export interface ListPage<T, M = null> {
 export interface ListSnapshot<T, M = null> {
   readonly key: string;
   readonly stale: string;
+  readonly source: ReadSource;
   readonly items: readonly T[];
   readonly cursor: string | null;
   /** Consumed page cursors preserve exact prefix coverage, even for empty pages. */
@@ -62,9 +64,10 @@ export interface ServerList<T, M = null> {
   readonly requestedKey: string | null;
   readonly status: "loading" | "failed" | "ready";
   readonly items: readonly T[];
+  readonly source: ReadSource;
   /** The requested key has a committed snapshot. */
   readonly current: boolean;
-  /** That snapshot matches the current invalidation token; running and failure still gate intent. */
+  /** A live snapshot matches the invalidation token; running and failure still gate intent. */
   readonly fresh: boolean;
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
@@ -106,6 +109,7 @@ interface ListInput<T, M> {
   readonly stale: string;
   readonly pageSize: number;
   readonly readPolicy?: string;
+  readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
   readonly id: (item: T) => string;
   readonly fetchPage: (
@@ -148,9 +152,10 @@ function useList<T, M>(
   latest.current = input;
   const seed = useServerSeed<ListPage<T, M>>(key);
   const [held, setShown] = useState<ListSnapshot<T, M> | null>(() => {
-    if (restored !== null || seed === null) return restored;
+    const retained = restored?.source.kind === "catalog" && restored.source.snapshot_id !== input.catalog?.snapshot_id ? null : restored;
+    if (retained !== null || seed === null) return retained;
     const { items, next_cursor, order_revision, metadata } = seed.data;
-    return { key: seed.key, stale, items: unique(items, input.id), cursor: next_cursor, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
+    return { key: seed.key, stale, source: LIVE_SOURCE, items: unique(items, input.id), cursor: next_cursor, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
   });
   const shown = shownAccount === accountId ? held : null;
   shownRef.current = shown;
@@ -171,16 +176,9 @@ function useList<T, M>(
   });
   const run = useCallback(
     function run(requested: Op) {
-      const { key, stale, pageSize, fetchPage, id } = latest.current;
-      const base = shownRef.current?.key === key ? shownRef.current : null;
+      const { key, stale, pageSize, fetchPage, id, catalog } = latest.current;
+      let base = shownRef.current?.key === key ? shownRef.current : null;
       if (latestAccount.current !== accountId || key === null || flight.current !== null) return;
-      if (!remoteReady()) {
-        const error = new ApiError(0, "E_NETWORK", "this view needs a connection");
-        setFailureAccount(accountId);
-        setFailure(previous => previous?.key === key ? previous : { key, op: requested, error });
-        for (const waiter of waiters.current.splice(0)) waiter.reject(error);
-        return;
-      }
       if (requested === "More" && base?.cursor == null) return;
       // A reread of a key with no rows yet is its first load.
       const op = requested === "Refetch" && base === null ? "Load" : requested;
@@ -198,8 +196,8 @@ function useList<T, M>(
       };
       // The cursor restart budget encloses transport retries, not each attempt.
       let restarted = false;
-      const wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
-      const toEnd = op !== "Load" && base !== null && base.cursor === null;
+      let wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
+      let toEnd = op !== "Load" && base !== null && base.cursor === null;
       const read = async (signal: AbortSignal) => {
         const validateCursor = (page: ListPage<T, M>, cursors: readonly (string | null)[]) => {
           if (page.next_cursor !== null && cursors.includes(page.next_cursor)) {
@@ -226,7 +224,7 @@ function useList<T, M>(
           return { items, cursor, cursors, orderRevision, metadata, continuation: false };
         };
         try {
-          if (op === "More" && base !== null && !restarted) {
+          if (op === "More" && base !== null && base.source.kind === "live" && !restarted) {
             const page = await fetchPage(base.cursor, pageSize, signal);
             const cursors = [...base.cursors, base.cursor];
             validateCursor(page, cursors);
@@ -242,14 +240,50 @@ function useList<T, M>(
           return walk();
         }
       };
-      const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
-        op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
-      void owner.read(requestKey, signal => requestWithRetry(read, signal), controller.signal)
+      void (async () => {
+        let localError: ApiError | null = null;
+        if (catalog && (base === null || base.source.kind === "catalog" || base.cursor !== null)) {
+          try {
+            const saved = await catalog.load(controller.signal);
+            if (controller.signal.aborted) throw aborted();
+            if (superseded()) return null;
+            if (saved !== null) {
+              const { items, order_revision, metadata } = saved.data;
+              const next: ListSnapshot<T, M> = { key, stale, source: saved.source, items: unique(items, id), cursor: null, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
+              base = next;
+              shownRef.current = next;
+              setShownAccount(accountId);
+              setShown(next);
+              setFailure(null);
+              toEnd = true;
+              wantPages = 1;
+            } else localError = new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device");
+          } catch (error) {
+            if (controller.signal.aborted) throw aborted();
+            if (!isApiError(error)) throw error;
+            localError = error;
+          }
+        }
+        if (localError?.code === "E_CATALOG_COVERAGE" && base?.source.kind === "catalog") {
+          base = null;
+          shownRef.current = null;
+          setShown(null);
+        }
+        if (!remoteReady()) {
+          if (base !== null && base.cursor === null) { for (const waiter of settle) waiter.resolve(); return null; }
+          throw localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection");
+        }
+        const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
+          op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
+        return owner.read(requestKey, signal => requestWithRetry(read, signal), controller.signal);
+      })()
         .then(
-          ({ items, cursor, cursors, orderRevision, metadata, continuation }) => {
+          result => {
+            if (result === null) return;
+            const { items, cursor, cursors, orderRevision, metadata, continuation } = result;
             if (controller.signal.aborted) throw aborted();
             if (superseded()) return;
-            const next = { key, stale, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, cursors, orderRevision, metadata };
+            const next = { key, stale, source: LIVE_SOURCE, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, cursors, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
             setShownAccount(accountId);
@@ -259,6 +293,11 @@ function useList<T, M>(
           (error: unknown) => {
             if (controller.signal.aborted) throw aborted();
             if (superseded()) return;
+            if (isApiError(error) && error.code === "E_NETWORK" && !remoteReady() && base?.source.kind === "catalog") {
+              setFailure(null);
+              for (const waiter of settle) waiter.resolve();
+              return;
+            }
             // A continuation the server or network failed stops the list, not the pane.
             const modeled =
               op === "More" &&
@@ -300,7 +339,7 @@ function useList<T, M>(
     const queue = waiters.current;
     const kept = shownRef.current;
     if (kept?.key !== key) run("Load");
-    else if (kept.stale !== latest.current.stale) run("Refetch");
+    else if (kept.stale !== latest.current.stale || kept.source.kind === "catalog") run("Refetch");
     return () => {
       flight.current?.abort();
       flight.current = null;
@@ -309,6 +348,16 @@ function useList<T, M>(
       setFailure(null);
     };
   }, [key, run, shownRef]);
+
+  const catalogSnapshot = input.catalog?.snapshot_id ?? null;
+  const observedCatalog = useRef(catalogSnapshot);
+  useEffect(() => {
+    if (observedCatalog.current === catalogSnapshot) return;
+    observedCatalog.current = catalogSnapshot;
+    const held = shownRef.current;
+    if (held?.source.kind === "live" && held.cursor === null && held.key === key) return;
+    owner.invalidate();
+  }, [catalogSnapshot, key, owner, shownRef]);
 
   const admittedGeneration = useRef(admissionGeneration);
   useEffect(() => {
@@ -341,8 +390,9 @@ function useList<T, M>(
     requestedKey: key,
     status: ofKey !== null ? "ready" : failure !== null ? "failed" : "loading",
     items: ofKey?.items ?? NONE,
+    source: ofKey?.source ?? LIVE_SOURCE,
     current: ofKey !== null,
-    fresh: ofKey !== null && ofKey.stale === stale,
+    fresh: ofKey !== null && ofKey.source.kind === "live" && ofKey.stale === stale,
     complete: ofKey !== null && ofKey.cursor === null,
     orderRevision: ofKey?.orderRevision ?? null,
     metadata: ofKey?.metadata ?? null,

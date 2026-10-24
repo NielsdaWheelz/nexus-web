@@ -54,6 +54,8 @@ import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
 import { QueueCommandError } from "@/lib/player/queue";
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
+import { installedApp, remoteReady } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
 import {
@@ -115,6 +117,20 @@ export interface ActionContext {
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly podcastLibraryCreation: ReturnType<typeof useDestinationCreation>;
   readonly overlays: { readonly open: (overlay: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => void };
+}
+
+/** Server-only commands are fenced at invocation, including after confirmation.
+ * Player/queue/download and authored journal operations retain their own policies. */
+const REMOTE_ACTIONS = new Set<string>([
+  "MediaMetadata", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
+  "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "ImportPodcastEpisodes", "RemovePodcastEpisodes",
+  "RefreshPodcast", "Chat", "LearnHighlight", "RegenerateArtifact", "Share", "DownloadOriginal",
+  "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
+  "ReviewMetadataResult", "LibrarySettings", "PodcastSettings", "RemoveUpload",
+  "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
+]);
+export function resourceActionRequiresRemote(id: string, tracked = true): boolean {
+  return REMOTE_ACTIONS.has(id) || id === "Transcript" && tracked;
 }
 
 interface Runtime {
@@ -208,7 +224,9 @@ export default function ResourceActionsProvider({
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const offlineSnapshot = useOfflineSnapshot();
-  const online = useConnectivity() === "Online";
+  const connectivity = useConnectivity();
+  const admission = useRemoteAdmission();
+  const online = installedApp ? admission === "Ready" : connectivity === "Online";
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const consumption = useConsumptionCommands();
@@ -324,6 +342,10 @@ export default function ResourceActionsProvider({
     (command: ActionCommand) => {
       const signal = session.controller.signal;
       if (signal.aborted) return;
+      if (installedApp && !remoteReady() && resourceActionRequiresRemote(command.id, command.tracked)) {
+        feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Neutral", title: "requires a connection" } });
+        return;
+      }
       const key = `${command.ref}|${command.id}`;
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {

@@ -5,6 +5,10 @@ import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { catalogChat } from "@/lib/catalog/selectors";
+import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
@@ -34,7 +38,7 @@ import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace } from "@/lib/workspace/store";
-import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import ChatComposer from "./ChatComposer";
 import ChatSurface from "./ChatSurface";
 import ChatContext from "./ChatContext";
@@ -66,6 +70,8 @@ function persistEndpoint(runtime: Pick<PaneRuntimeContextValue, "href" | "visitI
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
   const [state, store] = useChatStore(conversationId, runtime.paneId);
+  const savedCatalog = useCatalogState();
+  const saved = conversationId === null || savedCatalog.data === null ? null : catalogChat(savedCatalog.data, conversationId);
   // A menu's chat deletion speaks as a workspace condition (commandFeedback.tsx).
   const recovery = recoveryOf(state.command, (command) => command.kind !== "DeleteChat");
   const catalogRead = useServerValue({
@@ -233,7 +239,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
 
   // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
-  const { seed } = useChatDraft(conversationId ?? "new", runtime.paneId);
+  const { seed, draft } = useChatDraft(conversationId ?? "new", runtime.paneId);
   useLayoutEffect(() => {
     if (delivery?.entry.kind !== "ComposeChat") return;
     seed(delivery.entry.text);
@@ -311,10 +317,12 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     bodies,
   });
   // streaming re-renders this body often; publish only what changed.
+  const savedOnly = conversationId !== null && !state.gone && history !== "Ready" && messages.size === 0 && draft.text === "" && branch === null && state.command.kind === "Idle" && !remoteReady() && !savedCatalog.loading;
   const loading = history === "Loading";
   usePaneChrome(
     useMemo(
       () => ({
+        displayTitle: savedOnly && saved !== null ? saved.title || "untitled chat" : undefined,
         query: !conversationId
           ? undefined
           : loading
@@ -330,7 +338,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
               })
             : undefined,
       }),
-      [conversationId, find, loading, ready],
+      [savedOnly, saved, conversationId, find, loading, ready],
     ),
   );
 
@@ -362,7 +370,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     busy: recovery?.kind === "Busy",
   };
 
+  usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;
+  if (savedOnly) return <div className={styles.pane}>
+    {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
+    <FeedbackNotice content={saved === null ? catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" } : { tone: "Neutral", title: "this chat is not available offline" }} announcement="Polite" />
+  </div>;
+
   return (
     <div className={styles.pane}>
       {unavailableBranch ? (
