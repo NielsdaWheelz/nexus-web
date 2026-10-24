@@ -51,6 +51,27 @@ store and the views).
 
 ## Contracts
 
+### index metadata
+
+the index and destination picker share `presentConversationListItem` and
+`ConversationMetadata`: a compact updated-age token, semantic time with an exact
+timestamp including seconds/timezone in its expanded caption and native title,
+and the message count once. exact timestamps stay passive; touch has no new
+disclosure. only the age token has a three-character budget.
+
+age floors completed minutes/hours/days/weeks/365-day years. below one minute
+in either direction it says `now`; more than nine years says `>9y`; a timestamp
+at least one minute ahead shows an em dash and explains clock uncertainty.
+malformed wire instants are defects. duration rounding and prose relative-time
+formatting have separate contracts.
+
+`useChatAgeClock` owns one minute interval per visible list/picker, never per row.
+the initial render instant preserves hydration; layout effects refresh after
+mount, stable source-array replacement and pane visibility changes. hidden panes
+and documents stop the interval; document return refreshes immediately. visible
+unfocused panes keep aging. callbacks/effects alone read the clock; ticks only
+re-present existing data and never refetch, publish, reorder or move focus.
+
 ### http (authenticated, `Data{data}`, every request carries `X-Nexus-Wire`)
 
 | route | request | answer | retry rule |

@@ -1,4 +1,4 @@
-.metadata { display: flex; align-items: baseline; min-width: 0; gap: var(--space-2); white-space: nowrap; }
+.metadata { display: flex; align-items: baseline; min-width: 0; gap: var(--row-metadata-gap); white-space: nowrap; }
 .context { display: inline-flex; flex: 1; min-width: 0; overflow: hidden; }
 .context:not(:first-child) { max-inline-size: 45%; }
 .context > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

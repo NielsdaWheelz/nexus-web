@@ -15,8 +15,8 @@ export function collectionConsumptionText(consumption: Schema<"ConsumptionOut">)
       return "finished";
     case "InProgress":
       return consumption.progress !== null
-        ? `${Math.round(consumption.progress * 100)}%`
-        : "in progress";
+        ? `in progress; saved position ${Math.round(consumption.progress * 100)}%`
+        : "in progress; percentage unavailable";
   }
 }
 
@@ -24,13 +24,18 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
   switch (activity.kind) {
     case "RemainingTime": {
       const { modality, minutes } = activity;
-      const hours = Math.floor(minutes / 60);
-      const rest = minutes % 60;
+      // The upstream estimate is a known nonnegative integer number of minutes.
+      let visible = minutes > 9 * 525600 ? ">9y" : `${Math.ceil(minutes / 525600)}y`;
+      for (const [unitMinutes, unit] of [[1, "m"], [60, "h"], [1440, "d"], [10080, "w"]] as const) {
+        const count = Math.ceil(minutes / unitMinutes);
+        if (count <= 99) {
+          visible = `${count}${unit}`;
+          break;
+        }
+      }
       return {
-        visible: hours === 0
-          ? `${minutes} min`
-          : `${hours} h${rest === 0 ? "" : ` ${rest} min`}`,
-        accessible: `${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining to ${modality === "Read" ? "read" : "listen"}`,
+        visible,
+        accessible: `estimated ${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining to ${{ Read: "read", Listen: "listen at normal speed" }[modality]}`,
       };
     }
     case "Unplayed": {
