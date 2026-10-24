@@ -65,7 +65,6 @@ const ICONS: Record<TabId, LucideIcon> = {
   "resource-members": Users,
   "resource-connections": Network,
   "resource-forks": GitBranch,
-  "resource-dossier": FileText,
   "import-detail": FileText,
   "find-results": TextSearch,
 };

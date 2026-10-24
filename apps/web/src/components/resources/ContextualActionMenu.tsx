@@ -69,6 +69,9 @@ export default function ContextualActionMenu({
       id: "Resource", label: showSourceSubject ? `source: ${state.facts.label}` : "item", options,
     });
   }
+  if (state?.kind === "Failed" && state.connectionRequired) groups.push({
+    id: "Resource", label: null, options: [{ kind: "command", id: "Resource.ConnectionRequired", label: "requires a connection", disabled: true, onSelect: () => {} }],
+  });
   const content: MenuContent = { sections: groups.map((section) => ({
     ...section,
     label: groups.length > 1 || (showSourceSubject && section.id === "Resource") ? section.label : null,
@@ -78,7 +81,7 @@ export default function ContextualActionMenu({
   const identity = { title, subjectKey: `${pane?.visitId ?? "workspace"}:${subjectKey}:${resourceRef ?? "local"}:${JSON.stringify(displayedActivation ?? null)}` };
   const source: MenuSource = resourceRef ? {
     ...identity, kind: "Prepared", prepare: resource.prepare,
-    state: state?.kind === "Ready" ? { kind: "Ready", request: state.request, content } : state,
+    state: state?.kind === "Ready" || state?.kind === "Failed" && state.connectionRequired ? { kind: "Ready", request: state.request, content } : state,
   } : { ...identity, kind: "Immediate", content };
   return <ActionMenu {...props} label={props.label ?? `more actions for ${title}`} source={source} />;
 }

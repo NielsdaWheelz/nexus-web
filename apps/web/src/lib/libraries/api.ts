@@ -219,3 +219,8 @@ export async function respondToInvitation(id: string, accept: boolean): Promise<
   });
   if (accept) publishChange("Libraries", "Entries");
 }
+
+/** Authenticated complete membership count, including all's visible union. */
+export async function getLibraryMetadata(id: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/libraries/{library_id}/metadata", "get">>(`${libraryPath(id)}/metadata`, { signal })).data;
+}

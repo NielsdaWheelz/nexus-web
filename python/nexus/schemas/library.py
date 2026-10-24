@@ -88,6 +88,16 @@ class LibraryOut(BaseModel):
     can_leave: bool
 
 
+class LibraryMetadataOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    library: LibraryOut
+    kind: Literal["personal", "named", "system"]
+    created_at: datetime
+    updated_at: datetime
+    media_count: int = Field(ge=0)
+
+
 class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str

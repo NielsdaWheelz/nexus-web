@@ -30,5 +30,4 @@ export type MediaSubject =
       readonly media_kind: MediaSummary["media_kind"];
       readonly title: string;
       readonly contributors: readonly Schema<"ContributorCreditOut">[];
-      readonly publication_date: string | null;
     };

@@ -59,8 +59,15 @@ export function useActionFocusRecovery(
     const active = document.activeElement;
     if (active instanceof HTMLElement && root.contains(active)) capture(active);
     return () => {
+      const previous = captured;
       root.removeEventListener("focusin", focused);
       release();
+      // A responsive host can remount its controls before resize is delivered.
+      // Resolve its surviving presenter only after the replacement has mounted.
+      if (previous !== null) queueMicrotask(() => {
+        if (!previous.isConnected && document.activeElement === document.body)
+          destination.current()?.focus({ preventScroll: true });
+      });
     };
   }, [rootRef]);
 }

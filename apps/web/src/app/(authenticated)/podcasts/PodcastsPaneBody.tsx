@@ -31,6 +31,9 @@ import {
   listPodcasts,
   type PodcastRow,
 } from "@/lib/podcasts/api";
+import { remoteReady } from "@/lib/native/admission";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogPodcasts, catalogLibraries, catalogLibrary } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import {
   listRowStatus,
@@ -85,8 +88,11 @@ export default function PodcastsPaneBody() {
   const query = new URLSearchParams({ sort, filter });
   if (libraryId !== null) query.set("library_id", libraryId);
   const key = query.toString();
+  const savedPodcasts = useCatalogRead(value => catalogPodcasts(value, new URLSearchParams(key)));
+  const savedLibraries = useCatalogRead(catalogLibraries);
   const stale = `${useChangeStamp("Podcasts")}:${librariesRevision}:${useMediaQueryRevision()}`;
   const list = useServerList<PodcastRow>({
+    catalog: savedPodcasts,
     key: `/podcasts?${key}`,
     stale,
     pageSize: 100,
@@ -98,9 +104,10 @@ export default function PodcastsPaneBody() {
   });
   const actionFacts = (id: string): PodcastActionSubject["facts"] => list.failure !== null
     ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
-    : !list.fresh || list.running !== null
+    : list.source.kind !== "live" || !remoteReady() || !list.fresh || list.running !== null
       ? { kind: "Resolving" } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: id, subscribed: true } };
   const libraries = useServerList<Library>({
+    catalog: savedLibraries,
     key: "podcasts:member-libraries",
     stale: librariesRevision,
     pageSize: 200,
@@ -110,7 +117,9 @@ export default function PodcastsPaneBody() {
     fetchPage: (cursor, limit, signal) => librariesPage(pageQuery("", cursor, limit), signal),
   });
   const selectedLibraryId = libraryId !== null && !libraries.items.some(library => library.id === libraryId) ? libraryId : null;
+  const savedSelectedLibrary = useCatalogRead(value => selectedLibraryId === null ? null : catalogLibrary(value, selectedLibraryId));
   const selectedLibrary = useServerValue<Library>({
+    catalog: savedSelectedLibrary,
     key: selectedLibraryId,
     stale: librariesRevision,
     visit: SELECTED_LIBRARY,
@@ -215,7 +224,7 @@ export default function PodcastsPaneBody() {
     primaryAction: PODCAST_BROWSE_ACTION,
     menuActions: [PODCAST_BROWSE_ACTION],
     query: queryControls,
-    refresh: {
+    refresh: list.source.kind === "catalog" ? undefined : {
       kind: "Refreshable",
       sourceKey: `Podcasts.Subscriptions:${key}`,
       execute: REFRESH,

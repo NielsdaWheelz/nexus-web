@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { Fragment, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
+import { ExcerptText } from "@/components/resources/ResourceBody";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
@@ -13,10 +15,11 @@ import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
-import type { ApiJson } from "@/lib/api/wire";
+import { assertNever } from "@/lib/assertNever";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneIsActive, usePaneIsVisible, usePaneRuntime, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -105,11 +108,11 @@ function SearchResults({ query }: { query: SearchQuery }) {
   });
   const results = list.items;
   const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
-    targets: results.flatMap(row => row.item.ref.startsWith("podcast:") ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
+    targets: results.flatMap(row => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
     refresh: `${list.current}:${list.running}:${list.requestedKey}`,
   });
   const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
-  const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") ? {
+  const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? {
     target: { kind: "Canonical", podcast_id: row.item.ref.slice(8) }, title: row.item.label,
     facts: list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
       : !list.fresh || list.running !== null ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: row.item.ref.slice(8) }),
@@ -185,20 +188,35 @@ function SearchResults({ query }: { query: SearchQuery }) {
   </div>;
 }
 
-function SearchResult({ row, parentOccurrenceKey, podcastSubject, afterRemoval }: { row: Row; parentOccurrenceKey?: string; podcastSubject?: PodcastActionSubject; afterRemoval?: () => HTMLElement | null }) {
-  const title = useRef<HTMLAnchorElement>(null);
-  const { item } = row;
-  const passage = "matching_passage" in row ? row.matching_passage : null;
-  const child = parentOccurrenceKey !== undefined;
-  const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
+/** A matching passage owns the single evidence slot and its exact destination. */
+function SearchResult({ row, podcastSubject, afterRemoval }: { row: Row; podcastSubject?: PodcastActionSubject; afterRemoval?: () => HTMLElement | null }) {
+  const runtime = usePaneRuntime();
+  const evidence = ("matching_passage" in row ? row.matching_passage : null) ?? row;
+  const { item, match } = evidence;
+  const body = item.preview.body;
+  const hasExcerpt = (value: Schema<"ExcerptOut">) => Boolean(value.text || value.truncated_before || value.truncated_after);
+  let excerpt: ReactNode = null;
+  if (match && hasExcerpt(match.excerpt)) excerpt = <ExcerptText excerpt={match.excerpt} match={match} />;
+  else switch (body.kind) {
+    case "passage": excerpt = hasExcerpt(body.exact) ? <ExcerptText excerpt={body.exact} /> : null; break;
+    case "prose": {
+      const text = hasExcerpt(body.excerpt);
+      excerpt = text || body.image_count > 0 ? <>{text ? <ExcerptText excerpt={body.excerpt} /> : null}{text && body.image_count > 0 ? " · " : null}{body.image_count > 0 ? body.image_count === 1 ? "image" : `${body.image_count} images` : null}</> : null;
+      break;
+    }
+    case "images": excerpt = <>{body.count === 1 ? "image" : `${body.count} images`}{body.alts.map((alt, index) => alt && hasExcerpt(alt) ? <Fragment key={index}> · <ExcerptText excerpt={alt} /></Fragment> : null)}</>; break;
+    case "reference": excerpt = body.label && hasExcerpt(body.label) ? <ExcerptText excerpt={body.label} /> : null; break;
+    case "media": case "named": break;
+    default: assertNever(body);
+  }
+  const href = item.activation.href;
   return <ResourceIndexRow
-    item={item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
-    occurrenceLabel={child ? "matching passage" : undefined}
-    primaryLinkRef={title}
-    nestedContent={passage ? <div className={styles.matchingPassage}>
-      <ResourceList ariaLabel="Matching passage">
-        <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />
-      </ResourceList>
-    </div> : undefined}
+    item={row.item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={`search:${row.item.ref}`} match={row.match} matchMethod={row.match_method}
+    occurrenceLabel={evidence !== row ? ["matching passage", item.preview.source?.location_label].filter(Boolean).join(" · ") : undefined}
+    presentation={{ kind: "Search", excerpt: excerpt && href ? <a href={href}
+      className={styles.evidence} data-workspace-rich-target="true"
+      onClick={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
+      onKeyDown={event => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
+    >{excerpt}</a> : excerpt }}
   />;
 }

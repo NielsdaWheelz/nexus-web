@@ -3,10 +3,12 @@
 /** The queue displays occurrences from the current cursor forward. Its viewport
  * never requests preceding history; all edits go through the player's revision owner. */
 import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
-import { ArrowDown, ArrowUp, Play, Trash2, ListStart } from "lucide-react";
+import { ArrowDown, ArrowUp, Ellipsis, Play, Trash2, ListStart } from "lucide-react";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import ResourceRow from "@/components/ui/ResourceRow";
+import ActionMenu from "@/components/ui/ActionMenu";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import SortableList from "@/components/sortable/SortableList";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
@@ -17,9 +19,9 @@ import styles from "./Player.module.css";
 
 const SORT_LABELS = {
   added_asc: "oldest added", added_desc: "newest added", title_asc: "title a–z", title_desc: "title z–a",
-  creator_asc: "creator a–z", creator_desc: "creator z–a", published_asc: "oldest published", published_desc: "newest published",
+  creator_asc: "creator a–z", creator_desc: "creator z–a", published_asc: "first published, oldest", published_desc: "first published, newest",
   remaining_asc: "least time remaining", remaining_desc: "most time remaining",
-  newest: "newest episodes", oldest: "oldest episodes", duration_asc: "shortest first", duration_desc: "longest first",
+  newest: "newest released", oldest: "oldest released", duration_asc: "shortest first", duration_desc: "longest first",
 };
 
 function sourceHref(source: QueueSource): string {
@@ -39,7 +41,7 @@ function sourceHref(source: QueueSource): string {
 }
 
 export function QueueStatus() {
-  const { queue } = usePlayerSession();
+  const { queue, state } = usePlayerSession();
   const commands = usePlayerCommands();
   return <>
     {queue.phase === "Preparing" ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "preparing queue…" }} actions={[{ label: "cancel", onClick: commands.cancelQueuePreparation }]} /> : null}
@@ -47,7 +49,7 @@ export function QueueStatus() {
     {queue.phase === "Uncertain" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t confirm queue change" }} actions={[{ label: "check", onClick: commands.checkQueue }]} /> : null}
     {queue.phase === "Unavailable" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "player unavailable", message: "open nexus in a browser with web locks and broadcast channels to play audio" }} /> : null}
     {queue.error !== null && queue.failure?.kind !== "Episode" && queue.phase !== "Uncertain" && queue.phase !== "Unavailable" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: queue.error }} actions={[{ label: "retry", onClick: commands.checkQueue }]} /> : null}
-    {queue.canRestore ? <FeedbackNotice announcement="None" content={{ tone: "Neutral", title: "queue replaced" }} actions={[{ label: "restore previous queue", onClick: commands.restoreQueue }]} /> : null}
+    {queue.known && queue.phase === "Ready" && state.kind !== "Unavailable" && queue.canRestore ? <FeedbackNotice announcement="None" content={{ tone: "Neutral", title: "queue replaced" }} actions={[{ label: "restore previous queue", onClick: commands.restoreQueue }]} /> : null}
   </>;
 }
 
@@ -57,7 +59,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
   const header = queue.header;
   const root = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const pendingFocus = useRef<{ entryId: string | null; action: string } | null>(null);
+  const pendingFocus = useRef<{ entryId: string | null; trigger: Element | null } | null>(null);
   const [prefix, setPrefix] = useState(100);
   const [paging, setPaging] = useState(false);
   const [pageError, setPageError] = useState(false);
@@ -67,7 +69,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
   const current = header?.current_entry ?? null;
   const visible = current === null ? upcoming : [current, ...upcoming];
   const summaries = useMediaSummaryIds(visible.map(entry => entry.media_id));
-  const ready = queue.phase === "Ready";
+  const ready = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
   const failure = queue.failure?.kind === "Episode" && queue.failure.entry_id === current?.id ? queue.failure : null;
   const failed = failure !== null;
   useLayoutEffect(() => { setPrefix(100); setPageError(false); }, [header?.queue_id, header?.current_entry_id]);
@@ -75,13 +77,14 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     if (!ready || pendingFocus.current === null) return;
     const pending = pendingFocus.current;
     pendingFocus.current = null;
-    const target = [...root.current!.querySelectorAll<HTMLButtonElement>("button[data-queue-entry]")]
-      .find(button => button.dataset.queueEntry === pending.entryId && button.dataset.queueAction === pending.action);
-    (target ?? heading.current)?.focus({ preventScroll: true });
+    if (document.activeElement !== pending.trigger && document.activeElement !== document.body) return;
+    const row = [...root.current!.querySelectorAll<HTMLElement>("[data-collection-row-id]")]
+      .find(row => row.dataset.collectionRowId === pending.entryId);
+    (row?.querySelector<HTMLElement>('[data-queue-action="more"]') ?? row?.querySelector<HTMLElement>("[data-row-focusable]") ?? heading.current)?.focus({ preventScroll: true });
   }, [header?.revision, ready]);
 
   const send = async (command: QueueCommand) => {
-    if (header === null) return false;
+    if (!ready || header === null) return false;
     setCommandFailed(false);
     try {
       await commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command });
@@ -97,13 +100,13 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
   const remove = async (entry: QueueEntry, position: number) => {
     const index = queue.entries.findIndex(item => item.id === entry.id);
     const next = queue.entries[index + 1] ?? queue.entries[index - 1] ?? null;
-    pendingFocus.current = { entryId: next?.id ?? null, action: "remove" };
+    pendingFocus.current = { entryId: next?.id ?? null, trigger: document.activeElement };
     if (await send({ kind: "remove", entry_id: entry.id, failed_current: failure?.entry_id === entry.id }))
       announce(`removed position ${position} from queue`);
-    else pendingFocus.current = { entryId: entry.id, action: "remove" };
+    else pendingFocus.current = { entryId: entry.id, trigger: document.activeElement };
   };
   const rows: CollectionRowView[] = upcoming.map(entry => ({
-    id: entry.id, kind: "podcast_episode", primary: { kind: "link", href: `/media/${entry.media_id}` },
+    id: entry.id, kind: "podcast_episode", presentation: "Index", primary: { kind: "link", href: `/media/${entry.media_id}` },
     title: { text: summaries.resolve(entry.media_id)?.title ?? (summaries.pending(entry.media_id) ? "loading episode…" : "episode unavailable") },
     contributors: [], publicationDate: null, context: null, activity: null, exceptionalStatus: null,
     resourceRef: null, selected: false,
@@ -129,27 +132,45 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     const index = upcoming.findIndex(item => item.id === entry.id);
     const successor = queue.entries[queue.entries.findIndex(item => item.id === entry.id) + 2];
     const laterUnknown = position + 1 < (header?.count ?? 0) && successor === undefined;
-    const action = (kind: string, label: string, icon: ReactElement, invoke: () => void, disabled = false) => <Button
-      key={kind} iconOnly icon={icon} size="comfortable" aria-label={`${label}: ${name}`}
-      data-queue-entry={entry.id} data-queue-action={kind}
-      aria-disabled={!ready || disabled || undefined}
-      onClick={() => { if (ready && !disabled) invoke(); }} />;
-    return <ResourceRow media as="div" primary={{ kind: "link", href: `/media/${entry.media_id}` }} title={<>{title}<span className="sr-only">, position {position}</span></>}
-      supporting={<p className={styles.eyebrow}>position {position} of {header?.count ?? 0}</p>}
-      rootProps={{ "data-collection-row-id": entry.id, "aria-current": isCurrent ? "true" : undefined, "aria-label": name }}
-      primaryControl={action("play", failed && isCurrent ? "retry" : "play", <Play />, () => select(entry.id))}
-      actions={!isCurrent ? <div className={styles.queueActions}>
-        {action("next", "play next", <ListStart />, () => { void move(entry.id, upcoming[0]?.id ?? null); }, index === 0)}
-        {action("earlier", "move earlier", <ArrowUp />, () => {
-          pendingFocus.current = { entryId: entry.id, action: "earlier" };
+    const action = (id: string, label: string, icon: ReactElement, invoke: () => void, reason: string | null = null): ActionDescriptor => ({
+      kind: "command", id, label, icon,
+      disabled: !ready || reason !== null,
+      disabledReason: !ready ? state.kind === "Unavailable" ? "player unavailable" : "wait for the queue change to finish" : reason ?? undefined,
+      onSelect: () => { if (ready && reason === null) invoke(); },
+    });
+    const options = [
+      ...(!isCurrent ? [
+        action("next", "play next", <ListStart />, () => { void move(entry.id, upcoming[0]?.id ?? null); }, index === 0 ? "already next in queue" : null),
+        action("earlier", "move earlier", <ArrowUp />, () => {
+          pendingFocus.current = { entryId: entry.id, trigger: document.activeElement };
           void move(entry.id, upcoming[index - 1]!.id).then(accepted => { if (accepted) announce(`“${title}” moved earlier`); });
-        }, index === 0)}
-        {action("later", "move later", <ArrowDown />, () => {
-          pendingFocus.current = { entryId: entry.id, action: "later" };
+        }, index === 0 ? "already first in the upcoming queue" : null),
+        action("later", "move later", <ArrowDown />, () => {
+          pendingFocus.current = { entryId: entry.id, trigger: document.activeElement };
           void move(entry.id, successor?.id ?? null).then(accepted => { if (accepted) announce(`“${title}” moved later`); });
-        }, position === (header?.count ?? 0) || laterUnknown)}
-        {action("remove", "remove from queue", <Trash2 />, () => { void remove(entry, position); })}
-      </div> : failed ? <Button data-queue-entry={entry.id} data-queue-action="remove" aria-label={`remove from queue: ${name}`} onClick={() => { void remove(entry, position); }} disabled={!ready}>remove from queue</Button> : null}
+        }, position === (header?.count ?? 0) ? "already last in queue" : laterUnknown ? "show more episodes before moving later" : null),
+      ] : []),
+      ...(!isCurrent || failed ? [action("remove", "remove from queue", <Trash2 />, () => { void remove(entry, position); })] : []),
+    ];
+    const returnFocus = () => {
+      const row = [...(root.current?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? [])]
+        .find(row => row.dataset.collectionRowId === entry.id);
+      return row?.querySelector<HTMLElement>('[data-queue-action="more"]') ?? row?.querySelector<HTMLElement>("[data-row-focusable]") ?? heading.current;
+    };
+    return <ResourceRow as="div" primary={{ kind: "link", href: `/media/${entry.media_id}` }} title={<>{title}<span className="sr-only">, position {position}</span></>}
+      content={{ kind: "Index", metadata: <span>position {position} of {header?.count ?? 0}</span> }}
+      rootProps={{ "data-collection-row-id": entry.id, "aria-current": isCurrent ? "true" : undefined, "aria-label": name }}
+      controls={<>
+        <Button iconOnly icon={<Play />} size="comfortable" aria-label={`${failed && isCurrent ? "retry" : "play"}: ${name}`}
+          data-queue-entry={entry.id} data-queue-action="play" disabled={!ready}
+          onClick={() => select(entry.id)} />
+        {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus}
+          label={`more actions for ${name}${failed && isCurrent ? "; episode playback failed" : ""}`}
+          triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
+          renderTrigger={props => <Button {...props} iconOnly icon={<span className={styles.queueMoreGlyph}><Ellipsis />{failed && isCurrent ? <span className={styles.queueAttention}>!</span> : null}</span>} />}
+          source={{ kind: "Immediate", subjectKey: `queue:${header?.queue_id}:${entry.id}`, title: name,
+            content: { sections: [{ id: "Queue", label: null, options }] } }} /> : null}
+      </>}
     />;
   };
   const remaining = Math.max(0, (header?.count ?? 0) - firstUpcoming);
@@ -157,18 +178,18 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
     <QueueStatus />
     {commandFailed ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t change queue", message: "try the queue action again" }} /> : null}
-    {header?.source ? <div>
+    {!queue.known ? <p>{queue.error === null ? "loading queue…" : "couldn’t load queue"}</p> : header?.source ? <div>
       <ButtonLink href={sourceHref(header.source)}>{header.source.kind === "Lectern" ? "started from lectern" : `started from “${header.source.label}”`}</ButtonLink>
       <p className={styles.eyebrow}>{[header.source.sort === null ? header.source.kind === "Lectern" ? "custom order" : "default order" : SORT_LABELS[header.source.sort], header.source.query ? `filter: ${header.source.query}` : null,
         header.source.kind === "Library" ? [header.source.entry_type?.replaceAll("_", " "), header.source.projection?.replaceAll("_", " "), header.source.completion].filter(Boolean).join(" · ") : header.source.kind === "Podcast" ? header.source.state.replaceAll("_", " ") : null].filter(Boolean).join(" · ")}</p>
-    </div> : <p className={styles.eyebrow}>custom queue</p>}
-    <p className={styles.eyebrow}>{header?.count ?? 0} queued · {remaining} upcoming</p>
+    </div> : header !== null ? <p className={styles.eyebrow}>custom queue</p> : null}
+    {queue.known ? <p className={styles.eyebrow}>{header?.count ?? 0} queued · {remaining} upcoming</p> : null}
     {summaries.error !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "episodes couldn’t be loaded" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
-    {failure !== null && current !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: failure.title === null ? "episode unavailable" : `couldn’t play “${failure.title}”` }} actions={[
+    {failure !== null && current !== null ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: failure.title === null ? "episode unavailable" : `couldn’t play “${failure.title}”` }} actions={ready ? [
       { label: "retry", onClick: () => select(current.id) },
       { label: "skip", onClick: () => { const next = upcoming[0]; if (next === undefined) commands.next(); else select(next.id); } },
-    ]} /> : null}
-    {current !== null ? <div><h3 className={styles.panelTitle}>current</h3>{render(current, (header?.current_index ?? 0) + 1, true)}</div> : <p>{header && header.count > 0 ? "queue finished" : "nothing queued"}</p>}
+    ] : undefined} /> : null}
+    {current !== null ? <div><h3 className={styles.panelTitle}>current</h3>{render(current, (header?.current_index ?? 0) + 1, true)}</div> : queue.known ? <p>{header && header.count > 0 ? "queue finished" : "nothing queued"}</p> : null}
     {upcoming.length > 0 ? <div><h3 className={styles.panelTitle}>upcoming</h3>
       <SortableList items={rows} order={order} ariaLabel="upcoming episodes" scrollport={scrollport}
         onAnnouncement={announce} renderItem={row => {
@@ -176,7 +197,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
           return render(upcoming[index]!, firstUpcoming + index + 1, false);
         }} />
     </div> : null}
-    {upcoming.length < remaining ? <Button disabled={paging} onClick={() => {
+    {queue.known && upcoming.length < remaining ? <Button disabled={!ready || paging} onClick={() => {
       setPaging(true); setPageError(false);
       const next = prefix + 100;
       const loaded = queue.offset + queue.entries.length - firstUpcoming;
@@ -185,7 +206,7 @@ export default function QueuePanel({ announce, scrollport }: { readonly announce
     <div className={styles.queueActions}>
       <Button onClick={commands.previous} disabled={!ready || header === null || header.count === 0}>previous</Button>
       {current !== null && state.kind === "Absent" ? <Button onClick={commands.resume} disabled={!ready}>resume</Button> : null}
-      <Button onClick={commands.stop} disabled={!ready || header === null}>stop playback</Button>
+      <Button onClick={commands.stop} disabled={state.kind !== "Loaded" && (!ready || header === null)}>stop playback</Button>
       <Button onClick={commands.clearQueue} disabled={!ready || header === null || header.count === 0}>clear queue</Button>
     </div>
   </section>;

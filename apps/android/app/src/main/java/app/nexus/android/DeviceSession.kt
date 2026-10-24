@@ -68,6 +68,7 @@ internal class DeviceSession private constructor(private val context: Context) {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
     private val origin = NexusOriginClient()
+    val catalog = CatalogStore(context, this)
     private var loaded = false
     private var cleanupCompleted = false
     private var envelope: JSONObject? = null
@@ -132,6 +133,7 @@ internal class DeviceSession private constructor(private val context: Context) {
                     if (envelope?.isNull("binding") == true) signingOut = true
                     account = envelope?.optJSONObject("binding")?.getJSONObject("account")
                         ?.getString("account_id")?.let(UUID::fromString)
+                    account?.let(catalog::bind)
                 } catch (error: Exception) {
                     loadError = when (error) {
                         is java.nio.charset.CharacterCodingException -> LocalStateError("E_LOCAL_STATE_INVALID", "saved workspace is invalid")
@@ -318,6 +320,7 @@ internal class DeviceSession private constructor(private val context: Context) {
             persist(validate(JSONObject().put("format_version", 1).put("binding", binding)))
             OfflineStore.get(context).bind(remoteAccount)
             account = remoteAccount
+            catalog.bind(remoteAccount)
         }
         synchronized(this) {
             if (signingOut || !current()) throw IOException("retired session")
@@ -337,6 +340,7 @@ internal class DeviceSession private constructor(private val context: Context) {
         account?.let { return it }
         val cached = PlaybackStore.cachedAccounts(context).toMutableSet()
         OfflineStore.get(context).account?.let(cached::add)
+        catalog.cachedAccount()?.let(cached::add)
         cached += ActivityOutbox(File(context.filesDir, "player/spans.json")).cachedAccounts()
         if (cached.size > 1) throw NexusOriginError(409, "E_DIFFERENT_ACCOUNT")
         return cached.singleOrNull()
@@ -423,6 +427,7 @@ internal class DeviceSession private constructor(private val context: Context) {
             signOutJob?.takeIf { !it.isCompleted } ?: run {
                 signingOut = true
                 lifetime.incrementAndGet()
+                catalog.retire()
                 admission("SignInRequired")
                 scope.async { performSignOut() }.also { signOutJob = it }
             }
@@ -453,6 +458,7 @@ internal class DeviceSession private constructor(private val context: Context) {
 
     private suspend fun cleanup(stopJobs: Boolean) = withContext(NonCancellable) {
         account = null
+        catalog.purge()
         if (stopJobs) OfflineJobService.stopForSignOut(context)
         OfflineStore.get(context).purge()
         val player = File(context.filesDir, "player")

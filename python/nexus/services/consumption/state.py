@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
+from nexus.schemas import collection_actions as collection_wire
 from nexus.schemas import consumption as wire
-from nexus.schemas.podcast import PodcastEpisodeConsumptionItem
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot, XReaderResumeState
 from nexus.services.consumption import lectern, listening, projection, reader_cursor, viewer_txn
 from nexus.services.reader_publication import lock_publication_generation
@@ -150,16 +150,16 @@ def finish(viewer_id: UUID, media_id: UUID, body: wire.FinishIn) -> wire.Finish:
     return viewer_txn("finish", viewer_id, run)
 
 
-def undo_finish(viewer_id: UUID, media_id: UUID, body: wire.Finish) -> None:
+def undo_finish(viewer_id: UUID, media_id: UUID, body: wire.Finish) -> wire.ConsumptionOverrideOut:
     """While the override still holds the finish's revision, put back its prior status, drop the
     completion it recorded and the row it removed. A resend that already landed succeeds."""
 
-    def run(db: Session) -> None:
+    def run(db: Session) -> wire.ConsumptionOverrideOut:
         kind = _kind(db, viewer_id, media_id)
         current = _override(db, viewer_id, media_id)
         params = {"viewer_id": viewer_id, "media_id": media_id, "id": body.completion_id}
         if current is not None and current.revision == body.revision:
-            _set_override(db, viewer_id, media_id, body.prior_status)
+            revision = _set_override(db, viewer_id, media_id, body.prior_status)
             db.execute(
                 text("""DELETE FROM consumption_completion_facts
                         WHERE id = :id AND user_id = :viewer_id AND media_id = :media_id"""),
@@ -178,31 +178,35 @@ def undo_finish(viewer_id: UUID, media_id: UUID, body: wire.Finish) -> None:
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Completion is no longer undoable"
             )
+        else:
+            revision = current.revision
         if body.removed is not None:
             lectern.restore_in_txn(db, viewer_id=viewer_id, media_id=media_id, removed=body.removed)
         record_input_change(db)
         db.commit()
+        return wire.ConsumptionOverrideOut(override_revision=revision)
 
-    viewer_txn("undo_finish", viewer_id, run)
+    return viewer_txn("undo_finish", viewer_id, run)
 
 
-def mark_unread(viewer_id: UUID, media_id: UUID) -> None:
+def mark_unread(viewer_id: UUID, media_id: UUID) -> wire.ConsumptionOverrideOut:
     """Unread, and retire every earlier cursor save and listening sample. A resend re-applies."""
 
-    def run(db: Session) -> None:
+    def run(db: Session) -> wire.ConsumptionOverrideOut:
         kind = _kind(db, viewer_id, media_id)
-        _set_override(db, viewer_id, media_id, "unread")
+        revision = _set_override(db, viewer_id, media_id, "unread")
         _fence(db, viewer_id, media_id, kind)
         record_input_change(db)
         db.commit()
+        return wire.ConsumptionOverrideOut(override_revision=revision)
 
-    viewer_txn("mark_unread", viewer_id, run)
+    return viewer_txn("mark_unread", viewer_id, run)
 
 
-def reset_progress(viewer_id: UUID, media_id: UUID) -> None:
+def reset_progress(viewer_id: UUID, media_id: UUID) -> wire.ConsumptionOverrideOut:
     """Empty cursor, listening at zero, no override and no engagement; history stays."""
 
-    def run(db: Session) -> None:
+    def run(db: Session) -> wire.ConsumptionOverrideOut:
         kind = _cursor_kind(db, viewer_id, media_id)
         reader_cursor.reset(db, viewer_id=viewer_id, media_id=media_id)
         db.execute(
@@ -210,13 +214,14 @@ def reset_progress(viewer_id: UUID, media_id: UUID) -> None:
                     WHERE user_id = :viewer_id AND media_id = :media_id"""),
             {"viewer_id": viewer_id, "media_id": media_id},
         )
-        _set_override(db, viewer_id, media_id, None)
+        revision = _set_override(db, viewer_id, media_id, None)
         if kind == _EPISODE:
             listening.reset(db, viewer_id=viewer_id, media_id=media_id)
         record_input_change(db)
         db.commit()
+        return wire.ConsumptionOverrideOut(override_revision=revision)
 
-    viewer_txn("reset_progress", viewer_id, run)
+    return viewer_txn("reset_progress", viewer_id, run)
 
 
 def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn) -> None:
@@ -274,34 +279,116 @@ def settle_natural_end_in_txn(
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The natural end was superseded")
 
 
-def set_episode_states_in_txn(
+def set_states_in_txn(
     db: Session,
     *,
     viewer_id: UUID,
-    items: list[PodcastEpisodeConsumptionItem],
-    desired_state: Literal["played", "unplayed"],
-) -> int:
-    """Conditional absolute write for validated readable episodes in the caller's viewer_txn.
+    items: list[collection_wire.StateItem],
+    desired_state: Literal["finished", "unread"],
+) -> collection_wire.CollectionConsumptionUndoReceipt | None:
+    """Preflight every override, then change only differing explicit states.
 
-    Preflight every override before writing. Current = desired succeeds without touching
-    revisions, progress fences or completion facts; otherwise the captured revision must match.
+    The caller validates source membership. Current = desired is inert before
+    revision comparison. The inverse names only this transaction's actual changes
+    and completion insertions; a replay cannot reconstruct an earlier receipt.
     """
-    desired = {"played": "finished", "unplayed": "unread"}[desired_state]
-    changes: list[tuple[UUID, Row | None]] = []
+    changes: list[tuple[UUID, str, Row | None]] = []
     for item in items:
+        kind = _kind(db, viewer_id, item.media_id)
         current = _override(db, viewer_id, item.media_id)
-        if current is not None and current.status == desired:
+        if current is not None and current.status == desired_state:
             continue
         if (current.revision if current else None) != item.expected_override_revision:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Episode state changed")
-        changes.append((item.media_id, current))
-    for media_id, current in changes:
-        if desired_state == "played":
-            _finish(db, viewer_id, media_id, current)
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Item state changed")
+        changes.append((item.media_id, kind, current))
+    inverse = []
+    for media_id, kind, current in changes:
+        prior_status = current.status if current else None
+        completion_id = None
+        if desired_state == "finished":
+            finished = _finish(db, viewer_id, media_id, current)
+            revision = finished.revision
+            completion_id = finished.completion_id
         else:
-            _set_override(db, viewer_id, media_id, "unread")
-            _fence(db, viewer_id, media_id, _EPISODE)
-    return len(changes)
+            revision = _set_override(db, viewer_id, media_id, "unread")
+            _fence(db, viewer_id, media_id, kind)
+        inverse.append(
+            collection_wire.UndoItem(
+                media_id=media_id,
+                applied_override_revision=revision,
+                prior_status=prior_status,
+                created_completion_id=completion_id,
+            )
+        )
+    return (
+        collection_wire.CollectionConsumptionUndoReceipt(
+            applied_status=desired_state, items=inverse
+        )
+        if inverse
+        else None
+    )
+
+
+def undo_states_in_txn(
+    db: Session, *, viewer_id: UUID, receipt: collection_wire.CollectionConsumptionUndoReceipt
+) -> bool:
+    """Restore every applied register or accept an entirely exact inert replay.
+
+    Preflight all readability, revisions, statuses and completion identities before
+    any write. Mixed/superseded receipts refuse atomically. Restore advances epochs
+    and revisions, preserves progress/history, and deletes only named owned facts.
+    """
+    applied = True
+    restored = True
+    kinds: dict[UUID, str] = {}
+    for item in receipt.items:
+        kinds[item.media_id] = _kind(db, viewer_id, item.media_id)
+        current = _override(db, viewer_id, item.media_id)
+        completion = None
+        if item.created_completion_id is not None:
+            completion = db.execute(
+                text("SELECT user_id, media_id FROM consumption_completion_facts WHERE id = :id"),
+                {"id": item.created_completion_id},
+            ).one_or_none()
+        owns_completion = item.created_completion_id is None or (
+            completion is not None
+            and completion.user_id == viewer_id
+            and completion.media_id == item.media_id
+        )
+        applied = applied and (
+            current is not None
+            and current.revision == item.applied_override_revision
+            and current.status == receipt.applied_status
+            and owns_completion
+        )
+        restored = restored and (
+            current is not None
+            and current.revision == item.applied_override_revision + 1
+            and current.status == item.prior_status
+            and completion is None
+        )
+    if restored:
+        return False
+    if not applied:
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT, "These items changed; this attempt changed nothing"
+        )
+    for item in receipt.items:
+        _set_override(db, viewer_id, item.media_id, item.prior_status)
+        if item.created_completion_id is not None:
+            db.execute(
+                text(
+                    "DELETE FROM consumption_completion_facts "
+                    "WHERE id = :id AND user_id = :viewer_id AND media_id = :media_id"
+                ),
+                {
+                    "id": item.created_completion_id,
+                    "viewer_id": viewer_id,
+                    "media_id": item.media_id,
+                },
+            )
+        _fence(db, viewer_id, item.media_id, kinds[item.media_id])
+    return True
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:

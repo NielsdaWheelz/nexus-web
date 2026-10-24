@@ -69,6 +69,16 @@ def page_ref(page_id: UUID) -> ResourceRef:
     return ResourceRef(scheme="page", id=page_id)
 
 
+def page_index_rows_sql() -> str:
+    """Complete owned page summaries and their updated/title order facts; binds :viewer."""
+    return """
+                SELECT p.id, p.title, p.updated_at, p.title AS presented_title,
+                    lower(p.title) AS title_key
+                FROM pages p
+                WHERE p.user_id = :viewer
+    """
+
+
 def list_pages(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[NotePageSummaryOut]:
@@ -88,10 +98,7 @@ def list_pages(
         params={"viewer": viewer_id},
         sql=lambda keyset, order: f"""
             WITH facts AS (
-                SELECT p.id, p.title, p.updated_at, p.title AS presented_title,
-                    lower(p.title) AS title_key
-                FROM pages p
-                WHERE p.user_id = :viewer
+                {page_index_rows_sql()}
             )
             SELECT * FROM facts WHERE true {keyset}
             ORDER BY {order}
@@ -245,7 +252,6 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> WritingAck:
 
 def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     """Lock the root before its canonical teardown. Flush only; its notes stay."""
-    from nexus.services.dossier import engine as dossier_engine
 
     page = db.scalar(
         select(Page)
@@ -260,7 +266,6 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
     if page is None:
         return
     ref = page_ref(page_id)
-    dossier_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(delete(DailyPageBinding).where(DailyPageBinding.page_id == page_id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)

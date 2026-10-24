@@ -128,10 +128,11 @@ export function createNativeEngine(
     options: { timeoutMs?: number } = {},
   ) => {
     const id = nextId++;
+    const snapshotAtCall = snapshotId;
     return new Promise<Reply>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         pending.delete(id);
-        respond(false);
+        if (snapshotId === snapshotAtCall) respond(false);
         reject(new Error("NotResponding"));
       }, options.timeoutMs ?? REPLY_TIMEOUT_MS);
       pending.set(id, {
@@ -274,6 +275,7 @@ export function createNativeEngine(
     }
   };
   const queue: NativeQueueOwner = {
+    known: () => snapshotId > 0,
     uncertain: () => uncertain,
     async read() { try { return await readQueue(); } catch (error) { throw queueError(error); } },
     async page(input) {

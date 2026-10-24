@@ -2,7 +2,7 @@
 
 Two semantics share one envelope. A cursor stream (chat runs) emits each committed event
 with ``id: <seq>`` and resumes after ``?after=<seq>``; a snapshot stream (oracle readings,
-dossier builds, metadata) emits the whole
+metadata) emits the whole
 ``state`` when it changed and ``done`` when terminal, and a reconnect re-sends it. Every
 wake (a NOTIFY carrying the entity id, or the keepalive timeout) re-reads committed state
 in a fresh session, so a missed NOTIFY delays but never drops. Snapshots listen before
@@ -36,15 +36,12 @@ from nexus.services import media as media_service
 from nexus.services import metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
-from nexus.services.dossier import engine as dossier_engine
 from nexus.services.oracle import readings as oracle_readings
 
 router = APIRouter(tags=["streaming"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 KEEPALIVE_SECONDS = 15.0
-_GONE = frozenset(
-    {ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_MEDIA_NOT_FOUND, ApiErrorCode.E_DOSSIER_NOT_FOUND}
-)
+_GONE = frozenset({ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_MEDIA_NOT_FOUND})
 type Snapshot = tuple[dict[str, Any], bool]
 type Advisory = tuple[str, dict[str, Any]]
 
@@ -253,22 +250,6 @@ async def stream_oracle_reading_events(
         return reading.model_dump(mode="json"), reading.status in ("complete", "failed")
 
     return await _snapshot_stream(request, "oracle_readings", reading_id, read)
-
-
-@router.get("/stream/artifact-builds/{artifact_build_id}/events")
-async def stream_artifact_build_events(
-    request: Request, artifact_build_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    """The build on each change; ``done`` once it is not Active."""
-
-    def read() -> Snapshot:
-        with _snapshot() as db:
-            build = dossier_engine.build_state(
-                db, build_id=artifact_build_id, viewer_id=viewer.user_id
-            )
-        return build.model_dump(mode="json"), build.status != "Active"
-
-    return await _snapshot_stream(request, "artifact_builds", artifact_build_id, read)
 
 
 @router.get("/stream/media/{media_id}/events")

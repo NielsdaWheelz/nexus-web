@@ -11,9 +11,10 @@ changes subscriptions.
 
 the show pane's libraries card contains named subscription destinations, including
 read-only rows. its shared title links navigate; inline removal unsubscribes only
-that library and keeps episodes. the card's library icon chooses a named
-subscription destination. the header's shared rss action subscribes personally or
-unsubscribes everywhere from loaded aggregate facts. the default destination is
+that library and keeps episodes. the card's library icon manages named
+subscription destinations, including reviewed removal. the header's shared rss
+action subscribes personally or unsubscribes everywhere from loaded aggregate
+facts. the default destination is
 excluded only from card rows, never from subscription state. library changes
 invalidate these names immediately within the tab.
 
@@ -27,7 +28,8 @@ their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
 warnings and import progress remain.
 local removal uses the permission from the same current section read as its rows.
 
-at row content widths at or below 479px the shortcut moves into more. named menus
+index rows use the shared compact layout below 32em; headers move shortcuts into
+more at 479px and below. named menus
 contain distinct local occurrence removal and canonical global unsubscribe; all
 contains the canonical action once. hiding a focused shortcut returns focus to
 more. removal captures displayed successor ids at selection; acknowledged success
@@ -188,29 +190,16 @@ and the existing trigger retains focus recovery before hiding panel content.
 
 ## episode-wide commands
 
-`POST /podcasts/{id}/episodes/consumption/prepare` reads the complete visible
-state selection in repeatable read, sorted by media id, with required nullable
-override revisions. `PUT /podcasts/{id}/episodes/consumption` takes those fixed
-items and absolute `desired_state`. the serializable viewer transaction verifies
-the show, every readable episode membership and every differing override before
-writing any. current explicit override = desired succeeds inertly before version
-comparison; otherwise the captured nullable revision must match. replay never
-reselects episodes or advances fences, completion facts or revisions. unplayed
-fences earlier progress without resetting positions, history, speed or placement.
+whole-show state and unfinished-lectern actions use the shared
+[collection actions](collection-actions.md) contract. filtered podcast state
+commands name their state selection explicitly and use the same projectors and
+account owner. unfiltered commands appear only once. collection selection never
+walks browser pages or follows the current sort/text filter.
 
-preparation belongs to its pane visit, state, empty text and visible active
-account context. departure or a changed context retires it; sort changes do not
-retarget it. confirmation precedes submission and progress flushing. the account
-owner reserves one unresolved command per show synchronously and retains its
-serialized request beyond pane navigation. only the still-current command in its
-original account lifetime can settle it. state retries resend identical bytes
-after the matching progress holders prepare; failed preparation sends nothing.
-
-acknowledgment retires recovery. a first definite refusal retires it too; refusal
-after an unknown attempt leaves that earlier uncertainty unresolved. inspection
-rereads without claiming a commit. guarded stop tracking forgets only local
-recovery; accepted server work continues. reload/signout guard actual memory
-loss, while pane navigation stays free. no request is stored in browser storage.
+transcript forecast/admission retains its episode owner and exact count/scope
+review. preparation belongs to the current visit; admitted requests and uncertain
+outcomes belong to the account. retry/inspection never infer acknowledgement from
+reads. there is no transcript behavior or cost-estimation change.
 
 acknowledged state changes publish `Podcasts` and `Consumption`; acknowledged
 transcript batches publish `PodcastEpisodes` and invalidate imports. unknown

@@ -58,7 +58,7 @@ quick reads and suggestions own no playback sequence. browse owns previews;
    viewer's row (taking the viewer lock before the media, as teardown does).
 8. A mounted reader or player of a media flushes and pauses its unsaved
    progress before unread, reset and undo of that media, and reads the
-   server's after (`holdProgress`). bulk podcast state writes use the same
+   server's after (`holdProgress`). bulk collection state writes use the same
    boundary for their fixed target ids. every started preparation settles;
    one failure prevents the write, and only successfully prepared holder/id
    pairs reconcile. fulfillment proves acknowledgment or authoritative
@@ -72,12 +72,20 @@ quick reads and suggestions own no playback sequence. browse owns previews;
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
    place) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own
-   acknowledgement); a move only on an idle lane at the exact revision on
-   screen. A lost answer blocks the lane until "check" or a read past its
+   acknowledgement); a move or reviewed collection batch only on an idle
+   lane at the exact revision on screen. A lost answer blocks the lane until "check" or a read past its
    revision settles it; a refusal reaches its caller. A membership write is
    refused as a conflict only when the revision moved, so the lane then waits
    for a read past it; a move's conflict leaves the floor alone, since the
    server also refuses a move whose row went hidden at an unchanged revision.
+
+[collection actions](collection-actions.md) owns finite bulk selection, atomic
+state/inverse semantics and reviewed lectern appends.
+
+single unread, reset and finish-undo acknowledgements return their resulting
+override revision. the account owner orders inverse offers by these revisions,
+not response arrival time; late older acknowledgements cannot replace newer
+inverses. inert collection choices preserve still-valid earlier offers.
 
 ## Backend owners
 
@@ -104,7 +112,7 @@ quick reads and suggestions own no playback sequence. browse owns previews;
 - `state.py` — sole DML owner of `consumption_overrides`,
   `reader_engagement_states` and `consumption_completion_facts`: the player
   read, the reader cursor composition, listening and preview writes, finish,
-  undo, unread, reset, the natural-end settle, the podcast batch state and
+  undo, unread, reset, the natural-end settle, the collection batch state and
   media teardown. `settle_natural_end_in_txn` composes completion/removal with
   browser cursor persistence; `natural_end_is_settled` inspects the full retry
   postcondition without reapplying it.
@@ -132,9 +140,9 @@ PUT    /lectern/items/{media_id}      {placement: First | After{media_id} | null
 DELETE /lectern/items/{media_id}?expected_order_revision=... -> {order_revision}
 PUT    /lectern/items/{media_id}/position {before_media_id: UUID | null, expected_order_revision} -> {media_ids, order_revision}
 POST   /media/{id}/finish             {leave_lectern} -> Finish
-POST   /media/{id}/finish/undo        Finish -> 204
-POST   /media/{id}/unread             -> 204
-POST   /media/{id}/progress/reset     -> 204
+POST   /media/{id}/finish/undo        Finish -> {override_revision}
+POST   /media/{id}/unread             -> {override_revision}
+POST   /media/{id}/progress/reset     -> {override_revision}
 POST   /media/{id}/natural-end        {terminal_listening, expected_override_revision} -> 204
 GET    /media/{id}/player             -> PlayerDescriptor (404 when not playable)
 PUT    /media/{id}/listening-state    ListeningIn -> ListeningPositionOut
@@ -193,7 +201,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   membership write's conflict until a read passes it, writes say "lectern is
   not ready · load lectern". `lecternNext` serves reader navigation only;
   `lib/lectern/api.ts` is the transport.
-- `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
+- `lib/consumption/state.tsx` — single and collection state writes with untimed exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the
   reader and player join. `ResourceActionsProvider` owns the consumption
   commands above pane lifetime; sending or unconfirmed undo remains a required
@@ -245,6 +253,17 @@ finish, undo, unread, reset and settle publish `Consumption`.
   omitted and validates it again at engine application. retired seeks do nothing.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
+  public explicit play, preview, resume and playing queue selection notify
+  `onExplicitPlay` once at admission, before asynchronous work. internal loads,
+  natural advancement and passive observations never notify presentation.
+  pending intent covers source/descriptor preparation as well as installation,
+  including passive-tab playing selection. generation-owned cleanup cannot erase
+  a newer start; pause retires pending intent immediately.
+  `PlayerQueue.known` distinguishes first observation from confirmed absence;
+  queue-derived commands require knowledge and their existing revision/phase
+  preconditions. `createQueue` captures a singleton paused queue and rechecks
+  absence under ownership; a discovered queue refuses creation rather than
+  rebasing it. unrestricted replacement belongs only to explicit-play internals.
   Server rendering and the first client render start absent. Only the existing
   client initialization effect can observe a missing Android bridge and report
   `UpdateRequired`; native response timeouts report `NotResponding`, cleared by
@@ -265,6 +284,10 @@ finish, undo, unread, reset and settle publish `Consumption`.
   recovery resends through the joint consumption/queue postcondition. pause or
   seek retires automatic activation; an already-sent write settles before a
   newer retained cursor is persisted.
+  initial knowledge is false; successful reads and acknowledged saves establish
+  it. refresh failures preserve confirmed data. the runtime bounds first browser
+  observation by the existing five-second coordination deadline; preparation
+  and cancellation cannot clear unresolved startup failure.
 - `lib/player/browserOwnership.ts` owns the exclusive account web lock and
   narrow broadcast channel. passive tabs mirror state and forward non-play
   commands. explicit play resolves its source, requests cooperative release,
@@ -289,10 +312,25 @@ finish, undo, unread, reset and settle publish `Consumption`.
   replies cannot replace an intervening confirmed load. real pushes from the
   current controller remain authoritative. preference admission refuses while
   unavailable; recovery preserves failed intent for explicit retry.
+  the accepted snapshot counter establishes queue knowledge. runtime reads and
+  pages retain their originating engine and observation; retired success/failure
+  cannot change current queue data or status. a timeout cannot mark availability
+  lost after a newer accepted snapshot.
+- `lib/player/presentation.tsx` owns desktop visibility for the account's workspace
+  lifetime, independently of audio, queue data and mobile chrome. initial markup
+  is hidden; mount reads `sessionStorage` key `nexus:desktop-player:<account_id>`
+  before explicit commands write `shown`/`hidden`. denied storage leaves the
+  in-memory choice usable. rail-open focuses the committed region; hide returns
+  owned focus to the rail and closes desktop pickers without changing playback.
+  explicit desktop play/resume reveals without moving focus; mobile commands
+  preserve the desktop choice. tabs keep independent ongoing choices.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
   sheet, desktop playback/chapter pickers and shared presentational fields.
-  the authenticated workspace always renders one stable player slot and footer,
-  including server rendering and initial hydration. a retained stopped queue
+  the authenticated workspace keeps one mounted player and live-region owner.
+  a hidden desktop slot contributes no geometry or tab stops; its operation
+  owners remain mounted. the permanent rail disclosure indicates active playback
+  or engine/queue/preference-application failure without forcing reopen.
+  a retained stopped queue
   remains reachable with resume/up next even when the engine is absent.
   exhausted and empty queues are distinct; restoration never starts audio.
   `Loaded` retains identity, transport and stop while load-scoped preferences
@@ -300,8 +338,12 @@ finish, undo, unread, reset and settle publish `Consumption`.
   `Unavailable` exposes the actual warning and android update link only when
   required. stop unloads and retains sequence/cursor; clear remains distinct. closing an overlay preserves playback. the downloaded shelf is a
   separate composition.
-  normal idle/loaded footprints match: wide desktop is 80px, narrow desktop
-  128px; coarse pointing adds 16px for seeking. the 42rem breakpoint belongs to
+  desktop shares one source/transport/seek/options anatomy across empty, pending,
+  unavailable and loaded states. unavailable controls are natively disabled;
+  unloaded clocks read `—` and speed reads `speed`. pending pause remains usable,
+  and unknown queues never display invented emptiness or counts. wide desktop
+  starts at 80px, narrow desktop at 128px; coarse pointing adds 16px for seeking.
+  the 64rem breakpoint belongs to
   the player container. equal side tracks center transport in the whole player.
   enlarged text and substantive failures may grow without clipping controls.
   the 64px mobile mini adds the existing safe inset and shows artwork, title,

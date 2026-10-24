@@ -1,6 +1,12 @@
-import { installedApp } from "@/lib/native/admission";
+import { parseResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { assertNever } from "@/lib/assertNever";
+import { installedApp, remoteReady } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
 import type { PodcastActionFocus } from "./inlineActions";
+import type { MetadataSubject } from "./subjects";
+import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/api";
+import type { EpisodeState } from "@/lib/podcasts/api";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
 import { Minus, type LucideIcon } from "lucide-react";
 import {
@@ -24,14 +30,9 @@ import {
 } from "@/lib/chat/conversationIndex";
 import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
-import {
-  artifactPaneHref,
-  createDossierBuild,
-  learnDossier,
-} from "@/lib/dossiers/dossierApi";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
-import { deleteLibrary } from "@/lib/libraries/api";
+import { deleteLibrary, leaveLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
   metadataResearchLabel,
@@ -68,7 +69,7 @@ import type {
 
 export type ResourceActions = Schema<"ResourceActionsOut">;
 type Action = ResourceActions["actions"][number];
-type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribePodcast" | "UnsubscribePodcast" | "PodcastLibraries">;
+type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribePodcast" | "UnsubscribePodcast" | "PodcastLibraries" | "AddUnfinishedToLectern" | "MarkCollectionFinished" | "MarkCollectionUnread" | "TranscribePodcastEpisodes">;
 
 /** One chosen verb. The provider confirms it, tracks it busy and reports failure. */
 export interface ActionCommand {
@@ -110,10 +111,11 @@ export function projectLecternAction({
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const request = ctx.lectern.pending.get(mediaId);
-  const { read, revision } = ctx.lectern;
+  const { read, revision, collectionPending } = ctx.lectern;
   const currentIntent = request?.intent.kind ?? intent ?? "Ensure";
   const needsRead = intent === null || revision === null;
-  const retry = !request && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
+  const disconnected = installedApp && !ctx.online;
+  const retry = !disconnected && !request && collectionPending === null && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
   const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
   const copy = LECTERN_INTENT_COPY[currentIntent];
   const label = request
@@ -122,14 +124,18 @@ export function projectLecternAction({
         Checking: copy.check,
         Unconfirmed: copy.check,
       }[request.phase]
+    : disconnected ? "lectern"
+    : collectionPending !== null ? state.label
     : retry ? "retry checking lectern"
     : needsRead && blocked === null ? "checking lectern" : state.label;
   let disabledReason: string | undefined;
-  if (request && request.phase !== "Unconfirmed")
+  if (disconnected) disabledReason = "requires a connection";
+  else if (request && request.phase !== "Unconfirmed")
     disabledReason = "wait for this lectern change to finish.";
   else if (busy.has("LecternMembership")) disabledReason = BLOCKED_COPY.Busy;
   else if (!request) {
     if (blocked !== null) disabledReason = BLOCKED_COPY[blocked];
+    else if (collectionPending !== null) disabledReason = collectionPending.phase === "Unconfirmed" ? "resolve the unconfirmed lectern change first." : "finish the current lectern change first.";
     else if (retry) disabledReason = "lectern couldn’t be loaded; retry checking it";
     else if (needsRead) disabledReason = "checking lectern membership";
   }
@@ -141,6 +147,7 @@ export function projectLecternAction({
     disabled: retry ? read.retrying || undefined : disabledReason !== undefined || undefined,
     disabledReason,
     onSelect: () => {
+      if (installedApp && !remoteReady()) return;
       if (retry) { if (!read.retrying) read.refetch(); return; }
       if (disabledReason !== undefined || (!request && intent === null)) return;
       run({
@@ -178,18 +185,109 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
   const pausing = phase === "Playing" || phase === "Buffering";
   const state = ACTION_CATALOG.Playback.states[phase];
   const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
-    : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio" : undefined;
+    : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio"
+    : installedApp && !ctx.online && !loaded && !pending && descriptor === null ? "requires a connection" : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
     icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
-    onSelect: () => run({
-      ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
-      confirmation: null, tracked: false,
-      execute: () => pausing ? ctx.player.commands.pause() :
-        ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
-    }),
+    onSelect: () => {
+      if (installedApp && !remoteReady() && !loaded && !pending && descriptor === null) return;
+      run({
+        ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
+        confirmation: null, tracked: false,
+        execute: () => pausing ? ctx.player.commands.pause() :
+          ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
+      });
+    },
   };
+}
+
+function invocationFocus(trigger: HTMLElement | null, returnFocus?: ReturnFocusTarget) {
+  const paneId = trigger?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? null;
+  return { anchor: () => trigger, returnFocusFallback: returnFocus ?? (() => findPaneLandmarkFocusTarget(paneId)) };
+}
+
+function metadataSubject(parsed: ResourceRef): MetadataSubject {
+  switch (parsed.scheme) {
+    case "media": return { kind: "Media", mediaId: parsed.id };
+    case "podcast": return { kind: "Podcast", podcastId: parsed.id };
+    case "library": return { kind: "Library", libraryId: parsed.id };
+    case "evidence_span": case "content_chunk": case "highlight": case "page": case "note_block":
+    case "fragment": case "conversation": case "message": case "oracle_reading": case "oracle_passage_anchor":
+    case "external_snapshot": case "contributor":
+    case "reader_apparatus_item": case "passage_anchor": throw new Error(`metadata has no subject for ${parsed.scheme}`);
+    default: return assertNever(parsed.scheme);
+  }
+}
+
+function collectionTarget(resource: ResourceRef): CollectionTarget {
+  if (resource.scheme === "podcast") return { kind: "Podcast", podcast_id: resource.id };
+  if (resource.scheme === "library") return { kind: "Library", library_id: resource.id };
+  throw new Error(`collection action has no target for ${resource.scheme}`);
+}
+
+/** Whole and explicit filtered selections open the same reviewed account command. */
+export function projectCollectionConsumptionAction({ selection, desiredState, title, blocked, ctx, run, returnFocus }: {
+  selection: CollectionSelection; desiredState: "finished" | "unread"; title: string; blocked: BlockedReason | null;
+  ctx: ActionContext; run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
+}): Extract<ActionDescriptor, { kind: "command" }> {
+  const id = desiredState === "finished" ? "MarkCollectionFinished" : "MarkCollectionUnread";
+  const entry = ACTION_CATALOG[id];
+  const status = selection.kind === "Podcast" ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
+  const label = selection.kind === "Podcast" && selection.state !== "all"
+    ? `mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
+    : `mark all ${status}…`;
+  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+    disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
+    onSelect: ({ triggerEl }) => {
+      if (blocked !== null) return;
+      run({ ref: `collection:${JSON.stringify(selection)}`, id, label, title, confirmation: null, tracked: false,
+        execute: () => ctx.overlays.open({ kind: "CollectionConsumption", selection, desiredState, title }, invocationFocus(triggerEl, returnFocus)) });
+    },
+  };
+}
+
+/** Transcript views retain their explicit state scope and existing admission owner. */
+export function projectPodcastTranscriptAction({ podcastId, state, title, blocked, ctx, run, returnFocus }: {
+  podcastId: string; state: EpisodeState; title: string; blocked: BlockedReason | null; ctx: ActionContext;
+  run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
+}): Extract<ActionDescriptor, { kind: "command" }> {
+  const id = "TranscribePodcastEpisodes";
+  const entry = ACTION_CATALOG[id];
+  const label = state === "all" ? entry.label : `transcribe ${state.replaceAll("_", " ")} episodes…`;
+  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+    disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
+    onSelect: ({ triggerEl }) => {
+      if (blocked !== null) return;
+      run({ ref: `podcast:${podcastId}`, id, label, title, confirmation: null, tracked: false,
+        execute: () => ctx.overlays.open({ kind: "TranscribePodcastEpisodes", podcastId, state, title }, invocationFocus(triggerEl, returnFocus)) });
+    },
+  };
+}
+
+/** Supplied directory metadata and real URLs remain usable without write authority. */
+export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
+  subject: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;
+  ctx: ActionContext; run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
+}): ActionDescriptor[] {
+  const supplied = subject.kind === "DiscoveryPodcast" ? subject.candidate : subject.preview;
+  const facts = supplied.kind_facts;
+  const result: ActionDescriptor[] = [];
+  if (facts.website_href !== null) result.push({ kind: "link", id: "OpenSource", label: ACTION_CATALOG.OpenSource.label,
+    icon: createElement(ACTION_CATALOG.OpenSource.icon, { size: 16, "aria-hidden": true }), href: facts.website_href });
+  result.push({ kind: "command", id: "Metadata", label: ACTION_CATALOG.Metadata.label,
+    icon: createElement(ACTION_CATALOG.Metadata.icon, { size: 16, "aria-hidden": true }),
+    onSelect: ({ triggerEl }) => {
+      const focus = invocationFocus(triggerEl, returnFocus);
+      const metadata: MetadataSubject = subject.kind === "DiscoveryPodcast" ? { kind: "DiscoveryPodcast", candidate: subject.candidate } : { kind: "DiscoveryPodcastPreview", preview: subject.preview };
+      ctx.overlays.open({ kind: "Metadata", subject: metadata, returnFocusTo: triggerEl, fallback: focus.returnFocusFallback }, focus);
+    },
+  });
+  result.push({ kind: "link", id: "OpenPodcastFeed", label: ACTION_CATALOG.OpenPodcastFeed.label,
+    icon: createElement(ACTION_CATALOG.OpenPodcastFeed.icon, { size: 16, "aria-hidden": true }), href: facts.feed_href });
+
+  return result;
 }
 
 /** Subscription and organization keep the admitted target and original focus. */
@@ -202,6 +300,7 @@ export function projectPodcastSubscriptionAction({ target, title, subscribed, di
   readonly run: (command: ActionCommand) => void;
   readonly focus?: PodcastActionFocus;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId } {
+  disabledReason = installedApp && !ctx.online ? "requires a connection" : disabledReason;
   const id = subscribed ? "UnsubscribePodcast" : "SubscribePodcast";
   const entry = ACTION_CATALOG[id];
   return {
@@ -228,6 +327,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
   readonly target: PodcastTarget; readonly title: string; readonly disabledReason: string | null;
   readonly ctx: ActionContext; readonly run: (command: ActionCommand) => void; readonly focus?: PodcastActionFocus;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId } {
+  disabledReason = installedApp && !ctx.online ? "requires a connection" : disabledReason;
   return {
     kind: "command", id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label,
     icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { size: 16, "aria-hidden": true }),
@@ -258,7 +358,8 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly accessibleLabel: string } {
   const label = `remove from ${libraryName}`;
-  const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
+  const disabledReason = installedApp && !ctx.online ? "requires a connection"
+    : blocked !== null ? BLOCKED_COPY[blocked]
     : !canRemove ? "a library admin must remove this subscription." : undefined;
   return {
     kind: "command", id: "PodcastLibraryRemoval", label,
@@ -292,7 +393,10 @@ export function projectResourceActions(
   podcastFocus?: PodcastActionFocus,
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
-  const id = ref.slice(ref.indexOf(":") + 1);
+  const resource = parseResourceRef(ref);
+  if (resource === null) throw new Error(`invalid resource action ref: ${ref}`);
+  const id = resource.id;
+  const returnFocus = podcastFocus?.returnFocus;
   // A verb acts from the pane active when it runs.
   const originPaneId = () => boundPaneId ?? ctx.workspace().state.active_primary_pane_id;
   const activate = (
@@ -448,10 +552,7 @@ export function projectResourceActions(
     });
   };
   const overlay = (next: Overlay): Verb => [
-    () => {
-      const trigger = podcastFocus?.trigger ?? null;
-      ctx.overlays.open(next, podcastFocus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: podcastFocus.returnFocus });
-    },
+    ({ triggerEl }) => ctx.overlays.open(next, invocationFocus(triggerEl ?? podcastFocus?.trigger ?? null, returnFocus)),
     { tracked: false },
   ];
   // What had focus when the verb ran (the trigger, the menu closed first).
@@ -470,33 +571,32 @@ export function projectResourceActions(
       originPaneId();
     ctx.overlays.open({
       kind: "Metadata",
-      mediaId: id,
+      subject: metadataSubject(resource),
       returnFocusTo:
-        focused instanceof HTMLElement && focused !== document.body
+        resource.scheme !== "media" ? triggerEl : focused instanceof HTMLElement && focused !== document.body
           ? focused
           : triggerEl,
-      fallback: () => findPaneChromeFocusTarget(pane),
+      fallback: returnFocus ?? (() => findPaneChromeFocusTarget(pane)),
     });
   };
 
-  const queueDisabled = ctx.player.queue.phase === "Ready" ? undefined
+  const queueDisabled = !ctx.player.queue.known
+    ? ctx.player.queue.error === null ? "loading queue…" : "check the queue before trying again"
+    : ctx.player.queue.phase === "Ready" ? undefined
     : ctx.player.queue.phase === "Uncertain" ? "check the unconfirmed queue change first"
     : ctx.player.queue.phase === "Preparing" ? "finish preparing this queue first"
     : ctx.player.queue.phase === "Saving" ? "saving queue…" : "player unavailable";
   const append = (next: boolean) => {
     const entry = { id: crypto.randomUUID(), media_id: id };
     const header = ctx.player.queue.header;
-    if (header === null) return ctx.player.commands.replaceQueue({
-      state: { queue_id: crypto.randomUUID(), entries: [entry], current_entry_id: entry.id, source: null },
-      knownDescriptor: null, play: false, positionMs: null,
-    });
+    if (header === null) return ctx.player.commands.createQueue({ entry });
     return ctx.player.commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision,
       command: { kind: next ? "insert-next" : "append", entry } });
   };
   const verbs: Record<DirectKind, Verb> = {
     Open: [follow("Follow"), { tracked: false }],
     OpenInNewPane: [follow("Fork"), { tracked: false }],
-    MediaMetadata: [
+    Metadata: [
       ({ triggerEl }) => metadata(triggerEl),
       { tracked: false },
     ],
@@ -538,6 +638,7 @@ export function projectResourceActions(
         window.location.assign(response.data.url);
       },
     ],
+    LeaveLibrary: deleted(() => leaveLibrary(id), "/libraries"),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
     ImportPodcastEpisodes: overlay({ kind: "ImportPodcastEpisodes", target: { kind: "Canonical", podcast_id: id }, title: facts.label }),
@@ -560,28 +661,6 @@ export function projectResourceActions(
         } });
       });
     }, "/notes"),
-    LearnHighlight: [
-      ({ openIntent }) =>
-        openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, create: async () => {
-          const learned = await learnDossier(ref, crypto.randomUUID());
-          return {
-            target: { href: artifactPaneHref(learned.artifact_ref), labelHint: "Dossier" },
-            title: {
-              BuildAccepted: "dossier requested",
-              Opened: "dossier available",
-            }[learned.kind],
-            openLabel: "open dossier",
-          };
-        } }),
-    ],
-    RegenerateArtifact: [
-      () =>
-        createDossierBuild(
-          { kind: "Artifact", artifactRef: ref },
-          null,
-          crypto.randomUUID(),
-        ),
-    ],
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
     EditNoteBody: entry({ kind: "EditNoteBody", noteBlockId: id }),
     EditHighlight: entry({ kind: "EditHighlight", highlightId: id }),
@@ -703,8 +782,9 @@ export function projectResourceActions(
   const project = (action: Action): ActionDescriptor => {
     const { blocked } = action;
     switch (action.kind) {
-      case "OpenSource": {
-        return link(make("OpenSource", blocked, () => {}), action.href);
+      case "OpenSource":
+      case "OpenPodcastFeed": {
+        return link(make(action.kind, blocked, () => {}), action.href);
       }
       case "Playback":
         return projectPlaybackAction({ mediaId: id, title: facts.label,
@@ -771,6 +851,19 @@ export function projectResourceActions(
           intent: action.lectern_item_id === null ? "Ensure" : "Remove",
           blocked, ctx, busy, run,
         });
+      }
+      case "TranscribePodcastEpisodes":
+        return projectPodcastTranscriptAction({ podcastId: id, state: "all", title: facts.label, blocked, ctx, run, returnFocus });
+      case "MarkCollectionFinished":
+      case "MarkCollectionUnread": {
+        const target = collectionTarget(resource);
+        return projectCollectionConsumptionAction({ selection: target.kind === "Podcast" ? { ...target, state: "all" } : target, desiredState: action.kind === "MarkCollectionFinished" ? "finished" : "unread", title: facts.label, blocked, ctx, run, returnFocus });
+      }
+      case "AddUnfinishedToLectern": {
+        const target = collectionTarget(resource);
+        const label = target.kind === "Podcast" ? "add unfinished episodes to lectern…" : ACTION_CATALOG.AddUnfinishedToLectern.label;
+        return make(action.kind, blocked, ({ triggerEl }) => ctx.overlays.open({ kind: "CollectionLectern", target, title: facts.label }, invocationFocus(triggerEl, returnFocus)),
+          { tracked: false, state: { label, icon: ACTION_CATALOG.AddUnfinishedToLectern.icon } });
       }
       case "SubscribePodcast":
       case "UnsubscribePodcast":

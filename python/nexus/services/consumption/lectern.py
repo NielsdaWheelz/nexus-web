@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.schemas import collection_actions as collection_wire
 from nexus.schemas import consumption as wire
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.services.consumption import projection, viewer_txn
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.users import lock_viewer
@@ -37,7 +39,9 @@ class _Row:
     visible: bool
 
 
-def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
+def get_lectern(
+    db: Session, viewer_id: UUID, *, summaries: dict[UUID, MediaSummaryOut] | None = None
+) -> wire.LecternOut:
     """The visible rows in order, each with its summary and how it activates; capacity counts
     every row."""
     from nexus.services.media import media_summaries
@@ -46,7 +50,8 @@ def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
     order = _order_snapshot(db, viewer_id, membership)
     rows = [row for row in membership if row.visible]
     media_ids = order.media_ids
-    summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
+    if summaries is None:
+        summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
     descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
     return wire.LecternOut(
         items=[
@@ -66,6 +71,63 @@ def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
         at_capacity=len(membership) >= LECTERN_MAX_ITEMS,
         order_revision=order.order_revision,
     )
+
+
+def prepare_collection(
+    db: Session, viewer_id: UUID, target: collection_wire.CollectionTarget
+) -> collection_wire.CollectionLecternPreparedOut:
+    """Freeze unfinished contents and full capacity under one repeatable-read snapshot."""
+    from nexus.services.consumption.collections import ordered_source_ids
+
+    label, ids = ordered_source_ids(db, viewer_id, target)
+    states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=ids)
+    selected = [media_id for media_id in ids if states[media_id].state != "Finished"]
+    rows = _load(db, viewer_id)
+    present = {row.media_id for row in rows}
+    return collection_wire.CollectionLecternPreparedOut(
+        label=label,
+        media_ids=selected,
+        expected_order_revision=str(_revision(db, viewer_id)),
+        already_present_count=sum(media_id in present for media_id in selected),
+        available_slots=max(0, LECTERN_MAX_ITEMS - len(rows)),
+    )
+
+
+def append_collection(
+    viewer_id: UUID, body: collection_wire.CollectionLecternRequest
+) -> collection_wire.CollectionLecternOut:
+    """One frozen batch under the reviewed order revision; never rebase or truncate.
+
+    Revision comparison precedes membership equality, so replay at an already-used
+    revision refuses. Existing members stay put even when since finished. Every
+    missing target must remain unfinished, readable and in the original source.
+    append_missing_in_txn advances once, including an accepted membership no-op.
+    """
+    from nexus.services import library_entries
+    from nexus.services.consumption.collections import require_source_members
+
+    def run(db: Session) -> collection_wire.CollectionLecternOut:
+        _require_revision(db, viewer_id, int(body.expected_order_revision))
+        library_entries.lock_media_rows_in_order(db, body.media_ids)
+        require_source_members(db, viewer_id, body.target, body.media_ids)
+        present = {row.media_id for row in _load(db, viewer_id)}
+        missing = [media_id for media_id in body.media_ids if media_id not in present]
+        states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=missing)
+        if any(state.state == "Finished" for state in states.values()):
+            raise ConflictError(
+                ApiErrorCode.E_SELECTION_CHANGED, "An insertion target is now finished"
+            )
+        inserted = append_missing_in_txn(db, viewer_id=viewer_id, media_ids=body.media_ids)
+        record_input_change(db)
+        result = collection_wire.CollectionLecternOut(
+            order_revision=str(_revision(db, viewer_id)),
+            matched_count=len(body.media_ids),
+            added_count=len(inserted),
+        )
+        db.commit()
+        return result
+
+    return viewer_txn("lectern_append_collection", viewer_id, run)
 
 
 def place(
@@ -315,9 +377,9 @@ def _order_snapshot(db: Session, viewer_id: UUID, rows: list[_Row]) -> wire.Lect
     )
 
 
-def _load(db: Session, viewer_id: UUID) -> list[_Row]:
-    rows = db.execute(
-        text(f"""
+def lectern_rows_sql() -> str:
+    """Whole ordered membership with visibility; hidden rows still determine capacity."""
+    return f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()})
             SELECT q.id, q.media_id, m.kind, q.added_at,
                    (vm.media_id IS NOT NULL AND ti.media_id IS NULL) AS visible
@@ -327,7 +389,12 @@ def _load(db: Session, viewer_id: UUID) -> list[_Row]:
             LEFT JOIN media_teardown_intents ti ON ti.media_id = q.media_id
             WHERE q.user_id = :viewer_id
             ORDER BY q.position, q.added_at, q.id
-        """),
+    """
+
+
+def _load(db: Session, viewer_id: UUID) -> list[_Row]:
+    rows = db.execute(
+        text(lectern_rows_sql()),
         {"viewer_id": viewer_id},
     )
     return [_Row(r.id, r.media_id, r.kind, r.added_at, r.visible) for r in rows]

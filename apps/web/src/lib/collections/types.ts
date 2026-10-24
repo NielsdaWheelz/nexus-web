@@ -9,6 +9,7 @@ import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
+import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { Move, MoveOutcome, OrderRevision } from "./order";
 
@@ -65,6 +66,7 @@ export type ExceptionalStatus = {
 
 interface CollectionRowBase {
   readonly id: string;
+  readonly presentation: "Index" | "Details";
   readonly primary: ResourceRowPrimary;
   readonly title: {
     readonly text: string;
@@ -88,6 +90,7 @@ interface CollectionRowBase {
   readonly flatActions?: readonly ActionDescriptor[];
   readonly selected: boolean;
   readonly resourceActions?: ResourceActionSubject;
+  readonly podcastMetadata?: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;
 }
 
 export type CollectionRowView = CollectionRowBase & (

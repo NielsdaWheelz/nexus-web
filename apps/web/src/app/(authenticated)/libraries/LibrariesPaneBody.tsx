@@ -11,6 +11,8 @@ import LibraryInvitations from "@/components/libraries/LibraryInvitations";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogLibraries } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import {
   listRowStatus,
@@ -45,9 +47,11 @@ export default function LibrariesPaneBody() {
   const params = usePaneSearchParams();
   const sort = params.get("sort");
   const query = sort === null ? "" : new URLSearchParams({ sort }).toString();
+  const catalog = useCatalogRead(value => catalogLibraries(value, new URLSearchParams(query)));
   const list = useServerList<Library>({
     key: `/libraries?${query}`,
     stale: useChangeStamp("Libraries"),
+    catalog,
     pageSize: 100,
     active: usePaneIsActive(),
     visit: VISIT,

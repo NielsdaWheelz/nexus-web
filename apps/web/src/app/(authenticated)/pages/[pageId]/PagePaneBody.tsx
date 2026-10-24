@@ -10,8 +10,12 @@ import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type 
 import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { catalogPage } from "@/lib/catalog/selectors";
+import { remoteReady } from "@/lib/native/admission";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
 import { editText, hasUnsavedText, readText, textDraft, useTextReady } from "@/lib/notes/texts";
 import { readDraft, readWriting } from "@/lib/notes/journal";
@@ -67,6 +71,8 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
   const routePageId = usePaneParam("pageId");
   const pageId = creation?.page_id ?? routePageId;
   const localDate = usePaneParam("localDate");
+  const catalog = useCatalogState();
+  const saved = pageId === null || catalog.data === null ? null : catalogPage(catalog.data, pageId);
   const runtime = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
@@ -101,7 +107,7 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
     `page:${pageId ?? localDate}`,
     "Filter page items",
   );
-  usePaneReturnReady(outline.status !== "loading");
+  usePaneReturnReady(outline.status !== "loading" || !remoteReady() && !catalog.loading && creation === null);
   usePaneDailyPage(dailyDate && id ? { localDate: dailyDate, pageId: id } : null);
 
   useEffect(() => {
@@ -137,7 +143,9 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
 
   const gone = id !== null && isDeletedResource(`page:${id}`);
   const retainedRefs = id ? outlineTextRefs(`page:${id}`) : [];
-  const materialized = id !== null && !gone && !outline.latent && outline.status === "ready" && (creation === null || outline.creationPublished);
+  const savedOnly = !gone && !remoteReady() && outline.root === null && creation === null && !catalog.loading &&
+    outline.failure?.status !== 403 && outline.failure?.status !== 404 && !isStaleBuild(outline.failure);
+  const materialized = id !== null && !gone && !outline.latent && outline.root !== null && (creation === null || outline.creationPublished);
   const resourceRef = materialized ? canonicalResourceRef({ scheme: "page", id }) : undefined;
   const { activateTarget } = runtime;
   const menuActions = useMemo<ActionDescriptor[]>(
@@ -152,7 +160,7 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
         : [],
     [dailyDate],
   );
-  usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef, menuActions }), [resourceRef, menuActions, queryControls]));
+  usePaneChrome(useMemo(() => ({ displayTitle: savedOnly && saved !== null ? saved.title || "untitled page" : undefined, query: queryControls, resourceRef, menuActions }), [savedOnly, saved, resourceRef, menuActions, queryControls]));
 
   const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
   const stale = isStaleBuild(outline.failure);
@@ -169,6 +177,11 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
     : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
   if (gone && retainedRefs.some(hasUnsavedText)) return <UnavailableTexts kind="page" refs={retainedRefs} />;
   if (gone) return <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />;
+  if (failure !== null && (unavailable || stale)) return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
+  if (savedOnly) return <>
+    {saved === null ? null : <h1>{saved.title || "untitled page"}</h1>}
+    <FeedbackState content={saved === null ? catalogErrorFeedback(catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" } : { tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />
+  </>;
   if (failure !== null && (outline.root === null || unavailable || stale))
     return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading page…" announcement="Polite" />;

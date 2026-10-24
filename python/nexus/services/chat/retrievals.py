@@ -53,7 +53,6 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "highlight": ("color", "exact"),
     "message": ("conversation_id", "seq"),
     "reader_apparatus_item": ("apparatus_kind",),
-    "artifact": ("revision_id", "subject_ref"),
 }
 _WEB_KEYS = (
     "result_ref",

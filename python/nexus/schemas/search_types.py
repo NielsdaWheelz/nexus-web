@@ -21,7 +21,6 @@ SEARCH_RESULT_TYPES = Literal[
     "message",
     "evidence_span",
     "conversation",
-    "artifact",
     "web_result",
     "reader_apparatus_item",
 ]

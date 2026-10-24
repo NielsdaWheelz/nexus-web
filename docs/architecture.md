@@ -98,7 +98,7 @@ scaffolding.
                            └──────┬───────┘          ┌───────────────────────┐
                                   │                  │ Workers (two lanes)   │
                                   │ object refs      │ interactive: chat,    │
-                                  ▼                  │ dossier, metadata,    │
+                                  ▼                  │ metadata,    │
                            ┌──────────────┐          │ podcast sync, oracle  │
                            │ r2/seaweedfs  │◀─────────│ background: ingest,   │
                            │ object store │          │ index, repair, delete │
@@ -335,7 +335,7 @@ A stream is an ordinary session request through the BFF:
    (cursor streams) or receives the whole snapshot again (snapshot streams); a
    401 sends the tab to login.
 
-This is used by chat runs, oracle readings, Dossier builds, media processing
+This is used by chat runs, oracle readings, media processing
 status, metadata enrichment, and the active Podcast subscription lifecycle.
 The lifecycle stream is keyed by the subscription epoch UUID while its public
 route remains viewer + Podcast addressed; every snapshot reasserts that exact
@@ -418,7 +418,7 @@ targets are exact `evidence_span` rows. `services/media_intelligence_lifecycle.p
 owns the head lifecycle, `tasks/media_unit_build.py` publishes or fails a unit,
 and `services/media_intelligence.py` publishes audience-gated single/batch
 projections.
-Media Intelligence is current-only reusable interpretation, not a Dossier.
+Media Intelligence is current-only reusable interpretation, shared by discovery.
 
 **Highlights & passage anchors** — `highlights` (base row + the
 exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
@@ -494,22 +494,6 @@ mutations and durable assistant creator receipts. external snapshots remain
 public-web citation targets. see [connections](modules/connections.md).
 the librarian names the presentation role for assistant and automatic connection
 curation; stored origins and capabilities retain their operational meaning.
-
-**Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
-derived audience, and carries its one revision: `revision_id` (the
-`artifact_revision:` identity), one accepted semantic `content_html` article,
-its `content_text`, its `coverage` (counts plus the input fingerprint) and its
-provenance. `artifact_builds` records each generation attempt with a `status`
-(`active | succeeded | failed | cancelled`, at most one active per head by a
-partial unique index) and a failure code. Eight subject bindings cover Media,
-Conversation, Library, Podcast, Contributor, Page, Note, and the internal
-user-owned Idea (`artifact_idea_subjects`, seeded by `artifact_idea_seeds`). One
-engine, API and `dossier_build` job own the lifecycle; a success swaps the
-revision columns and citation edges and deletes every other build of the head in
-one transaction.
-published dossiers say `prepared by the librarian`; provenance distinguishes
-`requested by you` from `requested by a library member` using `by_viewer`, and
-retains model, tokens and date. media abstracts keep their own attribution.
 
 **Conversations / chat** — `conversations` (carries the owner's
 `active_leaf_message_id`), `messages` (the message tree with branch pointers;
@@ -626,7 +610,6 @@ keepalive, never drops it.
 | ----------------------- | --------------------------------- | ---------------- |
 | `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
 | `oracle_readings`       | status change on `oracle_readings` | oracle SSE tail  |
-| `artifact_builds`       | insert, status change, delete     | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
@@ -658,7 +641,7 @@ The **registry** (`jobs/registry.py`) is the one table of kinds: lane, handler
 retention and hook paths. Lanes, budgets and prune retention derive from it. See
 [modules/jobs.md](modules/jobs.md).
 
-Kinds (17): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
+Kinds (16): interactive `chat_run`, `enrich_metadata`,
 `oracle_reading_generate`; background
 `ingest_media_source`, `media_content_reindex_job`, `note_reindex_job`,
 `media_unit_build`, `connection_discovery_scan`, `podcast_feed_page`, `podcast_chapters`,
@@ -682,7 +665,7 @@ reconciled after the fact.
 > queue-level retries. A handler that wants the job dead returns `TerminalJobFailure`.
 
 **Generation boundary.** Every generative job — chat, Oracle, connection
-discovery, dossiers, media summaries, and metadata enrichment — makes one
+discovery, media summaries, and metadata enrichment — makes one
 `generate` call (`services/generation/run.py`). It reads the exact selection from
 the chat run or the operation table, checks the catalog, opens one `llm_calls`
 row, runs Codex Personal (the kernel's transient native mode) or a provider API
@@ -695,11 +678,8 @@ presets, or fallback routes.
 Nothing replays. A worker that dies mid-generation leaves its row open until its
 job's next attempt starts, the job dies or is revoked, or migration 0269 closes
 it `interrupted`; chat fails the run and the user reruns, background jobs rerun
-from scratch. Within `dossier_build`, `services/dossier/synthesis.py`
-owns the synthesis prompt and its `Published | Failed | Stopped` outcome; idea
-research keeps its billed web search picks in the job payload across
-reschedules. The existing PostgreSQL queue, leases, and publication owners
-remain unchanged. See [modules/llms.md](modules/llms.md).
+from scratch. the PostgreSQL queue, leases and publication owners remain
+independent of generation transport. See [modules/llms.md](modules/llms.md).
 
 Eligible Chat and background runs use one canonical tool authority. Provider
 API tool proposals adapt frozen plans to the executor and use
@@ -800,7 +780,7 @@ Other identity surfaces:
 browser discovery and strict evidence retrieval share `services/search/` visible
 sql families, scope predicates, embeddings and resource items. `discovery.py` owns
 `GET /search/preview` and `/search`: bounded launcher bands, resource grouping and
-an explicit passages view. `DiscoveryQuery` adds libraries, readings, dossiers and
+an explicit passages view. `DiscoveryQuery` adds libraries, readings and
 saved passages to the six browser kinds. `service.py` retains strict `SearchQuery`,
 six-kind evidence retrieval, frozen chat context and citation reopen; browse,
 connection discovery, oracle and the target picker keep those contracts.
@@ -860,7 +840,7 @@ resource reopening and visibility belong to `services/resource_graph/resolve.py`
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_passage_anchor`,
-  `artifact`, `artifact_revision`, `reader_apparatus_item`, `external_snapshot`,
+  `reader_apparatus_item`, `external_snapshot`,
   `contributor`, `podcast`, `passage_anchor`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
@@ -905,9 +885,7 @@ after fresh per-run consent:
   **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
   persist their exact effects with the tool result and support scoped Undo.
 
-Dossier model turns, Idea ones included, carry no model tools: Idea research
-calls the web search provider directly from the build, before the model turn.
-Other background operations retain their direct evidence algorithms and publish
+background operations retain their direct evidence algorithms and publish
 `NoModelTools`; none inherit Chat authority. Both transports hand every call to
 the one dispatcher, `services/tools/run.run_tool`; the tool contract, plans,
 domain handlers and the one `tool_calls` row per call are owned by
@@ -918,65 +896,31 @@ Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole tur
 edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
 source is the assistant message and whose target is the cited resource. The
 backend builds the `CitationOut` read-model from those edges via
-`resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
-Universal Dossiers), reconstructing the in-reader jump from the target's own
+`resource_graph.citations.build_citation_outs` (uniformly for chat and oracle), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
 the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
 resource activation plus an optional reader-internal focus target.
 
-### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
+### 7.8 resource inspector and media intelligence
 
-`CAPABILITIES` (`services/resource_items/capabilities.py`) is the backend authority for Inspector eligibility,
-linked-items policy, Forks, and default surface order; the committed TypeScript
-projection must agree with the backend. Every eligible resource implies Dossier.
-`useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents, Connections, Context, and Forks bodies plus the
-shared Dossier body. Selecting that action validates the requested surface
-against its route-owned publication and, when attached to the workspace host,
-synchronously reasserts the same publication before requesting its surface, so
-publication cleanup and command acceptance cannot race or silently discard a
-valid first click.
+`CAPABILITIES` (`services/resource_items/capabilities.py`) owns inspector
+eligibility, linked-items policy, forks and default preference. its generated
+web projection agrees with the backend. `components/resource-inspector/`
+composes route-owned bodies through `useResourceInspector` and the existing
+companion/find host. missing or unpublished subjects publish no inspector.
 
-The backend (`services/dossier/`) separates its owners:
+| subject | surfaces in order | default |
+| --- | --- | --- |
+| media | contents when available; connections | contents, else connections |
+| conversation | connections; forks | connections |
+| library | authorized members; connections | connections |
+| podcast, author, page, note | connections | connections |
 
-- `subjects.py` is the one eight-entry binding table: prompt phrase, operation,
-  the subject's visibility predicate (one sql string serving the single check
-  and the batch `CASE` of `head_visible_sql`), input collector, media
-  intelligence ensure, shared library audience, and route handle;
-- `inputs.py` collects each subject purely, so a build and a head's freshness
-  check call the same function; `research.py` gathers the Idea's sources;
-- `document.py` accepts the model article against the closed grammar and
-  compiles citations; `synthesis.py` runs the one model turn;
-- `engine.py` owns heads, builds and every status transition (compare-and-set
-  out of `active`), publish, purge and the head read; `run.py` is one worker
-  attempt.
-
-A revision's `coverage` (`unit`, `included`, `omitted`) is the coverage line;
-its stored fingerprint against the live collection is `stale`. Head reads
-never generate or mutate a dossier. Idea subject routes remain unavailable.
-Failure facts reach the browser as a code; the diagnostic detail stays in the
-database. Build identifiers are UUIDs, authorized through the owning head.
-
-Resource bootstrap/Inspector lookup uses
-`GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
-`POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`; an
-existing head regenerates only through
-`POST /artifacts/{artifact_ref}/builds`. `GET /artifacts/{artifact_ref}` is the
-canonical authorized head read. Selection Learn uses
-`POST /artifacts/dossiers/learn`, resolves an internal Idea, records the
-Highlight as a seed, and adopts the standalone Artifact pane. The remaining
-API is `POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
-`GET /stream/artifact-builds/{artifact_build_id}/events`, a snapshot stream:
-`state` frames carry the build's `DossierBuildOut` whenever it changes and
-`done` closes it once the build is no longer active. `lib/dossiers/dossierApi.ts`
-is the one browser Dossier transport boundary over generated wire types
-(typed-wire); Cancel is an exact 204. The browser renders a revision into an
-open shadow root of the app document under the app's nonce csp, after
-re-proving the grammar on the exact nodes it adopts (`DossierDocument`), with
-one delegated click listener for citations. Media Intelligence reaches the web
-only inside the Dossier read model as `media_abstract`; the Media Dossier
-renders it as a compact Abstract and offers the same claims as generation
-input.
+single-tab inspectors retain the host, remembered selection, visibility, width,
+keyboard/touch behavior and focus restoration. opening a resource reads its
+existing facts; it does not schedule synthesis. shared media intelligence still
+builds a current summary and grounded claims consumed by connection discovery.
+source abstracts and show notes remain reader content.
 
 ---
 
@@ -1198,7 +1142,7 @@ apparatus is extracted before sanitization removes semantic attributes. PDF
 the bounded media `h1`-to-`h2` projection beneath the resource heading; the
 reader never rewrites that dom for decorations. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Connections`, and `Dossier`. Contents and Connections retain their
+available and `Connections`. Contents and Connections retain their
 internal **Document Map** semantics:
 connections is a target-centered aggregate of highlights, source references,
 generated citations, links, and librarian links, separated into passage and
@@ -1335,7 +1279,7 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   unfiled means default-held media without a direct named placement. subscriptions
   have their own section and active-rule relation, outside content counts/sort/page.
   default added dates win, otherwise the earliest qualifying physical entry.
-  canonical relations feed search, atlas, dossiers and suggestions. all's podcast
+  canonical relations feed search, atlas and suggestions. all's podcast
   commands cascade to affected destinations; [podcasts](modules/podcast.md) owns
   exact preview, preservation and authority contracts.
 - **guarded organization**: destination and placement reads return named rows,
@@ -1386,14 +1330,9 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   consumption and shared reading estimate; relation reasons remain internal.
   inline related discovery and `/media/{id}/related` are retired; the resource
   graph and opened-resource connections remain.
-- **Library Dossier** is the Library binding of Universal Dossiers, not a
-  Library-owned subsystem. The Library pane publishes Entries in primary
-  content and capability-gated `Members | Connections | Dossier` in the shared
-  Resource Inspector; Members is present only for mutable Libraries the viewer
-  can administer, and Dossier remains default. Its audience is the Library
-  membership scope; direct entries and expanded Podcast episodes are
-  intersected with audience-visible Media (the library owner's), and freshness
-  compares the stored input fingerprint with the same collection run live.
+- the library pane publishes entries in primary content and authorized
+  `Members | Connections` in the shared inspector, defaulting to connections.
+  members appear only for mutable libraries the viewer can administer.
 
 ### 8.6 Contributors
 
@@ -1937,13 +1876,11 @@ open over Resume and never become panes.
   row and the inner Nexus control, without moving the Nexus wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
-  (`Contents | Connections | Dossier`), Conversation
-  (`Context | Forks | Dossier`), Library
-  (`Members | Connections | Dossier` when the viewer can administer it, else
-  `Connections | Dossier`), and Podcast/Author/Page/Note
-  (`Connections | Dossier`). One visible inspector action opens the same group
-  on desktop and mobile; open state, active tab, width, and viewed Dossier
-  revision are workspace-local. The Imports pane publishes the one other
+  (`Contents | Connections`), Conversation
+  (`Connections | Forks`), Library
+  (`Members | Connections` when the viewer can administer it, else
+  `Connections`), and Podcast/Author/Page/Note (`Connections`). One visible inspector action opens the same group
+  on desktop and mobile; open state, active tab and width are workspace-local. The Imports pane publishes the one other
   secondary group, `imports-inspector` (`Import details`), the same way, because
   its selection is a row rather than a resource; its selection lives in the pane
   URL (`selected=<ref>`).
@@ -2232,7 +2169,7 @@ The things most likely to bite you, distilled:
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,content_chunking,embeddings,note_indexing}.py`, `services/chat/retrievals.py` |
 | Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `cleanup`)                                                     |
-| Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
+| media intelligence                           | `python/nexus/services/media_intelligence.py`                                                                               |
 | Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
 | Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_members,contributors,notes}.py`                                                                                               |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |

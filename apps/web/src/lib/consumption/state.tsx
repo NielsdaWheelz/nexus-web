@@ -8,7 +8,7 @@
  * Each write publishes `Consumption` (and `Lectern` when a row moves).
  */
 
-import { useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import {
   useFeedback,
   useWorkspaceCondition,
@@ -22,9 +22,11 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
+import { createCollectionCommands, CollectionCommandFeedback, type StateChange } from "./collectionCommands";
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
-import { useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -34,6 +36,7 @@ export interface ProgressHolder {
 }
 
 const holders = new Set<ProgressHolder>();
+const stateSettled = new Set<(change: StateChange) => void>();
 
 /** Register a mounted reader or player; returns its unregister. */
 export function holdProgress(holder: ProgressHolder): () => void {
@@ -58,25 +61,21 @@ export async function withProgressFence<T>(mediaIds: readonly string[], write: (
   }
 }
 
-const post = (mediaId: string, verb: string, body?: object) =>
-  apiFetch<void>(`/api/media/${mediaId}/${verb}`, {
-    method: "POST",
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-
 /** 204 settled, 409 superseded (a later unread, reset or finish), 404 gone; others throw. */
 export async function settleNaturalEnd(
   mediaId: string,
   body: Schema<"NaturalEndIn">,
 ): Promise<"Settled" | "Superseded" | "Gone"> {
+  const observers = [...stateSettled];
   try {
-    await post(mediaId, "natural-end", body);
+    await apiFetch<void>(`/api/media/${mediaId}/natural-end`, { method: "POST", body: JSON.stringify(body) });
   } catch (error) {
     if (isApiError(error) && error.status === 409) return "Superseded";
     if (isApiError(error) && error.status === 404) return "Gone";
     throw error;
   }
-  publishChange("Consumption", "Lectern");
+  for (const listener of observers) if (stateSettled.has(listener)) listener({ mediaId, revision: (body.expected_override_revision ?? 0) + 1 });
+  publishChange("Consumption", "Podcasts", "Lectern");
   return "Settled";
 }
 
@@ -112,6 +111,9 @@ interface UndoEntry {
   receipt: ApiJson<"/media/{media_id}/finish", "post">["data"];
   offer: FeedbackOffer;
   status: "Offered" | "Sending" | "Unconfirmed";
+  uncertain: boolean;
+  observed: number | null;
+  unregister(): void;
 }
 interface UndoRecovery {
   commandKey: string;
@@ -124,23 +126,26 @@ interface UndoRecovery {
 /** The finish inverse lives with the account's action owner, beyond any originating pane. */
 function createConsumptionCommands(
   feedback: FeedbackContextValue,
+  accountId: string,
+  guard: WorkGuard,
   fail: (input: { error: unknown }) => void,
 ) {
   let live = true;
   const entries = new Map<string, UndoEntry>();
   const listeners = new Set<() => void>();
+  const finishes = new Set<{ mediaId: string; observed: number | null }>();
   let snapshot: readonly UndoRecovery[] = [];
   const publish = () => {
     snapshot = [...entries.values()]
       .filter((entry) => entry.status !== "Offered")
       .map((entry) => ({
-        key: `completion-undo:${entry.mediaId}`,
+        key: `completion-undo:${entry.commandKey}`,
         commandKey: entry.commandKey,
         content: entry.status === "Sending"
           ? { tone: "Neutral", title: "undoing finish…" }
           : {
               tone: "Warning",
-              title: "undo is unconfirmed",
+              title: "undo not confirmed",
               message: "it may already have completed. retry uses the same finish receipt.",
             },
         busy: entry.status === "Sending",
@@ -148,15 +153,26 @@ function createConsumptionCommands(
       }));
     for (const listener of listeners) listener();
   };
-  const invalidate = (mediaId: string) => {
-    entries.get(mediaId)?.offer.withdraw();
-    entries.delete(mediaId);
-    publish();
+  const retire = (entry: UndoEntry) => {
+    entry.offer.withdraw(); entry.unregister(); entries.delete(entry.commandKey); publish();
   };
+  const invalidate = (revisions: ReadonlyMap<string, number>) => {
+    for (const entry of [...entries.values()]) {
+      const revision = revisions.get(entry.mediaId);
+      if (revision === undefined) continue;
+      if (entry.status === "Offered" && revision > entry.receipt.revision) retire(entry);
+      else entry.observed = Math.max(entry.observed ?? 0, revision);
+    }
+    for (const pending of finishes) {
+      const revision = revisions.get(pending.mediaId);
+      if (revision !== undefined) pending.observed = Math.max(pending.observed ?? 0, revision);
+    }
+  };
+  const collections = createCollectionCommands({ accountId, guard, feedback, fail, supersedeSingle: invalidate, fence: withProgressFence });
   async function undo(entry: UndoEntry): Promise<void> {
     if (
       !live ||
-      entries.get(entry.mediaId) !== entry ||
+      entries.get(entry.commandKey) !== entry ||
       entry.status === "Sending"
     ) return;
     entry.offer.update({
@@ -172,21 +188,24 @@ function createConsumptionCommands(
     entry.status = "Sending";
     publish();
     const signal = AbortSignal.timeout(30_000);
+    let restoredRevision: number;
     try {
-      await withProgressFence([entry.mediaId], () =>
-        apiFetch<void>(`/api/media/${entry.mediaId}/finish/undo`, {
+      const response = await withProgressFence([entry.mediaId], () =>
+        apiFetch<ApiJson<"/media/{media_id}/finish/undo", "post">>(`/api/media/${entry.mediaId}/finish/undo`, {
           method: "POST",
           body: JSON.stringify(entry.receipt),
           signal,
         }),
       );
+      restoredRevision = response.data.override_revision;
     } catch (error) {
-      if (!live || entries.get(entry.mediaId) !== entry) return;
+      if (!live || entries.get(entry.commandKey) !== entry) return;
       const unknown = !(error instanceof ProgressPreparationError) && (signal.aborted || (
         isApiError(error) &&
         ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"].includes(error.code)
       ));
       if (unknown) {
+        entry.uncertain = true;
         entry.status = "Unconfirmed";
         publish();
         return;
@@ -194,20 +213,28 @@ function createConsumptionCommands(
       if (handleUnauthenticatedApiError(error)) return;
       const content = undoFailure(error);
       if (content === null) return fail({ error });
-      if (
+      if (entry.uncertain) {
+        entry.status = "Unconfirmed";
+        entry.offer.withdraw();
+        entry.offer = feedback.offer({ key: `completion-undo-result:${entry.mediaId}`, content: { ...content, title: "undo not confirmed", message: "these items changed; this attempt changed nothing. earlier undo outcome remains unconfirmed." }, announcement: "Polite" });
+        publish();
+      } else if (
         isApiError(error) &&
         (error.code === "E_RESOURCE_CONFLICT" || error.status === 404)
       ) {
-        invalidate(entry.mediaId);
+        retire(entry);
         feedback.offer({
           key: `completion-undo-result:${entry.mediaId}`,
           content,
           announcement: "Polite",
         });
+      } else if (entry.observed !== null && entry.observed > entry.receipt.revision) {
+        retire(entry);
+        feedback.offer({ key: `completion-undo-result:${entry.commandKey}`, announcement: "Polite", content: { tone: "Warning", title: "these items changed; this attempt changed nothing." } });
       } else {
         entry.status = "Offered";
         entry.offer = feedback.offer({
-          key: `completion-undo:${entry.mediaId}`,
+          key: `completion-undo:${entry.commandKey}`,
           content,
           announcement: "Polite",
           actions: [{
@@ -220,58 +247,70 @@ function createConsumptionCommands(
       }
       return;
     }
-    if (!live || entries.get(entry.mediaId) !== entry) return;
-    invalidate(entry.mediaId);
-    publishChange("Consumption", "Lectern");
-    feedback.receipt({ tone: "Success", title: "finish undone" });
+    if (!live || entries.get(entry.commandKey) !== entry) return;
+    retire(entry);
+    collections.supersede([{ mediaId: entry.mediaId, revision: restoredRevision }]);
+    publishChange("Consumption", "Podcasts", "Lectern");
+    feedback.settleCondition({ key: `completion-undo:${entry.commandKey}`, content: { tone: "Success", title: "finish undone" } });
   }
   return {
+    collections,
     commands: {
+      ...collections.commands,
       async finish(
         mediaId: string,
         { leaveLectern }: { leaveLectern: boolean },
       ): Promise<void> {
         if (!live) return;
-        const { data: receipt } = await withProgressFence([mediaId], () =>
-          apiFetch<ApiJson<"/media/{media_id}/finish", "post">>(
-            `/api/media/${mediaId}/finish`,
-            {
-              method: "POST",
-              body: JSON.stringify({ leave_lectern: leaveLectern }),
-            },
-          ),
-        );
+        const pending: { mediaId: string; observed: number | null } = { mediaId, observed: null };
+        finishes.add(pending);
+        let receipt: UndoEntry["receipt"];
+        try {
+          receipt = (await withProgressFence([mediaId], () =>
+            apiFetch<ApiJson<"/media/{media_id}/finish", "post">>(`/api/media/${mediaId}/finish`, {
+              method: "POST", body: JSON.stringify({ leave_lectern: leaveLectern }),
+            }),
+          )).data;
+        } finally { finishes.delete(pending); }
         if (!live) return;
-        invalidate(mediaId);
-        publishChange("Consumption", "Lectern");
-        const commandKey = `${mediaId}:${receipt.revision}`;
+        collections.supersede([{ mediaId, revision: receipt.revision }]);
+        publishChange("Consumption", "Podcasts", "Lectern");
+        if (pending.observed !== null && pending.observed > receipt.revision) {
+          feedback.receipt({ tone: "Success", title: "finish acknowledged; undo is unavailable after overlapping state changes" });
+          return;
+        }
+        const commandKey = `${mediaId}:${receipt.revision}:${crypto.randomUUID()}`;
         const entry: UndoEntry = {
           mediaId,
           receipt,
           commandKey,
           status: "Offered",
+          uncertain: false,
+          observed: null,
+          unregister: () => {},
           offer: feedback.offer({
-            key: `completion-undo:${mediaId}`,
+            key: `completion-undo:${commandKey}`,
             content: { tone: "Success", title: "marked as finished" },
             announcement: "Polite",
             actions: [{ label: "undo", commandKey, onClick: () => void undo(entry) }],
           }),
         };
-        entries.set(mediaId, entry);
+        entry.unregister = guard.register({ id: `completion-undo:${commandKey}`, scope: { kind: "account" }, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, read: () => ({ changed: false, unconfirmed: entry.status !== "Offered", stopsBrowserWork: false }) });
+        entries.set(commandKey, entry);
       },
       async markUnread(mediaId: string): Promise<void> {
         if (!live) return;
-        await withProgressFence([mediaId], () => post(mediaId, "unread"));
+        const response = await withProgressFence([mediaId], () => apiFetch<ApiJson<"/media/{media_id}/unread", "post">>(`/api/media/${mediaId}/unread`, { method: "POST" }));
         if (!live) return;
-        invalidate(mediaId);
-        publishChange("Consumption");
+        collections.supersede([{ mediaId, revision: response.data.override_revision }]);
+        publishChange("Consumption", "Podcasts");
       },
       async resetProgress(mediaId: string): Promise<void> {
         if (!live) return;
-        await withProgressFence([mediaId], () => post(mediaId, "progress/reset"));
+        const response = await withProgressFence([mediaId], () => apiFetch<ApiJson<"/media/{media_id}/progress/reset", "post">>(`/api/media/${mediaId}/progress/reset`, { method: "POST" }));
         if (!live) return;
-        invalidate(mediaId);
-        publishChange("Consumption");
+        collections.supersede([{ mediaId, revision: response.data.override_revision }]);
+        publishChange("Consumption", "Podcasts");
       },
     },
     subscribe(listener: () => void) {
@@ -283,19 +322,27 @@ function createConsumptionCommands(
     snapshot: () => snapshot,
     attach() {
       live = true;
+      const stopCollections = collections.start();
+      const settled = (change: StateChange) => collections.supersede([change]);
+      stateSettled.add(settled);
       return () => {
         live = false;
-        for (const entry of entries.values()) entry.offer.withdraw();
+        stopCollections();
+        stateSettled.delete(settled);
+        for (const entry of entries.values()) { entry.offer.withdraw(); entry.unregister(); }
         entries.clear();
+        finishes.clear();
       };
     },
   };
 }
 
-export function useConsumptionCommands() {
+export function useConsumptionCommands(reportDefect: (failure: { error: unknown }) => void) {
   const feedback = useFeedback();
-  const fail = useThrowLater();
-  const [owner] = useState(() => createConsumptionCommands(feedback, fail));
+  const { accountId } = useAuthenticatedAccount();
+  const guard = useWorkGuard();
+  const owner = useMemo(() => createConsumptionCommands(feedback, accountId, guard, reportDefect), [feedback, accountId, guard, reportDefect]);
+  const bulk = useSyncExternalStore(owner.collections.subscribe, owner.collections.snapshot, owner.collections.snapshot);
   const recoveries = useSyncExternalStore(
     owner.subscribe,
     owner.snapshot,
@@ -304,9 +351,10 @@ export function useConsumptionCommands() {
   useLayoutEffect(() => owner.attach(), [owner]);
   return {
     commands: owner.commands,
-    feedback: recoveries.map((recovery) => (
-      <UndoFeedback key={recovery.key} recovery={recovery} />
-    )),
+    feedback: <>
+      {recoveries.map(recovery => <UndoFeedback key={recovery.key} recovery={recovery} />)}
+      {bulk.map(entry => <CollectionCommandFeedback key={entry.key} entry={entry} commands={owner.collections.commands} />)}
+    </>,
   };
 }
 

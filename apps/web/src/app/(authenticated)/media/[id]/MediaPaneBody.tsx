@@ -18,8 +18,20 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus, useWorkspaceCondition } 
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch, apiTransportFeedback, isStaleBuild, STALE_BUILD_FEEDBACK, type ApiError } from "@/lib/api/client";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { catalogMedia } from "@/lib/catalog/selectors";
+import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
+import { remoteReady } from "@/lib/native/admission";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
+import ResourceMetadata from "@/components/resources/ResourceMetadata";
+import { bibliographyMetadata } from "@/lib/resources/metadata";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
+import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
@@ -93,7 +105,7 @@ export default function MediaPaneBody() {
   const attemptId = runtime.searchParams.get("source_attempt_id");
   if (attemptId !== null && sourceTargetFromHref(runtime.href)?.kind !== "invalid_destination")
     return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
-  return <MediaPane key={id} id={id} />;
+  return <MediaRoute key={id} id={id} />;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
@@ -137,7 +149,56 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
     announcement="Polite" actions={[viewImports]} />;
 }
 
-function MediaPane({ id }: { readonly id: string }) {
+function MediaRoute({ id }: { readonly id: string }) {
+  const catalog = useCatalogState();
+  const record = usePaneFreeServerValue({
+    key: `/media/${id}`,
+    stale: "",
+    load: async (signal) =>
+      mediaDetailFromResponse(
+        await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
+        id,
+      ),
+  });
+  usePaneReturnReady(record.status === "failed" || !remoteReady() && !catalog.loading && record.status !== "ready");
+  if (record.status === "ready") return <MediaPane id={id} record={record} />;
+  const failure = record.status === "loading" ? null : record.error;
+  if (failure !== null && [403, 404, 426].includes(failure.status)) return <FeedbackState
+    content={{ tone: "Warning", title: failure.status === 426 ? "update nexus to open this item" : "this item is no longer available" }} announcement="Polite" />;
+  const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
+  if (summary !== null) return <SavedMedia summary={summary} record={record} />;
+  if (!remoteReady() && !catalog.loading) return <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />;
+  return record.status === "failed" ? <FeedbackState content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
+    : <PaneLoadingState label="loading item…" announcement="Polite" />;
+}
+
+function UnavailableSavedMedia({ error }: { readonly error: { readonly code: string } }) {
+  usePaneChrome({ displayTitle: "media", header: { kind: "Resource", resource: { status: "Unavailable" } } });
+  usePaneReturnReady(true);
+  return <FeedbackState content={catalogErrorFeedback(error) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" }} announcement="Polite" />;
+}
+
+function SavedMedia({ summary, record }: { readonly summary: MediaSummary; readonly record: ServerValue<MediaDetail> }) {
+  const authors = groupContributorCredits(selectMediaAuthors(summary.contributors)).find(group => group.role === "author");
+  usePaneChrome({
+    displayTitle: summary.title,
+    resourceRef: canonicalResourceRef({ scheme: "media", id: summary.media_id }),
+    header: { kind: "Resource", resource: { status: "Ready", creditGroups: authors ? [{ kind: "Authors", credits: authors.credits }] : [] } },
+  });
+  usePaneReturnReady(true);
+  const subject = { kind: "Stored" as const, summary };
+  return <div className={styles.stateScrollport}><div className={styles.state}>
+    <h1><MediaTitle subject={subject} /></h1>
+    <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
+    <p><MediaFacts summary={summary} /></p>
+    {summary.processing_status === "failed" ? <FeedbackStatus content={{ tone: "Warning", title: "processing failed" }} announcement="None" /> : null}
+    {!remoteReady() ? <FeedbackNotice content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />
+      : record.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
+      : <PaneLoadingState label="loading item…" announcement="Polite" />}
+  </div></div>;
+}
+
+function MediaPane({ id, record }: { readonly id: string; readonly record: ServerValue<MediaDetail> }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   const { requestSecondarySurface } = runtime;
   const paneActive = usePaneIsActive();
@@ -157,16 +218,6 @@ function MediaPane({ id }: { readonly id: string }) {
     [],
   );
 
-  // ---- the media record ----
-  const record = usePaneFreeServerValue({
-    key: `/media/${id}`,
-    stale: "",
-    load: async (signal) =>
-      mediaDetailFromResponse(
-        await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
-        id,
-      ),
-  });
   const loaded = record.status === "ready" ? record.data : null;
   const [detail, setMedia] = useState<MediaDetail | null>(null);
   useEffect(() => {
@@ -590,7 +641,7 @@ function MediaPane({ id }: { readonly id: string }) {
   useMobileChromeHold(isMobile && paneActive && paneVisible && annotationNotice !== null);
   useReaderChrome({
     media,
-    failed: record.status === "failed",
+    failed: record.status === "failed" || (record.status === "ready" && (record.error?.status === 403 || record.error?.status === 404)),
     reader,
     find,
     readable,

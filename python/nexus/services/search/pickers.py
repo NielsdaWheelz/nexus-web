@@ -43,7 +43,7 @@ _PASSAGES = (
     "oracle_passage_anchor",
 )
 # Every family but the passages and the search-only and browse-only ones names a resource.
-_DIRECT = [f for f in SOURCES if f not in {*_PASSAGES, "artifact", "web_result", "gutenberg"}]
+_DIRECT = [f for f in SOURCES if f not in {*_PASSAGES, "web_result", "gutenberg"}]
 
 
 def _refs(hits: list[Hit]) -> list[ResourceRef]:

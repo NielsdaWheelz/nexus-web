@@ -6,8 +6,9 @@ into episode placements. Action facts resolve sealed identities locally, using t
 same authenticated catalog existence rule as detail; they never contact a provider.
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -34,6 +35,8 @@ SubscriptionFilter = Literal["all", "has_new", "not_in_library"]
 class PodcastState:
     subscribed: bool
     has_episodes: bool
+    feed_url: str
+    website_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +64,7 @@ def podcast_states(
 ) -> dict[UUID, PodcastState]:
     rows = db.execute(
         text(f"""
-        SELECT p.id, EXISTS(SELECT 1 FROM ({active_subscription_rows_sql()}) s
+        SELECT p.id, p.feed_url, p.website_url, EXISTS(SELECT 1 FROM ({active_subscription_rows_sql()}) s
                              WHERE s.podcast_id=p.id) AS subscribed,
                EXISTS(SELECT 1 FROM podcast_episodes pe
                       JOIN ({library_entries.library_media_ids_cte_sql(library_param="(SELECT id FROM libraries WHERE is_default AND owner_user_id=:viewer_id)")}) vm ON vm.media_id=pe.media_id
@@ -70,7 +73,10 @@ def podcast_states(
     """),
         {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     )
-    return {row.id: PodcastState(row.subscribed, row.has_episodes) for row in rows}
+    return {
+        row.id: PodcastState(row.subscribed, row.has_episodes, row.feed_url, row.website_url)
+        for row in rows
+    }
 
 
 def action_facts(
@@ -244,6 +250,15 @@ def read_library_podcasts(
     db: Session, viewer_id: UUID, library_id: UUID
 ) -> wire.LibraryPodcastsOut:
     snapshot = _snapshot(db, viewer_id, library_id)
+    shows, recurring = _catalog(db, [UUID(rule["podcast_id"]) for rule in snapshot["rules"]])
+    return _library_podcasts(dict(snapshot), shows, recurring)
+
+
+def _library_podcasts(
+    snapshot: Mapping[str, Any],
+    shows: dict[UUID, wire.PodcastListItemOut],
+    recurring: dict[UUID, wire.PodcastRecurringOut],
+) -> wire.LibraryPodcastsOut:
     destinations: dict[UUID, list[wire.PodcastDestinationOut]] = {}
     history_ids = {UUID(rule["initial_import_id"]) for rule in snapshot["rules"]}
     for rule in snapshot["rules"]:
@@ -263,7 +278,6 @@ def read_library_podcasts(
         )
         for row in snapshot["imports"]
     ]
-    shows, recurring = _catalog(db, list(destinations))
     return wire.LibraryPodcastsOut(
         order_revision=str(snapshot["order_revision"]),
         removal_revision=str(snapshot["removal_revision"]),
@@ -326,7 +340,7 @@ def read_library_podcast(
     )
 
 
-def _plan(sort: SubscriptionSort) -> list[SortKey]:
+def podcast_order_plan(sort: SubscriptionSort) -> list[SortKey]:
     if sort == "alpha":
         return [
             SortKey("title_key", "asc", KeysetValueKind.Text),
@@ -345,6 +359,32 @@ def _plan(sort: SubscriptionSort) -> list[SortKey]:
     )
 
 
+def podcast_index_rows_sql() -> str:
+    """Active personal shows and all canonical index ordering/filter facts."""
+    state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
+    joins = projection.episode_state_joins_sql(
+        user_param=":viewer_id",
+        media_expr="pe.media_id",
+        listening_alias="pls",
+        override_alias="co",
+    )
+    return f"""
+        WITH episodes AS (SELECT pe.podcast_id,pe.published_at,{state} AS episode_state
+            FROM podcast_episodes pe JOIN ({visible_media_ids_cte_sql()}) vm ON vm.media_id=pe.media_id {joins}),
+        o AS (SELECT s.podcast_id,s.followed_at,lower(p.title) AS title_key,
+            count(e.*) FILTER(WHERE e.episode_state='unplayed') AS unplayed_count,
+            max(e.published_at) AS latest_published_at,(max(e.published_at) IS NULL)::int AS latest_missing
+            FROM ({active_subscription_rows_sql()}) s JOIN podcasts p ON p.id=s.podcast_id
+            LEFT JOIN episodes e ON e.podcast_id=s.podcast_id GROUP BY s.podcast_id,s.followed_at,p.id)
+        SELECT o.*, NOT EXISTS (
+            SELECT 1 FROM library_podcast_subscriptions s
+            JOIN libraries l ON l.id=s.library_id AND NOT l.is_default AND l.system_key IS NULL
+            JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id
+            WHERE s.podcast_id=o.podcast_id) AS not_in_library
+        FROM o
+    """
+
+
 def list_podcasts(
     db: Session,
     viewer_id: UUID,
@@ -360,22 +400,13 @@ def list_podcasts(
     if filter == "has_new":
         where.append("AND unplayed_count>0")
     if filter == "not_in_library":
-        where.append(
-            "AND NOT EXISTS (SELECT 1 FROM library_podcast_subscriptions s JOIN libraries l ON l.id=s.library_id JOIN memberships lm ON lm.library_id=l.id AND lm.user_id=:viewer_id WHERE s.podcast_id=o.podcast_id AND NOT l.is_default AND l.system_key IS NULL)"
-        )
+        where.append("AND not_in_library")
     if library_id is not None:
         libraries.access(db, viewer_id, library_id, lock=False)
         params["library_id"] = library_id
         where.append(
             f"AND podcast_id IN (SELECT podcast_id FROM ({library_entries.library_podcast_rows_sql()}) scoped)"
         )
-    state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
-    joins = projection.episode_state_joins_sql(
-        user_param=":viewer_id",
-        media_expr="pe.media_id",
-        listening_alias="pls",
-        override_alias="co",
-    )
     rows, next_cursor = keyset_page(
         db,
         binding={
@@ -385,19 +416,13 @@ def list_podcasts(
             "filter": filter,
             "library": library_id,
         },
-        plan=_plan(sort),
+        plan=podcast_order_plan(sort),
         cursor=cursor,
         limit=limit,
         params=params,
         alias="o",
         sql=lambda keyset, order: f"""
-        WITH episodes AS (SELECT pe.podcast_id,pe.published_at,{state} AS episode_state
-            FROM podcast_episodes pe JOIN ({visible_media_ids_cte_sql()}) vm ON vm.media_id=pe.media_id {joins}),
-        o AS (SELECT s.podcast_id,s.followed_at,lower(p.title) AS title_key,
-            count(e.*) FILTER(WHERE e.episode_state='unplayed') AS unplayed_count,
-            max(e.published_at) AS latest_published_at,(max(e.published_at) IS NULL)::int AS latest_missing
-            FROM ({active_subscription_rows_sql()}) s JOIN podcasts p ON p.id=s.podcast_id
-            LEFT JOIN episodes e ON e.podcast_id=s.podcast_id GROUP BY s.podcast_id,s.followed_at,p.id)
+        WITH o AS ({podcast_index_rows_sql()})
         SELECT * FROM o WHERE TRUE {" ".join(where)} {keyset} ORDER BY {order} LIMIT :limit
     """,
     )
@@ -406,32 +431,82 @@ def list_podcasts(
 
 
 def get_podcast_detail(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastDetailOut:
-    shows, recurring = _catalog(db, [podcast_id])
-    if podcast_id not in shows:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    _, details = read_catalog(
+        db, viewer_id, [], {podcast_id: episode_counts(db, viewer_id, podcast_id)}
+    )
+    return details[podcast_id]
+
+
+def catalog_show_ids_sql() -> str:
+    """Personal active subscriptions and unfinished member-library imports."""
+    return f"""
+        SELECT podcast_id FROM ({active_subscription_rows_sql()}) subscriptions
+        UNION
+        SELECT r.podcast_id FROM podcast_library_imports i
+        JOIN podcast_feed_runs r ON r.id=i.run_id
+        JOIN libraries l ON l.id=i.library_id AND l.system_key IS NULL
+        JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
+        WHERE r.completed_at IS NULL AND r.cancelled_at IS NULL
+          AND (NOT l.is_default OR l.owner_user_id=:viewer_id)
+    """
+
+
+def read_catalog(
+    db: Session,
+    viewer_id: UUID,
+    member_libraries: Sequence[libraries.LibraryAccess],
+    counts: dict[UUID, wire.PodcastEpisodeCountsOut],
+) -> tuple[dict[UUID, wire.LibraryPodcastsOut], dict[UUID, wire.PodcastDetailOut]]:
+    """Complete included sections and show details; one account relationship snapshot.
+
+    The caller admits shows and captures their exact visible episode counts in its
+    repeatable-read transaction. Metadata/settings hydrate in batches, never per show.
+    """
     default_id = libraries.default_library_id(db, viewer_id)
     snapshot = _snapshot(db, viewer_id, default_id)
-    destinations = [
-        wire.PodcastDestinationOut(
-            library_id=r["library_id"],
-            name=r["name"],
-            is_default=r["is_default"],
-            subscription_id=r["id"],
-            can_add_content=r["can_manage"],
+    shows, recurring = _catalog(db, list(counts))
+    if set(shows) != set(counts):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    playback_settings = settings.get_settings_many(db, viewer_id, list(counts))
+    sections = {}
+    for library in member_libraries:
+        scoped = dict(snapshot)
+        if not library.is_default:
+            scoped["rules"] = [
+                row for row in snapshot["rules"] if UUID(row["library_id"]) == library.id
+            ]
+            scoped["imports"] = [
+                row for row in snapshot["imports"] if UUID(row["library_id"]) == library.id
+            ]
+        scoped["order_revision"] = library.order_revision
+        scoped["can_manage"] = library.out(viewer_id).can_add_content
+        sections[library.id] = _library_podcasts(scoped, shows, recurring)
+    destinations: dict[UUID, list[wire.PodcastDestinationOut]] = {}
+    for rule in snapshot["rules"]:
+        destinations.setdefault(UUID(rule["podcast_id"]), []).append(
+            wire.PodcastDestinationOut(
+                library_id=rule["library_id"],
+                name=rule["name"],
+                is_default=rule["is_default"],
+                subscription_id=rule["id"],
+                can_add_content=rule["can_manage"],
+            )
         )
-        for r in snapshot["rules"]
-        if UUID(r["podcast_id"]) == podcast_id
-    ]
-    operations = [
-        imports.import_from_row(r, can_manage=r["can_manage"], order_revision=r["order_revision"])
-        for r in snapshot["imports"]
-        if UUID(r["podcast_id"]) == podcast_id
-    ]
-    return wire.PodcastDetailOut(
-        podcast=shows[podcast_id],
-        destinations=destinations,
-        recurring=recurring[podcast_id],
-        imports=operations,
-        playback_settings=settings.get_settings(db, viewer_id, podcast_id),
-        episode_counts=episode_counts(db, viewer_id, podcast_id),
-    )
+    operations: dict[UUID, list[wire.PodcastImportOut]] = {}
+    for row in snapshot["imports"]:
+        operation = imports.import_from_row(
+            row, can_manage=row["can_manage"], order_revision=row["order_revision"]
+        )
+        operations.setdefault(operation.podcast_id, []).append(operation)
+    details = {
+        podcast_id: wire.PodcastDetailOut(
+            podcast=shows[podcast_id],
+            destinations=destinations.get(podcast_id, []),
+            recurring=recurring[podcast_id],
+            imports=operations.get(podcast_id, []),
+            playback_settings=playback_settings[podcast_id],
+            episode_counts=count,
+        )
+        for podcast_id, count in counts.items()
+    }
+    return sections, details

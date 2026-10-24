@@ -5,6 +5,7 @@
 
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { apiTransportFeedback } from "@/lib/api/client";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { modeledApiError } from "@/lib/api/serverState";
 
 const PERMISSIONS = "Your library permissions changed. Refresh and try again.";
@@ -46,6 +47,8 @@ export function libraryErrorFeedback(
 ): FeedbackContent | null {
   const modeled = modeledApiError(error, fail, signIn);
   if (modeled === null) return null;
+  const catalog = catalogErrorFeedback(modeled);
+  if (catalog !== null) return catalog;
   const transport = apiTransportFeedback(modeled, title);
   if (transport !== null) return transport;
   const message = COPY[modeled.code];

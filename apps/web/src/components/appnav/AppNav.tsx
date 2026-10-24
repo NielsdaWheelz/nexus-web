@@ -1,7 +1,7 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, CircleUser, Plus, Search } from "lucide-react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, CircleUser, Headphones, Plus, Search } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import Button from "@/components/ui/Button";
@@ -15,6 +15,8 @@ import {
 } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { NAV_COLLAPSED_COOKIE } from "@/lib/renderEnvironment/types";
+import { usePlayerSession } from "@/lib/player/playerRuntime";
+import { usePlayerPresentation } from "@/lib/player/presentation";
 import { formatShortcut, shortcutAriaKeys, SHORTCUTS } from "@/lib/shortcuts";
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -180,6 +182,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
 
       <div className={styles.footer}>
+        <PlayerDisclosure collapsed={collapsed} />
         <Tooltip
           text={NAV_IMPORTS.label}
           placement="right"
@@ -251,4 +254,31 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
     </nav>
   );
+}
+
+function PlayerDisclosure({ collapsed }: { collapsed: boolean }) {
+  const { visible, show, hide, regionId, railRef } = usePlayerPresentation();
+  const { state, queue, preferences } = usePlayerSession();
+  const statusId = useId();
+  const failed = state.kind === "Unavailable"
+    || (state.kind === "Loaded" && (state.error !== null || state.playbackFailed))
+    || queue.error !== null || preferences?.application.kind === "Failed";
+  const active = state.kind === "Loaded" && (state.phase === "Playing" || state.phase === "Buffering");
+  const description = failed ? "playback needs attention" : active
+    ? `${state.phase === "Buffering" ? "buffering" : "playing"}: ${state.source.descriptor.title}` : null;
+  return <>
+    <Tooltip text="player" placement="right" openDelayMs={0} disabled={!collapsed} triggerRef={railRef}
+      renderTrigger={help => <button {...help} type="button"
+        className={cx(buttonClassName({ size: "comfortable" }), styles.item)}
+        aria-label="player" aria-expanded={visible} aria-controls={regionId}
+        aria-describedby={cx(help["aria-describedby"], description !== null && statusId) || undefined}
+        onClick={() => visible ? hide() : show({ focus: true })}>
+        <span className={styles.playerIcon}>
+          <Headphones className={styles.icon} size={20} aria-hidden="true" />
+          {failed || active ? <span className={cx(styles.playerMarker, failed && styles.playerFailure)} aria-hidden="true">{failed ? "!" : null}</span> : null}
+        </span>
+        <span className={styles.label}>player</span>
+      </button>} />
+    {description !== null ? <span id={statusId} className="sr-only">{description}</span> : null}
+  </>;
 }

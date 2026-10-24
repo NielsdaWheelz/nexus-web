@@ -7,7 +7,7 @@ import { ApiError, readResponse, WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { SettingsIdentity, EmailChangeResult, IdentityDeleteResult } from "@/lib/account/settingsWire";
 import type { WorkspaceState } from "@/lib/workspace/model";
-import type { DeviceStartup, RemoteAdmission, SignInResult } from "./contracts";
+import type { CatalogStatus, DeviceStartup, RemoteAdmission, SignInResult } from "./contracts";
 import { bindSessionCheck, publishAdmission, observeRemoteFailure } from "./admission";
 
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: unknown }) => void) | null };
@@ -24,11 +24,32 @@ function readAdmission(value: unknown): RemoteAdmission {
     default: throw invalidReply();
   }
 }
+const catalogListeners = new Set<(status: CatalogStatus) => void>();
+function readCatalogStatusValue(value: unknown): CatalogStatus {
+  if (!isRecord(value) || Object.keys(value).sort().join(",") !== "last_error,refreshing,snapshot" || typeof value.refreshing !== "boolean") throw invalidReply();
+  const snapshot = value.snapshot;
+  const error = value.last_error;
+  if (snapshot !== null && (!isRecord(snapshot) || Object.keys(snapshot).sort().join(",") !== "captured_at,snapshot_id" || typeof snapshot.snapshot_id !== "string" || typeof snapshot.captured_at !== "string" || !Number.isFinite(Date.parse(snapshot.captured_at)))) throw invalidReply();
+  if (error !== null && (!isRecord(error) || Object.keys(error).sort().join(",") !== "code,message" || typeof error.code !== "string" || typeof error.message !== "string")) throw invalidReply();
+  return { snapshot: snapshot === null ? null : { snapshot_id: String(snapshot.snapshot_id), captured_at: String(snapshot.captured_at) }, refreshing: value.refreshing,
+    last_error: error === null ? null : { code: String(error.code), message: String(error.message) } };
+}
+export function subscribeCatalogStatus(listener: (status: CatalogStatus) => void): () => void {
+  catalogListeners.add(listener);
+  return () => { catalogListeners.delete(listener); };
+}
+export async function readCatalogStatus(): Promise<CatalogStatus> { return readCatalogStatusValue((await call("catalog_status")).catalog); }
+export async function refreshCatalog(): Promise<CatalogStatus> { return readCatalogStatusValue((await call("catalog_refresh")).catalog); }
 if (port) port.onmessage = ({ data }) => {
   try {
     const frame: unknown = JSON.parse(typeof data === "string" ? data : "");
     if (!isRecord(frame)) throw invalidReply();
     if ("kind" in frame) {
+      if (frame.kind === "catalog_changed") {
+        const status = readCatalogStatusValue(frame.catalog);
+        for (const listener of catalogListeners) listener(status);
+        return;
+      }
       if (frame.kind !== "session_changed") throw invalidReply();
       publishAdmission(readAdmission(frame.remote_admission));
       return;

@@ -3,7 +3,11 @@
 resource actions replace `AddPodcast`/`StopPodcast` with distinct
 `SubscribePodcast`, `ImportPodcastEpisodes`, `UnsubscribePodcast` and
 `RemovePodcastEpisodes` kinds. mixed api/web contracts are incompatible;
-write endpoints and database schemas do not change.
+collection state/undo, lectern preparation/apply, local action-facts resolution
+and library metadata routes join the same contract. single unread, reset and
+finish-undo replies now return required override revisions in data envelopes
+(status 200); natural-end keeps its existing 204/native contract. old podcast-only consumption
+routes and `MediaMetadata` are removed. database schemas do not change.
 
 the action-parity cutover adds `PodcastLibraries` to that closed union and
 `POST /podcasts/action-facts/resolve` for local subscription resolution. it shares

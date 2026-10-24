@@ -141,7 +141,6 @@ def set_member_role(
 def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID) -> None:
     """An admin removes a member, or a member leaves (`user_id` is the viewer); the
     owner transfers first. Already gone, or a library the viewer cannot see: success."""
-    from nexus.services.dossier.engine import on_visibility_lost
 
     def attempt() -> None:
         with transaction(db):
@@ -165,7 +164,6 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
                 {"library_id": library_id, "user_id": user_id},
             )
             if removed is not None:
-                on_visibility_lost(db, user_id=user_id)
                 delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
                 resource_grants.invalidate_annotation_visibility(db, projections)
                 record_input_change(db)

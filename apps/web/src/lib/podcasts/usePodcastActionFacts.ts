@@ -3,11 +3,14 @@
 // One containing view owns the complete loaded target set. Local reads are
 // sequential batches; only their complete result can authorize a new command.
 // Retained facts survive a same-key refresh solely for disabled presentation.
+// Re-admission retires old facts before the reconnect reread begins.
 
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, type ServerValue, type Visit } from "@/lib/api/serverState";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
+import { LIVE_SOURCE } from "@/lib/catalog/types";
+import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
 import {
   podcastTargetKey,
@@ -32,10 +35,11 @@ export function usePodcastActionFacts(input: {
 }): ServerValue<ActionFacts> {
   const { accountId } = useAuthenticatedAccount();
   const stamp = useChangeStamp("Podcasts", "Libraries");
+  const admissionGeneration = useRemoteGeneration();
   const active = usePaneIsActive();
   const visible = usePaneIsVisible();
   const foreground = useRefreshStamp(active && visible, 0);
-  const stale = JSON.stringify([stamp, input.refresh, foreground]);
+  const stale = JSON.stringify([stamp, input.refresh, foreground, admissionGeneration]);
   const targets = [...new Map(input.targets.map(target => [podcastTargetKey(target), target])).entries()]
     .sort(([a], [b]) => a.localeCompare(b));
   const read = useServerValue<Snapshot>({
@@ -64,7 +68,7 @@ export function usePodcastActionFacts(input: {
       };
     },
   });
-  if (targets.length === 0) return { status: "ready", data: EMPTY, generation: 0, error: null, refreshing: false, refetch: read.refetch };
+  if (targets.length === 0) return { status: "ready", data: EMPTY, source: LIVE_SOURCE, generation: 0, error: null, refreshing: false, refetch: read.refetch };
   if (read.status !== "ready") return read;
   return { ...read, data: read.data.items, refreshing: read.refreshing || read.data.stale !== stale };
 }

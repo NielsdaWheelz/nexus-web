@@ -34,30 +34,15 @@ CHAT_OUTPUT_BUDGET_TOKENS: Final = 32_000
 PROVIDER_MAX_TURNS: Final = 24
 MEMORY_PLANS: Final = frozenset({"ChatMemoryRead", "ChatMemoryReadSave"})
 
-# operation, model, reasoning, whole-generation timeout s, input KiB. every
-# background operation is strict JSON over Codex Personal.
-_BACKGROUND: tuple[tuple[BackgroundOperation, str, str, int, int], ...] = (
-    ("metadata_enrichment", "luna", "xhigh", 300, 32),
-    ("media_title", "luna", "low", 120, 256),
-    ("media_summary", "luna", "low", 120, 256),
-    ("connection_discovery", "luna", "low", 120, 256),
-    ("oracle", "sol", "medium", 180, 256),
-    ("dossier_page", "luna", "low", 120, 1024),
-    ("dossier_note", "luna", "low", 120, 1024),
-    ("dossier_media", "sol", "medium", 180, 1024),
-    ("dossier_conversation", "sol", "medium", 180, 1024),
-    ("dossier_library", "sol", "high", 300, 1024),
-    ("dossier_podcast", "sol", "high", 300, 1024),
-    ("dossier_contributor", "sol", "high", 300, 1024),
-    ("dossier_idea", "sol", "high", 300, 1024),
+# operation, owner, model, reasoning, whole-generation timeout s, input KiB.
+# every background operation is strict JSON over Codex Personal.
+_BACKGROUND: tuple[tuple[BackgroundOperation, OwnerKind, str, str, int, int], ...] = (
+    ("metadata_enrichment", "media_enrichment", "luna", "xhigh", 300, 32),
+    ("media_title", "media_enrichment", "luna", "low", 120, 256),
+    ("media_summary", "media_summary", "luna", "low", 120, 256),
+    ("connection_discovery", "connection_discovery_scan", "luna", "low", 120, 256),
+    ("oracle", "oracle_reading", "sol", "medium", 180, 256),
 )
-_OWNER_KINDS: dict[str, OwnerKind] = {
-    "metadata_enrichment": "media_enrichment",
-    "media_title": "media_enrichment",
-    "media_summary": "media_summary",
-    "connection_discovery": "connection_discovery_scan",
-    "oracle": "oracle_reading",
-}
 
 
 def _codex(model: str, reasoning: str) -> CodexPersonalSelection:
@@ -75,7 +60,7 @@ _TABLE: dict[Operation, OperationPolicy] = {
     ),
     **{
         operation: OperationPolicy(
-            owner_kind=_OWNER_KINDS.get(operation, "artifact_build"),
+            owner_kind=owner,
             selection=_codex(f"gpt-6-{model}", reasoning),
             output="StrictJson",
             timeout_seconds=timeout,
@@ -84,7 +69,7 @@ _TABLE: dict[Operation, OperationPolicy] = {
                 {"MetadataResearch"} if operation == "metadata_enrichment" else ()
             ),
         )
-        for operation, model, reasoning, timeout, kib in _BACKGROUND
+        for operation, owner, model, reasoning, timeout, kib in _BACKGROUND
     },
 }
 

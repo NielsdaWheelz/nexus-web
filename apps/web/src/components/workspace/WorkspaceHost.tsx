@@ -49,7 +49,11 @@ const PaneContent = memo(function PaneContent(props: {
   const writingState = useWritingState();
   const writingReady = writingState === "ready";
   const local = props.routeId === "unsupported" || ["settings", "settingsAppearance", "settingsReader", "settingsKeybindings"].includes(props.routeId);
-  const canAdmit = writingReady && (local || admission === "Ready");
+  // Covered bodies own saved-data and coverage states; mounting grants no remote
+  // capability. Other cold server panes still require credential admission.
+  const catalog = ["libraries", "library", "podcasts", "podcastDetail", "lectern",
+    "notes", "conversations", "media", "page", "conversation", "note"].includes(props.routeId);
+  const canAdmit = writingReady && (local || catalog || admission === "Ready");
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
@@ -186,7 +190,12 @@ export default function WorkspaceHost() {
     const lost =
       document.activeElement === null ||
       document.activeElement === document.body;
-    if (flipped && lost) focusPane(activeId);
+    // A removed control's owner restores its specific successor after commit.
+    // The pane fallback yields to that recovery and to intentional focus.
+    if (flipped && lost) queueMicrotask(() => {
+      if (document.activeElement === null || document.activeElement === document.body)
+        focusPane(activeId);
+    });
   }, [activeId, isMobile, focusPane, latestWorkspace]);
   const { scrollPaneIntoView } = canvas;
   useLayoutEffect(() => {

@@ -288,7 +288,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     preventing an old create-and-file command from recreating the deleted id.
     """
     from nexus.services import library_entries, media_upload_sessions, users
-    from nexus.services.dossier import engine as dossier
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
@@ -338,22 +337,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             held = library_entries.media_ids_in_library(db, library_id)
             if not set(held) <= set(media_ids):
                 raise TransactionRestart("library media set grew")
-            members = list(
-                db.scalars(
-                    text("""
-                        SELECT user_id FROM memberships WHERE library_id = :id
-                        ORDER BY user_id FOR UPDATE
-                    """),
-                    {"id": library_id},
-                )
-            )
-            # The whole dossier head union, once, before any cleanup takes a head lock.
-            dossier.lock_heads(
-                db,
-                subjects=[ref, *(ResourceRef(scheme="media", id=m) for m in held)],
-                user_ids=members,
-            )
-            dossier.on_subject_deleted(db, ref)
             delete_edges_for_deleted_resource(db, ref=ref)
             media_upload_sessions.delete_library_destination_support_in_current_transaction(
                 db, library_id=library_id
@@ -378,8 +361,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             library_entries.delete_library_entries(db, library_id)
             delete_suggestion_feeds(db, library_id=library_id)
             db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
-            for user_id in members:
-                dossier.on_visibility_lost(db, user_id=user_id)
             record_input_change(db)
 
     retry_read_committed(db, "delete_library", attempt, retries=5)
@@ -429,7 +410,7 @@ def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
 # oldest created, so All comes first. Every plan ends in the unique id.
 _PRESENTED = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
 _ID = SortKey("id", "asc", KeysetValueKind.Uuid)
-_INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
+INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
     None: (SortKey("created_at", "asc", KeysetValueKind.DateTime), _ID),
     "created_desc": (
         SortKey("created_at", "desc", KeysetValueKind.DateTime),
@@ -448,28 +429,33 @@ _INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
 }
 
 
+def library_index_rows_sql() -> str:
+    """Every member library with its presented name and canonical index order facts."""
+    return f"""
+                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
+                       lower(btrim({_PRESENTED})) AS name_key
+                FROM libraries l
+                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+    """
+
+
 def list_libraries(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[LibraryOut]:
     """One keyset page of the viewer's libraries in the `sort` view."""
     query = parse_collection_query(items, domain_keys={"sort"})
     sort = query.parameters.get("sort")
-    if sort not in _INDEX_PLANS:
+    if sort not in INDEX_PLANS:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported libraries view")
     rows, next_cursor = keyset_page(
         db,
         binding={"list": "Libraries", "viewer": viewer_id, "sort": sort},
-        plan=_INDEX_PLANS[sort],
+        plan=INDEX_PLANS[sort],
         cursor=query.cursor,
         limit=query.limit,
         params={"viewer_id": viewer_id},
         sql=lambda keyset, order: f"""
-            WITH facts AS (
-                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
-                       lower(btrim({_PRESENTED})) AS name_key
-                FROM libraries l
-                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            )
+            WITH facts AS ({library_index_rows_sql()})
             SELECT * FROM facts WHERE true {keyset} ORDER BY {order} LIMIT :limit
         """,
     )

@@ -1,7 +1,7 @@
 "use client";
 
 // What a reader does with a selection or a mark. A selection is not yet a
-// resource: highlight, note, learn and share create its highlight first
+// resource: highlight, note and share create its highlight first
 // and continue with it; Link creates nothing until a target is confirmed.
 // Mobile observations remain provisional: only explicit frozen-capture commands
 // prepare authoring. A quiet range owns no draft, journal or chat destination.
@@ -22,15 +22,11 @@ import {
   type SelectionNotice,
 } from "@/lib/documentReader/DocumentReader";
 import type { HighlightColor } from "@/lib/documentReader/model";
-import { artifactPaneHref, learnDossier } from "@/lib/dossiers/dossierApi";
-import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { openAsyncResult } from "@/lib/panes/openResult";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 import { useOverlay } from "@/lib/ui/overlay";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useSelectionComposer, type SelectionComposer } from "./useSelectionComposer";
 import type { AnnotationStore } from "./annotations";
@@ -79,13 +75,11 @@ export interface AnnotationVerbs {
   dismissSelection(): void;
   composeSelection(subject: MobileSelection, mode: "Note" | "Ask"): void;
   highlightSelection(subject: MobileSelection, color: HighlightColor): void;
-  learnSelection(subject: MobileSelection, intent: OpenIntent): void;
   shareSelection(subject: MobileSelection, trigger: HTMLElement | null): void;
   applySelection(subject: MobileSelection): void;
   onSelection(notice: SelectionNotice): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
-  learn(intent?: OpenIntent): void;
   share(trigger: HTMLElement | null): void;
   focus(id: string | null): void;
   hover(id: string | null): void;
@@ -105,9 +99,8 @@ export function useAnnotationVerbs(input: {
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
   const { reader, active, isMobile, store, marks, openEvidence } = input;
-  const { ctx } = useActionRuntime();
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const { paneId, closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
+  const { closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
   const [focused, setFocused] = useState<string | null>(null);
@@ -266,19 +259,6 @@ export function useAnnotationVerbs(input: {
       },
     );
   };
-  const learn = (ensure: () => ReturnType<SelectionComposer["ensure"]>, intent: OpenIntent) => {
-    const requestId = createRandomId("learn-dossier");
-    let mayOpen = () => false;
-    void openAsyncResult({ ctx, originPaneId: paneId, intent, mayOpen: () => mayOpen(), create: async () => {
-      const ensured = await ensure();
-      if (!ensured) return null;
-      mayOpen = ensured.isCurrent;
-      if (ensured.isCurrent()) setNotice({ tone: "Neutral", title: "creating dossier…" });
-      const outcome = await learnDossier(`highlight:${ensured.id}`, requestId);
-      if (ensured.isCurrent()) setNotice(null);
-      return { target: { href: artifactPaneHref(outcome.artifact_ref), labelHint: "Dossier" }, title: "dossier created", openLabel: "open dossier" };
-    } }).catch((error: unknown) => fail(error, "dossier creation not confirmed"));
-  };
   const ensureSelection = async (subject: MobileSelection) => {
     const result = await composer.ensureCapture(subject.capture);
     return result ? { id: result.id, isCurrent: () => selectionCurrent(subject) && result.isCurrent() } : null;
@@ -384,10 +364,6 @@ export function useAnnotationVerbs(input: {
       if (!selectionCurrent(subject) || subject.highlightId && store.highlight(subject.highlightId)?.color === color) return;
       consumeSelection(); void composer.highlightCapture(subject.capture, color);
     },
-    learnSelection(subject, intent) {
-      if (!selectionCurrent(subject)) return;
-      consumeSelection(); learn(() => ensureSelection(subject), intent);
-    },
     shareSelection(subject, trigger) {
       if (!selectionCurrent(subject)) return;
       consumeSelection();
@@ -474,7 +450,6 @@ export function useAnnotationVerbs(input: {
       else if (event.marks[0]) composer.activate(event.marks[0], event.identity, event.input !== "touch");
     },
     highlight: (color) => composer.highlight(color),
-    learn(intent = "default") { learn(withHighlight, intent); },
     share(trigger) {
       void withHighlight().then((result) => {
         if (result?.isCurrent()) openShare(resourceShareTarget(`highlight:${result.id}`), anchoredShareOpenOptions(trigger, () => null));

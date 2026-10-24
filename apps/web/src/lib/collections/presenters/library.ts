@@ -16,6 +16,7 @@ export function libraryDisplayName(library: {
 export function presentLibrary(library: Library): CollectionRowView {
   const name = libraryDisplayName(library);
   return {
+    presentation: "Index",
     id: library.id,
     kind: "library",
     primary: { kind: "link", href: `/libraries/${library.id}`, paneLabelHint: name },

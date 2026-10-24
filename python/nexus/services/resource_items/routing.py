@@ -134,9 +134,6 @@ def _external_urls(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef])
 def _dynamic_routes(
     db: Session, *, viewer_id: UUID, by_scheme: dict[str, list[ResourceRef]]
 ) -> dict[str, str]:
-    # Imported here: the dossier binding table sits above resource routing.
-    from nexus.services.dossier.subjects import head_visible_sql
-
     def rows(sql: str, refs: Sequence[ResourceRef]) -> Sequence[Any]:
         if not refs:
             return []
@@ -170,17 +167,6 @@ def _dynamic_routes(
         )
         if route is not None:
             routes[f"reader_apparatus_item:{row.id}"] = route
-    for (id_,) in rows(
-        f"SELECT a.id FROM artifacts a WHERE a.id = ANY(:ids) AND {head_visible_sql('a')}",
-        by_scheme["artifact"],
-    ):
-        routes[f"artifact:{id_}"] = f"/artifacts/artifact:{id_}"
-    for revision_id, artifact_id in rows(
-        "SELECT a.revision_id, a.id FROM artifacts a"
-        f" WHERE a.revision_id = ANY(:ids) AND {head_visible_sql('a')}",
-        by_scheme["artifact_revision"],
-    ):
-        routes[f"artifact_revision:{revision_id}"] = f"/artifacts/artifact:{artifact_id}"
     for id_, handle in rows(
         "SELECT id, handle FROM contributors WHERE id = ANY(:ids)", by_scheme["contributor"]
     ):

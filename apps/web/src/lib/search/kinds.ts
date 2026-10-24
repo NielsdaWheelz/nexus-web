@@ -10,7 +10,6 @@ export const SEARCH_KINDS = [
   "web",
   "libraries",
   "readings",
-  "dossiers",
   "saved_passages",
 ] as const satisfies readonly Schema<"DiscoveryKind">[];
 export type SearchKind = Schema<"DiscoveryKind">;
@@ -24,7 +23,6 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   web: "Web",
   libraries: "Libraries",
   readings: "Readings",
-  dossiers: "Dossiers",
   saved_passages: "Saved passages",
 };
 
@@ -72,8 +70,6 @@ const KIND_ALIASES: Record<string, SearchKind> = {
   libraries: "libraries",
   reading: "readings",
   readings: "readings",
-  dossier: "dossiers",
-  dossiers: "dossiers",
   saved_passages: "saved_passages",
   saved_passage: "saved_passages",
 };

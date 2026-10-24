@@ -70,10 +70,15 @@ build and packaging command.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
   may call only its fixed player-descriptor, listening-state, consumption-command,
-  Consumption-activity, `me`, reading-copy, reader-state, bootstrap, handoff and
+  Consumption-activity, `me`, reading-copy, reader-state, offline-catalog, bootstrap, handoff and
   account-setting BFF paths with
   WebView cookies, the exact owned Origin and `X-Nexus-Wire`; it accepts no
   arbitrary URL, path, headers, or credentials.
+- `apps/android/app/src/main/java/.../CatalogStore.kt` owns the complete saved
+  browsing catalog, atomic publication and account retirement. its fixed local
+  route and bridge operations are documented in
+  [offline-catalog.md](../modules/offline-catalog.md); media downloads remain with
+  the offline owner below.
 - `apps/android/app/src/main/java/.../offline/` owns offline
   ([module](../modules/offline.md)): the store, the transfer and sync jobs, the
   `nexusDownloads` bridge and the shelf router. Its only direct calls are the

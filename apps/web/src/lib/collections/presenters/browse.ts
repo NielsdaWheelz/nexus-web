@@ -41,8 +41,10 @@ export function presentBrowseCandidate(
   if (candidate.kind === "Podcast" && podcast === undefined) throw new Error("podcast browse row requires current action facts");
   const preview = candidate.kind === "Podcast" ? local === null : resolution.kind === "Preview";
   return {
+    presentation: "Index",
     id,
     kind: candidate.kind === "Podcast" ? "podcast" : "search_result",
+    ...(candidate.kind === "Podcast" ? { podcastMetadata: { kind: "DiscoveryPodcast" as const, candidate } } : {}),
     ...(podcast === undefined ? {} : { resourceActions: { kind: "Podcast" as const, subject: podcast } }),
     ...(candidate.kind !== "Podcast" && preview ? {
       resourceActions: {
@@ -54,7 +56,6 @@ export function presentBrowseCandidate(
             : candidate.kind === "Video" ? "video" as const : "web_article" as const,
           title: candidate.title,
           contributors: candidate.contributors,
-          publication_date: candidate.published_at,
         },
         knownDescriptor: null,
       },
@@ -70,7 +71,7 @@ export function presentBrowseCandidate(
       candidate.kind === "Podcast"
         ? candidate.contributors
         : selectMediaAuthors(candidate.contributors),
-    publicationDate: candidate.published_at,
+    publicationDate: null,
     context: {
       kind: "Text",
       text: preview ? source : `${source} · In Nexus`,
@@ -87,6 +88,7 @@ export function presentPreviewEpisode(
   episode: PreviewEpisode,
 ): CollectionRowView {
   return {
+    presentation: "Index",
     id: `PodcastIndex:episode:${episode.target}`,
     kind: "search_result",
     resourceActions: {
@@ -97,7 +99,6 @@ export function presentPreviewEpisode(
         media_kind: "podcast_episode",
         title: episode.title,
         contributors: episode.contributors,
-        publication_date: episode.published_at,
       },
       knownDescriptor: null,
     },
@@ -108,7 +109,7 @@ export function presentPreviewEpisode(
     },
     title: { text: episode.title },
     contributors: selectMediaAuthors(episode.contributors),
-    publicationDate: episode.published_at,
+    publicationDate: null,
     context: {
       kind: "Text",
       text: `Podcast Index · ${episode.kind_facts.podcast_title}`,

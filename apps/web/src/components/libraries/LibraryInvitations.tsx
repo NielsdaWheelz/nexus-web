@@ -18,6 +18,8 @@ import {
   type ViewerInvitation,
 } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
+import { installedApp, remoteReady } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryInvitations.module.css";
@@ -28,6 +30,7 @@ export default function LibraryInvitations({ returnFocus }: {
   readonly returnFocus: () => HTMLElement | null;
 }) {
   const headingId = useId();
+  const admission = useRemoteAdmission();
   const fail = useThrowLater();
   const [answered, setAnswered] = useState(0);
   const list = useServerList<ViewerInvitation>({
@@ -47,6 +50,7 @@ export default function LibraryInvitations({ returnFocus }: {
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
 
   const answer = async (id: string, accept: boolean) => {
+    if (installedApp && !remoteReady()) return;
     setBusy(id);
     try {
       await respondToInvitation(id, accept);
@@ -60,6 +64,10 @@ export default function LibraryInvitations({ returnFocus }: {
       setBusy(null);
     }
   };
+
+  if (installedApp && admission !== "Ready") return <FeedbackNotice announcement="Polite" content={{
+    tone: "Neutral", title: "library invitations require a connection",
+  }} />;
 
   const failure =
     list.failure && list.failure.op !== "More" &&

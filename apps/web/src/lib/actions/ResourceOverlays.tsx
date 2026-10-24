@@ -1,10 +1,13 @@
 "use client";
 
 import PodcastAcquisitionDialog from "@/components/podcasts/PodcastAcquisitionDialog";
-import PodcastLibrariesOverlay from "@/components/podcasts/PodcastLibrariesOverlay";
 import PodcastStopDialog from "@/components/podcasts/PodcastStopDialog";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
-import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
+import ResourceMetadataOverlay from "@/components/resources/ResourceMetadataOverlay";
+import CollectionConsumptionDialog from "@/components/collections/CollectionConsumptionDialog";
+import CollectionLecternDialog from "@/components/collections/CollectionLecternDialog";
+import PodcastLibrariesDialog from "@/components/podcasts/PodcastLibrariesDialog";
+import PodcastTranscriptDialog from "@/components/podcasts/PodcastTranscriptDialog";
 import PodcastSettingsOverlay from "@/components/podcasts/PodcastSettingsOverlay";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { Overlay } from "@/lib/actions/ResourceActionsProvider";
@@ -35,10 +38,10 @@ export function ResourceOverlays({
       routeKey="resource-action-overlays"
     >
       {overlay?.kind === "Metadata" ? (
-        <MediaInfoOverlay
+        <ResourceMetadataOverlay
           key={overlay.key}
           open={overlay.open}
-          mediaId={overlay.mediaId}
+          subject={overlay.subject}
           returnFocusTo={() =>
             overlay.returnFocusTo?.isConnected
               ? overlay.returnFocusTo
@@ -48,6 +51,10 @@ export function ResourceOverlays({
           onClose={close}
         />
       ) : null}
+      {overlay?.kind === "CollectionConsumption" ? <CollectionConsumptionDialog key={overlay.key} selection={overlay.selection} desiredState={overlay.desiredState} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "CollectionLectern" ? <CollectionLecternDialog key={overlay.key} target={overlay.target} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "PodcastLibraries" ? <PodcastLibrariesDialog key={overlay.key} target={overlay.target} title={overlay.title} successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "TranscribePodcastEpisodes" ? <PodcastTranscriptDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} state={overlay.state} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "LibrarySettings" ? (
         <LibrarySettingsDialog
           key={overlay.key}
@@ -62,7 +69,6 @@ export function ResourceOverlays({
           onClose={close}
         />
       ) : null}
-      {overlay?.kind === "PodcastLibraries" ? <PodcastLibrariesOverlay key={overlay.key} target={overlay.target} title={overlay.title} anchor={overlay.anchor} returnFocusFallback={overlay.focusFallback} successFocus={overlay.successFocus} onClose={close} /> : null}
       {overlay?.kind === "SubscribePodcast" ? <PodcastAcquisitionDialog key={overlay.key} mode="follow" target={overlay.target} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "ImportPodcastEpisodes" ? <PodcastAcquisitionDialog key={overlay.key} mode="current_episodes" target={overlay.target} title={overlay.title} libraryId={null} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "UnsubscribePodcast" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={overlay.libraryId} episodes="keep" successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}

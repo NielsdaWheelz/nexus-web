@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw, Search, Share2 } from "lucide-react";
+import { RotateCcw, Search, Share2, Download } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -28,6 +28,9 @@ import Companion, {
   type CompanionPresentation,
 } from "@/components/workspace/Companion";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { installedApp } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
 import {
   useMobileChrome,
@@ -300,6 +303,8 @@ function PaneView({
   }, [isActive, platform]);
 
   // ---- refresh, header, actions ------------------------------------------
+  const catalog = useCatalogState();
+  const admission = useRemoteAdmission();
   const pull =
     isActive &&
     isMobile &&
@@ -313,8 +318,8 @@ function PaneView({
   });
   const header = resolvePaneHeaderModel({
     route: route.header,
-    title: body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
-      : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label,
+    title: body?.displayTitle ?? (body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
+      : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label),
     publication: body?.header,
   });
   const inspector = state.companion
@@ -363,7 +368,14 @@ function PaneView({
     });
   }
   if (refresh.command) paneActions.push(refresh.command);
-  const share = resolvePaneRouteShareIdentity(route, label);
+  if (installedApp) paneActions.push({
+    kind: "command", id: "Catalog.Save", label: "save catalog for offline",
+    icon: <Download size={16} aria-hidden="true" />,
+    disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
+    disabledReason: admission !== "Ready" ? "requires a connection" : catalog.accepting || catalog.status?.refreshing ? "updating catalog…" : undefined,
+    onSelect: () => { void catalog.refresh(); },
+  });
+  const share = resolvePaneRouteShareIdentity(route, header.title);
   if (share && !body?.resourceRef) {
     paneActions.push({
       kind: "command",
@@ -384,6 +396,7 @@ function PaneView({
       header={header}
       identityId={identityId}
       resourceActions={body?.resourceActions}
+      podcastMetadata={body?.podcastMetadata}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
       paneActions={paneActions}

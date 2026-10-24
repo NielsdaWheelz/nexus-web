@@ -6,6 +6,9 @@ import { useCallback, useId, useMemo } from "react";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogChats } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
@@ -84,9 +87,11 @@ export default function ConversationsPaneBody() {
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
   const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
+  const catalog = useCatalogRead(value => catalogChats(value, new URLSearchParams(viewQuery)));
   const list = useServerList<ConversationListItem>({
     key: invalid ? null : `/conversations?${viewQuery}`,
     stale: useChangeStamp("Chats"),
+    catalog,
     pageSize: 100,
     active: usePaneIsActive(),
     visit: VISIT,
@@ -207,7 +212,7 @@ export default function ConversationsPaneBody() {
   const failed = list.failure?.op === "More" ? null : list.failure?.error;
   const failure = failed ? (
     <FeedbackNotice
-      content={{
+      content={catalogErrorFeedback(failed) ?? {
         tone: "Danger",
         title: "Chats couldn’t be loaded.",
         requestId: failed.requestId,

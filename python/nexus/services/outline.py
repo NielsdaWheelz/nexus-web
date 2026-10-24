@@ -18,7 +18,6 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import assert_never, cast
 from uuid import UUID
@@ -66,19 +65,6 @@ from nexus.services.resource_items.items import resource_items_out
 from nexus.services.suggestion_changes import record_input_change
 
 _CURSOR = TypeAdapter(tuple[UUID, str, int, str | None, datetime, UUID])
-
-
-@dataclass(slots=True)
-class TreeNote:
-    block: NoteBlock
-    order_key: str
-    children: list[TreeNote] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class PageNoteTree:
-    page: Page
-    roots: list[TreeNote]
 
 
 def read(
@@ -649,29 +635,6 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
         items=[],
         next_cursor=None,
     )
-
-
-def page_note_tree(db: Session, *, viewer_id: UUID, page_id: UUID) -> PageNoteTree:
-    """The page's notes depth-first in outline order, each note once (dossier input)."""
-    page = db.get(Page, page_id)
-    if page is None or page.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
-    seen: set[UUID] = set()
-
-    def children(endpoint: ResourceRef) -> list[TreeNote]:
-        out: list[TreeNote] = []
-        for edge, order_key in order.ordered(db, viewer_id, endpoint):
-            other = _other(edge, endpoint)
-            if edge.origin != "user" or other.scheme != "note_block":
-                continue
-            block = db.get(NoteBlock, other.id)
-            if block is None or block.user_id != viewer_id or block.id in seen:
-                continue
-            seen.add(block.id)
-            out.append(TreeNote(block=block, order_key=order_key or "", children=children(other)))
-        return out
-
-    return PageNoteTree(page=page, roots=children(notes.page_ref(page_id)))
 
 
 def _incident(

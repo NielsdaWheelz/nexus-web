@@ -31,7 +31,6 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     load_contributor_credits_for_podcasts,
 )
-from nexus.services.dossier.subjects import head_visible_sql
 from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.text import ECMASCRIPT_WHITESPACE
 
@@ -50,22 +49,6 @@ def read_presentations(
             handles.add(locator.handle)
         else:
             dates.add(locator.local_date)
-
-    # A head names its subject. Add visible subjects to the same narrow reads,
-    # rather than hydrating the head or issuing one resolver request per artifact.
-    artifact_subjects: dict[UUID, tuple[str, UUID]] = {}
-    if ids["artifact"]:
-        rows = db.execute(
-            text(f"""
-                SELECT a.id, a.subject_scheme, a.subject_id
-                FROM artifacts a
-                WHERE a.id = ANY(:ids) AND {head_visible_sql("a")}
-            """),
-            {"ids": list(ids["artifact"]), "viewer_id": viewer_id},
-        )
-        for row in rows:
-            artifact_subjects[row.id] = (row.subject_scheme, row.subject_id)
-            ids[row.subject_scheme].add(row.subject_id)
 
     daily_bindings: dict[date, UUID] = {}
     if dates:
@@ -226,26 +209,6 @@ def read_presentations(
             ref = f"contributor:{row.id}"
             author_refs[row.handle] = ref
             facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=row.display_name)
-
-    idea_titles: dict[UUID, str] = {}
-    if ids["idea"]:
-        rows = db.execute(
-            text("""
-                SELECT id, display_title FROM artifact_idea_subjects
-                WHERE id = ANY(:ids) AND user_id = :viewer_id
-            """),
-            {"ids": list(ids["idea"]), "viewer_id": viewer_id},
-        )
-        idea_titles = {row.id: row.display_title for row in rows}
-
-    for artifact_id, (scheme, subject_id) in artifact_subjects.items():
-        # justify-defect: the head's subject gate proves it exists and is visible
-        # in this snapshot; a missing fact here is a defect, not unavailability.
-        title = (
-            idea_titles[subject_id] if scheme == "idea" else facts[f"{scheme}:{subject_id}"].title
-        )
-        ref = f"artifact:{artifact_id}"
-        facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=title)
 
     items = []
     for locator in request.locators:

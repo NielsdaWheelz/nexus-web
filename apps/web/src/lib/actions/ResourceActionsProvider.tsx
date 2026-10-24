@@ -17,6 +17,9 @@ import {
 } from "@/components/feedback/Feedback";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import { useWorkGuard } from "@/lib/unsavedWork";
+import type { MetadataSubject } from "./subjects";
+import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/api";
+import type { EpisodeState } from "@/lib/podcasts/api";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useMediaContinuationOwner } from "@/lib/actions/mediaContinuation";
@@ -54,6 +57,8 @@ import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
 import { QueueCommandError } from "@/lib/player/queue";
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
+import { installedApp, remoteReady } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
 import {
@@ -65,10 +70,13 @@ import {
 export type Overlay =
   | {
       readonly kind: "Metadata";
-      readonly mediaId: string;
+      readonly subject: MetadataSubject;
       readonly returnFocusTo: HTMLElement | null;
-      readonly fallback: () => HTMLElement | null;
+      readonly fallback: ReturnFocusTarget;
     }
+  | { readonly kind: "CollectionConsumption"; readonly selection: CollectionSelection; readonly desiredState: "finished" | "unread"; readonly title: string }
+  | { readonly kind: "CollectionLectern"; readonly target: CollectionTarget; readonly title: string }
+  | { readonly kind: "TranscribePodcastEpisodes"; readonly podcastId: string; readonly title: string; readonly state: EpisodeState }
   | { readonly kind: "LibrarySettings"; readonly libraryId: string }
   | { readonly kind: "PodcastSettings"; readonly podcastId: string }
   | { readonly kind: "PodcastLibraries"; readonly target: PodcastTarget; readonly title: string; readonly successFocus?: ReturnFocusTarget }
@@ -117,11 +125,26 @@ export interface ActionContext {
   readonly overlays: { readonly open: (overlay: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => void };
 }
 
+/** Server-only commands are fenced at invocation, including after confirmation.
+ * Player/queue/download and authored journal operations retain their own policies. */
+const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
+  "Metadata", "MarkCollectionFinished", "MarkCollectionUnread", "AddUnfinishedToLectern", "TranscribePodcastEpisodes", "LeaveLibrary", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
+  "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "ImportPodcastEpisodes", "RemovePodcastEpisodes",
+  "RefreshPodcast", "Chat", "Share", "DownloadOriginal",
+  "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
+  "ReviewMetadataResult", "LibrarySettings", "PodcastSettings", "RemoveUpload",
+  "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
+]);
+export function resourceActionRequiresRemote(id: string, tracked = true): boolean {
+  return REMOTE_ACTIONS.has(id.startsWith("View.") ? id.split(".")[1] : id) || id === "Transcript" && tracked;
+}
+
 interface Runtime {
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
   readonly busy: BusyKeys;
   readonly defect: { error: unknown } | null;
+  readonly overlayPresentation: ReactNode;
 }
 
 interface BusyKeys {
@@ -138,11 +161,12 @@ export function useActionRuntime(): Runtime {
   return runtime;
 }
 
-/** Render beneath workspace containment so account command recovery stays mounted. */
-export function ResourceActionDefect() {
-  const { defect } = useActionRuntime();
-  if (defect !== null) throw defect.error;
-  return null;
+/** Render action overlays below workspace containment while retained commands survive. */
+export function ResourceActionPresentation() {
+  const { ctx, defect, overlayPresentation } = useActionRuntime();
+  const failure = defect ?? ctx.lectern.defect;
+  if (failure !== null) throw failure.error;
+  return overlayPresentation;
 }
 
 /** The tracked verbs of `ref` now running: a reopened menu shows them busy. */
@@ -208,14 +232,16 @@ export default function ResourceActionsProvider({
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const offlineSnapshot = useOfflineSnapshot();
-  const online = useConnectivity() === "Online";
+  const connectivity = useConnectivity();
+  const admission = useRemoteAdmission();
+  const online = installedApp ? admission === "Ready" : connectivity === "Online";
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
-  const consumption = useConsumptionCommands();
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const consumption = useConsumptionCommands(setDefect);
   const admissions = useMediaAdmissions();
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [confirmation, setConfirmation] = useState<ActionCommand | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
@@ -324,6 +350,10 @@ export default function ResourceActionsProvider({
     (command: ActionCommand) => {
       const signal = session.controller.signal;
       if (signal.aborted) return;
+      if (installedApp && !remoteReady() && resourceActionRequiresRemote(command.id, command.tracked)) {
+        feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", content: { tone: "Neutral", title: "requires a connection" } });
+        return;
+      }
       const key = `${command.ref}|${command.id}`;
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
@@ -361,7 +391,10 @@ export default function ResourceActionsProvider({
     },
     [busy, feedback, session],
   );
-  const runtime = useMemo(() => ({ ctx, run, busy, defect }), [ctx, run, busy, defect]);
+  const runtime = useMemo(() => ({
+    ctx, run, busy, defect,
+    overlayPresentation: <ResourceOverlays overlay={overlay} close={close} />,
+  }), [ctx, run, busy, defect, overlay, close]);
 
   return (
     <RuntimeContext.Provider value={runtime}>
@@ -382,10 +415,6 @@ export default function ResourceActionsProvider({
       {podcastEpisodes.feedback}
       {podcasts.feedback}
       {podcastSettings.feedback}
-      <ResourceOverlays
-        overlay={overlay}
-        close={close}
-      />
     </RuntimeContext.Provider>
   );
 }

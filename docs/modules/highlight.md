@@ -229,22 +229,6 @@ existing-chat request belongs to the account and conversation. hiding the reader
 keeps authored drafts and pending commands. a retired visit cannot restore its
 presentation through a late callback.
 
-## Learn
-
-**Learn** is Highlight-first. A reader selection is created or reused through
-the existing Highlight owner; after that succeeds, the reader pane posts the
-durable `highlight:<id>` ref to `POST /artifacts/dossiers/learn`. Popover state
-ends normally. Global feedback owns pending/failure state, and success adopts
-the standalone Artifact pane.
-
-The Artifact subsystem, not Highlight, canonicalizes the selected text to one
-user-owned Idea and records the Highlight as a generation seed. Learning the
-same phrase twice reaches the same Idea, so the resolution row, the seed pair
-and the head key carry the replay; re-Learn is the recovery path. Highlight
-deletion explicitly removes Idea resolution, seed, and any leftover Learn rows
-before the Highlight row. Learn creates no Resource Graph Link and Highlight
-still publishes no Inspector.
-
 ## Reader Presentation
 
 Marks are css custom highlights over the untouched reader dom (pdf: overlay
@@ -278,7 +262,7 @@ mobile uses the existing viewport classification for every input device. after
 `highlight`, `note`, `ask` and `more`; ask is absent when quoting is unavailable.
 there is no passive editor, quote preview or keyboard focus. highlight saves
 yellow directly; an equivalent saved highlight shows inactive `highlighted`.
-more owns copy, colour, learn, share and applicable saved-highlight actions without
+more owns copy, colour, share and applicable saved-highlight actions without
 claiming a note draft merely by opening.
 
 note and ask freeze the passage and open the shared composer body in `MobileSheet`,
@@ -381,8 +365,6 @@ resolved through the `highlight:<id>` resource and graph citation path.
   `resource_edges`.
 - Do not make Evidence the owner of highlight CRUD. It is an
   aggregate read and presentation surface.
-- Do not key a learning Dossier by Highlight occurrence or add a second Learn
-  preview surface; the Highlight is provenance for an Idea Artifact.
 - Do not delete a Highlight or its anchors from reindex/refresh code, and do
   not add a DB cascade between highlight-family rows; deletion is always
   explicit and child-first.

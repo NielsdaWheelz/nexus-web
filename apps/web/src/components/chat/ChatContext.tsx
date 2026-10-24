@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -11,7 +11,7 @@ import ResourceList from "@/components/ui/ResourceList";
 import ResourceComposer from "@/components/resources/ResourceComposer";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import Button from "@/components/ui/Button";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
@@ -41,12 +41,12 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   });
   const entries = context.status === "ready" ? context.data.items : [];
   const actionFacts = usePodcastActionFacts({ scope: `Chat.Context:${conversationId}`,
-    targets: entries.flatMap(entry => entry.item.ref.startsWith("podcast:") ? [{ kind: "Canonical" as const, podcast_id: entry.item.ref.slice(8) }] : []),
+    targets: entries.flatMap(entry => entry.item.ref.startsWith("podcast:") && entry.item.preview.body.kind === "named" && !entry.item.missing ? [{ kind: "Canonical" as const, podcast_id: entry.item.ref.slice(8) }] : []),
     refresh: `${refreshKey}:${revision}:${metadata}:${context.status === "ready" ? context.generation : ""}`,
   });
   const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
   const failure = context.status === "loading" ? null : context.error;
-  const podcastFor = (item: Schema<"ContextOut">["items"][number]["item"]): PodcastActionSubject | undefined => item.ref.startsWith("podcast:") ? {
+  const podcastFor = (item: Schema<"ContextOut">["items"][number]["item"]): PodcastActionSubject | undefined => item.ref.startsWith("podcast:") && item.preview.body.kind === "named" && !item.missing ? {
     target: { kind: "Canonical", podcast_id: item.ref.slice(8) }, title: item.label,
     facts: failure !== null
       ? { kind: "Failed", error: failure, retry: context.refetch, retrying: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }
@@ -81,6 +81,10 @@ function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, af
   const submitted = useRef<typeof entry.mutation>(null);
   const refreshRequested = useRef(false);
   const removeButton = useRef<HTMLButtonElement>(null);
+  const more = useRef<HTMLButtonElement>(null);
+  const title = useRef<HTMLAnchorElement>(null);
+  const conditionKey = `chat-context:${conversationId}:${entry.item.ref}:${useId()}`;
+  const returnFocus = () => more.current?.isConnected && more.current.getClientRects().length ? more.current : title.current;
   if (defect) throw defect.error;
   const remove = async () => {
     if (busy || stale) return;
@@ -119,10 +123,14 @@ function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, af
     setStale(false);
     setFailure(null);
   }, [entry.mutation, stale]);
-  return <ResourceIndexRow item={entry.item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
+  useWorkspaceCondition(conditionKey, failure ? {
+    priority: "Write", content: failure, announcement: "Polite", returnFocus,
+    actions: [{ label: stale ? "refresh context" : "retry removal", onClick: stale ? () => { refreshRequested.current = true; onChanged(); } : () => { void remove(); }, busy }],
+  } : null);
+  return <ResourceIndexRow presentation={{ kind: "Index" }} item={entry.item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
+    moreTriggerRef={more} primaryLinkRef={title}
+    attention={failure ? [failure.title, failure.message].filter(Boolean).join(" · ") : undefined}
     primaryControl={entry.mutation ? <Button className={styles.remove} ref={removeButton} aria-disabled={busy || stale}
       aria-label={`remove from future context: ${entry.item.label}`} onClick={() => { void remove(); }}>remove</Button> : undefined}
-    nestedContent={failure ? <FeedbackNotice content={failure} announcement="Polite"
-      actions={[{ label: stale ? "refresh context" : "retry removal", onClick: stale ? () => { refreshRequested.current = true; onChanged(); } : () => { void remove(); }, busy }]} /> : undefined}
   />;
 }

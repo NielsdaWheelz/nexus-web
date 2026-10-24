@@ -31,6 +31,12 @@ preservation to remove every selected placement without recreating holdings.
 other members may leave. nonmembers receive a masked 404. default libraries never
 appear among organizational destinations.
 
+inspection uses `GET /libraries/{id}/metadata`: the native kind, viewer role,
+record timestamps and full visible physical media count. personal consumption and
+[collection lectern actions](collection-actions.md) require reading authority,
+not administration. libraries never nest through these actions. leaving uses the
+existing membership owner and appears in the shared resource menu when eligible.
+
 ## writes and locks
 
 writes acquire viewer serialization when needed, then admission identity, sorted
@@ -80,10 +86,28 @@ owns account-scoped per-library queues, frozen commands and unknown recovery.
 only acknowledged local predecessors may supply dependent revisions. external
 changes require a new choice. closing presentation preserves accepted work.
 
-canonical media/show relations feed search scopes, atlas, dossiers and suggestions.
+canonical media/show relations feed search scopes, atlas and suggestions.
 `library_listing` owns media lenses and paging. `library_members` owns invitations,
 leaving/transfer; passive membership changes acquire nothing. resource grants,
 consumption and suggestions retain their own owners.
+
+## publication presentation and order
+
+index publication means `original_published_date`, displayed as its four-digit
+year with the complete partial calendar value retained in `time`. full metadata
+retains precision, edition dates and complete role-grouped credits. external
+discovery does not assert first publication; its observed instant appears only in
+preview details, labelled `source published` in the viewer's render environment.
+the [index shell](resource-references.md#presentation-contract) owns density.
+
+`published_asc`/`published_desc` order by the complete supported original calendar
+value, nulls last in either direction, then title/id. partial values retain their
+existing deterministic ordering without asserting invented days. feed timestamps
+never substitute. fresh library playback snapshots share this query; durable
+queues keep their recorded order. publication keyset plans name the original-date
+columns, so prior publication-plan cursors are invalid and require a fresh list
+read. public sort names and wire shapes remain unchanged. explicit episode/source
+release views retain release chronology.
 
 ## chooser presentation
 

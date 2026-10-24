@@ -4,108 +4,6 @@
 export const WIRE_REVISION = 15;
 
 export interface paths {
-    "/artifact-builds/{artifact_build_id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Cancel Dossier Build */
-        post: operations["cancel_dossier_build_artifact_builds__artifact_build_id__cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/dossiers/learn": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Learn Dossier */
-        post: operations["learn_dossier_artifacts_dossiers_learn_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/dossiers/{subject_scheme}/{subject_handle}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Dossier */
-        get: operations["get_dossier_artifacts_dossiers__subject_scheme___subject_handle__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/dossiers/{subject_scheme}/{subject_handle}/builds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Dossier Build */
-        post: operations["create_dossier_build_artifacts_dossiers__subject_scheme___subject_handle__builds_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/{artifact_ref}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Dossier By Ref */
-        get: operations["get_dossier_by_ref_artifacts__artifact_ref__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/{artifact_ref}/builds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Regenerate Dossier */
-        post: operations["regenerate_dossier_artifacts__artifact_ref__builds_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/assistant-writes": {
         parameters: {
             query?: never;
@@ -369,6 +267,57 @@ export interface paths {
         put?: never;
         /** Post Activity */
         post: operations["post_activity_consumption_activity_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/consumption/collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Apply Collection Consumption */
+        put: operations["apply_collection_consumption_consumption_collections_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/consumption/collections/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Collection Consumption */
+        post: operations["prepare_collection_consumption_consumption_collections_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/consumption/collections/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Undo Collection Consumption */
+        put: operations["undo_collection_consumption_consumption_collections_undo_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -848,6 +797,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lectern/collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Append Collection Lectern */
+        put: operations["append_collection_lectern_lectern_collections_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lectern/collections/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Collection Lectern */
+        post: operations["prepare_collection_lectern_lectern_collections_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lectern/items/{media_id}": {
         parameters: {
             query?: never;
@@ -1224,6 +1207,23 @@ export interface paths {
         post?: never;
         /** Leave Library */
         delete: operations["leave_library_libraries__library_id__membership_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Library Metadata */
+        get: operations["get_library_metadata_libraries__library_id__metadata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2397,6 +2397,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/offline-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Offline Catalog */
+        get: operations["get_offline_catalog_offline_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/oracle/readings": {
         parameters: {
             query?: never;
@@ -2562,40 +2579,6 @@ export interface paths {
         get: operations["list_podcast_episodes_podcasts__podcast_id__episodes_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/podcasts/{podcast_id}/episodes/consumption": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Set Podcast Episode Consumption */
-        put: operations["set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/podcasts/{podcast_id}/episodes/consumption/prepare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Prepare Podcast Episode Consumption */
-        post: operations["prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2948,26 +2931,6 @@ export interface paths {
         };
         /** Search Preview */
         get: operations["search_preview_search_preview_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/artifact-builds/{artifact_build_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Artifact Build Events
-         * @description The build on each change; ``done`` once it is not Active.
-         */
-        get: operations["stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3660,6 +3623,91 @@ export interface components {
             /** Owner Ref */
             owner_ref: string | null;
         };
+        /** CatalogChatOut */
+        CatalogChatOut: {
+            order: components["schemas"]["UpdatedTitleOrder"];
+            value: components["schemas"]["ConversationListItemOut"];
+        };
+        /** CatalogEpisodeOut */
+        CatalogEpisodeOut: {
+            /**
+             * Episode State
+             * @enum {string}
+             */
+            episode_state: "unplayed" | "in_progress" | "played";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            order: components["schemas"]["EpisodeOrder"];
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            transcript_state: components["schemas"]["TranscriptState"];
+        };
+        /** CatalogLibraryMediaOut */
+        CatalogLibraryMediaOut: {
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+            /** Entry Id */
+            entry_id: string | null;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            order: components["schemas"]["LibraryEntryOrder"];
+        };
+        /** CatalogLibraryOut */
+        CatalogLibraryOut: {
+            order: components["schemas"]["LibraryIndexOrder"];
+            value: components["schemas"]["LibraryOut"];
+        };
+        /** CatalogLibraryShowsOut */
+        CatalogLibraryShowsOut: {
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            value: components["schemas"]["LibraryPodcastsOut"];
+        };
+        /** CatalogMediaOut */
+        CatalogMediaOut: {
+            /** Is Unfiled */
+            is_unfiled: boolean;
+            order: components["schemas"]["MediaOrder"];
+            summary: components["schemas"]["MediaSummaryOut"];
+        };
+        /** CatalogNoteOut */
+        CatalogNoteOut: {
+            order: components["schemas"]["UpdatedTitleOrder"];
+            value: components["schemas"]["NotePageSummaryOut"];
+        };
+        /** CatalogPodcastIndexOut */
+        CatalogPodcastIndexOut: {
+            /** Has New */
+            has_new: boolean;
+            /** Not In Library */
+            not_in_library: boolean;
+            order: components["schemas"]["PodcastIndexOrder"];
+        };
+        /** CatalogShowOut */
+        CatalogShowOut: {
+            detail: components["schemas"]["PodcastDetailOut"];
+            index: components["schemas"]["CatalogPodcastIndexOut"] | null;
+        };
         /** ChapterOut */
         ChapterOut: {
             /** End Ms */
@@ -3908,6 +3956,67 @@ export interface components {
              */
             route: "CodexPersonal";
         };
+        /** CollectionConsumptionOut */
+        CollectionConsumptionOut: {
+            changed_count: components["schemas"]["_Count"];
+            matched_count: components["schemas"]["_Count"];
+            undo: components["schemas"]["CollectionConsumptionUndoReceipt"] | null;
+        };
+        /** CollectionConsumptionPrepareRequest */
+        CollectionConsumptionPrepareRequest: {
+            selection: components["schemas"]["CollectionSelection"];
+        };
+        /** CollectionConsumptionPreparedOut */
+        CollectionConsumptionPreparedOut: {
+            /** Items */
+            items: components["schemas"]["StateItem"][];
+            /** Label */
+            label: string;
+        };
+        /** CollectionConsumptionRequest */
+        CollectionConsumptionRequest: {
+            desired_state: components["schemas"]["_Status"];
+            /** Items */
+            items: components["schemas"]["StateItem"][];
+            target: components["schemas"]["CollectionTarget"];
+        };
+        /** CollectionConsumptionUndoOut */
+        CollectionConsumptionUndoOut: {
+            restored_count: components["schemas"]["_Count"];
+        };
+        /** CollectionConsumptionUndoReceipt */
+        CollectionConsumptionUndoReceipt: {
+            applied_status: components["schemas"]["_Status"];
+            /** Items */
+            items: components["schemas"]["UndoItem"][];
+        };
+        /** CollectionLecternOut */
+        CollectionLecternOut: {
+            added_count: components["schemas"]["_Count"];
+            matched_count: components["schemas"]["_Count"];
+            order_revision: components["schemas"]["OrderRevision"];
+        };
+        /** CollectionLecternPrepareRequest */
+        CollectionLecternPrepareRequest: {
+            target: components["schemas"]["CollectionTarget"];
+        };
+        /** CollectionLecternPreparedOut */
+        CollectionLecternPreparedOut: {
+            already_present_count: components["schemas"]["_Count"];
+            available_slots: components["schemas"]["_Count"];
+            expected_order_revision: components["schemas"]["OrderRevision"];
+            /** Label */
+            label: string;
+            /** Media Ids */
+            media_ids: string[];
+        };
+        /** CollectionLecternRequest */
+        CollectionLecternRequest: {
+            expected_order_revision: components["schemas"]["OrderRevision"];
+            /** Media Ids */
+            media_ids: string[];
+            target: components["schemas"]["CollectionTarget"];
+        };
         /** CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Items */
@@ -3971,6 +4080,8 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        CollectionSelection: components["schemas"]["PodcastCollectionSelection"] | components["schemas"]["LibraryCollectionTarget"];
+        CollectionTarget: components["schemas"]["PodcastCollectionTarget"] | components["schemas"]["LibraryCollectionTarget"];
         /** CompletionStatsSectionOut */
         CompletionStatsSectionOut: {
             /** Applied Filters */
@@ -4035,9 +4146,9 @@ export interface components {
             /** Origins */
             origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant")[] | null;
             /** Source Schemes */
-            source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
+            source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Target Schemes */
-            target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
+            target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
         };
         /**
          * ConnectionOut
@@ -4175,6 +4286,14 @@ export interface components {
              * @enum {string}
              */
             state: "Unread" | "InProgress" | "Finished";
+        };
+        /**
+         * ConsumptionOverrideOut
+         * @description The register revision acknowledged by a single state write or exact finish inverse.
+         */
+        ConsumptionOverrideOut: {
+            /** Override Revision */
+            override_revision: number;
         };
         /** ConsumptionStatsOut */
         ConsumptionStatsOut: {
@@ -4557,11 +4676,6 @@ export interface components {
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
         };
-        /** Data[Annotated[Union[LearnDossierOpenedOut, LearnDossierBuildAcceptedOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Data */
-            data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
-        };
         /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderTranscriptDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTextDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -4609,6 +4723,26 @@ export interface components {
         Data_ChatRunResponse_: {
             data: components["schemas"]["ChatRunResponse"];
         };
+        /** Data[CollectionConsumptionOut] */
+        Data_CollectionConsumptionOut_: {
+            data: components["schemas"]["CollectionConsumptionOut"];
+        };
+        /** Data[CollectionConsumptionPreparedOut] */
+        Data_CollectionConsumptionPreparedOut_: {
+            data: components["schemas"]["CollectionConsumptionPreparedOut"];
+        };
+        /** Data[CollectionConsumptionUndoOut] */
+        Data_CollectionConsumptionUndoOut_: {
+            data: components["schemas"]["CollectionConsumptionUndoOut"];
+        };
+        /** Data[CollectionLecternOut] */
+        Data_CollectionLecternOut_: {
+            data: components["schemas"]["CollectionLecternOut"];
+        };
+        /** Data[CollectionLecternPreparedOut] */
+        Data_CollectionLecternPreparedOut_: {
+            data: components["schemas"]["CollectionLecternPreparedOut"];
+        };
         /** Data[CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
             data: components["schemas"]["CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -4653,6 +4787,10 @@ export interface components {
         Data_ConnectionPageOut_: {
             data: components["schemas"]["ConnectionPageOut"];
         };
+        /** Data[ConsumptionOverrideOut] */
+        Data_ConsumptionOverrideOut_: {
+            data: components["schemas"]["ConsumptionOverrideOut"];
+        };
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
             data: components["schemas"]["ConsumptionStatsOut"];
@@ -4684,14 +4822,6 @@ export interface components {
         /** Data[DailyPageOut] */
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
-        };
-        /** Data[DossierBuildCreatedOut] */
-        Data_DossierBuildCreatedOut_: {
-            data: components["schemas"]["DossierBuildCreatedOut"];
-        };
-        /** Data[DossierHeadOut] */
-        Data_DossierHeadOut_: {
-            data: components["schemas"]["DossierHeadOut"];
         };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
@@ -4757,6 +4887,10 @@ export interface components {
         Data_LibraryInvitationOut_: {
             data: components["schemas"]["LibraryInvitationOut"];
         };
+        /** Data[LibraryMetadataOut] */
+        Data_LibraryMetadataOut_: {
+            data: components["schemas"]["LibraryMetadataOut"];
+        };
         /** Data[LibraryOrderOut] */
         Data_LibraryOrderOut_: {
             data: components["schemas"]["LibraryOrderOut"];
@@ -4813,6 +4947,10 @@ export interface components {
         Data_NoteBlockOut_: {
             data: components["schemas"]["NoteBlockOut"];
         };
+        /** Data[OfflineCatalogOut] */
+        Data_OfflineCatalogOut_: {
+            data: components["schemas"]["OfflineCatalogOut"];
+        };
         /** Data[OracleReadingCreatedOut] */
         Data_OracleReadingCreatedOut_: {
             data: components["schemas"]["OracleReadingCreatedOut"];
@@ -4844,14 +4982,6 @@ export interface components {
         /** Data[PodcastDetailOut] */
         Data_PodcastDetailOut_: {
             data: components["schemas"]["PodcastDetailOut"];
-        };
-        /** Data[PodcastEpisodeConsumptionOut] */
-        Data_PodcastEpisodeConsumptionOut_: {
-            data: components["schemas"]["PodcastEpisodeConsumptionOut"];
-        };
-        /** Data[PodcastEpisodeConsumptionPreparedOut] */
-        Data_PodcastEpisodeConsumptionPreparedOut_: {
-            data: components["schemas"]["PodcastEpisodeConsumptionPreparedOut"];
         };
         /** Data[PodcastEpisodeFromDiscoveryOut] */
         Data_PodcastEpisodeFromDiscoveryOut_: {
@@ -5068,7 +5198,7 @@ export interface components {
             label: string;
         };
         /** @enum {string} */
-        DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "dossiers" | "saved_passages";
+        DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "saved_passages";
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
             /**
@@ -5223,94 +5353,6 @@ export interface components {
             /** Value */
             value: string | null;
         };
-        /** DossierBuildCreatedOut */
-        DossierBuildCreatedOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /** Build Handle */
-            build_handle: string;
-            /** Created */
-            created: boolean;
-        };
-        /**
-         * DossierBuildOut
-         * @description One build; also the SSE snapshot. ``phase`` is set only while Active.
-         */
-        DossierBuildOut: {
-            failure_code: components["schemas"]["DossierFailureCode"] | null;
-            /** Handle */
-            handle: string;
-            /** Instruction */
-            instruction: string | null;
-            phase: components["schemas"]["DurableExecutionPhase"] | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "Active" | "Succeeded" | "Failed" | "Cancelled";
-        };
-        /** DossierCoverageOut */
-        DossierCoverageOut: {
-            /** Included */
-            included: number;
-            /** Omitted */
-            omitted: number;
-            /**
-             * Unit
-             * @enum {string}
-             */
-            unit: "claim" | "media" | "episode" | "work" | "source";
-        };
-        /**
-         * DossierFailureCode
-         * @enum {string}
-         */
-        DossierFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
-        /** DossierGenerateRequest */
-        DossierGenerateRequest: {
-            /** Instruction */
-            instruction: string | null;
-        };
-        /**
-         * DossierHeadOut
-         * @description ``artifact_ref`` null: never generated (a head read never inserts a head).
-         */
-        DossierHeadOut: {
-            active_build: components["schemas"]["DossierBuildOut"] | null;
-            /** Artifact Ref */
-            artifact_ref: string | null;
-            last_failure: components["schemas"]["DossierBuildOut"] | null;
-            media_abstract: components["schemas"]["MediaAbstractOut"] | null;
-            revision: components["schemas"]["DossierRevisionOut"] | null;
-            subject_activation: components["schemas"]["ResourceActivationOut"] | null;
-            /** Title */
-            title: string;
-        };
-        /** DossierRevisionOut */
-        DossierRevisionOut: {
-            /** By Viewer */
-            by_viewer: boolean;
-            /** Citations */
-            citations: components["schemas"]["CitationOut"][];
-            /** Content Html */
-            content_html: string;
-            coverage: components["schemas"]["DossierCoverageOut"];
-            /**
-             * Generated At
-             * Format: date-time
-             */
-            generated_at: string;
-            /** Instruction */
-            instruction: string | null;
-            /** Model */
-            model: string | null;
-            /** Revision Ref */
-            revision_ref: string;
-            /** Stale */
-            stale: boolean;
-            /** Total Tokens */
-            total_tokens: number | null;
-        };
         /**
          * DownloadAction
          * @description What android needs to keep this media offline: an episode's audio or a reading copy.
@@ -5388,6 +5430,17 @@ export interface components {
              */
             id: string;
             initial_note: components["schemas"]["InitialHighlightNote"] | null;
+        };
+        /** EpisodeOrder */
+        EpisodeOrder: {
+            /** Duration Asc */
+            duration_asc: number;
+            /** Duration Desc */
+            duration_desc: number;
+            /** Newest */
+            newest: number;
+            /** Oldest */
+            oldest: number;
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -6280,33 +6333,6 @@ export interface components {
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
         };
-        /** LearnDossierBuildAcceptedOut */
-        LearnDossierBuildAcceptedOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /** Build Handle */
-            build_handle: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "BuildAccepted";
-        };
-        /** LearnDossierOpenedOut */
-        LearnDossierOpenedOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Opened";
-        };
-        /** LearnDossierRequest */
-        LearnDossierRequest: {
-            /** Highlight Ref */
-            highlight_ref: string;
-        };
         /** LecternItemOut */
         LecternItemOut: {
             /** Activation */
@@ -6365,6 +6391,19 @@ export interface components {
         LecternWriteOut: {
             order_revision: components["schemas"]["OrderRevision"];
         };
+        /** LibraryCollectionTarget */
+        LibraryCollectionTarget: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+        };
         /** LibraryDestinationOut */
         LibraryDestinationOut: {
             /**
@@ -6392,6 +6431,26 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
             order_revision: components["schemas"]["OrderRevision"] | null;
+        };
+        /** LibraryEntryOrder */
+        LibraryEntryOrder: {
+            /** Added Asc */
+            added_asc: number;
+            /** Added Desc */
+            added_desc: number;
+            /** Default */
+            default: number;
+        };
+        /** LibraryIndexOrder */
+        LibraryIndexOrder: {
+            /** Created Desc */
+            created_desc: number;
+            /** Default */
+            default: number;
+            /** Name Asc */
+            name_asc: number;
+            /** Name Desc */
+            name_desc: number;
         };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
@@ -6469,6 +6528,27 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /** LibraryMetadataOut */
+        LibraryMetadataOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "personal" | "named" | "system";
+            library: components["schemas"]["LibraryOut"];
+            /** Media Count */
+            media_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** LibraryOrderOut */
         LibraryOrderOut: {
@@ -6908,16 +6988,6 @@ export interface components {
             /** Tool Position */
             tool_position: number;
         };
-        /** MediaAbstractOut */
-        MediaAbstractOut: {
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "Building" | "Ready" | "Stale" | "Failed";
-            /** Summary Md */
-            summary_md: string | null;
-        };
         /** MediaActivityBreakdownOut */
         MediaActivityBreakdownOut: {
             /** Other Active Ms */
@@ -6993,6 +7063,25 @@ export interface components {
          * @enum {string}
          */
         MediaKind: "web_article" | "epub" | "pdf" | "video" | "podcast_episode";
+        /** MediaOrder */
+        MediaOrder: {
+            /** Creator Asc */
+            creator_asc: number;
+            /** Creator Desc */
+            creator_desc: number;
+            /** Published Asc */
+            published_asc: number;
+            /** Published Desc */
+            published_desc: number;
+            /** Remaining Asc */
+            remaining_asc: number;
+            /** Remaining Desc */
+            remaining_desc: number;
+            /** Title Asc */
+            title_asc: number;
+            /** Title Desc */
+            title_desc: number;
+        };
         /**
          * MediaOut
          * @description One media as this viewer sees it: bibliography, processing, readability and the
@@ -7778,7 +7867,7 @@ export interface components {
         };
         /**
          * NoteContentOut
-         * @description ``places`` counts cross-owner retaining graph facts and saved dossier heads.
+         * @description ``places`` counts cross-owner retaining graph facts.
          */
         NoteContentOut: {
             /** Body Pm Json */
@@ -7813,6 +7902,48 @@ export interface components {
              */
             updated_at: string;
         };
+        /** OfflineCatalogOut */
+        OfflineCatalogOut: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /** Chats */
+            chats: components["schemas"]["CatalogChatOut"][];
+            /** Episodes */
+            episodes: components["schemas"]["CatalogEpisodeOut"][];
+            /**
+             * Format Version
+             * @constant
+             */
+            format_version: 1;
+            lectern: components["schemas"]["LecternOut"];
+            /** Libraries */
+            libraries: components["schemas"]["CatalogLibraryOut"][];
+            /** Library Media */
+            library_media: components["schemas"]["CatalogLibraryMediaOut"][];
+            /** Library Shows */
+            library_shows: components["schemas"]["CatalogLibraryShowsOut"][];
+            /** Media */
+            media: components["schemas"]["CatalogMediaOut"][];
+            /** Notes */
+            notes: components["schemas"]["CatalogNoteOut"][];
+            /** Shows */
+            shows: components["schemas"]["CatalogShowOut"][];
+            /**
+             * Snapshot Id
+             * Format: uuid
+             */
+            snapshot_id: string;
+            /** Wire Revision */
+            wire_revision: number;
+        };
         /** OpenPaneActivation */
         OpenPaneActivation: {
             /**
@@ -7820,6 +7951,18 @@ export interface components {
              * @enum {string}
              */
             kind: "OpenPane";
+        };
+        /** OpenPodcastFeedAction */
+        OpenPodcastFeedAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OpenPodcastFeed";
         };
         /** OpenSourceAction */
         OpenSourceAction: {
@@ -8467,6 +8610,37 @@ export interface components {
              */
             podcast_id: string;
         };
+        /** PodcastCollectionSelection */
+        PodcastCollectionSelection: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "all" | "unplayed" | "in_progress" | "played";
+        };
+        /** PodcastCollectionTarget */
+        PodcastCollectionTarget: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+        };
         PodcastCommitTarget: components["schemas"]["PodcastDiscoveryCommitTarget"] | components["schemas"]["PodcastCanonicalCommitTarget"];
         /** PodcastContributorWorkItemOut */
         PodcastContributorWorkItemOut: {
@@ -8556,38 +8730,6 @@ export interface components {
             /** Url */
             url: string | null;
         };
-        /** PodcastEpisodeConsumptionItem */
-        PodcastEpisodeConsumptionItem: {
-            /** Expected Override Revision */
-            expected_override_revision: number | null;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
-        /** PodcastEpisodeConsumptionOut */
-        PodcastEpisodeConsumptionOut: {
-            /** Changed Count */
-            changed_count: number;
-            /** Matched Count */
-            matched_count: number;
-        };
-        /** PodcastEpisodeConsumptionPreparedOut */
-        PodcastEpisodeConsumptionPreparedOut: {
-            /** Items */
-            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
-        };
-        /** PodcastEpisodeConsumptionRequest */
-        PodcastEpisodeConsumptionRequest: {
-            /**
-             * Desired State
-             * @enum {string}
-             */
-            desired_state: "played" | "unplayed";
-            /** Items */
-            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
-        };
         /** PodcastEpisodeCountsOut */
         PodcastEpisodeCountsOut: {
             /** Available Count */
@@ -8674,8 +8816,12 @@ export interface components {
         };
         /** PodcastFacts */
         PodcastFacts: {
+            /** Feed Href */
+            feed_href: string;
             /** Podcast Ref */
             podcast_ref: string;
+            /** Website Href */
+            website_href: string | null;
         };
         /** PodcastImportCancelRequest */
         PodcastImportCancelRequest: {
@@ -8756,6 +8902,15 @@ export interface components {
         };
         /** @enum {string} */
         PodcastImportState: "pending" | "running" | "complete" | "failed" | "cancelled";
+        /** PodcastIndexOrder */
+        PodcastIndexOrder: {
+            /** Alpha */
+            alpha: number;
+            /** Recent Episode */
+            recent_episode: number;
+            /** Unplayed Count */
+            unplayed_count: number;
+        };
         /** PodcastLibraryShowOut */
         PodcastLibraryShowOut: {
             /** Destinations */
@@ -8841,7 +8996,7 @@ export interface components {
              * @enum {string}
              */
             kind: "Podcast";
-            kind_facts: components["schemas"]["PodcastPreviewFacts"];
+            kind_facts: components["schemas"]["PodcastFacts"];
             /** Published At */
             published_at: string | null;
             resolution: components["schemas"]["BrowseResolution"];
@@ -8883,15 +9038,6 @@ export interface components {
              * @constant
              */
             source_limit: 1000;
-        };
-        /** PodcastPreviewFacts */
-        PodcastPreviewFacts: {
-            /** Feed Href */
-            feed_href: string;
-            /** Podcast Ref */
-            podcast_ref: string;
-            /** Website Href */
-            website_href: string | null;
         };
         /** PodcastQueueCapture */
         PodcastQueueCapture: {
@@ -10483,7 +10629,7 @@ export interface components {
          */
         ResourceActionsOut: {
             /** Actions */
-            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
+            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["OpenPodcastFeedAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
             activation: components["schemas"]["ResourceActivationOut"];
             /** Label */
             label: string;
@@ -10566,7 +10712,7 @@ export interface components {
             source: components["schemas"]["SourceAttributionOut"] | null;
         };
         /** @enum {string} */
-        ResourceScheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
+        ResourceScheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
         /** ResourceShareSnapshotOut */
         ResourceShareSnapshotOut: {
             /** Authenticated Href */
@@ -11020,7 +11166,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "UnsubscribePodcast";
+            kind: "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -11334,6 +11480,15 @@ export interface components {
             x: number | null;
             /** Y */
             y: number | null;
+        };
+        /** StateItem */
+        StateItem: {
+            expected_override_revision: components["schemas"]["_Revision"] | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
         };
         /** SubscriptionBilling */
         SubscriptionBilling: {
@@ -11819,6 +11974,18 @@ export interface components {
              */
             reason: "source_unavailable" | "location_unavailable";
         };
+        /** UndoItem */
+        UndoItem: {
+            applied_override_revision: components["schemas"]["_Revision"];
+            /** Created Completion Id */
+            created_completion_id: string | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            prior_status: components["schemas"]["_Status"] | null;
+        };
         /** Unlink */
         Unlink: {
             expected: components["schemas"]["UnlinkExpected"] | null;
@@ -11888,6 +12055,17 @@ export interface components {
              * @description Display name (1-100 chars, or null to clear)
              */
             display_name?: string | null;
+        };
+        /** UpdatedTitleOrder */
+        UpdatedTitleOrder: {
+            /** Title Asc */
+            title_asc: number;
+            /** Title Desc */
+            title_desc: number;
+            /** Updated Newest */
+            updated_newest: number;
+            /** Updated Oldest */
+            updated_oldest: number;
         };
         /** UploadAccepted */
         UploadAccepted: {
@@ -12398,7 +12576,7 @@ export interface components {
              * Active Surface Id
              * @enum {string}
              */
-            active_surface_id: "resource-contents" | "resource-members" | "resource-connections" | "resource-forks" | "resource-dossier" | "import-detail";
+            active_surface_id: "resource-contents" | "resource-members" | "resource-connections" | "resource-forks" | "import-detail";
             /**
              * Group Id
              * @enum {string}
@@ -12720,6 +12898,10 @@ export interface components {
             /** Unresolved Parent Count */
             unresolved_parent_count: number;
         };
+        _Count: number;
+        _Revision: number;
+        /** @enum {string} */
+        _Status: "finished" | "unread";
     };
     responses: never;
     parameters: never;
@@ -12729,208 +12911,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    cancel_dossier_build_artifact_builds__artifact_build_id__cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_build_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    learn_dossier_artifacts_dossiers_learn_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LearnDossierRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_dossier_artifacts_dossiers__subject_scheme___subject_handle__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                subject_scheme: string;
-                subject_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierHeadOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_dossier_build_artifacts_dossiers__subject_scheme___subject_handle__builds_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                subject_scheme: string;
-                subject_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DossierGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierBuildCreatedOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_dossier_by_ref_artifacts__artifact_ref__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierHeadOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    regenerate_dossier_artifacts__artifact_ref__builds_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                artifact_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DossierGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_DossierBuildCreatedOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_assistant_writes_assistant_writes_get: {
         parameters: {
             query?: {
@@ -13423,6 +13403,105 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_collection_consumption_consumption_collections_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionConsumptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionConsumptionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_collection_consumption_consumption_collections_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionConsumptionPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionConsumptionPreparedOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_collection_consumption_consumption_collections_undo_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionConsumptionUndoReceipt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionConsumptionUndoOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -14378,6 +14457,72 @@ export interface operations {
             };
         };
     };
+    append_collection_lectern_lectern_collections_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionLecternRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionLecternOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_collection_lectern_lectern_collections_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionLecternPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionLecternPreparedOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     place_on_lectern_lectern_items__media_id__put: {
         parameters: {
             query?: never;
@@ -15192,6 +15337,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_library_metadata_libraries__library_id__metadata_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryMetadataOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -16477,11 +16653,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_ConsumptionOverrideOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -16738,11 +16916,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_ConsumptionOverrideOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -17069,11 +17249,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_ConsumptionOverrideOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -17410,6 +17592,26 @@ export interface operations {
             };
         };
     };
+    get_offline_catalog_offline_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OfflineCatalogOut_"];
+                };
+            };
+        };
+    };
     list_oracle_readings_oracle_readings_get: {
         parameters: {
             query?: never;
@@ -17726,76 +17928,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_CollectionPage_PodcastEpisodeListItemOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PodcastEpisodeConsumptionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PodcastEpisodeSelection"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionPreparedOut_"];
                 };
             };
             /** @description Validation Error */
@@ -18523,37 +18655,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchPreviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_build_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

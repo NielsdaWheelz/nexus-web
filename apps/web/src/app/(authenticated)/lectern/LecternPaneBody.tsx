@@ -24,6 +24,13 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogState } from "@/lib/catalog/provider";
+import { catalogLectern } from "@/lib/catalog/selectors";
+import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
+import type { ServerValue } from "@/lib/api/serverState";
+import type { Lectern } from "@/lib/lectern/api";
+import { remoteReady } from "@/lib/native/admission";
 import { renderOrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
@@ -68,19 +75,30 @@ const SORTS = [
 function failure(error: unknown, title: string): FeedbackContent {
   const content =
     isApiError(error) && !isSameSystemApiDefect(error)
-      ? apiTransportFeedback(error, title)
+      ? catalogErrorFeedback(error) ?? apiTransportFeedback(error, title)
       : null;
   if (content === null) throw error;
   return content;
 }
 
 export default function LecternPaneBody() {
-  const lectern = useLectern();
+  const live = useLectern();
+  const catalog = useCatalogState();
+  const saved = catalog.data === null ? null : catalogLectern(catalog.data);
+  const source: ReadSource = live.status === "ready" || catalog.data === null ? LIVE_SOURCE : {
+    kind: "catalog", snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at,
+  };
+  const lectern: ServerValue<Lectern> = live.status === "ready" ? live : saved === null ?
+    !remoteReady() && !catalog.loading ? { status: "failed", retrying: false, refetch: live.refetch,
+      error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") } : live : {
+    status: "ready", data: saved, source, generation: 0, error: null, refreshing: false, refetch: live.refetch,
+  };
+  const liveShown = lectern.status === "ready" && source.kind === "live";
   const { ensure } = useLecternCommands();
   const order = useLecternOrder();
   const runtime = usePaneRuntime();
   const isActive = usePaneIsActive();
-  const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
+  const suggestions = useSuggestions({ kind: "Lectern" }, isActive && liveShown);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
     const outcome = await refreshSuggestionFeed(signal);
@@ -91,7 +109,7 @@ export default function LecternPaneBody() {
   const router = usePaneRouter();
   const section = useRef<HTMLElement>(null);
   const summaries = useMediaSummaries(
-    lecternItems(lectern).map((item) => item.media_summary),
+    lecternItems(lectern).map((item) => item.media_summary), source,
   );
   const items = lecternItems(lectern).flatMap((item) => {
     const summary = summaries.resolve(item.media_summary);
@@ -124,23 +142,23 @@ export default function LecternPaneBody() {
     },
   });
   const query = filterRows.query.trim();
-  const visible = sort === "" && query === ""
+  const visible = source.kind === "live" && sort === "" && query === ""
     ? projectOrder(shown, (item) => item.media_summary.media_id, order)
     : selectLectern(items, valid ? sort : "", query);
   const capture: PlaybackSource = async selected => {
-    if (!valid || lectern.status !== "ready" || lectern.error !== null || lectern.refreshing || order.state.pending !== null)
+    if (source.kind !== "live" || !remoteReady() || !valid || lectern.status !== "ready" || lectern.error !== null || lectern.refreshing || order.state.pending !== null)
       throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current lectern before starting this queue");
     const media_ids = visible
       .filter(item => item.media_summary.media_kind === "podcast_episode" && item.media_summary.can_play)
       .map(item => item.media_summary.media_id);
     if (!media_ids.includes(selected)) throw new ApiError(409, "E_RESOURCE_CONFLICT", "no playable episodes in this view");
     const sourceSort = (["added_asc", "added_desc", "title_asc", "title_desc"] as const).find(value => value === sort) ?? null;
-    const source: QueueSource = { kind: "Lectern", label: "lectern", query: paneFilterText(query), sort: sourceSort };
-    return { media_ids, source };
+    const queueSource: QueueSource = { kind: "Lectern", label: "lectern", query: paneFilterText(query), sort: sourceSort };
+    return { media_ids, source: queueSource };
   };
-  const ordering = presentOrder({ order,
+  const ordering = source.kind === "live" ? presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
-    complete: lectern.status === "ready" });
+    complete: lectern.status === "ready" }) : undefined;
   const orderingStatus = orderStatus(ordering);
   const change = useCallback(
     (changes: ViewChanges) =>
@@ -156,7 +174,7 @@ export default function LecternPaneBody() {
     ? { kind: "Pending" }
     : { kind: "Count", value: items.length, unit: "item" };
   usePaneChrome({
-    refresh: suggestions.state === null ? { kind: "Resolving" } : {
+    refresh: source.kind === "catalog" ? undefined : suggestions.state === null ? { kind: "Resolving" } : {
       kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
     },
     query: valid
@@ -212,7 +230,7 @@ export default function LecternPaneBody() {
 
   return (
     <PaneSurface
-      state={renderOrderNotice({ order: order.state, active: isActive, paneId: runtime?.paneId ?? null })}
+      state={liveShown ? renderOrderNotice({ order: order.state, active: isActive, paneId: runtime?.paneId ?? null }) : null}
     >
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (
@@ -256,7 +274,7 @@ export default function LecternPaneBody() {
                   id: item.media_summary.media_id,
                 }),
                 selected: false,
-                knownDescriptor: item.activation.kind === "FooterAudio" ? item.activation.descriptor : null,
+                knownDescriptor: source.kind === "live" && item.activation.kind === "FooterAudio" ? item.activation.descriptor : null,
               }),
             )}
             notice={
@@ -288,8 +306,8 @@ export default function LecternPaneBody() {
           </PlaybackSourceContext.Provider>
         ) : null}
       </section>
-      <QuickReadsSection isActive={isActive} />
-      <SuggestionsSection
+      {liveShown ? <QuickReadsSection isActive={isActive} /> : null}
+      {liveShown ? <SuggestionsSection
         destination={{ kind: "Lectern" }}
         suggestions={suggestions}
         returnScope="Lectern.Suggestions"
@@ -304,7 +322,7 @@ export default function LecternPaneBody() {
             ? "Accepted"
             : "Retained"
         }
-      />
+      /> : <FeedbackNotice content={{ tone: "Neutral", title: "suggestions require a connection" }} announcement="None" />}
     </PaneSurface>
   );
 }

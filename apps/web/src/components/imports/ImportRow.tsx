@@ -47,7 +47,6 @@ export default function ImportRow({
   return (
     <ResourceRow
       as="li"
-      wrapped
       selected={selected}
       rootProps={{
         "aria-label": item.title,
@@ -60,12 +59,11 @@ export default function ImportRow({
         onActivate: (triggerElement) => onSelect(item.ref, triggerElement),
       }}
       title={item.title}
-      supporting={<FeedbackStatus
+      content={{ kind: "Details", body: <><FeedbackStatus
         content={{ tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral", title: consequence,
           message: [reason, concurrent].filter(Boolean).join(" · ") || undefined }}
         announcement="None"
-      />}
-      status={
+      />
         <div className={styles.rowContext}>
           {item.matched_event !== null ? (
             <span>{matchLine(item.matched_event, display, now)}</span>
@@ -82,10 +80,9 @@ export default function ImportRow({
             <time dateTime={age.dateTime}>{age.text}</time>
           </span>
         </div>
-      }
-      primaryControl={actions.shortcuts}
-      actions={actions.menu}
-      expanded={actions.feedback}
+        {actions.feedback}
+      </> }}
+      controls={<>{actions.shortcuts}{actions.menu}</>}
     />
   );
 }

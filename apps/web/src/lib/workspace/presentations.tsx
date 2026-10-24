@@ -19,6 +19,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { watchWritingResource, type WritingWatch, type WritingVersions } from "@/lib/api/writingReceive";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { useCatalogState } from "@/lib/catalog/provider";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -149,6 +150,7 @@ class TitleReadBoundary extends Component<{
 export function WorkspacePresentationsProvider(props: { accountId: string; children: ReactNode }) {
   const { state, dailyPageByPaneId, setVisitTitleHint } = useWorkspaceStore();
   const textRevision = useTextTitleRevision();
+  const catalog = useCatalogState().data;
   const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
   const { observation } = useImports();
   const foreground = useRefreshStamp(true, 0);
@@ -265,14 +267,27 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
     if (route.labelMode === "static") return { title: route.defaultLabel, detail: null, status: "Ready" };
-    const kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
+    let kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
     if (!route.titleKey) return { title: `unavailable ${kind}`, detail: "unavailable", status: "Unavailable" };
     const current = retained.has(route.titleKey);
     const canonical = current ? read.facts.get(route.titleKey) : undefined;
+    // Saved titles are display evidence only: never canonical facts, versions or
+    // writer acknowledgements. An authoritative missing result still wins.
+    let savedTitle: string | null = null;
+    if (canonical === undefined && catalog !== null && route.titleLocator?.kind === "resource_ref") {
+      const [scheme, id] = route.titleLocator.ref.split(":");
+      if (scheme === "media") {
+        const summary = catalog.media.get(id)?.summary;
+        if (summary) { savedTitle = summary.title; kind = mediaKindLabel(summary.media_kind); }
+      } else if (scheme === "library") savedTitle = catalog.libraries.get(id)?.value.name ?? null;
+      else if (scheme === "podcast") savedTitle = catalog.shows.get(id)?.detail.podcast.title ?? null;
+      else if (scheme === "page") savedTitle = catalog.notes.get(id)?.title ?? null;
+      else if (scheme === "conversation") savedTitle = catalog.chats.get(id)?.title ?? null;
+    }
     const text = textFor(route, canonical, dailyRefs);
     const live = text && !text.gone && text.unsettled ? text : null;
     const settled = settledTitle(canonical, text);
-    const title = live?.title ?? settled ?? visit.title_hint;
+    const title = live?.title ?? settled ?? savedTitle ?? visit.title_hint;
     const named = title === null ? null : title.trim() ? title : `untitled ${kind}`;
     if (live && live.acknowledged === null) {
       return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
@@ -282,6 +297,7 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
         ? { title: named, detail: live ? "unsaved" : kind, status: live ? "Unsaved" : "Ready" }
         : { title: kind, detail: "open to load title", status: "Unresolved" };
     }
+    if (savedTitle !== null) return { title: named ?? `untitled ${kind}`, detail: kind, status: "Ready" };
     if (status === "Failed") return {
       title: named ?? kind,
       detail: named ? "couldn’t refresh title" : "couldn’t load title",
@@ -300,7 +316,7 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
     };
     if (live) return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
     return { title: named ?? `untitled ${kind}`, detail: canonical ? metadata(canonical, kind) : kind, status: "Ready" };
-  }, [read.facts, retained, dailyRefs, status]);
+  }, [read.facts, retained, dailyRefs, status, catalog]);
   const resourceRefForVisit = useCallback((visit: PaneVisit): string | null => {
     const route = resolvePaneRouteModel(visit.href);
     const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;

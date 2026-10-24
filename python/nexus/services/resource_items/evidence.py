@@ -73,8 +73,6 @@ _WHOLE = frozenset(
         "library",
         "podcast",
         "contributor",
-        "artifact",
-        "artifact_revision",
         "oracle_reading",
         "external_snapshot",
     }
