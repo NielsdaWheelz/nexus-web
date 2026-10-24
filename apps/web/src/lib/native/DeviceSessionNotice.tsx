@@ -8,10 +8,10 @@ import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { useRemoteAdmission } from "./admissionHooks";
 import type { SignInResult } from "./contracts";
 import { sessionCheck, sessionSignIn } from "./client";
-/** One shared condition describes admission; pane bodies do not each invent a
- * session lifecycle. Required account/build recovery is an Action; checking and
- * connectivity are Status. Connection and catalog episodes remain attention
- * through their own retries until clean settlement. The custom tab keeps work owners. */
+/** Admission and catalog conditions own independent recovery controls. Required
+ * account/build recovery is an Action; connectivity and catalog work are Status.
+ * Each episode remains attention through its own retry until clean settlement,
+ * including overlapping session checks. The custom tab keeps work owners. */
 export function DeviceSessionNotice() {
   const admission = useRemoteAdmission();
   const catalog = useCatalogState();
@@ -28,9 +28,8 @@ export function DeviceSessionNotice() {
   if (catalogEpisode !== catalogAttention) setCatalogEpisode(catalogAttention);
   const catalogContent = catalogRefreshing
     ? { tone: "Neutral" as const, title: saved === null ? "saving your catalog…" : "updating catalog…", message: saved ?? undefined }
-    : catalogFailure ? { tone: "Warning" as const, title: "couldn’t update catalog", message: saved ?? "connect to save your lists for offline browsing." }
+    : catalogAttention ? { tone: "Warning" as const, title: "couldn’t update catalog", message: saved ?? "connect to save your lists for offline browsing." }
     : catalog.loading ? { tone: "Neutral" as const, title: "opening saved catalog…" }
-    : admission !== "Ready" ? { tone: "Neutral" as const, title: saved === null ? "catalog not ready on this device" : `offline · ${saved}`, message: saved === null ? "connect to save your lists for offline browsing." : undefined }
     : null;
   const [result, setResult] = useState<SignInResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -55,11 +54,11 @@ export function DeviceSessionNotice() {
   const connectionChecking = connectionAttention && admission === "Checking";
   // Publish episode continuity before layout registration can observe a retry.
   if (connectionEpisode !== connectionAttention) setConnectionEpisode(connectionAttention);
-  const content = needsRecovery && sessionContent !== null
+  const content = sessionContent !== null
     ? { ...sessionContent, message: ["message" in sessionContent ? sessionContent.message : null, saved].filter(Boolean).join(" ") }
-    : catalogContent ?? sessionContent;
+    : null;
   useWorkspaceCondition("device-session", content ? {
-    needsAttention: connectionAttention || catalogAttention,
+    needsAttention: connectionAttention,
     priority: wrong || admission === "SignInRequired" || admission === "UpdateRequired" ? "Action" : "Status",
     content, announcement: "Polite",
     actions: wrong ? [{ label: "retry", busy, onClick: signIn }, { label: "cancel", onClick: () => setResult(null) }]
@@ -68,9 +67,15 @@ export function DeviceSessionNotice() {
         if (busy || connectionChecking) return;
         setBusy(true); setConnectionEpisode(true); setResult(null);
         void sessionCheck().catch(() => setResult("Failed")).finally(() => setBusy(false));
-      } }]
-      : catalogAttention && admission === "Ready" ? [{ label: "retry", busy: catalogRefreshing || catalog.loading,
-        onClick: () => { if (!catalogRefreshing && !catalog.loading) void catalog.refresh(); } }] : undefined,
+      } }] : undefined,
+  } : null);
+  useWorkspaceCondition("device-catalog", catalogContent ? {
+    needsAttention: catalogAttention,
+    priority: "Status",
+    content: catalogContent, announcement: "Polite",
+    actions: catalogAttention ? [{ label: "retry", busy: catalogRefreshing || catalog.loading,
+      disabledReason: admission === "Ready" ? undefined : "connect before retrying",
+      onClick: () => { if (admission === "Ready" && !catalogRefreshing && !catalog.loading) void catalog.refresh(); } }] : undefined,
   } : null);
   return null;
 }
