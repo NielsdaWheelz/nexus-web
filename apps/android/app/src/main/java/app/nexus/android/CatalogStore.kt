@@ -108,6 +108,12 @@ internal class CatalogStore(context: Context, private val session: DeviceSession
         synchronized(lock) { statusLocked() }
     }
 
+    /** Only a validated, durably published catalog can retire acknowledged overlays. */
+    fun consumptionRevision(): String? = synchronized(lock) {
+        if (account == null || session.accountId() != account) null
+        else snapshot?.getString("consumption_revision")
+    }
+
     /** Acknowledges acquisition, not completion; no network or validation in this call. */
     suspend fun refresh(): JSONObject = withContext(Dispatchers.IO) {
         try { synchronized(lock) {
@@ -296,6 +302,7 @@ internal class CatalogStore(context: Context, private val session: DeviceSession
                 var captured: String? = null
                 var format: Int? = null
                 var wire: Int? = null
+                var consumptionRevision: String? = null
                 json.beginObject()
                 while (json.hasNext()) {
                     require(json.nextName() == "data" && !found)
@@ -308,6 +315,12 @@ internal class CatalogStore(context: Context, private val session: DeviceSession
                         when (key) {
                             "format_version" -> format = json.nextInt()
                             "wire_revision" -> wire = json.nextInt()
+                            "consumption_revision" -> {
+                                require(json.peek() == JsonToken.STRING)
+                                consumptionRevision = json.nextString()
+                                require(consumptionRevision.matches(Regex("[1-9][0-9]{0,18}")))
+                                require(consumptionRevision.toLongOrNull()?.let { it > 0 } == true)
+                            }
                             "account_id" -> identity = UUID.fromString(json.nextString())
                             "snapshot_id" -> id = UUID.fromString(json.nextString()).toString()
                             "captured_at" -> {
@@ -321,8 +334,9 @@ internal class CatalogStore(context: Context, private val session: DeviceSession
                 }
                 json.endObject()
                 require(json.peek() == JsonToken.END_DOCUMENT && found && identity == owner && id != null && captured != null && format != null && wire != null)
-                if (format != 1 || wire != BuildConfig.NEXUS_WIRE) throw LocalStateError("E_CATALOG_INCOMPATIBLE", "connect to rebuild this device’s catalog")
-                return JSONObject().put("snapshot_id", id).put("captured_at", captured)
+                if (format != 2 || wire != BuildConfig.NEXUS_WIRE) throw LocalStateError("E_CATALOG_INCOMPATIBLE", "connect to rebuild this device’s catalog")
+                require(consumptionRevision != null)
+                return JSONObject().put("snapshot_id", id).put("captured_at", captured).put("consumption_revision", consumptionRevision)
             }
         } catch (failure: LocalStateError) { throw failure }
         catch (failure: Exception) { throw LocalStateError("E_CATALOG_INVALID", "saved catalog is invalid") }

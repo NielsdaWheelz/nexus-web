@@ -24,7 +24,7 @@ export default defineConfig({
     react(),
     {
       name: "installed-assets",
-      closeBundle() {
+      writeBundle() {
         for (const directory of ["brand", "oracle-plates"])
           cpSync(path.resolve(__dirname, "public", directory), path.join(outDir, directory), { recursive: true });
         copyPdfJsRuntime(path.join(outDir, "pdfjs"));

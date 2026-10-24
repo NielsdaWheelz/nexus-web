@@ -7,7 +7,8 @@
 
 import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { PlaybackSourceContext, capturePlaybackSource } from "@/lib/actions/playbackSource";
+import { PlaybackSourceContext, captureSavedView, capturePlaybackSource } from "@/lib/actions/playbackSource";
+import { paneFilterText } from "@/lib/panes/paneFilterText";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { presentMedia } from "@/lib/collections/presenters/media";
@@ -65,7 +66,8 @@ import {
   type PodcastEpisodeRow,
 } from "@/lib/podcasts/api";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
-import { useCatalogRead, useCatalogState } from "@/lib/catalog/provider";
+import { useCatalogRead, useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
+import { oldestRevision, unstamped, type ConsumptionStamp, type StampedRead } from "@/lib/consumption/listening";
 import { catalogShow, catalogEpisodes } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
 import { ApiError, isApiError } from "@/lib/api/client";
@@ -90,9 +92,9 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
-const HEAD = definePaneVisitDataKey<Visit<PodcastDetail>>("PodcastDetail.Head");
+const HEAD = definePaneVisitDataKey<Visit<StampedRead<PodcastDetail>>>("PodcastDetail.Head");
 const DETAILS = definePaneVisitDataKey<boolean>("PodcastDetail.Details");
-const EPISODES = definePaneVisitDataKey<ListSnapshot<PodcastEpisodeRow>>(
+const EPISODES = definePaneVisitDataKey<ListSnapshot<PodcastEpisodeRow, ConsumptionStamp>>(
   "PodcastDetail.Episodes",
 );
 const STATES: readonly {
@@ -154,23 +156,32 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const queryRevision = useMediaQueryRevision();
   const headStale = `${useChangeStamp("Podcasts", "Libraries")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`;
   const catalog = useCatalogState();
-  const savedHead = useCatalogRead(value => catalogShow(value, podcastId));
-  const rawHead = useServerValue<PodcastDetail>({
+  const query = new URLSearchParams({ state, sort }).toString();
+  // Heading and episodes are one consumption group.
+  const group = useLiveGroup(`${podcastId}?${query}`);
+  const savedHead = useCatalogRead(value => {
+    const show = catalogShow(value, podcastId);
+    return show === null ? null : { data: show, consumption_revision: value.value.consumption_revision };
+  });
+  const rawHead = useServerValue<StampedRead<PodcastDetail>>({
     catalog: savedHead,
     key: `podcast-head:${podcastId}`,
-    stale: headStale,
+    stale: `${headStale}|${group.stale}`,
     visit: HEAD,
     load: signal => getPodcastDetail(podcastId, signal),
   });
   const sourceRevision = rawHead.status === "ready" ? JSON.stringify([
-    rawHead.data.recurring.last_checked_at, rawHead.data.imports.map(operation => [operation.id, operation.updated_at]),
+    rawHead.data.data.recurring.last_checked_at, rawHead.data.data.imports.map(operation => [operation.id, operation.updated_at]),
   ]) : "";
-  const query = new URLSearchParams({ state, sort }).toString();
-  const savedEpisodes = useCatalogRead(value => catalogEpisodes(value, podcastId, new URLSearchParams(query)));
-  const rawEpisodes = useServerList<PodcastEpisodeRow>({
+  const savedEpisodes = useCatalogRead(value => {
+    const page = catalogEpisodes(value, podcastId, new URLSearchParams(query));
+    return page === null ? null : { ...page, metadata: { consumption_revision: value.value.consumption_revision } };
+  });
+  const rawEpisodes = useServerList<PodcastEpisodeRow, ConsumptionStamp>({
     catalog: savedEpisodes,
+    foldMetadata: oldestRevision,
     key: rawHead.status === "ready" || catalog.data?.shows.has(podcastId) === true ? `/podcasts/${podcastId}/episodes?${query}` : null,
-    stale: `${sourceRevision}:${entries}:${queryRevision}:${useChangeStamp("PodcastEpisodes")}:${state === "all" ? "-" : consumption}`,
+    stale: `${sourceRevision}:${entries}:${queryRevision}:${useChangeStamp("PodcastEpisodes")}:${state === "all" ? "-" : consumption}:${group.stale}`,
     pageSize: 100,
     active: observing,
     visit: EPISODES,
@@ -178,11 +189,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     fetchPage: (cursor, limit, signal) =>
       listEpisodes(podcastId, pageQuery(query, cursor, limit), signal),
   });
-  const groupKey = `${podcastId}?${query}`;
-  const promoted = useRef({ key: groupKey, live: false });
-  if (promoted.current.key !== groupKey) promoted.current = { key: groupKey, live: false };
-  if (rawHead.status === "ready" && rawHead.source.kind === "live" && rawHead.error === null &&
-      rawEpisodes.source.kind === "live" && rawEpisodes.complete && rawEpisodes.failure === null) promoted.current.live = true;
+  // Relevance is the show's complete saved episode selection, never the filtered rows.
+  const showEpisodes = useMemo(() => new Set(catalog.raw?.value.episodes.flatMap(row => row.podcast_id === podcastId ? [row.media_id] : []) ?? []), [catalog.raw, podcastId]);
+  usePromoteLiveGroup(group, rawHead.status === "ready" && rawHead.source.kind === "live" && rawHead.error === null &&
+    rawEpisodes.source.kind === "live" && rawEpisodes.complete && rawEpisodes.failure === null && rawEpisodes.metadata !== null
+    ? [rawHead.data.consumption_revision, rawEpisodes.metadata.consumption_revision] : null, showEpisodes);
   const saved = useMemo(() => {
     if (catalog.data === null) return null;
     try {
@@ -192,8 +203,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
     } catch (error) { if (isApiError(error)) return null; throw error; }
   }, [catalog.data, podcastId, query]);
-  const showingSaved = !promoted.current.live && saved !== null;
-  const head: ServerValue<PodcastDetail> = !showingSaved ? rawHead : {
+  const showingSaved = !group.live && saved !== null;
+  const head: ServerValue<PodcastDetail> = !showingSaved ? unstamped(rawHead) : {
     status: "ready", data: saved.head, source: saved.source, generation: 0,
     error: rawHead.status === "loading" ? null : rawHead.error,
     refreshing: rawHead.status === "ready" && rawHead.refreshing, refetch: rawHead.refetch,
@@ -506,10 +517,13 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               ]}
             />
           ) : known === undefined || ready === null ? null : (
-            <PlaybackSourceContext.Provider value={selected_media_id => {
-              if (!live || !remoteReady()) throw new ApiError(503, "E_REMOTE_UNAVAILABLE", "requires a connection and current episode facts");
+            <PlaybackSourceContext.Provider value={async selected_media_id => {
               const sourceSort = (["newest", "oldest", "duration_asc", "duration_desc"] as const).find(value => value === sort);
               if (sourceSort === undefined) throw new Error("invalid podcast queue sort");
+              if (episodes.source.kind === "catalog")
+                return captureSavedView(visible.map(episode => episode.media_summary), selected_media_id,
+                  { kind: "Podcast", label: ready.data.podcast.title, podcast_id: podcastId, query: paneFilterText(text), state: known, sort: sourceSort });
+              if (!live || !remoteReady()) throw new ApiError(503, "E_REMOTE_UNAVAILABLE", "requires a connection and current episode facts");
               return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
             }}>
             <CollectionView

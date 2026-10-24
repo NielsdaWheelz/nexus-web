@@ -3,7 +3,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { usePlaybackSource, type PlaybackSource } from "./playbackSource";
-import { projectResourceActions, type ResourceActions } from "@/lib/actions/project";
+import { projectDownloadActions, projectPlaybackAction, projectResourceActions, type ResourceActions } from "@/lib/actions/project";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useActionRuntime, useBusyActionIds, resourceActionRequiresRemote } from "@/lib/actions/ResourceActionsProvider";
 import { installedApp, remoteReady, remoteGeneration } from "@/lib/native/admission";
 import { ApiError, apiFetch } from "@/lib/api/client";
@@ -11,7 +13,6 @@ import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import type { PodcastActionFocus } from "./inlineActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 type ReadState =
   | null
@@ -108,4 +109,22 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
       }),
     } : state,
   };
+}
+
+/**
+ * A media principal's device actions from current download and player facts: play a
+ * ready download, cancel, retry or remove local work. They need no remote action facts
+ * and fabricate none; server-only commands stay with `useResourceActions`.
+ */
+export function useDeviceActions(ref: string | null, title: string): ActionDescriptor[] {
+  const { ctx, run } = useActionRuntime();
+  const busy = useBusyActionIds(ref);
+  const source = usePlaybackSource();
+  const resource = ref === null ? null : parseResourceRef(ref);
+  if (resource === null || resource.scheme !== "media") return [];
+  const mediaId = resource.id;
+  const downloads = projectDownloadActions({ mediaId, title, ctx, busy, run, server: null });
+  const downloaded = ctx.offline.kind === "Ready" && ctx.offline.items.some(item =>
+    item.media_id === mediaId && item.kind === "podcast_episode" && item.state === "Ready" && item.package_id !== null);
+  return downloaded ? [projectPlaybackAction({ mediaId, title, descriptor: null, blocked: null, playbackSource: source, ctx, run }), ...downloads] : downloads;
 }

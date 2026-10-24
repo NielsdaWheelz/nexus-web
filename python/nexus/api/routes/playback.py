@@ -6,7 +6,7 @@ paths, so it registers before the ``media`` router.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
@@ -14,28 +14,63 @@ from nexus.db.session import RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas import playback_sessions as queue_wire
 from nexus.schemas.consumption import (
+    EpisodeConsumptionObservation,
     ListeningIn,
-    ListeningPositionOut,
-    PlayerDescriptor,
+    PlayerActivationOut,
     PreviewPositionIn,
 )
-from nexus.services import playback_sessions, playback_snapshot
+from nexus.schemas.episode_download import EpisodeDownloadOut
+from nexus.schemas.reader_document import ReaderTranscriptDocumentOut
+from nexus.services import episode_download, playback_sessions, playback_snapshot
 from nexus.services.consumption import state
 
 router = APIRouter(tags=["media"])
 
 
+@router.get("/media/{media_id}/episode-download")
+def get_episode_download(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> Data[EpisodeDownloadOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return Data(data=episode_download.capture(db, viewer.user_id, media_id))
+
+
+@router.get(
+    "/media/{media_id}/episode-download/transcript",
+    response_model=Data[ReaderTranscriptDocumentOut],
+)
+def get_episode_download_transcript(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+    source_key: Annotated[str, Query(pattern=r"^[a-f0-9]{64}$")],
+    sha256: Annotated[str, Query(pattern=r"^[a-f0-9]{64}$")],
+) -> Response:
+    return Response(
+        content=episode_download.transcript(db, viewer.user_id, media_id, source_key, sha256),
+        media_type="application/json",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
 @router.get("/media/{media_id}/player")
 def get_player(
-    media_id: UUID, viewer: Annotated[Viewer, Depends(get_viewer)], db: RepeatableReadDbSession
-) -> Data[PlayerDescriptor]:
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> Data[PlayerActivationOut]:
+    response.headers["Cache-Control"] = "private, no-store"
     return Data(data=state.get_player(db, viewer.user_id, media_id))
 
 
 @router.put("/media/{media_id}/listening-state")
 def put_listening_state(
     media_id: UUID, body: ListeningIn, viewer: Annotated[Viewer, Depends(get_viewer)]
-) -> Data[ListeningPositionOut]:
+) -> Data[EpisodeConsumptionObservation]:
     return Data(data=state.record_listening(viewer.user_id, media_id, body))
 
 

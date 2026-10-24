@@ -42,10 +42,10 @@ import {
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
-  offlineAvailable,
-  useOfflineSnapshot,
-  type OfflineItem,
-} from "@/lib/offline/bridge";
+  localContentAvailable,
+  useLocalContent,
+  type LocalItem,
+} from "@/lib/offline/localContent";
 import {
   usePlayerCommands,
   usePlayerSession,
@@ -93,7 +93,7 @@ export interface ActionContext {
   readonly online: boolean;
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
-    | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
+    | { readonly kind: "Ready"; readonly items: readonly LocalItem[] };
   /** Shared lectern facts and the existing conditional-command owner. */
   readonly lectern: {
     readonly read: ReturnType<typeof useLectern>;
@@ -231,7 +231,7 @@ export default function ResourceActionsProvider({
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
-  const offlineSnapshot = useOfflineSnapshot();
+  const localIndex = useLocalContent().index;
   const connectivity = useConnectivity();
   const admission = useRemoteAdmission();
   const online = installedApp ? admission === "Ready" : connectivity === "Online";
@@ -297,11 +297,11 @@ export default function ResourceActionsProvider({
       isActive: () => !session.controller.signal.aborted,
       accountId,
       online,
-      offline: !offlineAvailable
+      offline: !localContentAvailable
         ? { kind: "Unavailable" }
-        : offlineSnapshot === null
+        : localIndex === null
           ? { kind: "Loading" }
-          : { kind: "Ready", items: offlineSnapshot.items },
+          : { kind: "Ready", items: localIndex.items },
       lectern,
       player: { queue: playerSession.queue, state: playerSession.state, pendingPlayback: playerSession.pendingPlayback, commands: playerCommands },
       workspace,
@@ -323,7 +323,7 @@ export default function ResourceActionsProvider({
     [
       accountId,
       online,
-      offlineSnapshot,
+      localIndex,
       lectern,
       playerSession.queue,
       playerSession.state,

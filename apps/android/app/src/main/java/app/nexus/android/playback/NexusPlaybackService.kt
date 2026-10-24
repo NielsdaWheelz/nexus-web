@@ -29,8 +29,10 @@ import androidx.media3.session.SessionResult
 import app.nexus.android.DeviceSession
 import app.nexus.android.NexusOriginClient
 import app.nexus.android.NexusOriginError
+import app.nexus.android.LocalStateError
 import app.nexus.android.R
 import app.nexus.android.offline.OfflineStore
+import app.nexus.android.offline.EpisodeLease
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -38,18 +40,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONException
@@ -65,7 +62,7 @@ private const val PAUSES_SAVED_MS = "pause-shortening.saved-on-device-ms"
 /**
  * The device's one audio engine on android: ExoPlayer behind a media session
  * (notification, lock screen, media buttons), driven by the web over
- * `window.nexusQueueSession` (PlayerBridge → ACTION_REQUEST), recording through
+ * `window.nexusPlayer` (PlayerBridge → ACTION_REQUEST), recording through
  * [ListeningRecorder] and pushing a snapshot (ACTION_EVENT) on every change and
  * each second while playing. A downloaded episode plays from its offline file
  * under an [OfflineStore] lease held while it is loaded. Every play, from the
@@ -101,12 +98,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var documentOwner: MediaSession.ControllerInfo? = null
     private var documentId: String? = null
     private var draft: QueueDraft? = null
-    private data class KnownDraft(val id: String, val descriptor: JSONObject, val chapters: Array<JSONObject?>)
-    private var knownDraft: KnownDraft? = null
-    private var knownDescriptor: JSONObject? = null
-    private var knownPreparationId: String? = null
-    private var preparing: Job? = null
-    private var preparingQueueId: String? = null
     private var offlineUnsubscribe: (() -> Unit)? = null
     private var activationGeneration = 0L
     private data class EndTransition(val queueId: String, val revision: Long, val entryId: String, val loadId: String?)
@@ -115,7 +106,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var loadedEntryId: String? = null
     private var loadId: String? = null // a fresh occurrence, including same-media reloads and service restarts
     private var installingSource = false // suppress reentrant listener snapshots, including same-media installs
-    private var leased: UUID? = null
+    private var leased: EpisodeLease? = null
+    private data class Activation(val descriptor: JSONObject, val lease: EpisodeLease?, val localRepair: LocalStateError? = null)
+    private data class RemoteActivation(val mediaId: UUID, val accountId: UUID, val generation: Long, val response: JSONObject?, val refused: Boolean, val localRepair: LocalStateError?)
+    private var savingFailed = false
     private var sessionShortenPauses: Boolean? = null
     private var error: String? = null
     private var playbackFailed = false
@@ -161,7 +155,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 val key = key()
                 val loaded = loadId
                 val mine = retireActivation()
-                scope.launch { loads.withLock { resume(key, loaded, mine) } }
+                scope.launch {
+                    val prepared = prepareActivation(resumeMediaId())
+                    loads.withLock { resume(key, loaded, mine, prepared) }
+                }
             }
             override fun prepare() {
                 val loaded = loadId
@@ -215,15 +212,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 )
             },
             onAdopt = ::installPosition,
+            onSaveFailed = ::listeningSaveFailed,
             onAccepted = { consumptionRevision += 1; publish() },
             onSynced = {
                 synced = it
                 publish()
             },
-            onOnline = ::prepareOffline,
             onRefused = { mediaId ->
-                store?.let { retireDescriptor(it, mediaId) }
-                error = "listening changed elsewhere. reconnect to review progress."
+                if (key() == mediaId.toString()) error = if (leased != null) "original no longer available · downloaded copy kept" else "original no longer available · listening saved locally"
                 synced = false
                 publish()
             },
@@ -245,7 +241,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 }
             },
         )
-        offlineUnsubscribe = offline.addListener { scope.launch { prepareOffline() } }
+        offlineUnsubscribe = offline.addListener { scope.launch { publish() } }
         releaseStop = device.ownPlaybackStop {
             retireActivation()
             loads.withLock {
@@ -269,20 +265,19 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             if (owner == account) {
                 if (owner != null && device.remotelyAdmitted()) {
                     store?.let { recorder.bind(owner, it) }
-                    prepareOffline()
                 }
                 return@withLock
             }
             unbind()
             if (owner != null && owner == device.accountId()) {
-                val playback = PlaybackStore(this, owner)
+                val playback = PlaybackStore.open(this, owner)
                 store = playback
+                playback.onListeningChanged = { scope.launch { publish() } }
                 account = owner
                 recorder.bind(owner, playback)
                 consumptionRevision = 0
                 // A restored checkpoint never starts audio or manufactures a sample.
                 restoreCheckpoint()
-                prepareOffline()
             }
             publish()
         } } catch (_: IOException) {
@@ -319,6 +314,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         prefs.edit { putLong(PAUSES_SAVED_MS, savedMs) }
         player.removeListener(this)
         offlineUnsubscribe?.invoke()
+        store?.onListeningChanged = null
         recorder.close()
         release()
         scope.cancel()
@@ -351,7 +347,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
 
         override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
-            if (documentOwner == controller) { draft = null; knownDraft = null; knownDescriptor = null; knownPreparationId = null; documentOwner = null; documentId = null }
+            if (documentOwner == controller) { draft = null; documentOwner = null; documentId = null }
         }
 
         override fun onCustomCommand(
@@ -384,6 +380,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 } catch (_: IllegalArgumentException) {
                     // justify-ignore-error: as above, for an id that is not a uuid.
                     failure("Invalid")
+                } catch (localError: LocalStateError) {
+                    error = "downloaded content needs repair · open downloads to review"
+                    publish()
+                    failure(localError.code)
                 } catch (_: IOException) {
                     // justify-ignore-error: an unsaved queue is refused, preserving its durable predecessor.
                     player.pause()
@@ -413,9 +413,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         if (op == "document_detach") return loads.withLock {
             if (documentOwner == controller && documentId == document) {
                 draft = null
-                knownDraft = null
-                knownDescriptor = null
-                knownPreparationId = null
                 documentOwner = null
                 documentId = null
             }
@@ -425,7 +422,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             adoptDeviceAccount()
             return loads.withLock {
                 if (documentOwner != controller || documentId != document) {
-                    draft = null; knownDraft = null; knownDescriptor = null; knownPreparationId = null
+                    draft = null
                 }
                 documentOwner = controller
                 documentId = document
@@ -439,10 +436,23 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             unbind(); ok()
         }
         if (account == null) return failure("NotConnected")
-        if (op.startsWith("known_")) return loads.withLock { knownRequest(request) }
+        if (op == "observe_consumption") return loads.withLock {
+            require(request.keys().asSequence().toSet() == setOf("id", "op", "document_id", "account_id", "observations"))
+            if (request.getString("account_id") != account.toString()) return failure("AccountMismatch")
+            val observations = request.getJSONArray("observations")
+            if (observations.length() > 100 || request.toString().toByteArray(Charsets.UTF_8).size > 32 * 1024) return failure("Limit")
+            recorder.observe((0 until observations.length()).map(observations::getJSONObject))
+            store?.collect(device.catalog.consumptionRevision())
+            ok()
+        }
+        if (op == "retry_listening") return loads.withLock {
+            require(request.keys().asSequence().toSet() == setOf("id", "op", "document_id", "media_id"))
+            recorder.retry(UUID.fromString(request.getString("media_id"))); ok()
+        }
+        val prepared = prepareRequest(request)
         if (op.startsWith("queue_")) return loads.withLock {
             if (mine != null && mine != activationGeneration) return failure("Stale")
-            queueRequest(request, controller, document)
+            queueRequest(request, controller, document, prepared)
         }
         when (op) {
             "cancelPlayback" -> return loads.withLock {
@@ -458,10 +468,10 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 val generation = mine
                 loads.withLock {
                     if (generation != activationGeneration) return failure("Stale")
-                    val descriptor = resolveDescriptor(mediaId)
-                    if (generation != activationGeneration) return failure("Stale")
-                    if (descriptor == null) return failure("Unavailable")
-                    if (!install(descriptor, episode = true, play = request.getBoolean("play"), positionMs = positionMs))
+                    val activation = resolveDescriptor(mediaId, prepared = prepared)
+                    if (generation != activationGeneration) { activation?.lease?.close(); return failure("Stale") }
+                    if (activation == null) return failure("Unavailable")
+                    if (!install(activation.descriptor, episode = true, play = request.getBoolean("play"), positionMs = positionMs, lease = activation.lease, localRepair = activation.localRepair))
                         return failure(if (generation != activationGeneration) "Stale" else "Unavailable")
                 }
             }
@@ -515,13 +525,13 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         checkpoint()
                     }
                     "seek", "skip" -> if (!recorder.fenced()) {
-                        val position = if (op == "seek") request.getLong("positionMs")
-                            else player.currentPosition + request.getLong("deltaMs")
+                        val position = if (op == "seek") request.getLong("position_ms")
+                            else player.currentPosition + request.getLong("delta_ms")
                         restoreEndedSelection()
                         player.seekTo(maxOf(0, position))
                         checkpoint()
                     }
-                    "play" -> resume(request.getString("key"), request.getString("expected_load_id"), mine ?: return failure("Stale"))?.let { return failure(it) }
+                    "play" -> resume(request.getString("key"), request.getString("expected_load_id"), mine ?: return failure("Stale"), prepared)?.let { return failure(it) }
                     "pause" -> {
                         player.pause()
                         checkpoint()
@@ -536,7 +546,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         checkpoint()
                         if (!recorder.fence()) return failure("Unavailable")
                     }
-                    "reconcile" -> if (!reconcile()) return failure("Unavailable")
+                    "reconcile" -> if (!reconcile(prepared)) return failure("Unavailable")
                     else -> return failure("Invalid")
                 }
                 publish()
@@ -558,48 +568,33 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     /** Called under [loads]; only a fully installed source may publish its occurrence. */
-    private suspend fun install(descriptor: JSONObject, episode: Boolean, play: Boolean = true, occurrenceId: String? = null, positionMs: Long? = null): Boolean {
+    private suspend fun install(descriptor: JSONObject, episode: Boolean, play: Boolean = true, occurrenceId: String? = null, positionMs: Long? = null, lease: EpisodeLease? = null, localRepair: LocalStateError? = null): Boolean {
         val mediaId = if (episode) UUID.fromString(descriptor.getString("media_id")) else null
         val generation = activationGeneration
-        val authorityRevision = mediaId?.let(recorder::authorityRevision)
         installingSource = true
+        var installedLease = false
         try {
             player.stop() // also keeps a pending natural-end advance from taking over (it needs STATE_ENDED)
             if (!recorder.stop()) throw IOException("listening checkpoint was not persisted")
             if (generation != activationGeneration) return false
-            if (mediaId != null && recorder.authorityRevision(mediaId) != authorityRevision) {
-                playbackFailed = true
-                return false
-            }
-            if (mediaId != null) store?.descriptor(mediaId)?.takeIf { it.getLong("reset_epoch") == descriptor.getLong("reset_epoch") }?.let {
-                descriptor.put("consumption_override_revision", it.get("consumption_override_revision"))
-                if (occurrenceId != loadedEntryId) it.optJSONObject("local_listening")?.let { listening ->
-                    descriptor.put("position_ms", if (it.optBoolean("locally_completed")) 0 else listening.getLong("position_ms"))
-                }
-            }
             if (positionMs != null) {
                 val duration = descriptor.nullableLong("duration_ms")?.takeIf { it > 0 }
                 descriptor.put("position_ms", minOf(positionMs, duration ?: Long.MAX_VALUE))
             }
             release()
             val nextSource = JSONObject().put("kind", if (episode) "Episode" else "Preview").put("descriptor", descriptor)
+                .put("package_id", lease?.packageId?.toString() ?: JSONObject.NULL)
+                .put("local_content_repair", localRepair != null)
             sessionShortenPauses = null
-            error = null
+            error = localRepair?.let { "downloaded content needs repair · streaming current version" }
             playbackFailed = false
-            val file = mediaId?.let { id -> offline.readyAudioFile(id)?.takeIf { offline.open(id) } }
-            val offlineOnly = descriptor.optBoolean("offline_only")
-            descriptor.remove("offline_only")
-            if (file == null && offlineOnly) {
-                playbackFailed = true
-                error = "needs a connection before offline play"
-                drop(keepError = true)
-                return false
-            }
-            if (file != null) leased = mediaId
+            val file = lease?.audioFile
+            leased = lease
+            installedLease = true
             val metadata = MediaMetadata.Builder()
                 .setTitle(descriptor.getString("title"))
                 .setArtist(if (episode) descriptor.nullableString("subtitle") else descriptor.getString("source"))
-                .setArtworkUri(descriptor.nullableString(if (episode) "artwork_url" else "imageUrl")?.toUri())
+                .setArtworkUri(if (lease != null) lease.artworkFile?.toUri() else descriptor.nullableString(if (episode) "artwork_url" else "imageUrl")?.toUri())
                 .build()
             val uri = file?.toUri() ?: descriptor.getString(if (episode) "stream_url" else "audioUrl").toUri()
             player.setMediaItem(
@@ -621,30 +616,36 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             if (play) player.play()
             return true
         } finally {
+            if (!installedLease) lease?.close()
             installingSource = false
             publish()
         }
     }
 
     /** Called under loads; acknowledgement follows the installed/resumed occurrence. */
-    private suspend fun resume(expectedKey: String?, expectedLoadId: String?, mine: Long): String? {
+    private suspend fun resume(expectedKey: String?, expectedLoadId: String?, mine: Long, prepared: RemoteActivation?): String? {
         if (mine != activationGeneration || expectedKey == null || expectedKey != key() || expectedLoadId != loadId) return "Stale"
-        if (recorder.fenced()) return if (reconcile()) "Reconciled" else "Fenced"
+        if (recorder.fenced()) return if (reconcile(prepared)) "Reconciled" else "Fenced"
         if (isEpisode() && (pendingEnd != null && loadedEntryId != store?.queue?.nullableString("current_entry_id") || !recorder.attached())) {
-            val activated = activateCurrent(play = true, checkpoint = pendingEnd == null)
+            val activated = activateCurrent(play = true, checkpoint = pendingEnd == null, prepared = prepared)
             return if (mine != activationGeneration) "Stale" else if (activated) null else "Unavailable"
         }
         val mediaId = if (isEpisode()) UUID.fromString(key()) else null
-        if (mediaId == null || player.playWhenReady || recorder.pending()) { playHere(); return null }
+        if (mediaId == null || leased != null && player.playbackState != Player.STATE_ENDED || player.playWhenReady || recorder.pending()) { playHere(); return null }
         val loaded = loadId
-        val fresh = resolveDescriptor(mediaId)
-        if (mine != activationGeneration || loadId != loaded) return "Stale"
-        val epoch = recorder.resetEpoch() ?: return "Stale"
-        val best = fresh ?: return "Unavailable"
+        val fresh = resolveDescriptor(mediaId, prepared = prepared)
+        if (mine != activationGeneration || loadId != loaded) { fresh?.lease?.close(); return "Stale" }
+        val epoch = recorder.resetEpoch() ?: run { fresh?.lease?.close(); return "Stale" }
+        val best = fresh?.descriptor ?: return "Unavailable"
         if (player.playbackState == Player.STATE_ENDED || best.getLong("reset_epoch") != epoch || best.getLong("position_ms") != player.currentPosition) {
-            if (!install(best, episode = true, occurrenceId = loadedEntryId))
+            if (!install(best, episode = true, occurrenceId = loadedEntryId, lease = fresh.lease, localRepair = fresh.localRepair))
                 return if (mine != activationGeneration) "Stale" else "Unavailable"
         } else {
+            fresh.lease?.close()
+            if (fresh.localRepair != null) {
+                source?.put("local_content_repair", true)
+                error = "downloaded content needs repair · streaming current version"
+            }
             recorder.refresh(best.nullableLong("consumption_override_revision"))
             playHere()
         }
@@ -652,59 +653,45 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     /** Read the current playback owner; no position write follows an authority installation. */
-    private suspend fun reconcile(): Boolean {
+    private suspend fun reconcile(prepared: RemoteActivation?): Boolean {
         val loaded = source
+        val generation = activationGeneration
         val mediaId = if (isEpisode()) UUID.fromString(key()) else return true
         // A timed-out preparation can still be draining this episode's old writes.
         if (!recorder.fence()) return false
-        if (loaded !== source) return false
-        val fresh = try {
-            descriptorReads.withPermit { origin.player(mediaId) }
-        } catch (_: IOException) {
-            // justify-ignore-error: saving remains fenced; the visible retry reads authority again.
-            null
-        } catch (_: NexusOriginError) {
-            // justify-ignore-error: as above, including an unavailable episode.
-            null
-        }
-        if (loaded !== source) return false
-        if (fresh == null) {
-            error = "Listening position unavailable. Retry to sync progress."
+        if (loaded !== source || generation != activationGeneration) return false
+        val observation = if (leased != null) store?.record(mediaId)?.optJSONObject("observed") else
+            prepared?.takeIf { it.mediaId == mediaId && it.accountId == account && it.generation == activationGeneration }?.response?.getJSONObject("observation")
+        if (loaded !== source || generation != activationGeneration) return false
+        if (observation == null) {
+            error = "listening position unavailable · retry to sync progress"
             synced = false
             publish()
             return false
         }
-        store?.let { retainDescriptor(it, mediaId, fresh) }
-        recorder.adopt(fresh)
-        installPosition(fresh)
-        error = null
+        recorder.adopt(observation)
+        installPosition(observation)
+        if (prepared?.localRepair != null) source?.put("local_content_repair", true)
+        error = if (source?.optBoolean("local_content_repair") == true) "downloaded content needs repair · streaming current version" else null
         synced = true
         publish()
         return true
     }
 
-    private fun installPosition(position: JSONObject) {
+    private fun installPosition(observation: JSONObject) {
+        if (!isEpisode() || observation.getString("media_id") != key()) return
+        val state = observation.getJSONObject("state")
         installingPosition = true
         try {
-            player.seekTo(position.getLong("position_ms"))
             player.pause()
-        } finally {
-            installingPosition = false
-        }
-        descriptor()?.put("reset_epoch", position.getLong("reset_epoch"))
-            ?.put("consumption_override_revision", position.get("consumption_override_revision"))
-        val mediaId = if (isEpisode()) key() else null
-        if (mediaId != null) store?.update { envelope ->
-            envelope.getJSONObject("descriptors").optJSONObject(mediaId)?.apply {
-                put("reset_epoch", position.getLong("reset_epoch"))
-                put("position_ms", position.getLong("position_ms"))
-                put("consumption_override_revision", position.get("consumption_override_revision"))
-                remove("local_listening"); remove("locally_completed")
-            }
-        }
+            player.seekTo(state.nullableLong("position_ms") ?: 0L)
+        } finally { installingPosition = false }
+        descriptor()?.put("reset_epoch", state.getLong("reset_epoch"))
+            ?.put("consumption_override_revision", state.get("consumption_override_revision"))
+            ?.put("position_ms", state.nullableLong("position_ms") ?: 0L)
         saveCheckpoint()
         error = null
-        synced = true
+        synced = !recorder.pending()
         publish()
     }
 
@@ -736,7 +723,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     private fun release() {
-        leased?.let(offline::close)
+        leased?.close()
         leased = null
     }
 
@@ -746,48 +733,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun key(): String? = descriptor()?.getString(if (isEpisode()) "media_id" else "target")
 
-    /** A page's already-authorized descriptor is only an outage candidate, never a substitute for an origin refusal. */
-    private fun knownRequest(request: JSONObject): JSONObject {
-        if (request.toString().toByteArray(Charsets.UTF_8).size > PlaybackStore.MESSAGE_BYTES) return failure("Limit")
-        val id = request.getString("preparation_id")
-        when (request.getString("op")) {
-            "known_begin" -> {
-                val descriptor = request.getJSONObject("descriptor")
-                UUID.fromString(descriptor.getString("media_id"))
-                val count = request.getInt("count")
-                require(count in 0..100 && !descriptor.has("chapters"))
-                knownDraft = KnownDraft(id, JSONObject(descriptor.toString()), arrayOfNulls(count))
-                knownPreparationId = id
-                knownDescriptor = null
-            }
-            "known_chunk" -> {
-                val input = knownDraft?.takeIf { it.id == id } ?: return failure("Stale")
-                val offset = request.getInt("offset")
-                val chapters = request.getJSONArray("chapters")
-                require(offset >= 0 && chapters.length() in 1..20 && offset + chapters.length() <= input.chapters.size)
-                for (index in 0 until chapters.length()) {
-                    val chapter = chapters.getJSONObject(index)
-                    require(chapter.getString("title").codePointCount(0, chapter.getString("title").length) in 1..300)
-                    require(chapter.getLong("start_ms") >= 0 && (chapter.nullableLong("end_ms") ?: 0) >= 0)
-                    val previous = input.chapters[offset + index]
-                    if (previous != null && previous.toString() != chapter.toString()) return failure("Stale")
-                }
-                for (index in 0 until chapters.length()) input.chapters[offset + index] = chapters.getJSONObject(index)
-            }
-            "known_commit" -> {
-                val input = knownDraft?.takeIf { it.id == id } ?: return failure("Stale")
-                if (input.chapters.any { it == null }) return failure("Stale")
-                knownDescriptor = input.descriptor.put("chapters", JSONArray(input.chapters.toList()))
-                knownDraft = null
-            }
-            "known_cancel" -> if (knownPreparationId == id) { knownDraft = null; knownDescriptor = null; knownPreparationId = null }
-            else -> return failure("Invalid")
-        }
-        return ok()
-    }
-
-    /** A document draft is memory only; every durable command shares the source/load mutex. */
-    private suspend fun queueRequest(request: JSONObject, controller: MediaSession.ControllerInfo, document: String): JSONObject {
+    private suspend fun queueRequest(request: JSONObject, controller: MediaSession.ControllerInfo, document: String, prepared: RemoteActivation?): JSONObject {
         val playback = store ?: return failure("NotConnected")
         val queue = playback.queue
         when (request.getString("op")) {
@@ -859,10 +805,9 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 undoQueue = JSONObject(queue.toString())
                 draft = null
                 drop()
-                prepareOffline()
                 return ok()
             }
-            "queue_command" -> return queueCommand(request)
+            "queue_command" -> return queueCommand(request, prepared)
             else -> return failure("Invalid")
         }
     }
@@ -876,7 +821,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         queue.put("current_entry_id", if (next in 0 until entries.length()) entries.getJSONObject(next).getString("id") else JSONObject.NULL)
     }
 
-    private suspend fun queueCommand(request: JSONObject): JSONObject {
+    private suspend fun queueCommand(request: JSONObject, prepared: RemoteActivation?): JSONObject {
         val playback = store ?: return failure("NotConnected")
         val old = playback.queue
         val next = JSONObject(old.toString())
@@ -977,6 +922,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val changed = next.toString() != old.toString()
         val selectionChanged = next.nullableString("current_entry_id") != current || kind == "clear" || kind == "restore"
         var generation = activationGeneration
+        val admittedPreparation = prepared?.takeIf { it.accountId == account && it.generation == generation }
         if (activate || selectionChanged) {
             generation = retireActivation()
             player.pause()
@@ -991,12 +937,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             trimDescriptors(it, if (kind == "clear") old else null)
         }
         if (changed) undoQueue = if (kind == "clear") JSONObject(old.toString()) else null
-        val activated = !activate || activateCurrent(play, checkpoint = !selectionChanged, positionMs = positionMs)
+        val activated = !activate || activateCurrent(play, checkpoint = !selectionChanged, positionMs = positionMs, prepared = admittedPreparation?.copy(generation = generation))
         if (positionMs != null) {
             if (generation != activationGeneration) return failure("Stale")
             if (!activated) return failure("Unavailable")
         }
-        prepareOffline()
         publish()
         return ok()
     }
@@ -1014,13 +959,16 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun transport(kind: String) {
         val mine = retireActivation()
-        scope.launch { loads.withLock {
-            if (mine != activationGeneration) return@withLock
-            val playback = store ?: return@withLock
-            queueCommand(JSONObject().put("queue_id", playback.queue.getString("queue_id"))
+        scope.launch {
+            val playback = store ?: return@launch
+            val request = JSONObject().put("op", "queue_command").put("queue_id", playback.queue.getString("queue_id"))
                 .put("expected_revision", playback.queue.getLong("revision").toString())
-                .put("command", JSONObject().put("kind", kind)))
-        } }
+                .put("command", JSONObject().put("kind", kind))
+            val prepared = prepareRequest(request)
+            loads.withLock {
+                if (mine == activationGeneration) queueCommand(request, prepared)
+            }
+        }
     }
 
     private fun restoreEndedSelection() {
@@ -1040,11 +988,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     /** Explicit account departure pauses before checkpoint/delivery suspension, even when saving fails. */
     private suspend fun unbind() {
         retireActivation()
-        preparing?.cancelAndJoin()
         draft = null
-        knownDraft = null
-        knownDescriptor = null
-        knownPreparationId = null
         player.pause()
         var failed: IOException? = null
         try {
@@ -1054,6 +998,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         } catch (error: IOException) { failed = error }
         try { recorder.unbind() } catch (error: IOException) { failed = error }
         account = null
+        store?.onListeningChanged = null
         store = null
         undoQueue = null
         drop()
@@ -1070,12 +1015,19 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun checkpoint() {
         val playback = store ?: return
-        if (!isEpisode() || loadedEntryId == null || loadedEntryId != playback.queue.nullableString("current_entry_id")) return
+        if (!isEpisode()) return
+        recorder.checkpoint()
         val descriptor = descriptor() ?: return
+        val mediaId = key() ?: return
+        playback.update { envelope ->
+            PlaybackStore.record(envelope, mediaId).put("playback_rate", player.playbackParameters.speed.toString().toDouble())
+                .put("pause_shortening_mode", if (player.skipSilenceEnabled) "Natural" else "Off")
+        }
         val listening = JSONObject().put("position_ms", maxOf(0, player.currentPosition))
             .put("duration_ms", player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: descriptor.get("duration_ms"))
             .put("expected_reset_epoch", recorder.resetEpoch() ?: descriptor.getLong("reset_epoch"))
             .put("episode_playback_rate", player.playbackParameters.speed.toString().toDouble())
+        if (loadedEntryId == null || loadedEntryId != playback.queue.nullableString("current_entry_id")) return
         val checkpoint = JSONObject().put("entry_id", loadedEntryId).put("listening", listening)
             .put("consumption_override_revision", recorder.overrideRevision() ?: JSONObject.NULL)
             .put("shorten_pauses", player.skipSilenceEnabled)
@@ -1088,25 +1040,33 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val playback = store ?: return
         val entry = playback.header().optJSONObject("current_entry") ?: return drop()
         val mediaId = UUID.fromString(entry.getString("media_id"))
-        if (playback.descriptor(mediaId) == null || offline.readyAudioFile(mediaId) == null) return drop()
+        val lease = try { offline.openEpisode(mediaId) }
+        catch (_: LocalStateError) {
+            // justify-ignore-error: retain the selected queue and local repair condition; streaming remains independently admissible.
+            error = "downloaded content needs repair · open downloads to review"
+            playbackFailed = true
+            return drop(keepError = true)
+        } ?: return drop()
+        lease.close()
         activateCurrent(play = false, checkpoint = true, refresh = false)
     }
 
-    private suspend fun activateCurrent(play: Boolean, checkpoint: Boolean, refresh: Boolean = true, positionMs: Long? = null): Boolean {
+    private suspend fun activateCurrent(play: Boolean, checkpoint: Boolean, refresh: Boolean = true, positionMs: Long? = null, prepared: RemoteActivation? = null): Boolean {
         val playback = store ?: return false
         val header = playback.header()
         val entry = header.optJSONObject("current_entry")
         if (entry == null) { drop(); return true }
         val entryId = entry.getString("id")
         if (loadedEntryId == entryId && source != null && recorder.attached() && checkpoint && positionMs == null) {
-            if (play) return resume(key(), loadId, activationGeneration) == null
+            if (play) return resume(key(), loadId, activationGeneration, prepared) == null
             player.pause()
             return true
         }
         val generation = activationGeneration
-        val descriptor = resolveDescriptor(UUID.fromString(entry.getString("media_id")), refresh)
-        if (generation != activationGeneration || store !== playback || playback.queue.nullableString("current_entry_id") != entryId) return false
-        if (descriptor == null) { drop(keepError = true); return false }
+        val activation = resolveDescriptor(UUID.fromString(entry.getString("media_id")), refresh, prepared)
+        if (generation != activationGeneration || store !== playback || playback.queue.nullableString("current_entry_id") != entryId) { activation?.lease?.close(); return false }
+        if (activation == null) { drop(keepError = true); return false }
+        val descriptor = activation.descriptor
         if (checkpoint) playback.value.optJSONObject("checkpoint")?.takeIf { it.getString("entry_id") == entryId }?.let {
             val listening = it.getJSONObject("listening")
             if (listening.getLong("expected_reset_epoch") == descriptor.getLong("reset_epoch") &&
@@ -1116,122 +1076,119 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     .put("pause_shortening_mode", if (it.getBoolean("shorten_pauses")) "Natural" else "Off")
             }
         }
-        if (!install(descriptor, episode = true, play = play, occurrenceId = entryId, positionMs = positionMs)) return false
+        if (!install(descriptor, episode = true, play = play, occurrenceId = entryId, positionMs = positionMs, lease = activation.lease, localRepair = activation.localRepair)) return false
         if (positionMs != null) checkpoint()
         return true
     }
 
-    /** Resource refusal retires retained authority; interrupted admission keeps prepared local files. */
-    private suspend fun resolveDescriptor(mediaId: UUID, refresh: Boolean = true): JSONObject? {
-        val playback = store ?: return null
-        val generation = activationGeneration
-        val factRevision = recorder.factRevision(mediaId)
-        val authorityRevision = recorder.authorityRevision(mediaId)
-        var transportFailed = !refresh
-        if (refresh) {
-            val fresh = try {
-                descriptorReads.withPermit { origin.player(mediaId) }
-            } catch (_: IOException) {
-                // justify-ignore-error: transport loss permits only explicit prepared offline authority.
-                null
-            } catch (failure: NexusOriginError) {
-                if (failure.status !in setOf(401, 408, 426, 429) && failure.status < 500) {
-                    retireDescriptor(playback, mediaId)
-                    if (store !== playback || generation != activationGeneration) return null
-                    playbackFailed = true
-                    error = "episode unavailable"
-                    publish()
-                    return null
-                }
-                null // unavailable service; existing offline authority still requires its complete file.
-            }
-            if (store !== playback || generation != activationGeneration || recorder.authorityRevision(mediaId) != authorityRevision) return null
-            if (fresh != null) {
-                retainDescriptor(playback, mediaId, fresh,
-                    recorder.hasPending(mediaId) || recorder.factRevision(mediaId) != factRevision)
-            } else {
-                transportFailed = true
-                knownDescriptor?.takeIf { it.getString("media_id") == mediaId.toString() }?.let {
-                    retainDescriptor(playback, mediaId, JSONObject(it.toString()), preserveLocal = true)
-                }
-            }
-            if (knownDescriptor?.getString("media_id") == mediaId.toString()) knownDescriptor = null
+    private fun currentMediaId(): UUID? = store?.header()?.optJSONObject("current_entry")?.let {
+        UUID.fromString(it.getString("media_id"))
+    }
+
+    private fun resumeMediaId(): UUID? = if (pendingEnd != null || !recorder.attached()) currentMediaId()
+        else if (isEpisode()) key()?.let(UUID::fromString) else null
+
+    /** Capture a candidate on the main thread; origin reads never hold the playback mutation lock. */
+    private suspend fun prepareRequest(request: JSONObject): RemoteActivation? {
+        val op = request.getString("op")
+        if (op == "load") return prepareActivation(UUID.fromString(request.getString("media_id")))
+        if (op == "reconcile") return prepareActivation(resumeMediaId())
+        if (op == "play") {
+            if (!recorder.fenced() && pendingEnd == null && recorder.attached() && (leased != null || player.playWhenReady || recorder.pending())) return null
+            return prepareActivation(resumeMediaId())
         }
-        if (store !== playback || generation != activationGeneration) return null
-        val retained = playback.descriptor(mediaId)
-        if (retained == null || (transportFailed && offline.readyAudioFile(mediaId)?.isFile != true)) {
+        if (op != "queue_command") return null
+        val queue = store?.queue ?: return null
+        val command = request.getJSONObject("command")
+        val kind = command.getString("kind")
+        val entries = queue.getJSONArray("entries")
+        val current = queue.nullableString("current_entry_id")
+        val index = (0 until entries.length()).firstOrNull { entries.getJSONObject(it).getString("id") == current }
+        val target = when (kind) {
+            "select" -> (0 until entries.length()).map(entries::getJSONObject).firstOrNull { it.getString("id") == command.getString("entry_id") }
+            "next", "previous" -> {
+                if (kind == "previous" && current != null && player.currentPosition > 3_000 && loadedEntryId == current) return null
+                val next = if (index == null) { if (kind == "previous") entries.length() - 1 else -1 }
+                    else if (kind == "previous") maxOf(0, index - 1) else index + 1
+                if (next in 0 until entries.length()) entries.getJSONObject(next) else null
+            }
+            "append", "insert-next" -> if (current == null) command.getJSONObject("entry") else null
+            "restore" -> undoQueue?.let { previous ->
+                val id = previous.nullableString("current_entry_id")
+                val saved = previous.getJSONArray("entries")
+                (0 until saved.length()).map(saved::getJSONObject).firstOrNull { it.getString("id") == id }
+            }
+            "remove" -> if (command.getString("entry_id") == current && index != null && index + 1 < entries.length()) entries.getJSONObject(index + 1) else null
+            else -> null
+        }
+        return prepareActivation(target?.let { UUID.fromString(it.getString("media_id")) })
+    }
+
+    private suspend fun prepareActivation(mediaId: UUID?): RemoteActivation? {
+        if (mediaId == null) return null
+        val owner = account ?: return null
+        val generation = activationGeneration
+        if (leased != null && key() == mediaId.toString()) return null
+        var localRepair: LocalStateError? = null
+        try { offline.openEpisode(mediaId)?.let { it.close(); return null } }
+        catch (failure: LocalStateError) { localRepair = failure }
+        if (!device.remotelyAdmitted()) return localRepair?.let { RemoteActivation(mediaId, owner, generation, null, false, it) }
+        return try { RemoteActivation(mediaId, owner, generation, descriptorReads.withPermit { origin.player(mediaId) }, false, localRepair) }
+        catch (_: IOException) {
+            // justify-ignore-error: the command applies its captured failure only if its intent still owns the occurrence.
+            RemoteActivation(mediaId, owner, generation, null, false, localRepair)
+        } catch (failure: NexusOriginError) {
+            RemoteActivation(mediaId, owner, generation, null, failure.status in setOf(403, 404, 410), localRepair)
+        }
+    }
+
+    /** A package lease is the complete local authority; origin admission applies only to streams. */
+    private fun resolveDescriptor(mediaId: UUID, refresh: Boolean = true, prepared: RemoteActivation? = null): Activation? {
+        val playback = store ?: return null
+        var localRepair: LocalStateError? = null
+        val lease = try { offline.openEpisode(mediaId) }
+        catch (failure: LocalStateError) { localRepair = failure; null }
+        if (lease != null) {
+            var handedOff = false
+            try {
+                recorder.observe(listOf(lease.playbackBaseline.getJSONObject("observation")))
+                playback.baseline(mediaId, lease.playbackBaseline)
+                val record = checkNotNull(playback.record(mediaId)) { "episode baseline missing" }
+                val state = record.getJSONObject("observed").getJSONObject("state")
+                val local = record.optJSONObject("local")?.takeIf { it.getLong("reset_epoch") == state.getLong("reset_epoch") }
+                val completed = local?.getBoolean("completed") ?: (state.nullableString("consumption_override_status") == "finished")
+                val descriptor = JSONObject(lease.rendition.toString()).put("media_id", mediaId.toString())
+                    .put("duration_ms", local?.nullableLong("duration_ms") ?: state.nullableLong("duration_ms") ?: lease.audioDurationMs ?: lease.rendition.nullableLong("duration_ms") ?: JSONObject.NULL)
+                    .put("position_ms", if (completed) 0L else local?.getLong("position_ms") ?: state.nullableLong("position_ms") ?: 0L)
+                    .put("reset_epoch", state.getLong("reset_epoch"))
+                    .put("consumption_override_revision", state.get("consumption_override_revision"))
+                    .put("playback_rate", record.getDouble("playback_rate"))
+                    .put("pause_shortening_mode", record.get("pause_shortening_mode"))
+                handedOff = true
+                return Activation(descriptor, lease)
+            } finally {
+                if (!handedOff) lease.close()
+            }
+        }
+        if (!refresh || !device.remotelyAdmitted()) {
             playbackFailed = true
-            error = "needs a connection before offline play"
+            error = if (localRepair != null) "downloaded content needs repair · open downloads to review" else "not downloaded · connect or skip"
             publish()
             return null
         }
-        val listening = retained.optJSONObject("local_listening")
-        if (listening != null && listening.getLong("expected_reset_epoch") == retained.getLong("reset_epoch")) {
-            retained.put("position_ms", if (retained.optBoolean("locally_completed")) 0 else listening.getLong("position_ms"))
-            if (!listening.isNull("episode_playback_rate")) retained.put("playback_rate", listening.getDouble("episode_playback_rate"))
+        val remote = prepared?.takeIf { it.mediaId == mediaId && it.accountId == account && it.generation == activationGeneration }
+        val activation = remote?.response
+        if (activation == null) {
+            playbackFailed = true
+            error = if (localRepair != null || remote?.localRepair != null) "downloaded content needs repair · current episode couldn’t open"
+                else if (remote?.refused == true) "episode unavailable · skip" else "episode unavailable · retry or skip"
+            publish()
+            return null
         }
-        retained.put("offline_only", transportFailed)
-        return retained
-    }
-
-    /** One refusal fences every earlier read and removes both saved and page-provided playback authority. */
-    private fun retireDescriptor(playback: PlaybackStore, mediaId: UUID) {
-        if (store !== playback) return
-        recorder.retireAuthority(mediaId)
-        if (knownDescriptor?.getString("media_id") == mediaId.toString()) knownDescriptor = null
-        playback.update { it.getJSONObject("descriptors").remove(mediaId.toString()) }
-    }
-
-    private fun retainDescriptor(playback: PlaybackStore, mediaId: UUID, fresh: JSONObject, preserveLocal: Boolean = false) {
-        playback.update { envelope ->
-            val descriptors = envelope.getJSONObject("descriptors")
-            val previous = descriptors.optJSONObject(mediaId.toString())
-            if (previous != null && previous.getLong("reset_epoch") > fresh.getLong("reset_epoch")) return@update
-            if (previous != null && previous.getLong("reset_epoch") == fresh.getLong("reset_epoch")) {
-                if ((previous.nullableLong("consumption_override_revision") ?: 0L) > (fresh.nullableLong("consumption_override_revision") ?: 0L))
-                    fresh.put("consumption_override_revision", previous.get("consumption_override_revision"))
-                if (preserveLocal) previous.optJSONObject("local_listening")?.let {
-                    fresh.put("local_listening", it).put("locally_completed", previous.optBoolean("locally_completed"))
-                }
-            }
-            descriptors.put(mediaId.toString(), fresh)
-        }
-    }
-
-    /** Four workers, not ten thousand jobs; online queue acknowledgement never waits for preparation. */
-    private fun prepareOffline() {
-        val playback = store ?: return
-        val queueId = playback.queue.getString("queue_id")
-        if (preparing?.isActive == true && preparingQueueId == queueId) return
-        preparing?.cancel()
-        preparingQueueId = queueId
-        val entries = playback.queue.getJSONArray("entries")
-        val ids = (0 until entries.length()).map { UUID.fromString(entries.getJSONObject(it).getString("media_id")) }.distinct()
-            .filter { offline.readyAudioFile(it)?.isFile == true && playback.descriptor(it) == null }
-        preparing = scope.launch {
-            var index = 0
-            coroutineScope {
-                List(4) { async {
-                    while (index < ids.size) {
-                        val mediaId = ids[index++]
-                        val factRevision = recorder.factRevision(mediaId)
-                        val authorityRevision = recorder.authorityRevision(mediaId)
-                        val fresh = try { descriptorReads.withPermit { origin.player(mediaId) } }
-                        catch (_: IOException) { continue } // justify-ignore-error: a later network/download event retries preparation.
-                        catch (failure: NexusOriginError) {
-                            if (failure.status !in setOf(401, 408, 426, 429) && failure.status < 500)
-                                retireDescriptor(playback, mediaId)
-                            continue
-                        }
-                        loads.withLock {
-                            if (store === playback && playback.queue.getString("queue_id") == queueId && recorder.authorityRevision(mediaId) == authorityRevision && offline.readyAudioFile(mediaId)?.isFile == true)
-                                retainDescriptor(playback, mediaId, fresh,
-                                    recorder.hasPending(mediaId) || recorder.factRevision(mediaId) != factRevision)
-                        }
-                    }
-                } }.awaitAll()
-            }
-        }
+        recorder.observe(listOf(activation.getJSONObject("observation")))
+        val descriptor = activation.getJSONObject("descriptor")
+        playback.update { it.getJSONObject("descriptors").put(mediaId.toString(), descriptor) }
+        return Activation(descriptor, null, localRepair ?: remote?.localRepair)
     }
 
     // ---- this load's silence choice, podcast default (absent means off), and time saved ----
@@ -1258,13 +1215,34 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         savedFrom = if (stretch) now to player.currentPosition else null
     }
 
+    private fun listeningSaveFailed() {
+        if (savingFailed) return
+        savingFailed = true
+        player.pause()
+        error = "couldn’t save listening progress · retry"
+        synced = false
+        publish()
+        savingFailed = false
+    }
+
+    private fun persistRecording(change: () -> Unit) {
+        if (savingFailed) return
+        try { change() } catch (_: IOException) {
+            // justify-ignore-error: a failed checkpoint pauses playback and cannot be acknowledged as saved.
+            listeningSaveFailed()
+        }
+    }
+
     // ---- player events ----
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         device.setPlaybackActive(isPlaying)
-        if (isPlaying) { error = null; playbackFailed = false }
+        if (isPlaying) {
+            error = if (source?.optBoolean("local_content_repair") == true) "downloaded content needs repair · streaming current version" else null
+            playbackFailed = false
+        }
         // at the end the recorder settles instead of writing
-        if (player.playbackState != Player.STATE_ENDED) recorder.playing(isPlaying)
+        if (player.playbackState != Player.STATE_ENDED) persistRecording { recorder.playing(isPlaying) }
         accrueSaved()
         ticker?.cancel()
         if (isPlaying) {
@@ -1287,10 +1265,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 val generation = activationGeneration
                 val endedLoad = loadId
                 if (recorder.ended()) scope.launch {
+                    val prepared = prepareActivation(currentMediaId())
                     loads.withLock {
                         publish()
                         if (activationGeneration == generation && loadId == endedLoad && player.playbackState == Player.STATE_ENDED)
-                            activateCurrent(play = true, checkpoint = false)
+                            activateCurrent(play = true, checkpoint = false, prepared = prepared)
                     }
                 } else error = "couldn’t confirm queue change"
             }
@@ -1302,7 +1281,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         if (reason == Player.DISCONTINUITY_REASON_SEEK && !installingPosition) {
             retireActivation()
             restoreEndedSelection()
-            recorder.seeked(oldPosition.positionMs)
+            persistRecording { recorder.seeked(oldPosition.positionMs) }
             saveCheckpoint()
             accrueSaved(discard = true)
         }
@@ -1329,7 +1308,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun snapshot(): JSONObject = JSONObject()
         .put("snapshot_id", ++nextSnapshotId)
-        .put("source", source?.let { JSONObject().put("kind", it.getString("kind"))
+        .put("source", source?.let { JSONObject().put("kind", it.getString("kind")).put("package_id", it.get("package_id"))
             .put("descriptor", if (isEpisode()) JSONObject(it.getJSONObject("descriptor").toString()).apply {
                 remove("chapters"); remove("local_listening"); remove("locally_completed")
             } else it.getJSONObject("descriptor")) } ?: JSONObject.NULL)
@@ -1345,17 +1324,18 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 else -> "Paused"
             },
         )
-        .put("positionMs", maxOf(0, player.currentPosition))
-        .put("durationMs", player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0)
-        .put("bufferedMs", maxOf(0, player.bufferedPosition))
+        .put("position_ms", maxOf(0, player.currentPosition))
+        .put("duration_ms", player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0)
+        .put("buffered_ms", maxOf(0, player.bufferedPosition))
         // Keep the float's shortest decimal; widening it directly invents persistence precision.
         .put("rate", player.playbackParameters.speed.toString().toDouble())
-        .put("shortenPauses", player.skipSilenceEnabled)
-        .put("shortenPausesSavedMs", savedMs)
+        .put("shorten_pauses", player.skipSilenceEnabled)
+        .put("shorten_pauses_saved_ms", savedMs)
         .put("error", error ?: JSONObject.NULL)
         .put("playback_failed", playbackFailed)
         .put("synced", synced)
-        .put("consumptionRevision", consumptionRevision)
+        .put("consumption_revision", consumptionRevision)
+        .put("listening_revision", ListeningPublication.revision().toString())
 
     private fun publish() {
         // Source replacement publishes only after the descriptor owns the installed media item.

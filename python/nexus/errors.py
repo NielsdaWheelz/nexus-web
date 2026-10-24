@@ -148,6 +148,7 @@ class ApiErrorCode(str, Enum):
     E_TRANSCRIPTION_TIMEOUT = ("E_TRANSCRIPTION_TIMEOUT", 504)  # provider timed out
     E_DIARIZATION_FAILED = ("E_DIARIZATION_FAILED", 502)  # diarized attempt failed (diagnostic)
     E_TRANSCRIPT_UNAVAILABLE = ("E_TRANSCRIPT_UNAVAILABLE", 409)  # transcript unavailable
+    E_EPISODE_DOWNLOAD_CHANGED = ("E_EPISODE_DOWNLOAD_CHANGED", 409)
 
     # PDF errors
     E_PDF_PASSWORD_REQUIRED = ("E_PDF_PASSWORD_REQUIRED", 422)

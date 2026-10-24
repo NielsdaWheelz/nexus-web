@@ -2,8 +2,10 @@
 
 /** Installed catalog memory and refresh owner. Native owns durable publication;
  * this owner binds one account, replaces whole indexes and retires late file reads.
+ * Readers see the index projected over this device's listening facts; the raw
+ * snapshot's observations go to native so it can adopt resets it lacks.
  * Remote writes never await this work. No catalog state enters browser storage. */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ApiError, isApiError, WIRE_HEADER } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -13,7 +15,9 @@ import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { readCatalogStatus, refreshCatalog, subscribeCatalogStatus } from "@/lib/native/client";
 import type { CatalogStatus } from "@/lib/native/contracts";
 import { isRecord } from "@/lib/validation";
-import { indexCatalog, type CatalogIndex, type OfflineCatalog } from "./selectors";
+import { currentListening, liveGroupCovers, observeConsumption, useListening } from "@/lib/consumption/listening";
+import { useLocalContent } from "@/lib/offline/localContent";
+import { catalogObservations, indexCatalog, projectCatalog, type CatalogIndex, type OfflineCatalog } from "./selectors";
 import type { CatalogRead } from "./types";
 
 interface State { readonly data: CatalogIndex | null; readonly loading: boolean; readonly status: CatalogStatus | null; readonly error: ApiError | null; readonly completed: number; readonly accepting: boolean }
@@ -43,7 +47,7 @@ function createOwner(accountId: string) {
         }
         const envelope: { data: OfflineCatalog } | null = response.status === 204 ? null : await response.json();
         if (controller.signal.aborted || generation !== epoch || stopped) return;
-        if (envelope !== null && (envelope.data.account_id !== accountId || envelope.data.wire_revision !== WIRE_REVISION || envelope.data.format_version !== 1))
+        if (envelope !== null && (envelope.data.account_id !== accountId || envelope.data.wire_revision !== WIRE_REVISION || envelope.data.format_version !== 2))
           throw new ApiError(0, "E_CATALOG_INCOMPATIBLE", "saved catalog needs an online rebuild");
         const data = envelope === null ? null : indexCatalog(envelope.data);
         publish({ ...state, data, loading: false, error: null });
@@ -142,6 +146,13 @@ export function CatalogProvider({ accountId, children }: { readonly accountId: s
     timer.current = setTimeout(() => { timer.current = null; refresh(true); }, 30_000);
     return () => { if (timer.current !== null) clearTimeout(timer.current); };
   }, [changes, refresh]);
+  // Forwarding filters to media native retains, so a new listening entry or download
+  // can make an already-shown catalog observation newly relevant.
+  const listening = useListening();
+  const downloads = useLocalContent().index;
+  useEffect(() => {
+    if (state.data !== null) observeConsumption(catalogObservations(state.data));
+  }, [state.data, listening.facts, downloads]);
   const completed = useRef(state.completed);
   useEffect(() => {
     if (state.accepting || completed.current === state.completed) return;
@@ -153,11 +164,51 @@ export function CatalogProvider({ accountId, children }: { readonly accountId: s
   return <Context value={owner}>{children}</Context>;
 }
 
+/** `data` is the saved index as this device's listening shows it; `raw` is the dated
+ * snapshot itself, for relationships the projection may hide (lectern membership). */
 export function useCatalogState() {
   const owner = useContext(Context);
   const empty = useMemo<State>(() => ({ data: null, loading: false, status: null, error: null, completed: 0, accepting: false }), []);
   const state = useSyncExternalStore(owner?.subscribe ?? (() => () => {}), owner?.get ?? (() => empty), () => empty);
-  return { ...state, refresh: owner?.refresh ?? (async () => {}) };
+  const { facts } = useListening();
+  const data = useMemo(() => state.data === null ? null : projectCatalog(state.data, facts), [state.data, facts]);
+  return { ...state, raw: state.data, data, refresh: owner?.refresh ?? (async () => {}) };
+}
+
+/**
+ * A pane group's shown source. Lost remote admission returns the whole group to its
+ * saved projection; afterwards it promotes only when every part is a complete live
+ * read and those reads cover this device's relevant listening (`usePromoteLiveGroup`).
+ * A promoted connected group stays live. While dated, `stale` follows `Consumption`,
+ * so every part rereads once a receipt can raise the floor; live groups keep their
+ * ordinary invalidation. Call before the group's reads.
+ */
+export function useLiveGroup(key: string) {
+  const admission = useRemoteAdmission();
+  const consumption = useChangeStamp("Consumption");
+  const [promoted, setPromoted] = useState<string | null>(null);
+  const live = promoted === key && admission === "Ready";
+  return { key, live, stale: live ? "live" : consumption, admission, promoted, setPromoted };
+}
+
+/**
+ * Commits the group's promotion before paint, against the listening facts current at
+ * commit. `revisions` are the parts' consumption revisions once every part is a
+ * complete live read (else null); `relevant` is the group's unfiltered saved media,
+ * memoized by its owner. Call after the group's reads.
+ */
+export function usePromoteLiveGroup(group: ReturnType<typeof useLiveGroup>, revisions: readonly string[] | null, relevant: ReadonlySet<string>) {
+  const listening = useListening();
+  const { key, admission, promoted, setPromoted } = group;
+  const identity = revisions === null ? null : revisions.join(",");
+  useLayoutEffect(() => {
+    if (admission !== "Ready") {
+      if (promoted !== null) setPromoted(null);
+      return;
+    }
+    if (promoted === key || identity === null) return;
+    if (liveGroupCovers(currentListening(), mediaId => relevant.has(mediaId), identity.split(","))) setPromoted(key);
+  }, [admission, identity, key, listening, promoted, relevant, setPromoted]);
 }
 
 export function useCatalogRead<T>(selector: (catalog: CatalogIndex) => T | null): CatalogRead<T> | undefined {
@@ -168,8 +219,9 @@ export function useCatalogRead<T>(selector: (catalog: CatalogIndex) => T | null)
   return useMemo<CatalogRead<T> | undefined>(() => owner === null ? undefined : {
     snapshot_id: state.data?.value.snapshot_id ?? null,
     async load(signal: AbortSignal) {
-      const data = await owner.load(signal);
-      if (data === null) return null;
+      const raw = await owner.load(signal);
+      if (raw === null) return null;
+      const data = projectCatalog(raw, currentListening().facts);
       const selected = selection.current(data);
       if (selected === null) throw new ApiError(0, "E_CATALOG_COVERAGE", "not in the saved catalog");
       return { data: selected, source: { kind: "catalog", snapshot_id: data.value.snapshot_id, captured_at: data.value.captured_at } };

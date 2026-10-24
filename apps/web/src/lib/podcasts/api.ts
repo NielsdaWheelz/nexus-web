@@ -9,6 +9,7 @@ import { publishChange } from "@/lib/api/changes";
 import type { AcquisitionGuard } from "@/lib/libraries/api";
 import { mediaAcquisitionAvailable } from "@/lib/imports/ingest";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
 export type PodcastRow = Schema<"PodcastListItemOut">;
@@ -42,31 +43,24 @@ export async function resolvePodcastActionFacts(
   })).data.items;
 }
 
-export async function listPodcasts(
-  query: URLSearchParams,
-  signal: AbortSignal,
-): Promise<ApiJson<"/podcasts", "get">["data"]> {
-  const path = `/api/podcasts?${query}` as const;
+/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
+export async function listPodcasts(query: URLSearchParams, signal: AbortSignal) {
   type Body = ApiJson<"/podcasts", "get">;
-  return (await apiFetch<Body>(path, { signal })).data;
+  const { data, consumption_revision } = stampedRead(await apiFetch<Body>(`/api/podcasts?${query}`, { signal }));
+  return { ...data, metadata: { consumption_revision } };
 }
 
-export async function getPodcastDetail(
-  podcastId: string,
-  signal: AbortSignal,
-): Promise<PodcastDetail> {
+/** Stamped with its read snapshot's consumption revision; observations reach native. */
+export async function getPodcastDetail(podcastId: string, signal: AbortSignal): Promise<StampedRead<PodcastDetail>> {
   type Body = ApiJson<"/podcasts/{podcast_id}", "get">;
-  return (await apiFetch<Body>(`/api/podcasts/${podcastId}`, { signal })).data;
+  return stampedRead(await apiFetch<Body>(`/api/podcasts/${podcastId}`, { signal }));
 }
 
-export async function listEpisodes(
-  podcastId: string,
-  query: URLSearchParams,
-  signal: AbortSignal,
-): Promise<ApiJson<"/podcasts/{podcast_id}/episodes", "get">["data"]> {
-  const path = `/api/podcasts/${podcastId}/episodes?${query}` as const;
+/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
+export async function listEpisodes(podcastId: string, query: URLSearchParams, signal: AbortSignal) {
   type Body = ApiJson<"/podcasts/{podcast_id}/episodes", "get">;
-  return (await apiFetch<Body>(path, { signal })).data;
+  const { data, consumption_revision } = stampedRead(await apiFetch<Body>(`/api/podcasts/${podcastId}/episodes?${query}`, { signal }));
+  return { ...data, metadata: { consumption_revision } };
 }
 
 /** Contextless admission reads the default destination's actual revision. */
@@ -74,8 +68,9 @@ export async function getDefaultPodcastLibrary(signal: AbortSignal): Promise<str
   return (await apiFetch<ApiJson<"/me", "get">>("/api/me", { signal })).data.default_library_id;
 }
 
-export async function getLibraryPodcasts(libraryId: string, signal: AbortSignal): Promise<PodcastSection> {
-  return (await apiFetch<ApiJson<"/libraries/{library_id}/podcasts", "get">>(`/api/libraries/${libraryId}/podcasts`, { signal })).data;
+/** Stamped with its read snapshot's consumption revision (a title-only header: no rows). */
+export async function getLibraryPodcasts(libraryId: string, signal: AbortSignal): Promise<StampedRead<PodcastSection>> {
+  return stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}/podcasts", "get">>(`/api/libraries/${libraryId}/podcasts`, { signal }));
 }
 
 /** Exact selected relationship; the default section is an aggregate, not membership. */

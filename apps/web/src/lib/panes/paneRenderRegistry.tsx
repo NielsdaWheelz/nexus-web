@@ -11,6 +11,7 @@ type Module = { default: ComponentType };
 // Pane bodies are lazy chunks; the server and the always-loaded shell never
 // import them. Two bodies serve two routes each: chats, and pages/daily pages.
 const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
+  downloads: () => import("@/app/(authenticated)/downloads/DownloadsPaneBody"),
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
   library: () => import("@/app/(authenticated)/libraries/[id]/LibraryPaneBody"),

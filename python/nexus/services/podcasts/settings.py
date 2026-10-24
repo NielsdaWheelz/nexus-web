@@ -15,6 +15,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.services import users
+from nexus.services.consumption import observation
 
 
 def get_settings(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastPlaybackSettingsOut:
@@ -95,6 +96,7 @@ def put_settings(
                     raise ConflictError(
                         ApiErrorCode.E_RESOURCE_CONFLICT, "Playback settings id is taken"
                     )
+                observation.advance(db, viewer_id)
                 return get_settings(db, viewer_id, podcast_id)
             if current.id != body.id:
                 raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Playback settings changed")
@@ -115,6 +117,7 @@ def put_settings(
                     "pause": body.pause_shortening_mode,
                 },
             )
+            observation.advance(db, viewer_id)
             return get_settings(db, viewer_id, podcast_id)
 
     return retry_read_committed(db, "podcast_playback_settings", attempt)

@@ -62,8 +62,8 @@ export function AcquisitionReview({ target, title, mode, libraryId, onAccepted, 
     load: async signal => {
       const id = libraryId ?? await getDefaultPodcastLibrary(signal);
       const [library, facts] = await Promise.all([
-        getLibrary(id, signal),
-        target.kind === "Canonical" ? getLibraryPodcast(id, target.podcast_id, signal) : getLibraryPodcasts(id, signal),
+        getLibrary(id, signal).then(read => read.data),
+        target.kind === "Canonical" ? getLibraryPodcast(id, target.podcast_id, signal) : getLibraryPodcasts(id, signal).then(read => read.data),
       ]);
       return { id, library, facts };
     },

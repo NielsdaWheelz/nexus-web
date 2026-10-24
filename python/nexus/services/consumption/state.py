@@ -21,7 +21,14 @@ from nexus.ids import new_uuid7
 from nexus.schemas import collection_actions as collection_wire
 from nexus.schemas import consumption as wire
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot, XReaderResumeState
-from nexus.services.consumption import lectern, listening, projection, reader_cursor, viewer_txn
+from nexus.services.consumption import (
+    lectern,
+    listening,
+    observation,
+    projection,
+    reader_cursor,
+    viewer_txn,
+)
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.suggestion_changes import engagement_gate, record_input_change
 
@@ -29,7 +36,7 @@ _EPISODE = "podcast_episode"
 Status = Literal["finished", "unread"] | None
 
 
-def get_player(db: Session, viewer_id: UUID, media_id: UUID) -> wire.PlayerDescriptor:
+def get_player(db: Session, viewer_id: UUID, media_id: UUID) -> wire.PlayerActivationOut:
     """The descriptor every play starts from; 404 when not playable."""
     descriptor = (
         projection.player_descriptors(db, viewer_id=viewer_id, media_ids=[media_id]).get(media_id)
@@ -38,7 +45,9 @@ def get_player(db: Session, viewer_id: UUID, media_id: UUID) -> wire.PlayerDescr
     )
     if descriptor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return descriptor
+    return wire.PlayerActivationOut(
+        descriptor=descriptor, observation=observation.read(db, viewer_id, media_id)
+    )
 
 
 def get_reader_cursor(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:
@@ -91,10 +100,10 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
 
 def record_listening(
     viewer_id: UUID, media_id: UUID, body: wire.ListeningIn
-) -> wire.ListeningPositionOut:
+) -> wire.EpisodeConsumptionObservation:
     """Store one sample under its epoch; a stale epoch answers 409 with the current fences."""
 
-    def run(db: Session) -> wire.ListeningPositionOut:
+    def run(db: Session) -> wire.EpisodeConsumptionObservation:
         _episode(db, viewer_id, media_id)
         gate = engagement_gate(db, viewer_id=viewer_id, media_id=media_id, listening=True)
         heard = listening.write(db, viewer_id=viewer_id, media_id=media_id, sample=body)
@@ -102,10 +111,12 @@ def record_listening(
             raise ConflictError(
                 ApiErrorCode.E_STALE_LISTENING_REVISION,
                 "Listening progress was reset",
-                details={"current": _position(db, viewer_id, media_id).model_dump(mode="json")},
+                details={
+                    "current": observation.read(db, viewer_id, media_id).model_dump(mode="json")
+                },
             )
         _resume(db, viewer_id, media_id)
-        result = _position(db, viewer_id, media_id)
+        result = observation.read(db, viewer_id, media_id)
         if gate.moved(db, viewer_id=viewer_id):
             record_input_change(db)
         db.commit()
@@ -224,16 +235,20 @@ def reset_progress(viewer_id: UUID, media_id: UUID) -> wire.ConsumptionOverrideO
     return viewer_txn("reset_progress", viewer_id, run)
 
 
-def settle_natural_end(viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn) -> None:
+def settle_natural_end(
+    viewer_id: UUID, media_id: UUID, body: wire.NaturalEndIn
+) -> wire.EpisodeConsumptionObservation:
     """Finish an episode its device heard end and leave the Lectern, fenced on the override
     revision the device last saw and the terminal sample's epoch. 409 when superseded; a resend
     that already landed (the next revision, finished, same epoch) succeeds."""
 
-    def run(db: Session) -> None:
+    def run(db: Session) -> wire.EpisodeConsumptionObservation:
         settle_natural_end_in_txn(db, viewer_id, media_id, body)
+        result = observation.read(db, viewer_id, media_id)
         db.commit()
+        return result
 
-    viewer_txn("settle_natural_end", viewer_id, run)
+    return viewer_txn("settle_natural_end", viewer_id, run)
 
 
 def natural_end_is_settled(
@@ -245,7 +260,7 @@ def natural_end_is_settled(
         current is not None
         and current.status == "finished"
         and current.revision == (body.expected_override_revision or 0) + 1
-        and _position(db, viewer_id, media_id).reset_epoch
+        and observation.read(db, viewer_id, media_id).state.reset_epoch
         == body.terminal_listening.expected_reset_epoch
         and not db.scalar(
             text(
@@ -276,7 +291,11 @@ def settle_natural_end_in_txn(
         lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
         record_input_change(db)
     elif not natural_end_is_settled(db, viewer_id, media_id, body):
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The natural end was superseded")
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT,
+            "The natural end was superseded",
+            details={"current": observation.read(db, viewer_id, media_id).model_dump(mode="json")},
+        )
 
 
 def set_states_in_txn(
@@ -393,6 +412,14 @@ def undo_states_in_txn(
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:
     """Media teardown: state, progress and history. Lectern owns its separate fenced cleanup."""
+    viewers = db.scalars(
+        text(
+            "SELECT user_id FROM podcast_listening_states WHERE media_id = :media UNION SELECT user_id FROM consumption_overrides WHERE media_id = :media"
+        ),
+        {"media": media_id},
+    )
+    for viewer_id in viewers:
+        observation.advance(db, viewer_id)
     for table in (
         "podcast_listening_states",
         "consumption_overrides",
@@ -417,13 +444,9 @@ def _finish(db: Session, viewer_id: UUID, media_id: UUID, prior: Row | None) -> 
 
 def _resume(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     """Accepted progress clears unread; known progress at 0.95 or more finishes (I7)."""
-    db.execute(
-        text("""
-            UPDATE consumption_overrides SET status = NULL, revision = revision + 1
-            WHERE user_id = :viewer_id AND media_id = :media_id AND status = 'unread'
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
+    current = _override(db, viewer_id, media_id)
+    if current is not None and current.status == "unread":
+        _set_override(db, viewer_id, media_id, None)
     state = projection.media_read_states(db, viewer_id=viewer_id, media_ids=[media_id])[media_id]
     if state.state != "Finished" and (state.progress or 0) >= projection.FINISHED_PROGRESSION:
         _finish(db, viewer_id, media_id, _override(db, viewer_id, media_id))
@@ -439,6 +462,7 @@ def _override(db: Session, viewer_id: UUID, media_id: UUID) -> Row | None:
 
 def _set_override(db: Session, viewer_id: UUID, media_id: UUID, status: Status) -> int:
     """Write the register; every write advances the revision (I4)."""
+    observation.advance(db, viewer_id)
     return db.scalar(
         text("""
             INSERT INTO consumption_overrides (user_id, media_id, status, revision)
@@ -472,16 +496,6 @@ def _fence(db: Session, viewer_id: UUID, media_id: UUID, kind: str) -> None:
     reader_cursor.fence(db, viewer_id=viewer_id, media_id=media_id)
     if kind == _EPISODE:
         listening.fence(db, viewer_id=viewer_id, media_id=media_id)
-
-
-def _position(db: Session, viewer_id: UUID, media_id: UUID) -> wire.ListeningPositionOut:
-    heard = listening.load(db, viewer_id=viewer_id, media_id=media_id)
-    current = _override(db, viewer_id, media_id)
-    return wire.ListeningPositionOut(
-        position_ms=heard.position_ms if heard else 0,
-        reset_epoch=heard.reset_epoch if heard else 0,
-        consumption_override_revision=current.revision if current else None,
-    )
 
 
 def _kind(db: Session, viewer_id: UUID, media_id: UUID) -> str:

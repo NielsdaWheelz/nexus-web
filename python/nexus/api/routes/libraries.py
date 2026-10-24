@@ -16,6 +16,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas import podcast as podcast_wire
 from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.consumption import ConsumptionData
 from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationsOut,
@@ -36,6 +37,7 @@ from nexus.schemas.suggestions import (
     SuggestionViewOut,
 )
 from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
+from nexus.services.consumption import observation
 from nexus.services.podcasts import (
     imports as podcast_imports,
 )
@@ -90,17 +92,23 @@ def create_library(
 
 
 @router.get("/libraries/{library_id}")
-def get_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[LibraryOut]:
+def get_library(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[LibraryOut]:
     """Members only; anyone else gets 404."""
+    response.headers["Cache-Control"] = "private, no-store"
     library = libraries.access(db, viewer.user_id, library_id, lock=False)
-    return Data(data=library.out(viewer.user_id))
+    return observation.stamp(db, viewer.user_id, library.out(viewer.user_id), [])
 
 
 @router.get("/libraries/{library_id}/metadata")
 def get_library_metadata(
-    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[LibraryMetadataOut]:
-    return Data(data=library_listing.metadata(db, viewer.user_id, library_id))
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[LibraryMetadataOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db, viewer.user_id, library_listing.metadata(db, viewer.user_id, library_id), []
+    )
 
 
 @router.patch("/libraries/{library_id}")
@@ -118,14 +126,20 @@ def delete_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Respon
 
 @router.get("/libraries/{library_id}/entries")
 def list_entries(
-    request: Request, library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[LibraryEntriesPageOut]:
+    request: Request,
+    library_id: UUID,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> ConsumptionData[LibraryEntriesPageOut]:
     """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
+    response.headers["Cache-Control"] = "private, no-store"
     view, query = library_listing.parse_entries_query(request.query_params.multi_items())
-    return Data(
-        data=library_listing.list_library_entries(
-            db, viewer.user_id, library_id, view=view, cursor=query.cursor, limit=query.limit
-        )
+    data = library_listing.list_library_entries(
+        db, viewer.user_id, library_id, view=view, cursor=query.cursor, limit=query.limit
+    )
+    return observation.stamp(
+        db, viewer.user_id, data, [row.media_summary.media_id for row in data.items]
     )
 
 
@@ -218,17 +232,31 @@ def place_item(
 
 @router.get("/libraries/{library_id}/podcasts")
 def library_podcasts(
-    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[podcast_wire.LibraryPodcastsOut]:
-    return Data(data=podcast_queries.read_library_podcasts(db, viewer.user_id, library_id))
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[podcast_wire.LibraryPodcastsOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db,
+        viewer.user_id,
+        podcast_queries.read_library_podcasts(db, viewer.user_id, library_id),
+        [],
+    )
 
 
 @router.get("/libraries/{library_id}/podcasts/{podcast_id}")
 def library_podcast(
-    library_id: UUID, podcast_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[podcast_wire.LibraryPodcastOut]:
-    return Data(
-        data=podcast_queries.read_library_podcast(db, viewer.user_id, library_id, podcast_id)
+    library_id: UUID,
+    podcast_id: UUID,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> ConsumptionData[podcast_wire.LibraryPodcastOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db,
+        viewer.user_id,
+        podcast_queries.read_library_podcast(db, viewer.user_id, library_id, podcast_id),
+        [],
     )
 
 

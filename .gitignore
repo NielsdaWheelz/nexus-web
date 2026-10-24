@@ -8,6 +8,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+!apps/web/src/app/(authenticated)/downloads/
 eggs/
 .eggs/
 /lib/

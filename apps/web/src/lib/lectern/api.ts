@@ -2,13 +2,15 @@
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Move, OrderRevision, Snapshot } from "@/lib/collections/order";
+import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
 export type Lectern = Schema<"LecternOut">;
 export type LecternItem = Lectern["items"][number];
 export type Placement = NonNullable<Schema<"PlaceIn">["placement"]>;
 
-export async function readLectern(signal: AbortSignal): Promise<Lectern> {
-  return (await apiFetch<ApiJson<"/lectern", "get">>("/api/lectern", { signal })).data;
+/** Stamped with its read snapshot's consumption revision; observations reach native. */
+export async function readLectern(signal: AbortSignal): Promise<StampedRead<Lectern>> {
+  return stampedRead(await apiFetch<ApiJson<"/lectern", "get">>("/api/lectern", { signal }));
 }
 
 export async function moveLecternItem(move: Move, signal: AbortSignal): Promise<Snapshot> {

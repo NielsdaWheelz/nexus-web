@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
@@ -12,6 +12,8 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
+from nexus.schemas.consumption import ConsumptionData
+from nexus.services.consumption import observation
 from nexus.services.podcasts import episode_acquisition, episodes, settings, subscriptions, sync
 from nexus.services.podcasts import subscriptions_query as queries
 
@@ -38,8 +40,9 @@ def acquire_podcast_episode(
 
 @router.get("/podcasts")
 def list_podcasts(
-    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[wire.PodcastListItemOut]]:
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[CollectionPage[wire.PodcastListItemOut]]:
+    response.headers["Cache-Control"] = "private, no-store"
     query = parse_collection_query(
         request.query_params.multi_items(), domain_keys=frozenset({"sort", "filter", "library_id"})
     )
@@ -50,22 +53,21 @@ def list_podcasts(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast library"
         ) from exc
-    return Data(
-        data=queries.list_podcasts(
-            db,
-            viewer.user_id,
-            limit=query.limit,
-            cursor=query.cursor,
-            sort=_option(
-                query.parameters,
-                "sort",
-                "recent_episode",
-                ("recent_episode", "unplayed_count", "alpha"),
-            ),
-            filter=_option(query.parameters, "filter", "all", ("all", "has_new", "not_in_library")),
-            library_id=library_id,
-        )
+    data = queries.list_podcasts(
+        db,
+        viewer.user_id,
+        limit=query.limit,
+        cursor=query.cursor,
+        sort=_option(
+            query.parameters,
+            "sort",
+            "recent_episode",
+            ("recent_episode", "unplayed_count", "alpha"),
+        ),
+        filter=_option(query.parameters, "filter", "all", ("all", "has_new", "not_in_library")),
+        library_id=library_id,
     )
+    return observation.stamp(db, viewer.user_id, data, [])
 
 
 @router.post("/podcasts/action-facts/resolve")
@@ -122,33 +124,42 @@ def refresh_podcasts(
 
 @router.get("/podcasts/{podcast_id}")
 def get_podcast_detail(
-    podcast_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[wire.PodcastDetailOut]:
-    return Data(data=queries.get_podcast_detail(db, viewer.user_id, podcast_id))
+    podcast_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
+) -> ConsumptionData[wire.PodcastDetailOut]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return observation.stamp(
+        db, viewer.user_id, queries.get_podcast_detail(db, viewer.user_id, podcast_id), []
+    )
 
 
 @router.get("/podcasts/{podcast_id}/episodes")
 def list_podcast_episodes(
-    podcast_id: UUID, request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[wire.PodcastEpisodeListItemOut]]:
+    podcast_id: UUID,
+    request: Request,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    response: Response,
+) -> ConsumptionData[CollectionPage[wire.PodcastEpisodeListItemOut]]:
+    response.headers["Cache-Control"] = "private, no-store"
     query = parse_collection_query(
         request.query_params.multi_items(), domain_keys=frozenset({"state", "sort"})
     )
-    return Data(
-        data=episodes.list_episodes(
-            db,
-            viewer.user_id,
-            podcast_id,
-            limit=query.limit,
-            cursor=query.cursor,
-            state=_option(
-                query.parameters, "state", "all", ("all", "unplayed", "in_progress", "played")
-            ),
-            sort=_option(
-                query.parameters,
-                "sort",
-                "newest",
-                ("newest", "oldest", "duration_asc", "duration_desc"),
-            ),
-        )
+    data = episodes.list_episodes(
+        db,
+        viewer.user_id,
+        podcast_id,
+        limit=query.limit,
+        cursor=query.cursor,
+        state=_option(
+            query.parameters, "state", "all", ("all", "unplayed", "in_progress", "played")
+        ),
+        sort=_option(
+            query.parameters,
+            "sort",
+            "newest",
+            ("newest", "oldest", "duration_asc", "duration_desc"),
+        ),
+    )
+    return observation.stamp(
+        db, viewer.user_id, data, [row.media_summary.media_id for row in data.items]
     )

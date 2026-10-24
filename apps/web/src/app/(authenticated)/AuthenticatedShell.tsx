@@ -41,7 +41,8 @@ import { WorkProvider } from "@/lib/unsavedWork";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
-import { connectOffline } from "@/lib/offline/bridge";
+import { connectLocalContent } from "@/lib/offline/localContent";
+import { connectListening } from "@/lib/consumption/listening";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
@@ -132,8 +133,10 @@ function Workspace(props: {
     observer.observe(node);
     return () => observer.disconnect();
   }, [profile]);
-  // Native owns account binding; this hello only subscribes.
-  useEffect(() => connectOffline(), []);
+  // Native owns account binding; these subscriptions read its committed local facts
+  // for this account and retire with it.
+  useEffect(() => connectLocalContent({ accountId, indexPath: "/_nexus/device/downloads.json" }), [accountId]);
+  useEffect(() => installedApp ? connectListening(accountId) : undefined, [accountId]);
   return (
     <PlayerPresentationProvider accountId={accountId}>
       <div
