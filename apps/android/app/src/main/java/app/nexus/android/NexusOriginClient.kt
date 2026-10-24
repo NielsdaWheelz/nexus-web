@@ -22,6 +22,7 @@ import okio.Buffer
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
+import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -123,6 +124,10 @@ internal class NexusOriginClient(
         .callTimeout(READING_COPY_DEADLINE_MINUTES, TimeUnit.MINUTES)
         .readTimeout(READING_COPY_DEADLINE_MINUTES, TimeUnit.MINUTES)
         .build()
+    private val catalogClient = client.newBuilder()
+        .callTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .build()
 
     init {
         require(base.username.isEmpty() && base.password.isEmpty())
@@ -182,6 +187,12 @@ internal class NexusOriginClient(
 
     /** The account the WebView session cookie belongs to. */
     suspend fun me(): UUID = UUID.fromString(data(Request.Builder().url(api("me")).get()).getString("user_id"))
+
+    /** Complete metadata only; the caller owns staging and atomic publication. */
+    suspend fun catalog(destination: OutputStream) {
+        checkStatus(execute(Request.Builder().url(api("offline-catalog")).get(), catalogClient,
+            destination = destination))
+    }
 
     /** A fresh offline reading copy `{url, expires_at, generation}`; the url needs no credentials. */
     suspend fun readingCopy(mediaId: UUID): JSONObject =
@@ -256,6 +267,7 @@ internal class NexusOriginClient(
         unlimited: Boolean = false,
         sendCookies: Boolean = true,
         capturedCookie: String? = null,
+        destination: OutputStream? = null,
     ): NexusOriginResponse = suspendCancellableCoroutine { continuation ->
         if (current == null && sendCookies && DeviceSession.current()?.remotelyAdmitted() != true) {
             continuation.resumeWithException(NexusOriginError(503, "E_REMOTE_UNAVAILABLE"))
@@ -287,7 +299,7 @@ internal class NexusOriginClient(
                 override fun onResponse(call: Call, response: Response) {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            val result = response.use { decodeResponse(it, current, unlimited) }
+                            val result = response.use { decodeResponse(it, current, unlimited, destination) }
                             if (continuation.isActive) {
                                 continuation.resume(result)
                             }
@@ -302,7 +314,7 @@ internal class NexusOriginClient(
         )
     }
 
-    private suspend fun decodeResponse(response: Response, current: (() -> Boolean)?, unlimited: Boolean): NexusOriginResponse {
+    private suspend fun decodeResponse(response: Response, current: (() -> Boolean)?, unlimited: Boolean, destination: OutputStream?): NexusOriginResponse {
         val setCookies = if (current != null) response.headers("Set-Cookie") else emptyList()
         for (setCookie in setCookies) {
             if (current?.invoke() != true) throw IOException("retired credential operation")
@@ -310,6 +322,22 @@ internal class NexusOriginClient(
         }
         if (setCookies.isNotEmpty()) {
             cookies.flush()
+        }
+        if (destination != null && response.isSuccessful) {
+            val body = response.body ?: throw IOException("origin answered without catalog")
+            if (body.contentLength() > MAX_CATALOG_BYTES) throw LocalStateError("E_CATALOG_TOO_LARGE", "catalog exceeds this device’s size limit")
+            body.byteStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                var bytes = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count == -1) break
+                    bytes += count
+                    if (bytes > MAX_CATALOG_BYTES) throw LocalStateError("E_CATALOG_TOO_LARGE", "catalog exceeds this device’s size limit")
+                    destination.write(buffer, 0, count)
+                }
+            }
+            return NexusOriginResponse(response.code, "")
         }
         val body = response.body?.let {
             val declared = it.contentLength()
@@ -333,7 +361,7 @@ internal class NexusOriginClient(
             }
             buffer.readUtf8()
         }.orEmpty()
-        if (current == null && response.code == 401) DeviceSession.current()?.requestCheck()
+        if (current == null && (response.code == 401 || response.code == 426)) DeviceSession.current()?.requestCheck()
         return NexusOriginResponse(response.code, body)
     }
 

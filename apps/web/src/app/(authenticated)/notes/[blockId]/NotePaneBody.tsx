@@ -9,6 +9,7 @@ import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { remoteReady } from "@/lib/native/admission";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { hasUnsavedText, readText, useText, useTextVersion } from "@/lib/notes/texts";
@@ -37,7 +38,7 @@ export default function NotePaneBody() {
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
-  usePaneReturnReady(deleted || outline.status !== "loading");
+  usePaneReturnReady(deleted || outline.status !== "loading" || !remoteReady() && outline.root === null);
 
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
@@ -110,6 +111,7 @@ export default function NotePaneBody() {
   const actions: FeedbackActions | undefined = stale || unavailable
     ? undefined
     : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  if (!remoteReady() && outline.root === null && !unavailable && !stale) return <FeedbackState content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />;
   if (failure !== null && (outline.root === null || unavailable || stale))
     return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;

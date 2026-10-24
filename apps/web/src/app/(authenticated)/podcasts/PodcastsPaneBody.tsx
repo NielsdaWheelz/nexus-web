@@ -31,6 +31,8 @@ import {
   listPodcasts,
   type PodcastRow,
 } from "@/lib/podcasts/api";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogPodcasts, catalogLibraries, catalogLibrary } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import {
   listRowStatus,
@@ -92,7 +94,10 @@ export default function PodcastsPaneBody() {
   const query = new URLSearchParams({ sort, filter });
   if (libraryId !== null) query.set("library_id", libraryId);
   const key = query.toString();
+  const savedPodcasts = useCatalogRead(value => catalogPodcasts(value, new URLSearchParams(key)));
+  const savedLibraries = useCatalogRead(catalogLibraries);
   const list = useServerList<PodcastRow>({
+    catalog: savedPodcasts,
     key: `/podcasts?${key}`,
     stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
     pageSize: 100,
@@ -103,6 +108,7 @@ export default function PodcastsPaneBody() {
       listPodcasts(pageQuery(key, cursor, limit), signal),
   });
   const libraries = useServerList<Library>({
+    catalog: savedLibraries,
     key: "podcasts:member-libraries",
     stale: librariesRevision,
     pageSize: 200,
@@ -112,7 +118,9 @@ export default function PodcastsPaneBody() {
     fetchPage: (cursor, limit, signal) => librariesPage(pageQuery("", cursor, limit), signal),
   });
   const selectedLibraryId = libraryId !== null && !libraries.items.some(library => library.id === libraryId) ? libraryId : null;
+  const savedSelectedLibrary = useCatalogRead(value => selectedLibraryId === null ? null : catalogLibrary(value, selectedLibraryId));
   const selectedLibrary = useServerValue<Library>({
+    catalog: savedSelectedLibrary,
     key: selectedLibraryId,
     stale: librariesRevision,
     visit: SELECTED_LIBRARY,

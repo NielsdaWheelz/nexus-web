@@ -1,6 +1,7 @@
 "use client";
 
 /** Shared media commands read the account runtime, never the lazy resource menu. */
+import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import { usePlaybackSource } from "./playbackSource";
 import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
@@ -48,6 +49,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const sharedDescriptor = sharedItem?.activation.kind === "FooterAudio" ? sharedItem.activation.descriptor : null;
   const descriptor = knownDescriptor ?? sharedDescriptor;
   const creatingLibrary = subject.kind === "External" && placement.hasPendingExternalCreation(subject.target);
+  const disconnected = installedApp && !ctx.online;
   const holding = creatingLibrary || operation !== null && operation.phase !== "complete";
   const heldReason = creatingLibrary ? "finish creating this item's library first" : "finish this item's import first";
   const actions: MediaAction[] = [];
@@ -119,14 +121,14 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   } else {
     const label = "add to lectern";
     actions.push({ id: "LecternMembership", label, glyph: "ListPlus",
-      disabled: holding, disabledReason: holding ? heldReason : null, busy: holding,
-      invoke: () => { if (subject.kind === "External" && !holding) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
+      disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
+      invoke: () => { if (subject.kind === "External" && !holding && (!installedApp || remoteReady())) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
     });
   }
-  actions.push({ id: "LibraryPlacement", label: "manage libraries", glyph: "Library", disabled: holding,
-    disabledReason: holding ? heldReason : null, busy: holding,
+  actions.push({ id: "LibraryPlacement", label: "manage libraries", glyph: "Library", disabled: holding || disconnected,
+    disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
     invoke: (trigger, fallback) => {
-      if (holding) return;
+      if (holding || installedApp && !remoteReady()) return;
       const options = { anchor: () => trigger, returnFocusFallback: fallback };
       if (mediaId !== null) placement.openLibraryPlacement([{ kind: "Media", id: mediaId }], options);
       else if (subject.kind === "External") placement.openExternalLibraryPlacement({ target: subject.target, pending: holding,

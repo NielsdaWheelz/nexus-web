@@ -1,4 +1,4 @@
-import { installedApp } from "@/lib/native/admission";
+import { installedApp, remoteReady } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -111,7 +111,8 @@ export function projectLecternAction({
   const { read, revision } = ctx.lectern;
   const currentIntent = request?.intent.kind ?? intent ?? "Ensure";
   const needsRead = intent === null || revision === null;
-  const retry = !request && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
+  const disconnected = installedApp && !ctx.online;
+  const retry = !disconnected && !request && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
   const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
   const copy = LECTERN_INTENT_COPY[currentIntent];
   const label = request
@@ -120,10 +121,12 @@ export function projectLecternAction({
         Checking: copy.check,
         Unconfirmed: copy.check,
       }[request.phase]
+    : disconnected ? "lectern"
     : retry ? "retry checking lectern"
     : needsRead && blocked === null ? "checking lectern" : state.label;
   let disabledReason: string | undefined;
-  if (request && request.phase !== "Unconfirmed")
+  if (disconnected) disabledReason = "requires a connection";
+  else if (request && request.phase !== "Unconfirmed")
     disabledReason = "wait for this lectern change to finish.";
   else if (busy.has("LecternMembership")) disabledReason = BLOCKED_COPY.Busy;
   else if (!request) {
@@ -139,6 +142,7 @@ export function projectLecternAction({
     disabled: retry ? read.retrying || undefined : disabledReason !== undefined || undefined,
     disabledReason,
     onSelect: () => {
+      if (installedApp && !remoteReady()) return;
       if (retry) { if (!read.retrying) read.refetch(); return; }
       if (disabledReason !== undefined || (!request && intent === null)) return;
       run({
@@ -176,18 +180,22 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
   const pausing = phase === "Playing" || phase === "Buffering";
   const state = ACTION_CATALOG.Playback.states[phase];
   const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
-    : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio" : undefined;
+    : player.kind === "Unavailable" && player.reason === "UpdateRequired" ? "update nexus for android to play audio"
+    : installedApp && !ctx.online && !loaded && !pending && descriptor === null ? "requires a connection" : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
     glyph: pausing ? "Pause" : "Play",
     icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
-    onSelect: () => run({
-      ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
-      confirmation: null, tracked: false,
-      execute: () => pausing ? ctx.player.commands.pause() :
-        ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
-    }),
+    onSelect: () => {
+      if (installedApp && !remoteReady() && !loaded && !pending && descriptor === null) return;
+      run({
+        ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
+        confirmation: null, tracked: false,
+        execute: () => pausing ? ctx.player.commands.pause() :
+          ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
+      });
+    },
   };
 }
 

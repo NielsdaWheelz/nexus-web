@@ -21,3 +21,11 @@ export interface NativeHandoffRequest {
   verifier: string;
   expected_account_id: string | null;
 }
+
+/** Snapshot identifies the usable durably published catalog. Status also reports
+ * refresh activity and failure; refresh acceptance does not mean completion. */
+export interface CatalogStatus {
+  snapshot: { snapshot_id: string; captured_at: string } | null;
+  refreshing: boolean;
+  last_error: { code: string; message: string } | null;
+}

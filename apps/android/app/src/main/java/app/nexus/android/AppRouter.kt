@@ -43,6 +43,21 @@ internal class AppRouter(private val context: Context, private val session: Devi
         val uri = request.url
         if (!isOwned(uri)) return null
         val path = uri.path ?: "/"
+        if (path == "/_nexus/device/catalog.json") {
+            if (request.requestHeaders.entries.firstOrNull { it.key.equals("X-Nexus-Wire", true) }?.value != BuildConfig.NEXUS_WIRE.toString()) {
+                return response(426, "Upgrade Required", "application/json", "{\"error\":{\"code\":\"E_WIRE_MISMATCH\",\"message\":\"update nexus\"}}".toByteArray())
+            }
+            if (request.method != "GET") return response(405, "Method Not Allowed", "text/plain", ByteArray(0))
+            return try {
+                val stream = runBlocking { session.initialize(); session.catalog.open() }
+                if (stream == null) response(204, "No Content", "application/json", ByteArray(0))
+                else WebResourceResponse("application/json", "utf-8", 200, "OK",
+                    mapOf("Cache-Control" to "private, no-store", "X-Content-Type-Options" to "nosniff"), stream)
+            } catch (error: java.io.IOException) {
+                val body = JSONObject().put("error", JSONObject().put("code", (error as? LocalStateError)?.code ?: "E_CATALOG_IO").put("message", error.message)).toString()
+                response(500, "Internal Server Error", "application/json", body.toByteArray(Charsets.UTF_8))
+            }
+        }
         if (path == "/_nexus/device/startup.json") {
             if (request.requestHeaders.entries.firstOrNull { it.key.equals("X-Nexus-Wire", true) }?.value != BuildConfig.NEXUS_WIRE.toString()) {
                 return response(426, "Upgrade Required", "application/json", "{\"error\":{\"code\":\"E_WIRE_MISMATCH\",\"message\":\"update nexus\"}}".toByteArray())

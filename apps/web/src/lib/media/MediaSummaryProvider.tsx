@@ -26,6 +26,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { apiFetch, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -259,31 +260,32 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={store}>{children}</Context.Provider>;
 }
 
-export function useMediaSummaries(seeds: readonly MediaSummary[]) {
+export function useMediaSummaries(seeds: readonly MediaSummary[], source: ReadSource = LIVE_SOURCE) {
+  const captured = source.kind === "catalog";
   const store = useStore();
   const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const revision = useSyncExternalStore(
-    key ? store.subscribe : () => () => {},
-    key ? store.revision : () => 0,
+    key && !captured ? store.subscribe : () => () => {},
+    key && !captured ? store.revision : () => 0,
     () => 0,
   );
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
   useEffect(() => {
-    if (key) return store.retain({ ids: key.split(","), seeds: seedsRef.current });
-  }, [store, key]);
+    if (key && !captured) return store.retain({ ids: key.split(","), seeds: seedsRef.current });
+  }, [store, key, captured]);
   const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");
     return {
-      resolve: store.resolve,
-      error: store.error(ids),
-      retry,
-      retrying: store.retrying(ids),
+      resolve: captured ? (seed: MediaSummary) => seed : store.resolve,
+      error: captured ? null : store.error(ids),
+      retry: captured ? () => {} : retry,
+      retrying: captured ? false : store.retrying(ids),
       revision,
-      queryRevision: store.queryRevision(),
+      queryRevision: captured ? 0 : store.queryRevision(),
     };
-  }, [store, revision, key, retry]);
+  }, [store, revision, key, retry, captured]);
 }
 
 /** Identity-only consumers retain the same summary owner without inventing seeds. */

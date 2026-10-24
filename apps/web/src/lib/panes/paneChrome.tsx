@@ -87,6 +87,8 @@ export type PanePrimaryAction = Extract<
 > & { readonly icon: ReactElement };
 
 export interface PaneChrome {
+  /** Display title of the currently shown body; never canonical or writing evidence. */
+  readonly displayTitle?: string;
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly primaryAction?: PanePrimaryAction;

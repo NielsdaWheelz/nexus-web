@@ -12,6 +12,9 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { useCatalogRead } from "@/lib/catalog/provider";
+import { catalogNotes } from "@/lib/catalog/selectors";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useWritingRevision } from "@/lib/api/writingReceive";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
@@ -107,9 +110,11 @@ export default function NotesPaneBody() {
   // Writing revisions discover pages other sessions made; Notes, this tab's own.
   const notesStamp = useChangeStamp("Notes");
   const writingRevision = useWritingRevision();
+  const catalog = useCatalogRead(value => catalogNotes(value, new URLSearchParams(viewQuery)));
   const list = useServerList<NotePageSummary>({
     key: invalid ? null : `/notes/pages?${viewQuery}`,
     stale: `${notesStamp}:${writingRevision}`,
+    catalog,
     pageSize: 100,
     active: usePaneIsActive(),
     visit: VISIT,
@@ -250,7 +255,7 @@ export default function NotesPaneBody() {
   const failed = list.failure?.op === "More" ? null : list.failure?.error;
   const loadFailure = failed ? (
     <FeedbackNotice
-      content={{
+      content={catalogErrorFeedback(failed) ?? {
         tone: "Danger",
         title: "Notes couldn’t be loaded.",
         requestId: failed.requestId,
