@@ -20,7 +20,7 @@ import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { DocumentReaderViewProps } from "../DocumentReader";
 import { ArticleContentNotice } from "../chrome/ArticleContentNotice";
-import { clock, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
+import { clock, sourceTarget, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
@@ -243,7 +243,8 @@ export default function TextSurface({
     for (const link of column.current!.querySelectorAll<HTMLAnchorElement>("a[href]")) {
       const note = link.matches("[data-reader-apparatus-item-id]") ? link : link.querySelector<HTMLElement>("[data-reader-apparatus-item-id]");
       const target = readerLinkTarget(link);
-      const destination = note ? apparatusDestination?.(note.dataset.readerApparatusItemId!) ?? null : target ? { source_identity: identity, target } : null;
+      const portable=target?sourceTarget(doc,target):null;
+      const destination = note ? apparatusDestination?.(note.dataset.readerApparatusItemId!) ?? null : portable ? { source_identity: identity, target:portable } : null;
       if (!destination) continue;
       changes.push({ link, href: link.getAttribute("href")!, rich: link.getAttribute("data-workspace-rich-target"), role: link.getAttribute("role"), tabIndex: link.getAttribute("tabindex") });
       bound.set(link, destination);
@@ -265,7 +266,7 @@ export default function TextSurface({
       if (tabIndex === null) link.removeAttribute("tabindex"); else link.setAttribute("tabindex", tabIndex);
       bound.delete(link);
     } };
-  }, [apparatusDestination, identity, runtime, units]);
+  }, [apparatusDestination, identity, runtime, units,doc]);
 
   function openLink(event: TargetActivationEvent & { readonly target: EventTarget | null }) {
     const element = event.target instanceof Element ? event.target : null;

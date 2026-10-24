@@ -9,17 +9,19 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus import web_paths
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_ingest import SUPPORTED_IMAGE_TYPES
+from nexus.services.media_text_scope import read_media_text_scope
 from nexus.storage.client import StorageError, get_storage_client
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 _SVG_CONTENT_TYPE = "image/svg+xml"
-# Anonymous shares expose every stored image type but SVG, which can carry script.
-_PUBLIC_CONTENT_TYPES = SUPPORTED_IMAGE_TYPES - {_SVG_CONTENT_TYPE}
+# Stored SVG bytes pass ingestion sanitization; public delivery applies the same CSP.
+_PUBLIC_CONTENT_TYPES = SUPPORTED_IMAGE_TYPES
 
 
 @dataclass(frozen=True)
@@ -85,7 +87,17 @@ def get_epub_asset_for_viewer(
         ).one_or_none()
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if media.kind != MediaKind.epub.value:
+        source_media_id = media_id
+        if media.kind == MediaKind.text_part.value:
+            scope = read_media_text_scope(db, media_id)
+            if (
+                scope.source_format != "epub"
+                or web_paths.media_asset_url(scope.source_media_id, asset_key)
+                not in scope.permitted_assets
+            ):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "EPUB asset not found")
+            source_media_id = scope.source_media_id
+        elif media.kind != MediaKind.epub.value:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_KIND, "Endpoint only supports EPUB media"
             )
@@ -102,7 +114,7 @@ def get_epub_asset_for_viewer(
                     FROM epub_resources
                     WHERE media_id = :media_id AND asset_key = :asset_key
                 """),
-                {"media_id": media_id, "asset_key": asset_key},
+                {"media_id": source_media_id, "asset_key": asset_key},
             )
             .mappings()
             .fetchone()

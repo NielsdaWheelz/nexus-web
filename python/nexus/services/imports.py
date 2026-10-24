@@ -476,6 +476,27 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
     )
 
 
+def read_media_search_obligation(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> ImportObligation | None:
+    """One media's search obligation as Imports shows it, for an owner presenting index
+    work in place (piece section preparation); None when the viewer has no such import."""
+    row = (
+        db.execute(
+            text(
+                f"{_CTE} SELECT *, primary_key AS view_key FROM imports WHERE media_id = :media_id"
+            ),
+            {**_params(viewer_id), "media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    facts, progress = _hydrate(db, viewer_id, [row]).get(media_id, (None, None))
+    return _obligation(row, "search", facts, progress)
+
+
 def read_import_history(
     db: Session, *, viewer_id: UUID, ref: ParsedImportRef, cursor: str | None, limit: int
 ) -> HistoryPage:

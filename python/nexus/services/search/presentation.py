@@ -22,7 +22,17 @@ def present_matches(
     terms: str,
 ) -> dict[str, tuple[ResourceItemOut, SearchMatchOut | None]]:
     """Hydrate selected identities once; excerpt truncation never changes their targets."""
-    items = resource_items_out(db, viewer_id=viewer_id, refs=list(dict.fromkeys(refs)))
+    owners = {hit.ref: hit.reading_media_id for hit in hits}
+    items = []
+    for owner in dict.fromkeys(owners.get(ref) for ref in refs):
+        items.extend(
+            resource_items_out(
+                db,
+                viewer_id=viewer_id,
+                refs=list(dict.fromkeys(ref for ref in refs if owners.get(ref) == owner)),
+                reading_media_id=owner,
+            )
+        )
     texts = discovery_texts(db, viewer_id, hits) if terms else {}
     texts.update(
         (f"note_block:{identity}", value)

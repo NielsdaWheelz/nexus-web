@@ -16,8 +16,10 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import unquote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from lxml.html import fragment_fromstring
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -30,6 +32,11 @@ from nexus.schemas.reader import (
     ReaderNavigationTocNodeOut,
 )
 from nexus.schemas.reader_document import (
+    ReaderPartDocumentOut,
+    ReaderPartExtentOut,
+    ReaderPartExtentPointOut,
+    ReaderPartProvenanceOut,
+    ReaderPartUnitOut,
     ReaderPdfDocumentOut,
     ReaderPdfFileOut,
     ReaderPointOut,
@@ -44,10 +51,17 @@ from nexus.schemas.reader_document import (
     ReaderXReferenceOut,
 )
 from nexus.schemas.x_source import XPostContent, XSourceCoverage, XSourcePost
+from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.document_embeds import list_document_embeds_for_fragments
 from nexus.services.epub_read import rewrite_epub_fragment_links
+from nexus.services.html_tree import inner_html
 from nexus.services.media_file_access import get_signed_download_url
+from nexus.services.media_text_scope import (
+    MediaTextScope,
+    read_media_text_scope,
+    read_scope_fragment,
+)
 from nexus.services.reader_navigation import read_media_navigation
 from nexus.services.reader_publication import (
     read_publication_source_issues,
@@ -76,7 +90,12 @@ _UNIT_ROWS_SQL = """
 
 def read_reader_document(
     db: Session, viewer_id: UUID, media_id: UUID
-) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
+) -> (
+    ReaderTextDocumentOut
+    | ReaderPartDocumentOut
+    | ReaderTranscriptDocumentOut
+    | ReaderPdfDocumentOut
+):
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -93,10 +112,17 @@ def build_reader_document(
     media_id: UUID,
     viewer_id: UUID | None,
     pdf_file: Callable[[], ReaderPdfFileOut],
-) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
+) -> (
+    ReaderTextDocumentOut
+    | ReaderPartDocumentOut
+    | ReaderTranscriptDocumentOut
+    | ReaderPdfDocumentOut
+):
     """An authorized publication; public reads include its X bodies without child grants."""
     media = db.execute(text(_MEDIA_SQL), {"media_id": media_id}).one()
     title = str(media.title)
+    if media.kind == "text_part":
+        return build_part_document(db, scope=read_media_text_scope(db, media_id), title=title)
     if media.kind in ("podcast_episode", "video"):
         if not is_text_document_ready(
             media.kind, media.processing_status, media.transcript_state, media.transcript_coverage
@@ -213,6 +239,133 @@ def build_reader_document(
         source_issues=navigation.source_issues,
         embeds=embeds,
         x_article_content=x_article_content_facts(db, media_ids=[media_id]).get(media_id),
+    )
+
+
+def build_part_document(db: Session, *, scope: MediaTextScope, title: str) -> ReaderPartDocumentOut:
+    """Only proved rich slices enter the child reader; every durable point stays canonical."""
+    media_id = scope.reading_media_id
+    paths: dict[UUID, str] = {
+        row.fragment_id: row.package_href
+        for row in db.execute(
+            text("SELECT fragment_id,package_href FROM epub_fragment_sources WHERE media_id=:id"),
+            {"id": scope.source_media_id},
+        )
+    }
+    units: list[ReaderPartUnitOut] = []
+    for interval in scope.fragment_intervals:
+        sliced = read_scope_fragment(db, scope, interval)
+        units.append(
+            ReaderPartUnitOut(
+                id=str(interval.fragment_id),
+                idx=len(units),
+                html_sanitized=sliced.html_sanitized,
+                canonical_text=sliced.canonical_text,
+                char_count=len(sliced.canonical_text),
+                source_start_offset=sliced.source_start_offset,
+                href_path=paths.get(interval.fragment_id),
+                t_start_ms=None,
+                t_end_ms=None,
+                speaker_label=None,
+                x_post=None,
+            )
+        )
+    anchors = {unit.id: set(canonicalize_structure(unit.html_sanitized).anchors) for unit in units}
+    paths_to_units = {unit.href_path: unit.id for unit in units if unit.href_path is not None}
+    for unit in units:
+        root = fragment_fromstring(unit.html_sanitized, create_parent=True)
+        for node in root.iter():
+            for attribute, value in list(node.attrib.items()):
+                node.set(
+                    attribute,
+                    value.replace(
+                        f"/media/{scope.source_media_id}/assets/", f"/media/{media_id}/assets/"
+                    ),
+                )
+            raw_href = node.get("href")
+            if node.tag != "a" or raw_href is None:
+                continue
+            if node.get("data-reader-apparatus-item-id") is not None or node.xpath(
+                ".//*[@data-reader-apparatus-item-id]"
+            ):
+                node.set("href", "#")
+                continue
+            href = urlsplit(raw_href)
+            if href.scheme or href.netloc:
+                continue
+            target_id = (
+                paths_to_units.get(href.path or unit.href_path or "")
+                if scope.source_format == "epub"
+                else unit.id
+            )
+            target_anchor = unquote(href.fragment)
+            if target_id is None or (target_anchor and target_anchor not in anchors[target_id]):
+                node.attrib.pop("href", None)
+                continue
+            node.set("href", "#")
+            node.set("data-nexus-fragment-id", target_id)
+            if target_anchor:
+                node.set("data-nexus-anchor-id", target_anchor)
+        unit.html_sanitized = inner_html(root)
+    navigation = read_media_navigation(
+        db,
+        media_id=scope.source_media_id,
+        kind=scope.source_format,
+        generation=scope.source_generation,
+    )
+    by_id = {unit.id: unit for unit in units}
+    sections: list[ReaderSectionOut] = []
+    for section in navigation.sections:
+        unit = by_id.get(str(section.target.fragment_id))
+        if (
+            unit is not None
+            and unit.source_start_offset
+            <= section.target.offset
+            < unit.source_start_offset + unit.char_count
+        ):
+            sections.append(
+                ReaderSectionOut(
+                    id=section.section_id,
+                    label=section.label,
+                    depth=0,
+                    at=ReaderPointOut(
+                        unit_id=unit.id, offset=section.target.offset - unit.source_start_offset
+                    ),
+                    anchor_id=section.anchor_id,
+                )
+            )
+    first, last = scope.fragment_intervals[0], scope.fragment_intervals[-1]
+    return ReaderPartDocumentOut(
+        kind="text_part",
+        source_format=scope.source_format,
+        provenance=ReaderPartProvenanceOut(
+            source_media_id=scope.source_media_id,
+            source_generation=scope.source_generation,
+            extent=ReaderPartExtentOut(
+                start=ReaderPartExtentPointOut(
+                    fragment_id=first.fragment_id, offset=first.start_offset
+                ),
+                end=ReaderPartExtentPointOut(fragment_id=last.fragment_id, offset=last.end_offset),
+            ),
+        ),
+        identity=f"g{scope.body_generation}",
+        title=title,
+        units=units,
+        sections=sections,
+        toc_nodes=[
+            ReaderTocNodeOut(
+                id=section.id,
+                label=section.label,
+                at=section.at,
+                section_id=section.id,
+                children=[],
+            )
+            for section in sections
+        ],
+        source_issues=[],
+        embeds=[],
+        x_capture=None,
+        x_article_content=None,
     )
 
 

@@ -250,7 +250,7 @@ def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapsh
         return _failure("E_ORACLE_CORPUS_NOT_READY", f"{len(public)} rankable corpus passages")
     excluded = list(db.scalars(select(OracleCorpusSource.media_id)))
     params = {"viewer_id": viewer_id, "excluded": excluded}
-    near = nearest_chunks(db, embedding, owner=_PERSONAL_CHUNKS, params=params, limit=200)
+    near = nearest_chunks(db, embedding, owner=_PERSONAL_CHUNKS, params=params, limit=200, ctes="")
     chunks = {
         row.id: row
         for row in db.execute(

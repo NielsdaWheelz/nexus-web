@@ -11,7 +11,7 @@ import Tooltip from "@/components/ui/Tooltip";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { workspaceTargetActivationIntent, type OpenIntent } from "@/lib/ui/targetActivation";
 import { useReaderState, type Reader } from "../DocumentReader";
-import { PDF_ZOOM } from "../model";
+import { PDF_ZOOM, sourceTarget } from "../model";
 import { activateReaderDestination, ReaderLink } from "../navigation";
 import styles from "./ReaderNavigation.module.css";
 
@@ -56,10 +56,12 @@ function Sections({ reader }: { readonly reader: Reader }) {
     const to = target(at);
     if (to === null) return { kind: "command", id: section.id, label: section.label,
       disabled: true, disabledReason: "no transcript at this time", onSelect: () => {} };
-    const destination = { source_identity: ready!.doc.identity, target: to };
+    const portable=sourceTarget(ready!.doc,to);
+    if (portable===null) throw new Error("section point is outside its reading body");
+    const destination = { source_identity: ready!.doc.identity, target: portable };
     const href = reader.navigation?.href(destination);
     const local = () => {
-      void reader.inspect({ target: destination.target });
+      void reader.inspect({ target: to });
       reader.focusSource();
     };
     return href ? { kind: "link", id: section.id, label: section.label, href,

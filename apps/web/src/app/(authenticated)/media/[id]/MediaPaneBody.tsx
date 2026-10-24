@@ -16,6 +16,11 @@ import {
 } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { SourcePieces, PieceDetails } from "@/components/media/containedWorks/Pieces";
+import { useShareController } from "@/lib/sharing/controller";
+import { resourceShareTarget } from "@/lib/sharing/targets";
+import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
+import { useChangeStamp } from "@/lib/api/changes";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch, apiTransportFeedback, isStaleBuild, STALE_BUILD_FEEDBACK, type ApiError } from "@/lib/api/client";
@@ -37,6 +42,7 @@ import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState"
 import { assertNever } from "@/lib/assertNever";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { localPoint } from "@/lib/documentReader/model";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
@@ -68,7 +74,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import { useSourceArrival, type SourceArrivalContext } from "@/lib/reader/sourceArrival";
+import { useSourceArrival, type SourceArrivalContext, type SourceArrivalOutcome } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -162,9 +168,10 @@ function MediaRoute({ id }: { readonly id: string }) {
   const [openedOffline, setOpenedOffline] = useState(false);
   const [interacted, setInteracted] = useState(false);
   const pinSaved = useCallback(() => setInteracted(true), []);
+  const metadataStamp = useChangeStamp("Metadata");
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
-    stale: "",
+    stale: metadataStamp,
     load: async (signal) =>
       mediaDetailFromResponse(
         await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
@@ -234,6 +241,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   return <div className={styles.stateScrollport}><div className={styles.state}>
     <h1><MediaTitle subject={subject} /></h1>
     <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
+    {summary.part_source ? <p>from {summary.part_source.title}</p> : null}
     <p><MediaFacts summary={summary} /></p>
     {summary.processing_status === "failed" ? <FeedbackStatus content={{ tone: "Warning", title: "processing failed" }} announcement="None" /> : null}
     {!remoteReady() ? <FeedbackNotice content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />
@@ -251,6 +259,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const { profile } = useReaderContext();
   const lectern = lecternItems(useLectern());
   const { ctx, run } = useActionRuntime();
+  const { openShare } = useShareController();
   // J4: the media's Lectern row (membership is the Lectern's) and its read state (the summary
   // owner's, which follows Consumption, so a reading auto-finish shows here at once).
   const row = lectern.find((item) => item.media_summary.media_id === id);
@@ -487,6 +496,31 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
 
   // The chosen pane alone resolves, positions and paints a source arrival.
   const [inspection, setInspection] = useState<(Inspection & { activationId: string }) | null>(null);
+  async function deliverEvidence(itemId: string, identity: string, context: SourceArrivalContext): Promise<SourceArrivalOutcome> {
+    if (context.restored) return "Applied";
+    latestOpenRequest.current?.onResolved(null);
+    pendingEvidenceArrival.current = context.signal;
+    try {
+      const map = await new Promise<ReturnType<typeof store.getState>["map"] | null>((resolve) => {
+        let unsubscribe = () => {};
+        const settle = (value: ReturnType<typeof store.getState>["map"] | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
+        const abort = () => settle(null);
+        const check = () => { const map = store.getState().map; if (map.status !== "loading") settle(map); };
+        unsubscribe = store.subscribe(check);
+        context.signal.addEventListener("abort", abort, { once: true });
+        if (context.signal.aborted) abort(); else check();
+      });
+      if (context.signal.aborted) return "Cancelled";
+      if (!map || map.status !== "ready" || map.data.identity !== identity) return "Unavailable";
+      if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return "Unavailable";
+      const delivered = requestEvidence(itemId, context);
+      requestSecondarySurface("resource-connections");
+      const applied = await delivered;
+      return context.signal.aborted ? "Cancelled" : applied ? "Applied" : "Unavailable";
+    } finally {
+      if (pendingEvidenceArrival.current === context.signal) pendingEvidenceArrival.current = null;
+    }
+  }
   const arrival = useSourceArrival({
     ready: restored || (media !== null && !readable),
     sourceIdentity: doc?.identity ?? null,
@@ -508,30 +542,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         if (!doc) return "Unavailable";
         const { destination } = result;
         if (destination.target.kind === "evidence_item") {
-          if (context.restored) return "Applied";
-          latestOpenRequest.current?.onResolved(null);
-          pendingEvidenceArrival.current = context.signal;
-          try {
-            const map = await new Promise<ReturnType<typeof store.getState>["map"] | null>((resolve) => {
-              let unsubscribe = () => {};
-              const settle = (value: ReturnType<typeof store.getState>["map"] | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
-              const abort = () => settle(null);
-              const check = () => { const map = store.getState().map; if (map.status !== "loading") settle(map); };
-              unsubscribe = store.subscribe(check);
-              context.signal.addEventListener("abort", abort, { once: true });
-              if (context.signal.aborted) abort(); else check();
-            });
-            if (context.signal.aborted) return "Cancelled";
-            if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity) return "Unavailable";
-            const itemId = destination.target.item_id;
-            if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return "Unavailable";
-            const delivered = requestEvidence(itemId, context);
-            requestSecondarySurface("resource-connections");
-            const applied = await delivered;
-            return context.signal.aborted ? "Cancelled" : applied ? "Applied" : "Unavailable";
-          } finally {
-            if (pendingEvidenceArrival.current === context.signal) pendingEvidenceArrival.current = null;
-          }
+          return deliverEvidence(destination.target.item_id, destination.source_identity, context);
         }
         const target = destinationTarget(destination, reader);
         if (!target) return "Unavailable";
@@ -571,16 +582,22 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         return "Applied";
       }
       if (!doc || source.location.kind !== "located") return "Unavailable";
-      const { locator, precision, source_identity } = source.location;
+      const { locator, precision, source_identity, apparatus_reference_id } = source.location;
       if (source_identity !== doc.identity) return "Unavailable";
+      if (apparatus_reference_id !== null) {
+        return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, source_identity, context);
+      }
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
         const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
-        if (!unit || locator.end_offset > unit.length) return "Unavailable";
+        if (!unit) return "Unavailable";
+        const start = localPoint(doc, { unit: unit.id, offset: locator.start_offset });
+        const end = localPoint(doc, { unit: unit.id, offset: locator.end_offset });
+        if (start === null || end === null || start.unit !== end.unit) return "Unavailable";
         if (locator.text_quote_selector) {
           // Same quote identity as text_quote.py; a relocation retains its original words.
           const normalized = (value: string) => value.normalize("NFC")
             .replace(/[\p{White_Space}\u001c-\u001f]+/gu, " ").replace(/^ | $/g, "");
-          const selected = Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("");
+          const selected = Array.from(unit.text).slice(start.offset, end.offset).join("");
           if (normalized(selected) !== normalized(locator.text_quote_selector.exact)) return "Unavailable";
         }
       }
@@ -652,9 +669,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   const actions = useMemo<EvidenceActions>(
     () => ({
       verbs: { noteEdit, hovered, hover, closeNoteEdit, relocate },
+      sourceContext: media?.kind !== "text_part",
       refresh: store.refresh,
     }),
-    [closeNoteEdit, hover, hovered, noteEdit, relocate, store],
+    [closeNoteEdit, hover, hovered, media?.kind, noteEdit, relocate, store],
   );
   const evidence = useMemo(
     () => (
@@ -671,13 +689,14 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   );
   const contents = useMemo(
     () =>
-      doc?.kind === "text" && (doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
+      doc?.kind === "text" && (media?.kind === "text_part" || media?.kind === "epub" || media?.kind === "web_article" || doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
         <>
           <SourceIssuesNotice issues={doc.sourceIssues} readable />
-          <Contents reader={reader} />
+          {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} /></>
+            : media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x" && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post") ? <SourcePieces source={id} reader={reader} /> : <Contents reader={reader} />}
         </>
       ) : undefined,
-    [doc, reader],
+    [doc, id, media, reader],
   );
   const markerTarget = useCallback((marker: string): ReaderDestination["target"] => {
     const embed = doc?.kind === "text" ? doc.embeds.find((entry) => `embed:${entry.id}` === marker) : null;
@@ -870,7 +889,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         end={
           doc?.kind === "text" && doc.format !== "transcript" ? (
             <>
-              <p>{doc.format === "epub" ? "End of book" : "End of article"}</p>
+              <p>{media.kind === "text_part" ? "end of piece" : doc.format === "epub" ? "End of book" : "End of article"}</p>
               {prompt}
             </>
           ) : null
@@ -885,6 +904,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         isMobile={isMobile}
         canQuote={canQuote}
         returnFocus={returnFocus}
+        sharePiece={media?.kind === "text_part" ? trigger => openShare(resourceShareTarget(`media:${id}`), anchoredShareOpenOptions(trigger, () => root.current)) : null}
       />
     </div>
   );

@@ -83,7 +83,7 @@ _TERMINAL_CODES = frozenset(
     E_INVALID_REQUEST E_INVALID_KIND E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE
     E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED
     E_REPAIR_NOT_ALLOWED E_RESOURCE_CONFLICT E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE
-    E_X_IDENTITY_CONFLICT E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED""".split()
+    E_X_IDENTITY_CONFLICT E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED E_PART_SOURCE_PINNED""".split()
 )
 _INDEXED_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
 
@@ -375,6 +375,9 @@ def _settle(
 
             for indexed_id in indexed_ids:
                 request_media_content_reindex(db, media_id=indexed_id, reason="source_success")
+        from nexus.services.part_discovery import enqueue_initial_part_discovery
+
+        enqueue_initial_part_discovery(db, source=media, attempt=attempt)
         if attempt.created_by_user_id is not None and outcome.metadata_enrichment:
             enqueue_metadata_enrichment(
                 db,
@@ -437,7 +440,10 @@ def _supersede(
     Publication holds ordered media locks; it never acquires a viewer lock. An
     admission payload records provenance and is never a future filing command.
     """
+    from nexus.services.media_parts import require_unpinned_source
+
     library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
+    require_unpinned_source(db, media_id=loser_id)
     kinds = db.scalars(
         text("SELECT kind FROM media WHERE id=ANY(:ids)"), {"ids": [loser_id, winner_id]}
     ).all()

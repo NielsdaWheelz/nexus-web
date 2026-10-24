@@ -22,6 +22,7 @@ from nexus.api.routes.llm import router as llm_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.media_assets import router as media_assets_router
+from nexus.api.routes.media_parts import router as media_parts_router
 from nexus.api.routes.media_sources import router as media_sources_router
 from nexus.api.routes.media_uploads import router as media_uploads_router
 from nexus.api.routes.notes import router as notes_router
@@ -69,6 +70,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(imports_router)
     api_router.include_router(public_resource_shares_router)
     api_router.include_router(reader_router)
+    api_router.include_router(media_parts_router)
     api_router.include_router(media_router)
     api_router.include_router(notes_router)
     api_router.include_router(resource_items_router)

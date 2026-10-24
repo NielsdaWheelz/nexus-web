@@ -171,6 +171,7 @@ class LocatedSourceLocationOut(_Out):
     locator: RetrievalLocator
     precision: LocationPrecision
     source_identity: str | None
+    apparatus_reference_id: UUID | None
 
 
 class UnavailableSourceLocationOut(_Out):
@@ -190,6 +191,7 @@ class ResolveSourceTargetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target: SourceTargetKey
+    reading_media_id: UUID | None
 
 
 TranscriptState = Literal[

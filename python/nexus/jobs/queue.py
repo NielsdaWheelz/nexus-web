@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.retries import integrity_constraint_name
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiErrorCode, ConflictError
+from nexus.ids import new_uuid7
 from nexus.jobs.registry import registry, resolve
 
 LEASE_SECONDS = 30
@@ -129,19 +131,21 @@ def enqueue_job(
     *,
     kind: str,
     payload: Mapping[str, Any],
+    id: UUID | None = None,
     priority: int = 100,
     available_at: datetime | None = None,
     dedupe_key: str | None = None,
     created_at: datetime | None = None,
 ) -> JobRow:
     """Insert one pending job with its kind's attempt budget; commits nothing."""
-    (row,) = _rows(
+    rows = _rows(
         db,
         """INSERT INTO background_jobs
-           (kind, payload, priority, max_attempts, available_at, dedupe_key, created_at)
-           VALUES (:kind, CAST(:payload AS jsonb), :priority, :max_attempts,
+           (id, kind, payload, priority, max_attempts, available_at, dedupe_key, created_at)
+           VALUES (:id, :kind, CAST(:payload AS jsonb), :priority, :max_attempts,
                    COALESCE(:available_at, now()), :dedupe_key, COALESCE(:created_at, now()))
-           RETURNING *""",
+           ON CONFLICT (id) DO NOTHING RETURNING *""",
+        id=new_uuid7() if id is None else id,
         kind=kind,
         payload=json.dumps(dict(payload)),
         priority=priority,
@@ -150,6 +154,12 @@ def enqueue_job(
         dedupe_key=dedupe_key,
         created_at=created_at,
     )
+    if not rows:
+        existing = get_job(db, id) if id is not None else None
+        if existing is not None and existing.kind == kind and existing.payload == dict(payload):
+            return existing
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "this operation id is already in use")
+    (row,) = rows
     _notify(db, kind)
     return row
 
@@ -553,6 +563,25 @@ def list_jobs_for_payload_values(
         key=payload_key,
         values=list(values),
     )
+
+
+def delete_jobs(db: Session, *, job_ids: Sequence[UUID]) -> None:
+    """physical-owner teardown revokes exact claims and removes their kept rows.
+
+    the resource owner holds its complete media barrier and closes open generation
+    audit rows first. deleting a running claim makes the existing watcher cancel
+    provider work; a late owner publication cannot reacquire the missing claim.
+    """
+    if not job_ids:
+        return
+    locked = list(
+        db.scalars(
+            text("SELECT id FROM background_jobs WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
+            {"ids": list(job_ids)},
+        )
+    )
+    _release_heavy(db, locked)
+    db.execute(text("DELETE FROM background_jobs WHERE id=ANY(:ids)"), {"ids": locked})
 
 
 def prune_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:

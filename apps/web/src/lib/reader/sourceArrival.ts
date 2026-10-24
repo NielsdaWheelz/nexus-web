@@ -232,12 +232,14 @@ export function useSourceArrival(input: {
         let target: SourceArrivalApplyTarget | null;
         if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
         else {
+          const destination = latest.current.runtime;
+          const readingMediaId = destination.routeId === "media" && destination.resourceRef?.startsWith("media:")
+            ? destination.resourceRef.slice("media:".length) : null;
           const { data } = await apiFetch<ApiJson<"/resource-items/source-targets/resolve", "post">>(
             "/api/resource-items/source-targets/resolve",
-            { method: "POST", body: JSON.stringify({ target: intent.target }), signal },
+            { method: "POST", body: JSON.stringify({ target: intent.target, reading_media_id: readingMediaId }), signal },
           );
           if (!current()) return;
-          const destination = latest.current.runtime;
           const source = data.source_activation;
           // Endpoint queries never change a conversation's source ownership.
           const sameOwner = source?.resource_ref && destination.resourceRef

@@ -51,7 +51,7 @@ export function createTextFind(
 
   const makeSource = (): FindSource<TextHit> => ({
     key: doc.identity,
-    label: transcript ? "Find in transcript" : doc.format === "epub" ? "Find in book" : "Find in article",
+    label: transcript ? "find in transcript" : "find in text",
     narrowLabel: narrowLabel(),
     scopeChangeMessage: transcript ? "chapters changed; search cleared" : "sections changed; search cleared",
     scopeInvalidated,

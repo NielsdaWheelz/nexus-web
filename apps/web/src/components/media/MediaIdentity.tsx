@@ -45,6 +45,7 @@ export default function MediaIdentity({ subject, returnFocus }: {
   return <span className={styles.support}>
     <IndexBibliography contributors={subject.kind === "Stored" ? subject.summary.contributors : subject.contributors}
       originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
+    {summary?.part_source ? <span className={styles.provenance}>from {summary.part_source.title}</span> : null}
     {summary ? <MediaFacts summary={summary} /> : null}
   </span>;
 }

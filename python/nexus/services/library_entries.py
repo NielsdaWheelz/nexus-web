@@ -247,33 +247,77 @@ def library_anchor_facts(
 # Locks and primitives.
 
 
-def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
-    """Lock the existing media rows in uuid order; return those that exist."""
-    ordered = sorted(set(media_ids))
-    if not ordered:
+def media_family_ids(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
+    """complete root/piece families for one ordered media barrier; no access is granted."""
+    if not media_ids:
         return []
     return list(
         db.scalars(
-            text("SELECT id FROM media WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"),
-            {"ids": ordered},
+            text("""
+        WITH roots AS (
+            SELECT m.id FROM media m WHERE m.id=ANY(:ids)
+            UNION
+            SELECT source_media_id FROM media_parts WHERE media_id=ANY(:ids)
+        )
+        SELECT id FROM roots
+        UNION
+        SELECT p.media_id FROM media_parts p JOIN roots r ON r.id=p.source_media_id
+        ORDER BY id
+    """),
+            {"ids": list(set(media_ids))},
         )
     )
 
 
+def lock_media_rows_in_order(
+    db: Session,
+    media_ids: Sequence[UUID],
+    *,
+    lock_mode: Literal["update", "no_key_update"] = "update",
+) -> list[UUID]:
+    """lock complete source families in uuid order; return requested existing identities.
+
+    re-enumeration after locking prevents a new lower-id child from escaping a
+    read-committed barrier. the transaction owner restarts when the family changed.
+    no_key_update serializes writers while admitting foreign-key key-share locks.
+    """
+    from nexus.db.retries import TransactionRestart
+
+    requested = set(media_ids)
+    ordered = media_family_ids(db, media_ids)
+    if not ordered:
+        return []
+    locked = list(
+        db.scalars(
+            text(
+                "SELECT id FROM media WHERE id = ANY(:ids) ORDER BY id "
+                + ("FOR UPDATE" if lock_mode == "update" else "FOR NO KEY UPDATE")
+            ),
+            {"ids": ordered},
+        )
+    )
+    if media_family_ids(db, media_ids) != ordered:
+        raise TransactionRestart
+    return [media_id for media_id in locked if media_id in requested]
+
+
 def lock_media_for_reference(db: Session, media_id: UUID) -> None:
-    """The reference barrier: lock the media row (gone: 404), then refuse a pending
-    teardown. The teardown claim locks the same row and checks for zero references,
-    so a new reference and a teardown never both commit."""
+    """reference admission takes the same complete family barrier as source teardown."""
     if not lock_media_rows_in_order(db, [media_id]):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if db.scalar(
-        text("SELECT 1 FROM media_teardown_intents WHERE media_id = :id"), {"id": media_id}
+        text("""
+        SELECT 1 FROM media_teardown_intents WHERE media_id=ANY(:ids) LIMIT 1
+    """),
+        {"ids": media_family_ids(db, [media_id])},
     ):
         raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
-    # A serializable collector may have taken its snapshot before waiting on
-    # this lock. Write the tuple without changing metadata so that collector
-    # must restart and see the new reference, rather than claim from stale facts.
-    db.execute(text("UPDATE media SET updated_at = updated_at WHERE id = :id"), {"id": media_id})
+    # Touch the family so an older serializable collector waiting on this barrier
+    # restarts instead of collecting from its pre-reference snapshot.
+    db.execute(
+        text("UPDATE media SET updated_at=updated_at WHERE id=ANY(:ids)"),
+        {"ids": media_family_ids(db, [media_id])},
+    )
 
 
 def lock_parent_podcast(db: Session, media_id: UUID) -> UUID | None:

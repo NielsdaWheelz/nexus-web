@@ -6,6 +6,7 @@ import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/l
 import { useReaderState } from "./DocumentReader";
 import type { ReaderDestination } from "./location";
 import type { Reader } from "./runtime";
+import { sourceTarget,localTarget } from "./model";
 
 export function activateReaderDestination(reader: Reader, destination: ReaderDestination, event: TargetActivationEvent, onDefault?: () => void, enter: "native" | "activate" = "native") {
   const activation = workspaceTargetActivationIntent(event, enter);
@@ -15,7 +16,9 @@ export function activateReaderDestination(reader: Reader, destination: ReaderDes
   const local = onDefault ?? (() => {
     // justify-defect: evidence destinations are host-owned and always bind their local activation.
     if (destination.target.kind === "evidence_item") throw new Error("evidence destination requires a host activation");
-    void reader.inspect({ target: destination.target });
+    const state=reader.getState().document;
+    const target=state.status==="ready" && state.doc.identity===destination.source_identity ? localTarget(state.doc,destination.target) : null;
+    if (target && target.kind!=="evidence_item") void reader.inspect({target});
   });
   if (reader.navigation) {
     if (reader.navigation.activate(destination, activation.intent, local) === "Refused") return "consumed" as const;
@@ -38,8 +41,9 @@ export function ReaderLink({ reader, target, onDefault, disabled = false, ref, c
   readonly disabled?: boolean;
   readonly ref?: Ref<HTMLAnchorElement | HTMLButtonElement>;
 }) {
-  const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
-  const destination = identity === null ? null : { source_identity: identity, target };
+  const doc=useReaderState(reader,(state)=>state.document.status==="ready"?state.document.doc:null);
+  const portable=doc===null?null:sourceTarget(doc,target);
+  const destination = doc===null || portable===null ? null : {source_identity:doc.identity,target:portable};
   const href = destination && reader.navigation?.href(destination);
   const activate = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
     if (disabled || !destination) {
@@ -57,5 +61,5 @@ export function ReaderLink({ reader, target, onDefault, disabled = false, ref, c
   // justify-type-assertion: react writes only the mounted host into the ref, and either host is a member of its declared union.
   return href ? <a {...attributes} ref={ref as Ref<HTMLAnchorElement>} href={disabled ? undefined : href} role={disabled ? "link" : attributes.role} data-workspace-rich-target="true" aria-disabled={disabled || undefined} tabIndex={attributes.tabIndex ?? (disabled ? 0 : undefined)} onClick={activate} onAuxClick={disabled ? blockAuxiliary : attributes.onAuxClick} onKeyDown={activate}>{children}</a>
     // justify-type-assertion: as above, for the button host.
-    : <button {...attributes} ref={ref as Ref<HTMLButtonElement>} type="button" disabled={disabled || identity === null} onClick={activate} onKeyDown={activate}>{children}</button>;
+    : <button {...attributes} ref={ref as Ref<HTMLButtonElement>} type="button" disabled={disabled || destination === null} onClick={activate} onKeyDown={activate}>{children}</button>;
 }

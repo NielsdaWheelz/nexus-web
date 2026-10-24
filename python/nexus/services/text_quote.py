@@ -2,6 +2,10 @@
 
 Quote identity is normalized (NFC, whitespace runs to one space, trimmed ends) and
 matching is unique-or-nothing: more than one hit is ``ambiguous``, never the first.
+A source may be a bounded slice of its fragment: matching and context stay inside it,
+and match offsets are canonical (the slice's ``base`` plus the local offset). At a cut
+edge the stored context beyond the slice belongs to no reader of its owner, so only its
+part inside the slice must agree; the quote itself never leaves the slice.
 """
 
 from __future__ import annotations
@@ -13,10 +17,11 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Fragment, NoteBlock
+from nexus.db.models import NoteBlock
+from nexus.services.media_text_scope import text_scope_rows_sql
 
 # The codepoint window of context stored either side of a matched quote.
 PREFIX_SUFFIX_WINDOW = 64
@@ -47,10 +52,16 @@ class QuoteCandidate:
 
 @dataclass(frozen=True, slots=True)
 class NormalizedOwnerSource:
+    """``normalized`` text whose first codepoint sits at canonical offset ``base``;
+    ``start_cut``/``end_cut``: the slice begins/ends inside its fragment's text."""
+
     fragment_id: UUID | None
     t_start_ms: int | None
     t_end_ms: int | None
     normalized: NormalizedText
+    base: int = 0
+    start_cut: bool = False
+    end_cut: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,15 +102,30 @@ def normalize_for_match(text: str) -> NormalizedText:
 
 
 def find_quote_candidates(
-    normalized: NormalizedText, *, exact: str, prefix: str, suffix: str
+    normalized: NormalizedText,
+    *,
+    exact: str,
+    prefix: str,
+    suffix: str,
+    start_cut: bool = False,
+    end_cut: bool = False,
 ) -> list[QuoteCandidate]:
-    """Occurrences of an already-normalized quote, narrowed by normalized context."""
+    """Occurrences of an already-normalized quote, narrowed by normalized context; at a
+    cut edge, context running past the text compares only its part inside it."""
     candidates: list[QuoteCandidate] = []
     start = normalized.text.find(exact)
     while start != -1:
         end = start + len(exact)
-        if (not prefix or normalized.text[:start].rstrip().endswith(prefix)) and (
-            not suffix or normalized.text[end:].lstrip().startswith(suffix)
+        before = normalized.text[:start].rstrip()
+        after = normalized.text[end:].lstrip()
+        if (
+            not prefix
+            or before.endswith(prefix)
+            or (start_cut and len(before) < len(prefix) and prefix.endswith(before.lstrip()))
+        ) and (
+            not suffix
+            or after.startswith(suffix)
+            or (end_cut and len(after) < len(suffix) and suffix.startswith(after.rstrip()))
         ):
             candidates.append(
                 QuoteCandidate(normalized.boundaries[start], normalized.boundaries[end], start, end)
@@ -118,16 +144,31 @@ def context_window(normalized: NormalizedText, *, start: int, end: int) -> tuple
 def load_normalized_media_sources(
     db: Session, *, media_id: UUID, cache: MediaSourceCache | None = None
 ) -> list[NormalizedOwnerSource]:
-    """Fetch and normalize one media's fragments once, memoized by ``cache``."""
+    """Fetch and normalize one reading owner's text scope once, memoized by ``cache``: a
+    source's fragments whole, a piece's bounded slices (``text_scope_rows_sql``)."""
     if cache is not None and media_id in cache:
         return cache[media_id]
     rows = db.execute(
-        select(Fragment.id, Fragment.canonical_text, Fragment.t_start_ms, Fragment.t_end_ms)
-        .where(Fragment.media_id == media_id)
-        .order_by(Fragment.idx)
+        text(f"""
+            SELECT f.id, f.canonical_text, f.t_start_ms, f.t_end_ms, scope.start_offset,
+                   scope.end_offset
+            FROM ({text_scope_rows_sql("SELECT CAST(:id AS uuid) AS media_id")}) scope
+            JOIN fragments f ON f.id = scope.fragment_id
+            ORDER BY scope.fragment_idx
+        """),
+        {"id": media_id},
     ).all()
     sources = [
-        NormalizedOwnerSource(row[0], row[2], row[3], normalize_for_match(row[1])) for row in rows
+        NormalizedOwnerSource(
+            fragment_id,
+            t_start,
+            t_end,
+            normalize_for_match(words[start:end]),
+            start,
+            start > 0,
+            end < len(words),
+        )
+        for fragment_id, words, t_start, t_end, start, end in rows
     ]
     if cache is not None:
         cache[media_id] = sources
@@ -137,29 +178,42 @@ def load_normalized_media_sources(
 def match_quote_in_sources(
     sources: list[NormalizedOwnerSource], *, exact: str, prefix: str = "", suffix: str = ""
 ) -> OwnerQuoteMatch:
-    """Match one normalized quote against pre-normalized owner sources."""
+    """Match one normalized quote against pre-normalized owner sources.
+
+    Overlapping slices can hold one canonical occurrence twice: it counts once, with the
+    context of the first slice holding it.
+    """
     if not exact:
         return _EMPTY_EXACT
-    hits = [
-        (source, candidate)
-        for source in sources
+    hits: dict[tuple[UUID | None, int, int], tuple[NormalizedOwnerSource, QuoteCandidate]] = {}
+    for source in sources:
         for candidate in find_quote_candidates(
-            source.normalized, exact=exact, prefix=prefix, suffix=suffix
-        )
-    ]
+            source.normalized,
+            exact=exact,
+            prefix=prefix,
+            suffix=suffix,
+            start_cut=source.start_cut,
+            end_cut=source.end_cut,
+        ):
+            occurrence = (
+                source.fragment_id,
+                source.base + candidate.raw_start,
+                source.base + candidate.raw_end,
+            )
+            hits.setdefault(occurrence, (source, candidate))
     if len(hits) > 1:
         return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
     if not hits:
         return _NO_MATCH
-    source, candidate = hits[0]
+    source, candidate = next(iter(hits.values()))
     context_prefix, context_suffix = context_window(
         source.normalized, start=candidate.normalized_start, end=candidate.normalized_end
     )
     return OwnerQuoteMatch(
         status=QuoteStatus.unique,
         fragment_id=source.fragment_id,
-        raw_start=candidate.raw_start,
-        raw_end=candidate.raw_end,
+        raw_start=source.base + candidate.raw_start,
+        raw_end=source.base + candidate.raw_end,
         prefix=context_prefix,
         suffix=context_suffix,
         t_start_ms=source.t_start_ms,

@@ -35,6 +35,7 @@ from nexus.schemas.media import (
 from nexus.schemas.media_summary import (
     ConsumptionOut,
     MediaDurationOut,
+    MediaPartSourceOut,
     MediaProcessingStatus,
     MediaSummaryOut,
 )
@@ -68,21 +69,26 @@ from nexus.services.transcript_navigation import read_transcript_navigation_sour
 from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import x_article_content_facts, x_source_contexts
 
-_DOCUMENT_KINDS = ("web_article", "epub", "pdf")
+_DOCUMENT_KINDS = ("web_article", "epub", "pdf", "text_part")
 _TRANSCRIPT_KINDS = ("video", "podcast_episode")
 
 # Every fact a projection decides on; the detail's prose and stamps are _DETAIL_SQL's.
 _ROWS_SQL = f"""
     WITH visible_media AS ({visible_media_ids_cte_sql()})
     SELECT m.id, m.kind, m.title, m.original_published_date,
+        part_definition.version AS part_version,
+        part_source.title AS part_source_title,
+        CASE WHEN source_visible.media_id IS NOT NULL THEN '/media/' || part_source.id::text END AS part_source_href,
         m.processing_status::text AS persisted_status, m.last_error_code,
         m.canonical_source_url, m.external_playback_url, m.provider, m.provider_id,
         COALESCE(m.created_by_user_id = :viewer_id, false) AS is_creator, rp.generation AS reader_generation,
         {media_file_exists_sql("m.id")} AS has_file,
         EXISTS (SELECT 1 FROM ({ready_publication_rows_sql()}) publication
                 WHERE publication.media_id = m.id) AS publication_ready,
-        ({non_system_media_ref_exists_sql("m.id")} OR {media_grant_path_exists_sql("m.id")})
-            AS can_delete,
+        ({non_system_media_ref_exists_sql("m.id")} OR {media_grant_path_exists_sql("m.id")}
+         OR (source_visible.media_id IS NOT NULL AND
+             ({non_system_media_ref_exists_sql("part_source.id")} OR {media_grant_path_exists_sql("part_source.id")}))) AS can_delete,
+        EXISTS(SELECT 1 FROM media_parts pin WHERE pin.source_media_id=m.id) AS source_pinned,
         {source_repairable_sql("m")} AS repairable,
         attempt.id AS attempt_id, attempt.status AS attempt_status,
         attempt.error_code AS attempt_error_code, attempt.source_type,
@@ -98,6 +104,9 @@ _ROWS_SQL = f"""
         pe.media_id AS episode_media_id
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
+    LEFT JOIN media_parts part_definition ON part_definition.media_id=m.id
+    LEFT JOIN media part_source ON part_source.id=part_definition.source_media_id
+    LEFT JOIN visible_media source_visible ON source_visible.media_id=part_source.id
     LEFT JOIN LATERAL (
         SELECT id, status, error_code, source_type, job_id FROM media_source_attempts
         WHERE media_id = m.id ORDER BY {LATEST_ORDER_SQL} LIMIT 1
@@ -163,6 +172,9 @@ def _summaries(
             media_id=media_id,
             media_kind=kind,
             title=row.title,
+            part_source=None
+            if row.part_source_title is None
+            else MediaPartSourceOut(title=row.part_source_title, href=row.part_source_href),
             contributors=credits[media_id],
             original_published_date=row.original_published_date,
             processing_status=_status(row),
@@ -243,7 +255,7 @@ def _recovery(
             article_content=article_content,
         )
         source = source_recovery(facts)
-        refreshable = source_refreshable(facts)
+        refreshable = source_refreshable(facts) and not row.source_pinned
     if row.index_revision is not None:
         search = search_recovery(
             SearchRecoveryFacts(
@@ -393,9 +405,13 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         {"media_id": media_id},
     ).mappings()
     return MediaOut(
+        part_version=row.part_version,
         id=media_id,
         kind=summary.media_kind,
         title=row.title,
+        part_source=None
+        if row.part_source_title is None
+        else MediaPartSourceOut(title=row.part_source_title, href=row.part_source_href),
         canonical_source_url=row.canonical_source_url,
         provider=row.provider,
         provider_id=row.provider_id,

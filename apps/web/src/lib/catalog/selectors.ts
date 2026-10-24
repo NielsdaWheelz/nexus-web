@@ -117,7 +117,7 @@ export function catalogEntries(catalog: CatalogIndex, id: string, params = new U
   if (!library) return null;
   query(params, {
     sort: ["title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"],
-    entry_type: ["web_article", "epub", "pdf", "video", "podcast_episode"],
+    entry_type: ["web_article", "epub", "text_part", "pdf", "video", "podcast_episode"],
     projection: ["unfiled", "in_progress"], completion: ["unfinished"],
   });
   const projection = params.get("projection");

@@ -3,7 +3,9 @@
 Missing, forbidden, or not-ready media yields ``None``; a tool never sees an
 expected availability exception from here. X compositions use the reader's one
 publication projection and reading order. Metadata identifies each source;
-section pointers name its canonical fragment, never a displayed occurrence.
+section pointers name its canonical fragment, never a displayed occurrence. A piece
+reads exactly its text scope and maps as one section read through the piece itself:
+a source fragment pointer would read beyond its bounds.
 The caller owns the coherent read snapshot.
 """
 
@@ -20,6 +22,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.reader_document import ReaderTextBodyOut, ReaderXPostOut
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.media_document_metrics import load_media_summary_metrics
+from nexus.services.media_text_scope import text_scope_rows_sql
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.reader_navigation import get_media_navigation_for_viewer
 from nexus.services.transcript_navigation import read_transcript_navigation_source
@@ -120,6 +123,15 @@ def get_media_read_map_for_viewer(
             return None
     elif readable.kind == "pdf":
         sections = _page_sections(db, media_id)
+    elif readable.kind == "text_part":
+        sections = [
+            MediaReadMapSection(
+                label=readable.title,
+                section_kind="heading",
+                read_uri=f"media:{media_id}",
+                preview=_preview(_scope_text(db, media_id)),
+            )
+        ]
     else:
         sections = _transcript_sections(db, media_id)
     numbered = [replace(section, ordinal=ordinal) for ordinal, section in enumerate(sections, 1)]
@@ -164,6 +176,8 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
         body = _composed_text(document)
     elif readable.kind == "pdf":
         body = str(_plain_text(db, media_id) or "")
+    elif readable.kind == "text_part":
+        body = _scope_text(db, media_id)
     else:
         body = _join_fragments(db, media_id)
     return DocumentRead(media_id, readable.kind, readable.title, body, len(body))
@@ -437,6 +451,20 @@ def _join_fragments(db: Session, media_id: UUID) -> str:
         {"id": media_id},
     )
     return "\n\n".join(str(row[0] or "") for row in rows)
+
+
+def _scope_text(db: Session, media_id: UUID) -> str:
+    """A piece's canonical words: its source slices in order (``text_scope_rows_sql``)."""
+    rows = db.execute(
+        text(f"""
+            SELECT f.canonical_text, scope.start_offset, scope.end_offset
+            FROM ({text_scope_rows_sql("SELECT CAST(:id AS uuid) AS media_id")}) scope
+            JOIN fragments f ON f.id = scope.fragment_id
+            ORDER BY scope.fragment_idx
+        """),
+        {"id": media_id},
+    )
+    return "\n\n".join(str(words)[start:end] for words, start, end in rows)
 
 
 def _fragment_previews(db: Session, fragment_ids: list[UUID]) -> dict[UUID, str]:

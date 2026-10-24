@@ -168,7 +168,7 @@ def rank_passages(
     ).all()
     ids = [row[5] for row in rows]
     near = nearest_chunks(
-        db, query_embedding, owner="cc.id = ANY(:ids)", params={"ids": ids}, limit=len(ids)
+        db, query_embedding, owner="cc.id = ANY(:ids)", params={"ids": ids}, limit=len(ids), ctes=""
     )
     similarity = dict(near)
     words = set(TOKEN.findall(question.lower()))

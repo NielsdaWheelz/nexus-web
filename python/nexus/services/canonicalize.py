@@ -68,6 +68,7 @@ class CanonicalElement:
     in_navigation: bool = False
     heading_group: tuple[int, int] | None = None
     link_href: str | None = None
+    dom_path: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,8 @@ class _CanonicalTextTarget:
         self._numbering_stack: list[bool] = []
         self._captured_stack: list[int] = []
         self._root_wrapper_seen = False
+        self._dom_paths: list[tuple[int, ...] | None] = []
+        self._dom_child_counts: list[int] = []
 
     def _append(self, text: str) -> None:
         if not text:
@@ -136,6 +139,14 @@ class _CanonicalTextTarget:
         root_wrapper = normalized_tag == "div" and not self._root_wrapper_seen
         if root_wrapper:
             self._root_wrapper_seen = True
+            dom_path = ()
+        elif self._dom_paths and (parent_path := self._dom_paths[-1]) is not None:
+            dom_path = parent_path + (self._dom_child_counts[-1],)
+            self._dom_child_counts[-1] += 1
+        else:
+            dom_path = None
+        self._dom_paths.append(dom_path)
+        self._dom_child_counts.append(0)
         if self.capture_structure:
             self._element_stack.append(None)
             self._numbering_stack.append(
@@ -168,6 +179,7 @@ class _CanonicalTextTarget:
                     tuple(attributes.get("aria-labelledby", "").split()),
                     self._numbering_stack[-1],
                     link_href=attributes.get("href") if normalized_tag == "a" else None,
+                    dom_path=dom_path,
                 )
             )
             self._element_stack[-1] = index
@@ -203,6 +215,8 @@ class _CanonicalTextTarget:
     def end(self, _tag: str) -> None:
         normalized_tag = self._tag_stack.pop()
         visible = self._visible_stack.pop()
+        self._dom_paths.pop()
+        self._dom_child_counts.pop()
         if self.capture_structure:
             element = self._element_stack.pop()
             self._numbering_stack.pop()

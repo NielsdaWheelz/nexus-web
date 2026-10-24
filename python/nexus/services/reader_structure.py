@@ -9,8 +9,10 @@ Callers supplying one scope and a document end retain ordinary article behavior.
 from bisect import bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
+from nexus.schemas.reader import MediaNavigationOut
 from nexus.schemas.reader_apparatus import NoteBodyRegion, NoteGroupRegion, NoteRegion
 
 
@@ -21,6 +23,38 @@ class DocumentPoint:
 
 
 @dataclass(frozen=True)
+class DomCut:
+    """An element-only path; after an element precedes its tail."""
+
+    path: tuple[int, ...]
+    edge: Literal["before", "after"]
+
+
+@dataclass(frozen=True)
+class SectionEnd:
+    point: DocumentPoint
+    cut: DomCut | None
+
+
+@dataclass(frozen=True)
+class SectionProof:
+    section_id: str
+    label: str
+    parent_section_id: str | None
+    start: DocumentPoint
+    end: DocumentPoint | None
+    start_cut: DomCut | None
+    end_cut: DomCut | None
+
+
+@dataclass(frozen=True)
+class NavigationProof:
+    navigation: MediaNavigationOut
+    sections: tuple[SectionProof, ...]
+    key: str
+
+
+@dataclass(frozen=True)
 class SectionRangeInput:
     section_id: str
     target: DocumentPoint
@@ -28,6 +62,8 @@ class SectionRangeInput:
     container_end: DocumentPoint | None
     owns_container: bool
     boundary_scope: str | None = None
+    start_cut: DomCut | None = None
+    container_end_cut: DomCut | None = None
 
 
 class NavigationNoteIndex:
@@ -77,12 +113,13 @@ class NavigationNoteIndex:
         )
 
 
-def resolve_section_ends(
+def resolve_section_extents(
     sections: Sequence[SectionRangeInput],
     document_end: DocumentPoint | None,
     *,
     unproved_boundaries: Sequence[DocumentPoint] = (),
-) -> dict[str, DocumentPoint | None]:
+    document_end_cut: DomCut | None = None,
+) -> dict[str, SectionEnd | None]:
     """End at a proved peer/container; a missing document end stays unknown."""
     by_id = {section.section_id: section for section in sections}
     if len(by_id) != len(sections):
@@ -105,7 +142,9 @@ def resolve_section_ends(
         return result
 
     ordered = sorted(sections, key=lambda section: (section.target, depth(section.section_id)))
-    natural_ends = dict.fromkeys(by_id, document_end)
+    natural_ends = dict.fromkeys(
+        by_id, SectionEnd(document_end, document_end_cut) if document_end is not None else None
+    )
     unproved: set[str] = set()
     stacks: dict[str | None, list[SectionRangeInput]] = {}
     boundaries: dict[DocumentPoint, list[SectionRangeInput]] = {}
@@ -150,8 +189,12 @@ def resolve_section_ends(
         for scope, group in groups.items():
             stack = stacks.setdefault(scope, [])
             next_depth = min(depths[section.section_id] for section in group)
+            witnesses = {
+                section.start_cut for section in group if depths[section.section_id] == next_depth
+            }
+            cut = next(iter(witnesses)) if len(witnesses) == 1 else None
             while stack and depths[stack[-1].section_id] >= next_depth:
-                natural_ends[stack.pop().section_id] = target
+                natural_ends[stack.pop().section_id] = SectionEnd(target, cut)
             stack.extend(group)
 
     by_depth = sorted(ordered, key=lambda section: depths[section.section_id])
@@ -163,19 +206,16 @@ def resolve_section_ends(
                 last_descendant_target[parent_id], last_descendant_target[section.section_id]
             )
 
-    ends: dict[str, DocumentPoint | None] = {}
+    ends: dict[str, SectionEnd | None] = {}
     for section in by_depth:
         if section.section_id in unproved:
             ends[section.section_id] = None
             continue
         end = natural_ends[section.section_id]
         if section.container_end is not None:
-            end = (
-                section.container_end
-                if section.owns_container or end is None
-                else min(end, section.container_end)
-            )
-        if end is not None and end <= last_descendant_target[section.section_id]:
+            if section.owns_container or end is None or section.container_end < end.point:
+                end = SectionEnd(section.container_end, section.container_end_cut)
+        if end is not None and end.point <= last_descendant_target[section.section_id]:
             if (
                 section.owns_container
                 and last_descendant_target[section.section_id] > section.target
@@ -186,11 +226,12 @@ def resolve_section_ends(
             parent = by_id[section.parent_section_id]
             parent_end = ends[parent.section_id]
             if parent.target > section.target or (
-                parent_end is not None and section.target >= parent_end
+                parent_end is not None and section.target >= parent_end.point
             ):
                 ends[section.section_id] = None
                 continue
             if parent_end is not None:
-                end = parent_end if end is None else min(end, parent_end)
-        ends[section.section_id] = end if end is not None and end > section.target else None
+                if end is None or parent_end.point < end.point:
+                    end = parent_end
+        ends[section.section_id] = end if end is not None and end.point > section.target else None
     return ends

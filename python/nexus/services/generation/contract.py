@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type BackgroundOperation = Literal[
     "metadata_enrichment",
+    "part_discovery",
     "media_title",
     "media_summary",
     "connection_discovery",
@@ -41,6 +42,7 @@ type OwnerKind = Literal[
     "media_summary",
     "connection_discovery_scan",
     "media_enrichment",
+    "part_discovery",
 ]
 type FailureCode = Literal[
     "auth",

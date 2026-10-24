@@ -1,4 +1,8 @@
-"""Backend-owned evidence locator resolution."""
+"""Backend-owned evidence locator resolution.
+
+Passage quotes resolve against their reading owner's text scope only; resolved offsets
+and locators stay canonical (source fragment ids and offsets).
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,11 @@ from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import reader_locations, text_quote
+from nexus.services.media_text_scope import (
+    MediaTextScope,
+    read_media_text_scope,
+    text_scope_rows_sql,
+)
 from nexus.services.text_quote import QuoteStatus
 
 
@@ -47,7 +56,16 @@ class HighlightReaderSource:
 
 @dataclass(frozen=True, slots=True)
 class PassageSourceReads:
+    """One batch of owner texts, keyed by reading owner.
+
+    ``media_kinds`` and ``canonical_media`` name the media whose fragments hold an
+    owner's words (a piece's source); ``ranges`` are the owner's exact canonical
+    intervals ``(fragment_id, start, end)`` and ``sources`` their normalized slices.
+    """
+
     media_kinds: dict[UUID, str]
+    canonical_media: dict[UUID, UUID]
+    ranges: dict[UUID, list[tuple[UUID, int, int]]]
     sources: dict[UUID, list[text_quote.NormalizedOwnerSource]]
     note_texts: dict[UUID, str]
     pdf_texts: dict[UUID, text_quote.NormalizedText]
@@ -55,12 +73,24 @@ class PassageSourceReads:
 
 
 def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> PassageSourceReads:
-    """Load each source family once for a page of quote selectors."""
+    """Load each source family once for a page of quote selectors; callers prove
+    visibility.
+
+    A media owner reads exactly its text scope (``text_scope_rows_sql``): a source whole,
+    a piece only its bounded slices with canonical bases, so a quote matches and takes
+    context only inside the piece and repeated text outside it cannot make it ambiguous.
+    A piece also reads the exact ranges of its permitted notes outside its body, each
+    its own slice. A pdf reads its extracted text.
+    """
     media_ids = list({id_ for scheme, id_ in owners if scheme == "media"})
     note_ids = list({id_ for scheme, id_ in owners if scheme == "note_block"})
     media = (
         db.execute(
-            text("SELECT id,kind,plain_text FROM media WHERE id=ANY(:ids)"), {"ids": media_ids}
+            text(
+                "SELECT id, kind, CASE WHEN kind = 'pdf' THEN plain_text END FROM media"
+                " WHERE id = ANY(:ids)"
+            ),
+            {"ids": media_ids},
         ).all()
         if media_ids
         else []
@@ -70,20 +100,80 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
         for id_, kind, words in media
         if kind == "pdf"
     }
+    kinds = {id_: kind for id_, kind, _ in media}
+    canonical = {id_: id_ for id_, _, _ in media}
+    ranges: dict[UUID, list[tuple[UUID, int, int]]] = {id_: [] for id_ in media_ids}
     sources: dict[UUID, list[text_quote.NormalizedOwnerSource]] = {id_: [] for id_ in media_ids}
     text_ids = [id_ for id_, kind, _ in media if kind != "pdf"]
     if text_ids:
-        for id_, owner, words, start, end in db.execute(
-            text(
-                "SELECT id,media_id,canonical_text,t_start_ms,t_end_ms FROM fragments WHERE media_id=ANY(:ids) ORDER BY idx"
-            ),
+        scopes = text_scope_rows_sql("SELECT unnest(CAST(:ids AS uuid[])) AS media_id")
+        for (
+            owner,
+            source_id,
+            source_kind,
+            fragment_id,
+            words,
+            t_start,
+            t_end,
+            start,
+            end,
+        ) in db.execute(
+            text(f"""
+                SELECT scope.reading_media_id, scope.source_media_id, source.kind, f.id,
+                       f.canonical_text, f.t_start_ms, f.t_end_ms, scope.start_offset,
+                       scope.end_offset
+                FROM ({scopes}) scope
+                JOIN fragments f ON f.id = scope.fragment_id
+                JOIN media source ON source.id = scope.source_media_id
+                ORDER BY scope.reading_media_id, scope.fragment_idx
+                """),
             {"ids": text_ids},
         ):
+            kinds[owner], canonical[owner] = source_kind, source_id
+            ranges[owner].append((fragment_id, start, end))
             sources[owner].append(
                 text_quote.NormalizedOwnerSource(
-                    id_, start, end, text_quote.normalize_for_match(words)
+                    fragment_id,
+                    t_start,
+                    t_end,
+                    text_quote.normalize_for_match(words[start:end]),
+                    start,
+                    start > 0,
+                    end < len(words),
                 )
             )
+    notes_of = {
+        id_: sorted(set(permitted_note_ranges(db, read_media_text_scope(db, id_)).values()))
+        for id_, kind, _ in media
+        if kind == "text_part"
+    }
+    note_fragment_ids = list({fragment for owned in notes_of.values() for fragment, _, _ in owned})
+    if note_fragment_ids:
+        fragments = {
+            row.id: row
+            for row in db.execute(
+                text(
+                    "SELECT id, canonical_text, t_start_ms, t_end_ms FROM fragments"
+                    " WHERE id = ANY(:ids)"
+                ),
+                {"ids": note_fragment_ids},
+            )
+        }
+        for owner, owned in notes_of.items():
+            for fragment_id, start, end in owned:
+                fragment = fragments[fragment_id]
+                ranges[owner].append((fragment_id, start, end))
+                sources[owner].append(
+                    text_quote.NormalizedOwnerSource(
+                        fragment_id,
+                        fragment.t_start_ms,
+                        fragment.t_end_ms,
+                        text_quote.normalize_for_match(fragment.canonical_text[start:end]),
+                        start,
+                        start > 0,
+                        end < len(fragment.canonical_text),
+                    )
+                )
     notes = (
         {
             id_: words
@@ -103,7 +193,44 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
             {"ids": list(pdfs)},
         ):
             pages[owner].append((page, start, end))
-    return PassageSourceReads({id_: kind for id_, kind, _ in media}, sources, notes, pdfs, pages)
+    return PassageSourceReads(kinds, canonical, ranges, sources, notes, pdfs, pages)
+
+
+def permitted_note_ranges(db: Session, scope: MediaTextScope) -> dict[UUID, tuple[UUID, int, int]]:
+    """The whole exact source ranges of a piece's permitted notes, each its own slice.
+
+    Only an exact text locator on the piece's source contributes; any other locator adds
+    no words and never widens the body. A note overlapping the body keeps its complete
+    range (the matcher counts an occurrence both slices hold once); one wholly inside the
+    body adds nothing. Ranges are never united or bridged across gaps.
+    """
+    out: dict[UUID, tuple[UUID, int, int]] = {}
+    for item_id, locator in db.execute(
+        text("""
+            SELECT id, locator FROM reader_apparatus_items
+            WHERE id = ANY(:ids) AND locator_status = 'exact'
+              AND locator ->> 'type' IN ('web_text_offsets', 'epub_fragment_offsets')
+              AND locator ->> 'media_id' = :source
+        """),
+        {"ids": list(scope.permitted_apparatus), "source": str(scope.source_media_id)},
+    ):
+        fragment_id = UUID(str(locator["fragment_id"]))
+        start, end = int(locator["start_offset"]), int(locator["end_offset"])
+        if start < end and not scope.contains(fragment_id, start, end):
+            out[item_id] = (fragment_id, start, end)
+    return out
+
+
+def admits_passage(
+    reads: PassageSourceReads, owner_id: UUID, fragment_id: UUID, start: int, end: int
+) -> bool:
+    """Whether canonical ``[start, end)`` of ``fragment_id`` lies wholly inside one of the
+    owner's exact ranges (its body or one permitted note): the target proof for a
+    passage under its reading owner."""
+    return start < end and any(
+        owned == fragment_id and lo <= start and end <= hi
+        for owned, lo, hi in reads.ranges.get(owner_id, [])
+    )
 
 
 def read_highlight_reader_source(

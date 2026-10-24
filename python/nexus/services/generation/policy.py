@@ -37,11 +37,12 @@ MEMORY_PLANS: Final = frozenset({"ChatMemoryRead", "ChatMemoryReadSave"})
 # operation, owner, model, reasoning, whole-generation timeout s, input KiB.
 # every background operation is strict JSON over Codex Personal.
 _BACKGROUND: tuple[tuple[BackgroundOperation, OwnerKind, str, str, int, int], ...] = (
-    ("metadata_enrichment", "media_enrichment", "luna", "xhigh", 300, 32),
-    ("media_title", "media_enrichment", "luna", "low", 120, 256),
-    ("media_summary", "media_summary", "luna", "low", 120, 256),
-    ("connection_discovery", "connection_discovery_scan", "luna", "low", 120, 256),
-    ("oracle", "oracle_reading", "sol", "medium", 180, 256),
+    ("metadata_enrichment", "media_enrichment", "gpt-6-luna", "xhigh", 300, 32),
+    ("part_discovery", "part_discovery", "gpt-6.1-sol", "xhigh", 300, 256),
+    ("media_title", "media_enrichment", "gpt-6-luna", "low", 120, 256),
+    ("media_summary", "media_summary", "gpt-6-luna", "low", 120, 256),
+    ("connection_discovery", "connection_discovery_scan", "gpt-6-luna", "low", 120, 256),
+    ("oracle", "oracle_reading", "gpt-6-sol", "medium", 180, 256),
 )
 
 
@@ -61,7 +62,7 @@ _TABLE: dict[Operation, OperationPolicy] = {
     **{
         operation: OperationPolicy(
             owner_kind=owner,
-            selection=_codex(f"gpt-6-{model}", reasoning),
+            selection=_codex(model, reasoning),
             output="StrictJson",
             timeout_seconds=timeout,
             input_max_bytes=kib * 1024,

@@ -78,6 +78,14 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_dead=_GENERATION_DEAD,
         ),
+        "discover_document_parts": JobDefinition(
+            "interactive",
+            "nexus.tasks.discover_document_parts:run_job",
+            retry_delays=(30, 120, 300),
+            keep_succeeded=True,
+            keep_dead=True,
+            on_dead=_GENERATION_DEAD,
+        ),
         "oracle_reading_generate": JobDefinition(
             "interactive",
             "nexus.services.oracle.readings:run_job",

@@ -21,6 +21,7 @@ export interface EvidenceOpenRequest {
 }
 
 export interface EvidenceActions {
+  readonly sourceContext: boolean;
   readonly verbs: Pick<AnnotationVerbs, "noteEdit" | "hovered" | "hover" | "closeNoteEdit" | "relocate">;
   readonly refresh: () => void;
 }
@@ -58,6 +59,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   const content = root?.content;
   const highlight = content?.kind === "Highlight" ? content : null;
   return <ResourceOutlineRow incoming={null} item={item} occurrenceKey={occurrenceKey} rowRef={row}
+    omitResourceActions={!actions.sourceContext && highlight !== null ? ["Share"] : undefined}
     continuation={entry.kind === "root" ? rootContinuation(entry.root) : pendingContinuation(entry.pending)}
     insertionSource={root?.continuation === null ? null : root?.continuation?.kind === "child" ? root.continuation.source : undefined}
     indentDestination={indentDestination}

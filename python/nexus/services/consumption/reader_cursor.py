@@ -36,6 +36,7 @@ from nexus.schemas.reader import (
 )
 from nexus.schemas.reader_document import ReaderPdfFileOut, ReaderTextBodyOut, ReaderUnitOut
 from nexus.services.canonicalize import canonicalize_structure
+from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
 
 _LOCATOR_KIND = {
     "pdf": "pdf",
@@ -315,7 +316,7 @@ def current_position_rows_sql() -> str:
 
 
 def supports(kind: str) -> bool:
-    return kind in _LOCATOR_KIND
+    return kind == "text_part" or kind in _LOCATOR_KIND
 
 
 def load(db: Session, *, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:
@@ -341,6 +342,9 @@ def save(
     base is stale, so a fence still retires it); from a stale base -> 409 with current; else
     admit the locator and write the next revision (I6). The flag says whether the save was
     accepted."""
+    scope = read_media_text_scope(db, media_id) if kind == "text_part" else None
+    if scope is not None:
+        kind = scope.source_format
     is_x = isinstance(write.locator, XReaderResumeState)
     if (is_x and kind not in ("web_article", "epub")) or (
         not is_x and write.locator.kind != _LOCATOR_KIND[kind]
@@ -359,7 +363,39 @@ def save(
             "Reader cursor was updated or needs explicit adoption",
             details={"current": current.model_dump(mode="json")},
         )
-    if isinstance(write.locator, XReaderResumeState):
+    if scope is not None:
+        locator = write.locator
+        if not isinstance(locator, (EpubReaderResumeState, WebReaderResumeState)):
+            raise InvalidRequestError(message="Piece cursor requires a source text locator")
+        try:
+            fragment_id = UUID(str(locator.target.fragment_id))
+        except ValueError as error:
+            raise InvalidRequestError(
+                message="piece cursor fragment identity must be canonical"
+            ) from error
+        offset = locator.locations.text_offset
+        interval = next(
+            (item for item in scope.fragment_intervals if item.fragment_id == fragment_id), None
+        )
+        if interval is None or offset is None:
+            raise InvalidRequestError(message="piece cursor is outside its text")
+        sliced = read_scope_fragment(db, scope, interval)
+        if (
+            not sliced.source_start_offset
+            <= offset
+            <= sliced.source_start_offset + len(sliced.canonical_text)
+        ):
+            raise InvalidRequestError(message="piece cursor is outside its displayed text")
+        if isinstance(locator, EpubReaderResumeState):
+            href = db.scalar(
+                text(
+                    "SELECT package_href FROM epub_fragment_sources WHERE fragment_id=:id AND media_id=:source"
+                ),
+                {"id": fragment_id, "source": scope.source_media_id},
+            )
+            if href != locator.target.href_path:
+                raise InvalidRequestError(message="Piece cursor has another source path")
+    elif isinstance(write.locator, XReaderResumeState):
         _admit_x(db, viewer_id, media_id, write.locator)
     elif isinstance(write.locator, EpubReaderResumeState):
         _admit_epub(db, media_id, write.locator)
@@ -465,3 +501,73 @@ def _admit_web(db: Session, media_id: UUID, locator: WebReaderResumeState) -> No
     offset = locator.locations.text_offset
     if offset is not None and offset > char_count:
         raise InvalidRequestError(message="Web cursor offset exceeds its source fragment")
+
+
+def reconcile_part_bounds(db: Session, media_id: UUID) -> None:
+    """Keep canonical in-scope cursors; excluded cursors require explicit adoption."""
+    scope = read_media_text_scope(db, media_id)
+    slices = [
+        (interval, read_scope_fragment(db, scope, interval))
+        for interval in scope.fragment_intervals
+    ]
+    total = sum(len(sliced.canonical_text) for _, sliced in slices)
+    for row in db.execute(
+        text(
+            "SELECT user_id,cursor FROM reader_media_state WHERE media_id=:id AND cursor IS NOT NULL FOR UPDATE"
+        ),
+        {"id": media_id},
+    ):
+        cursor = _CURSOR.validate_python(row.cursor)
+        if not isinstance(cursor, StoredReaderCursorPositioned):
+            continue
+        locator = cursor.locator
+        if not isinstance(locator, (EpubReaderResumeState, WebReaderResumeState)):
+            raise AssertionError("Piece cursor has no canonical text point")
+        offset = locator.locations.text_offset
+        fragment_id = UUID(str(locator.target.fragment_id))
+        preceding = 0
+        position = None
+        for interval, sliced in slices:
+            if (
+                interval.fragment_id == fragment_id
+                and offset is not None
+                and sliced.source_start_offset
+                <= offset
+                <= sliced.source_start_offset + len(sliced.canonical_text)
+            ):
+                position = preceding + offset - sliced.source_start_offset
+            preceding += len(sliced.canonical_text)
+        if position is not None:
+            updated = locator.model_copy(
+                update={
+                    "locations": locator.locations.model_copy(
+                        update={"total_progression": position / total if total else 0.0}
+                    )
+                }
+            )
+            if updated != locator:
+                _write(
+                    db,
+                    row.user_id,
+                    media_id,
+                    StoredReaderCursorPositioned(locator=updated).model_dump(mode="json"),
+                )
+            continue
+        previous = locator.model_copy(
+            update={"text": ReaderQuoteContext(quote=None, quote_prefix=None, quote_suffix=None)}
+        )
+        unresolved = StoredReaderCursorUnresolved(
+            previous_locator=previous,
+            from_generation=scope.body_generation - 1,
+            post_media_id=None,
+            source_revision_id=None,
+            excerpt="",
+            offset_in_excerpt=0,
+        )
+        _write(db, row.user_id, media_id, unresolved.model_dump(mode="json"))
+    db.execute(
+        text(
+            "UPDATE consumption_overrides SET status=NULL,revision=revision+1 WHERE media_id=:id AND status='finished'"
+        ),
+        {"id": media_id},
+    )

@@ -32,7 +32,7 @@ export function endpointForResource(ref: string): LinkTarget | null {
   const parsed = parseResourceRef(ref);
   if (!parsed) return null;
   const mode = RESOURCE_CAPABILITIES[parsed.scheme].link_mode;
-  return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref };
+  return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref, passage_target: null };
 }
 export type LinkMutation =
   | { kind: "created"; sourceRef: string; targetRef: string }

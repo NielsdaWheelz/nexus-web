@@ -296,14 +296,14 @@ def remove_item_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID) -> None:
     _advance_revision(db, viewer_id)
 
 
-def lock_viewers_for_media_in_txn(db: Session, *, media_id: UUID) -> list[UUID]:
+def lock_viewers_for_media_in_txn(db: Session, *, media_ids: list[UUID]) -> list[UUID]:
     """Teardown's viewer lock set, acquired before its media lock in a serializable attempt."""
     viewer_ids = list(
         db.scalars(
             text(
-                "SELECT user_id FROM consumption_queue_items WHERE media_id = :id UNION SELECT user_id FROM podcast_listening_states WHERE media_id = :id UNION SELECT user_id FROM consumption_overrides WHERE media_id = :id ORDER BY user_id"
+                "SELECT user_id FROM consumption_queue_items WHERE media_id = ANY(:ids) UNION SELECT user_id FROM podcast_listening_states WHERE media_id = ANY(:ids) UNION SELECT user_id FROM consumption_overrides WHERE media_id = ANY(:ids) ORDER BY user_id"
             ),
-            {"id": media_id},
+            {"ids": media_ids},
         )
     )
     for viewer_id in viewer_ids:

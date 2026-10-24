@@ -3,8 +3,8 @@ import { proxyShare } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";
 
-// The four public shapes, closed: no other path reaches FastAPI with the internal secret.
-const SHAPE = /^(?:\/file|\/document|\/assets\/[0-9]{1,9})?$/;
+// The public shapes, closed: no other path reaches FastAPI with the internal secret.
+const SHAPE = /^(?:\/file|\/document|\/(?:assets|apparatus)\/[0-9]{1,9})?$/;
 const MASKED = { error: { code: "E_NOT_FOUND", message: "Share unavailable" } };
 
 export async function GET(

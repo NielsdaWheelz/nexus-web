@@ -5,6 +5,8 @@ Instructions are the fixed system prompt only. The input carries the turn's cont
 ``<resources>``), then as much of the active path's history as fits, newest first and
 contiguous, then the current turn. Mandatory context never drops; when it cannot fit,
 admission rejects the send.
+Quoted-subject labels and words stay snapshot-owned; current proof only decides
+whether that frozen passage remains citable.
 """
 
 from __future__ import annotations
@@ -18,16 +20,20 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Message
-from nexus.errors import NotFoundError
+from nexus.errors import ConflictError, NotFoundError
+from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
 from nexus.services.chat import quotes
-from nexus.services.chat.retrievals import RetrievalCitation, citation_from_search_result
+from nexus.services.chat.retrievals import (
+    RetrievalCitation,
+    citation_from_search_result,
+    reopen_search_result,
+)
 from nexus.services.generation.contract import GenerationIntent, TextOutput
 from nexus.services.generation.policy import policy
 from nexus.services.resource_graph.context import list_context_refs
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_graph.resolve import ResolvedResource
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.search.service import get_search_result
 
 BLOCK_OVERHEAD_TOKENS = 4
 
@@ -179,17 +185,27 @@ def assemble(
     if refs:
         lines = ["<resources>"]
         for ref in refs:
-            citation = _attached_citation(db, ref.resolved, viewer_id)
             quoted_subject = snapshot is not None and ref.target.uri == subject_uri
-            if citation is not None and snapshot is not None and quoted_subject:
-                citation.captured_evidence = snapshot.evidence
+            if snapshot is not None and quoted_subject:
+                target = snapshot.evidence.target
+                citation = (
+                    _attached_citation(db, ref.resolved, viewer_id, passage_target=target)
+                    if isinstance(target, CapturedPassageTarget)
+                    else None
+                )
+                if citation is not None:
+                    citation.captured_evidence = snapshot.evidence
+            else:
+                citation = _attached_citation(db, ref.resolved, viewer_id)
             if citation is not None:
                 attached.append(citation)
             lines.append(
                 _resource(
                     ref.resolved,
                     n=len(attached) if citation is not None else None,
-                    quoted_subject=quoted_subject,
+                    quoted_evidence=snapshot.evidence
+                    if snapshot is not None and quoted_subject
+                    else None,
                     citation=citation,
                 )
             )
@@ -263,7 +279,11 @@ def _history_units(db: Session, user: Message) -> list[list[str]]:
 
 
 def _attached_citation(
-    db: Session, resource: ResolvedResource, viewer_id: UUID
+    db: Session,
+    resource: ResolvedResource,
+    viewer_id: UUID,
+    *,
+    passage_target: CapturedPassageTarget | None = None,
 ) -> RetrievalCitation | None:
     """Citable = rendered with a body or quote, and a retrieval row can materialize."""
 
@@ -282,11 +302,17 @@ def _attached_citation(
     if result_type is None:
         return None
     try:
-        result = get_search_result(db, viewer_id, result_type, str(ref.id))
+        result = reopen_search_result(
+            db,
+            viewer_id=viewer_id,
+            result_type=result_type,
+            source_id=str(ref.id),
+            passage_target=passage_target,
+        )
         citation = citation_from_search_result(result)
-    except (NotFoundError, ValueError):
-        # justify-ignore-error: no active content index or no resolvable anchor: the
-        # resource stays in the prompt, uncitable (no synthetic row).
+    except (NotFoundError, ConflictError, ValueError):
+        # justify-ignore-error: no active content index, no resolvable anchor or a body
+        # that moved under capture: the resource stays in the prompt, uncitable.
         return None
     citation.selected = True
     return citation
@@ -296,7 +322,7 @@ def _resource(
     resource: ResolvedResource,
     n: int | None,
     *,
-    quoted_subject: bool,
+    quoted_evidence: CapturedEvidence | None,
     citation: RetrievalCitation | None,
 ) -> str:
     uri = quotes.attribute(resource.uri)
@@ -307,11 +333,17 @@ def _resource(
         ref.scheme
     ).prompt_render in ("label", "none")
     n_attr = f' n="{n}"' if n is not None and not label_only else ""
+    quoted_subject = quoted_evidence is not None
     quote_attr = ' quote="reader_selection"' if quoted_subject else ""
+    label = (
+        (quoted_evidence.source.title or "selected passage") if quoted_evidence else resource.label
+    )
+    summary = "" if quoted_subject else resource.summary
+    fetch_hint = "see reader_selection" if quoted_subject else resource.fetch_hint
     head = (
-        f'<resource uri="{uri}"{n_attr}{quote_attr} label="{quotes.attribute(resource.label)}" '
-        f'summary="{quotes.attribute(resource.summary)}" '
-        f'fetch_hint="{quotes.attribute(resource.fetch_hint)}">'
+        f'<resource uri="{uri}"{n_attr}{quote_attr} label="{quotes.attribute(label)}" '
+        f'summary="{quotes.attribute(summary)}" '
+        f'fetch_hint="{quotes.attribute(fetch_hint)}">'
     )
     if quoted_subject or label_only:
         return f"{head}</resource>"

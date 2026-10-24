@@ -8,7 +8,7 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
-import { readerDocument, transcriptUnitAtTime, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
+import { readerDocument, transcriptUnitAtTime, localPoint, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
 import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -34,8 +34,15 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
   if (target.kind === "time") return doc.format === "transcript" && transcriptUnitAtTime(doc.units, target.ms) !== null ? target : null;
   const unit = doc.units.find((unit) => unit.id === (target.kind === "point" ? target.point.unit : target.unit));
   if (!unit) return null;
-  if (target.kind === "point") return target.point.offset <= unit.length ? target : null;
-  if (target.kind === "range") return target.end <= unit.length ? target : null;
+  if (target.kind === "point") {
+    const point = localPoint(doc,target.point);
+    return point ? {kind:"point",point:{kind:"text",...point}} : null;
+  }
+  if (target.kind === "range") {
+    const start=localPoint(doc,{unit:target.unit,offset:target.start});
+    const end=localPoint(doc,{unit:target.unit,offset:target.end});
+    return start && end ? {kind:"range",unit:start.unit,start:start.offset,end:end.offset} : null;
+  }
   return target;
 }
 
@@ -104,9 +111,12 @@ export function targetOfLocator(
   switch (locator.type) {
     case "web_text_offsets":
     case "epub_fragment_offsets":
-      return { kind: "range", unit: doc?.kind === "text"
-        ? doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id)?.id ?? String(locator.fragment_id)
-        : String(locator.fragment_id), start: locator.start_offset, end: locator.end_offset };
+      if (doc) {
+        const start=localPoint(doc,{unit:String(locator.fragment_id),offset:locator.start_offset});
+        const end=localPoint(doc,{unit:String(locator.fragment_id),offset:locator.end_offset});
+        return start && end ? {kind:"range",unit:start.unit,start:start.offset,end:end.offset} : null;
+      }
+      return {kind:"range",unit:String(locator.fragment_id),start:locator.start_offset,end:locator.end_offset};
     case "pdf_page_geometry":
       return { kind: "quads", page: locator.page_number, quads: locator.quads };
     case "pdf_page":
@@ -120,8 +130,8 @@ export function targetOfLocator(
   }
 }
 
-export const targetOfResolution = (resolution: Resolution) =>
-  resolution.kind === "Resolved" ? targetOfLocator(resolution.anchor.locator) : null;
+export const targetOfResolution = (resolution: Resolution, doc?: ReaderDocument) =>
+  resolution.kind === "Resolved" ? targetOfLocator(resolution.anchor.locator,doc) : null;
 
 /** Paint the full extent, including every transcript unit in a timed interval. */
 export function inspectionOfLocator(

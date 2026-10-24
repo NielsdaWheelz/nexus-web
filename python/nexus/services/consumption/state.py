@@ -29,6 +29,7 @@ from nexus.services.consumption import (
     reader_cursor,
     viewer_txn,
 )
+from nexus.services.library_entries import lock_media_for_reference
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.suggestion_changes import engagement_gate, record_input_change
 
@@ -60,12 +61,16 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
 
     def run(db: Session) -> ReaderCursorSnapshot:
         kind = _cursor_kind(db, viewer_id, media_id)
+        if kind == "text_part":
+            lock_media_for_reference(db, media_id)
         # A web save holds the publication lock, so a source replacement's cursor remap cannot
         # interleave with it.
         expected = write.expected_reader_generation
-        if isinstance(write.locator, XReaderResumeState) and expected is None:
+        if (
+            isinstance(write.locator, XReaderResumeState) or kind == "text_part"
+        ) and expected is None:
             raise InvalidRequestError(
-                message="X cursor writes require the displayed reader generation"
+                message="Source-backed cursor writes require the displayed reader generation"
             )
         generation = (
             lock_publication_generation(db, media_id=media_id)
