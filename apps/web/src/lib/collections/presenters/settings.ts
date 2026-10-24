@@ -4,6 +4,7 @@ import type { CollectionRowView } from "@/lib/collections/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export interface SettingsPresenterItem {
+  presentation: "Index" | "Details";
   id?: string;
   title: string;
   description?: string;
@@ -17,6 +18,7 @@ export function presentSettingsRow(
 ): CollectionRowView {
   const context = [item.description, item.meta].filter(Boolean).join(" · ");
   return {
+    presentation: item.presentation,
     id: item.id ?? item.href ?? item.title,
     kind: "settings_row",
     primary: item.href

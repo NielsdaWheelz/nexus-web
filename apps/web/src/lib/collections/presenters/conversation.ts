@@ -14,6 +14,7 @@ export function presentConversation(
   const presentation = presentConversationListItem(item, environment);
   const href = `/conversations/${item.id}`;
   return {
+    presentation: "Index",
     id: item.id,
     kind: "conversation",
     primary: {

@@ -18,8 +18,9 @@ conversation messages retain their message layout.
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
-| `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | ordinary index geometry and native title links |
+| `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
+| `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, gold bullets, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
@@ -77,6 +78,24 @@ search and future chat context: native title links, applicable bibliography,
 consumption and time, existing resource actions, and podcast-show artwork. indexes
 never create outline sessions, disclosure or editors. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
+
+the shell requires `Index` (title and metadata), `Search` (also one excerpt) or
+`Details` (wrapping operational/instructional content). index/search reserve empty
+lines and ellipsize individual fields; content length and arriving state never
+add lines. typography may enlarge the shared line geometry. the row's `indexRow`
+container owns adaptation: above 479px, show up to three observed author names;
+at 479px and below, show the first and a passive omitted count. hide routine
+reading state below 480px and remaining time below 360px. year/count keep their
+own slots. hidden names leave the tab order; focused hidden links/shortcuts return
+to that row's surviving more/title. no surname inference or author-only control.
+
+search uses one literal evidence line: a matching passage wins over an item's own
+match, and its link retains that passage's exact activation. prose titles identify
+their source/kind rather than repeat the evidence. complete evidence requires
+navigation; the index never recursively expands matching results. failure marks
+decorate the existing stable more control, whose label names the real recovery
+destination. chat mutation failures retain their supplied commands and use the
+workspace condition owner. static unavailable rows show a bounded reason.
 
 outlines serve notes, pages and connections: a gold opening bullet, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource

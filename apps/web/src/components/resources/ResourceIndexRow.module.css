@@ -1,0 +1,8 @@
+.metadata { display: flex; align-items: baseline; min-width: 0; gap: var(--space-2); white-space: nowrap; }
+.context { display: inline-flex; flex: 1; min-width: 0; overflow: hidden; }
+.context:not(:first-child) { max-inline-size: 45%; }
+.context > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.reason { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--danger); }
+.attentionTrigger { display: inline-flex; position: relative; }
+.attentionMark { position: absolute; inset-block-start: 0; inset-inline-end: 1px; pointer-events: none; font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--danger); }

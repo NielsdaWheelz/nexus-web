@@ -1,8 +1,8 @@
 "use client";
 
-// Credit lines for rows and headers. A credit with a person links to its
-// author pane; a text fact (a podcast preview credit) is plain text. Names are
-// inline text with dir="auto", never chips, and wrap rather than truncate.
+// Wrapping credit lines and the shared name renderer. A credit with a person
+// links to its author pane; a text fact is plain text. Names keep dir="auto"
+// and credited spelling; the calling presenter owns wrapping or truncation.
 
 import { Fragment } from "react";
 import {
@@ -13,7 +13,10 @@ import {
 import { cx } from "@/lib/ui/cx";
 import styles from "./ContributorCredits.module.css";
 
-function Name({ credit }: { readonly credit: ContributorCredit }) {
+export function ContributorName({ credit, className }: {
+  readonly credit: ContributorCredit;
+  readonly className?: string;
+}) {
   const name = creditName(credit);
   if (name === null) return null;
   const canonical = credit.contributor_display_name?.trim();
@@ -24,7 +27,7 @@ function Name({ credit }: { readonly credit: ContributorCredit }) {
   return name.href ? (
     <a
       href={name.href}
-      className={styles.link}
+      className={cx(styles.link, className)}
       title={title}
       dir="auto"
       data-pane-label-hint={name.label}
@@ -32,7 +35,7 @@ function Name({ credit }: { readonly credit: ContributorCredit }) {
       {name.label}
     </a>
   ) : (
-    <span className={styles.name} title={title} dir="auto">
+    <span className={cx(styles.name, className)} title={title} dir="auto">
       {name.label}
     </span>
   );
@@ -60,7 +63,7 @@ export function ContributorCreditList({
           key={`${credit.contributor_handle ?? credit.credited_name}-${credit.role}-${index}`}
         >
           {index > 0 ? ", " : null}
-          <Name credit={credit} />
+          <ContributorName credit={credit} />
         </Fragment>
       ))}
       {overflow > 0 ? (

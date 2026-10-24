@@ -38,7 +38,7 @@ export default function SettingsPaneBody() {
   return (
     <CollectionView
       returnScope="Settings.Sections"
-      rows={SECTIONS.map(presentSettingsRow)}
+      rows={SECTIONS.map(item => presentSettingsRow({ ...item, presentation: "Index" }))}
       status="ready"
       ariaLabel="Settings"
     />
