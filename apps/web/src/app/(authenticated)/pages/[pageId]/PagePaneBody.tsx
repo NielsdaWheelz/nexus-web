@@ -145,7 +145,7 @@ function PageContent({ creation }: { creation: PageCreation | null }) {
   const retainedRefs = id ? outlineTextRefs(`page:${id}`) : [];
   const savedOnly = !gone && !remoteReady() && outline.root === null && creation === null && !catalog.loading &&
     outline.failure?.status !== 403 && outline.failure?.status !== 404 && !isStaleBuild(outline.failure);
-  const materialized = id !== null && !gone && !outline.latent && outline.status === "ready" && (creation === null || outline.creationPublished);
+  const materialized = id !== null && !gone && !outline.latent && outline.root !== null && (creation === null || outline.creationPublished);
   const resourceRef = materialized ? canonicalResourceRef({ scheme: "page", id }) : undefined;
   const { activateTarget } = runtime;
   const menuActions = useMemo<ActionDescriptor[]>(
