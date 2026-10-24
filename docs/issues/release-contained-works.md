@@ -1,6 +1,7 @@
 # contained works release
 
 source-dependent media adds a generated reader variant and bounded public sharing.
+revision 0316 follows the offline-listening watermark migration, 0315.
 recheck the actual migration head before merging the single contained-works
 migration. existing text and annotations stay intact; existing imports are not
 automatically segmented. rehearse on the newest production backup before merge.
@@ -16,7 +17,8 @@ asset/note requests all gain captured identity fencing, with no old request arm.
 audit exhaustive kind switches
 and refuse part reading-copy creation at both capability and service boundaries.
 no compatibility branch. piece downloads remain unavailable. complete the shared
-[https/http2 release prerequisites](release-web-http2.md) when pairing these clients.
+[https/http2 release prerequisites](release-web-http2.md) and
+[offline-episode client pairing](release-offline-episodes.md) for the same release.
 
 drain existing `media_content_reindex_job` work before cutover: the new payload
 requires explicit structural and partition keys plus nullable preparation-command
