@@ -1,5 +1,5 @@
 // The one web owner of credit presentation: the role vocabulary and its
-// labels, author selection, role grouping, the handle grammar and the name key.
+// labels, author selection, role grouping and the handle grammar.
 
 import type { Schema } from "@/lib/api/wire";
 import type { PaneHeaderCredit } from "@/lib/panes/paneHeaderModel";
@@ -76,20 +76,4 @@ export function isContributorHandle(value: string): boolean {
     value.length <= 80 &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
   );
-}
-
-/**
- * The server's name match key as far as the browser can compute it: NFKC,
- * default-ignorables removed, lowercased, whitespace collapsed. It gates only
- * the editor's duplicate-create affordances; the server decides identity.
- */
-export function contributorNameKey(value: string): string {
-  return value
-    .normalize("NFKC")
-    .replace(/\p{Default_Ignorable_Code_Point}/gu, "")
-    .toLowerCase()
-    .normalize("NFKC")
-    .split(/\s+/u)
-    .filter(Boolean)
-    .join(" ");
 }

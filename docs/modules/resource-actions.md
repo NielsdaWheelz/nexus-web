@@ -40,7 +40,7 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
-  the overlays (authors, metadata, library settings, podcast settings and fixed
+  the overlays (metadata, library settings, podcast settings and fixed
   podcast subscription/import/unsubscribe/cleanup reviews).
   action defects are thrown by `ResourceActionDefect` beneath the existing workspace
   boundary; the account command owner and its feedback remain above containment.

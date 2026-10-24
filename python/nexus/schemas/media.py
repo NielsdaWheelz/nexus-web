@@ -92,7 +92,6 @@ class MediaOut(BaseModel):
     chapters: list[PodcastEpisodeChapterOut]
     capabilities: CapabilitiesOut
     contributors: list[ContributorCreditOut]
-    author_mode: Literal["automatic", "manual"]
     original_published_date: PublicationDate | None
     edition_published_date: PublicationDate | None
     edition_isbn: str | None

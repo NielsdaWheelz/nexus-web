@@ -13,7 +13,6 @@ its code, and attach their own retry:
   loaded" / "couldn’t refresh connections" + retry
 - `apps/web/src/app/(authenticated)/stats/StatsPaneBody.tsx:1026,1029`
 - `apps/web/src/components/podcasts/PodcastSubscriptionSettingsOverlay.tsx:44`
-- `apps/web/src/components/contributors/MediaAuthorsEditor.tsx:111`
 - `apps/web/src/app/(authenticated)/media/[id]/Embeds.tsx:172,190`: bare retry
   buttons outside the feedback signals
 
@@ -29,5 +28,5 @@ evidence: reading. the list comes from a pattern search, not an audit.
 
 resolved when: every failure notice takes its content from the error through
 `apiTransportFeedback` (or a domain owner that does), and a stale tab on chat
-context, statistics, podcast subscription settings, media authors and embeds
+context, statistics, podcast subscription settings and embeds
 shows the update copy with no retry.

@@ -63,7 +63,6 @@ import {
 
 /** The one overlay a verb can open; it loads its own facts by id. */
 export type Overlay =
-  | { readonly kind: "Authors"; readonly mediaId: string }
   | {
       readonly kind: "Metadata";
       readonly mediaId: string;

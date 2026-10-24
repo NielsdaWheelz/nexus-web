@@ -32,7 +32,6 @@ import {
   Trash2,
   Undo2,
   Upload,
-  Users,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -232,7 +231,6 @@ export const ACTION_CATALOG = {
     icon: CircleCheck,
     group: "Manage",
   },
-  EditAuthors: { label: "Edit authors…", icon: Users, group: "Manage" },
   LibrarySettings: {
     label: "Library settings…",
     icon: Settings,
