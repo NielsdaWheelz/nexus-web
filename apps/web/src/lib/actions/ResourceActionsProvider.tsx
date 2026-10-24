@@ -362,8 +362,10 @@ export default function ResourceActionsProvider({
       if (signal.aborted) return;
       const key = `${command.ref}|${command.id}`;
       if (installedApp && !remoteReady() && resourceActionRequiresRemote(command.id, command.tracked)) {
-        const attempt = { failure: feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null, content: { tone: "Neutral", title: "requires a connection" } }) };
+        const attempt: { failure: FeedbackOffer | null } = { failure: null };
         attempts.set(key, attempt);
+        attempt.failure = feedback.offer({ key: `resource-action:${command.ref}:${command.id}`, announcement: "Polite", needsAttention: true, undo: null,
+          onDismiss: () => { if (attempts.get(key) === attempt) attempts.delete(key); }, content: { tone: "Neutral", title: "requires a connection" } });
         return;
       }
       if (command.tracked && busy.keys().has(key)) return;
@@ -377,7 +379,9 @@ export default function ResourceActionsProvider({
       const attempt: { failure: FeedbackOffer | null } = { failure: null };
       attempts.set(key, attempt);
       const offerFailure = (notice: Parameters<FeedbackContextValue["offer"]>[0]) => {
-        if (!signal.aborted && attempts.get(key) === attempt) attempt.failure = feedback.offer(notice);
+        if (!signal.aborted && attempts.get(key) === attempt) attempt.failure = feedback.offer({ ...notice,
+          onDismiss: () => { if (attempts.get(key) === attempt) attempts.delete(key); },
+        });
       };
       void (async () => {
         try {
