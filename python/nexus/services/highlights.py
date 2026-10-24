@@ -292,7 +292,6 @@ def _find_fragment_highlight(
 class HighlightActionFacts:
     is_owner: bool
     edit_bounds_applicable: bool
-    learn_applicable: bool
     note_block_id: UUID | None
 
 
@@ -300,13 +299,12 @@ def highlight_action_facts(
     db: Session, *, viewer_id: UUID, highlight_ids: list[UUID]
 ) -> dict[UUID, HighlightActionFacts]:
     """Action facts for readable highlights; note presence is viewer-scoped."""
-    from nexus.services.dossier.research import learn_applicable
 
     ordered = list(dict.fromkeys(highlight_ids))
     if not ordered:
         return {}
     rows = db.execute(
-        select(Highlight.id, Highlight.user_id, Highlight.anchor_kind, Highlight.exact).where(
+        select(Highlight.id, Highlight.user_id, Highlight.anchor_kind).where(
             Highlight.id.in_(ordered), highlight_readability_filter(viewer_id)
         )
     ).all()
@@ -315,10 +313,9 @@ def highlight_action_facts(
         highlight_id: HighlightActionFacts(
             is_owner=user_id == viewer_id,
             edit_bounds_applicable=anchor_kind == "fragment_offsets",
-            learn_applicable=learn_applicable(exact or ""),
             note_block_id=notes[highlight_id][0].id if notes.get(highlight_id) else None,
         )
-        for highlight_id, user_id, anchor_kind, exact in rows
+        for highlight_id, user_id, anchor_kind in rows
     }
 
 

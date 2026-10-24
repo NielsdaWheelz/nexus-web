@@ -69,14 +69,6 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_dead="nexus.services.chat.worker:on_dead_letter",
         ),
-        # Paid: a retry after a worker death reruns the synthesis from scratch.
-        "dossier_build": JobDefinition(
-            "interactive",
-            "nexus.services.dossier.run:run_job",
-            retry_delays=(30, 120, 300),
-            keep_dead=True,
-            on_dead=_GENERATION_DEAD,
-        ),
         "enrich_metadata": JobDefinition(
             "interactive",
             "nexus.tasks.enrich_metadata:run_job",

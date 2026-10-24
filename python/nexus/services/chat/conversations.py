@@ -43,7 +43,6 @@ from nexus.services.collection_keyset import (
     encode_keyset_cursor,
     keyset_page,
 )
-from nexus.services.dossier import engine as dossier_engine
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup
@@ -384,7 +383,6 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
         return False
     chat = ResourceRef("conversation", conversation_id)
     cleanup.delete_edges_for_deleted_resource(db, ref=chat)
-    dossier_engine.on_subject_deleted(db, chat)  # a FK-less subject
     db.execute(text("DELETE FROM conversations WHERE id = :chat"), {"chat": conversation_id})
     return True
 

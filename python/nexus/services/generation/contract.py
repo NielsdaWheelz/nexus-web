@@ -33,20 +33,11 @@ type BackgroundOperation = Literal[
     "media_summary",
     "connection_discovery",
     "oracle",
-    "dossier_page",
-    "dossier_note",
-    "dossier_media",
-    "dossier_conversation",
-    "dossier_library",
-    "dossier_podcast",
-    "dossier_contributor",
-    "dossier_idea",
 ]
 type Operation = Literal["chat"] | BackgroundOperation
 type OwnerKind = Literal[
     "chat_run",
     "oracle_reading",
-    "artifact_build",
     "media_summary",
     "connection_discovery_scan",
     "media_enrichment",

@@ -1,7 +1,7 @@
 "use client";
 
 // The media pane's chrome around the reader: the header, document navigation,
-// find, the inspector (Contents, Evidence, the dossier), the view menu, the document map rail, the pane width
+// find, the inspector (Contents and Connections), the view menu, the document map rail, the pane width
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Activity } from "lucide-react";
@@ -13,7 +13,7 @@ import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import type { FindController } from "@/lib/find/useFind";
 import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
@@ -64,7 +64,7 @@ export function useReaderChrome(input: {
 
   useResourceInspector({
     scheme: "media",
-    handle: id,
+    handle: media?.id ?? null,
     bodies: { contents: input.contents, linkedItems: input.evidence },
   });
   const navigation = useMemo(

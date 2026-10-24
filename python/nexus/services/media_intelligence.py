@@ -1,39 +1,28 @@
 """The per-media intelligence unit: an abstract plus grounded claims, and its readers.
 
 A unit is built once per content fingerprint by the ``media_unit_build`` job; each claim
-cites an offered evidence span (I12). ``read_single`` and ``ensure_current_many`` are
-audience-gated and 404-mask or omit unreadable media; ``get_media_unit`` and
-``read_batch`` serve callers that carry their own visibility. A unit whose build died
-reads ``failed`` everywhere (the job's ``on_dead`` hook fails it, I16).
+cites an offered evidence span (I12). ``get_media_unit`` serves discovery callers that
+carry their own visibility. A unit whose build died reads ``failed`` (the job's
+``on_dead`` hook fails it, I16).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
-from nexus.errors import NotFoundError
 from nexus.logging import get_logger
-from nexus.services.media_intelligence_lifecycle import (
-    current_content_fingerprint,
-    current_content_fingerprints,
-    ensure_media_unit,
-)
+from nexus.services.media_intelligence_lifecycle import current_content_fingerprint
 
 logger = get_logger(__name__)
 
-MediaIntelligenceStatus = Literal["building", "ready", "stale", "failed", "not_available"]
-
 # The candidate budget in characters (~4 per token), leaving the model room to answer.
 MEDIA_UNIT_INPUT_CHAR_BUDGET = 60_000
-# How many per-media builds one ensure may fan out.
-ENSURE_CURRENT_MANY_DEFAULT_CONCURRENCY = 8
 
 
 @dataclass(frozen=True)
@@ -59,31 +48,6 @@ class NotReady(Enum):
     Building = "building"
     Failed = "failed"
     Stale = "stale"
-
-
-@dataclass(frozen=True)
-class MediaProjection:
-    """The claimless view of one unit; the abstract only for ``ready`` and ``stale``."""
-
-    media_id: UUID
-    status: MediaIntelligenceStatus
-    content_fingerprint: str
-    summary_md: str | None
-    model_name: str | None
-
-
-class MediaOmissionReason(Enum):
-    NotAudienceVisible = "not_audience_visible"
-    NoReadyUnit = "no_ready_unit"
-    ProjectionPending = "projection_pending"
-    ProjectionFailed = "projection_failed"
-    Budget = "budget"
-
-
-@dataclass(frozen=True)
-class MediaOmission:
-    media_id: UUID
-    reason: MediaOmissionReason
 
 
 @dataclass(frozen=True)
@@ -127,86 +91,6 @@ def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
         content_fingerprint=head.content_fingerprint,
         claims=[MediaClaimView(*claim) for claim in claims],
     )
-
-
-def read_batch(db: Session, *, media_ids: list[UUID]) -> dict[UUID, MediaProjection]:
-    """The ready, current units among already-scoped ``media_ids`` (citation chips)."""
-    if not media_ids:
-        return {}
-    current = current_content_fingerprints(db, media_ids)
-    return {
-        head.media_id: MediaProjection(
-            head.media_id, "ready", head.content_fingerprint, head.summary_md, head.model_name
-        )
-        for head in db.execute(text(_HEADS_SQL), {"ids": media_ids})
-        if head.status == "ready" and head.content_fingerprint == current[head.media_id]
-    }
-
-
-def read_single(db: Session, *, media_id: UUID, requester_user_id: UUID) -> MediaProjection:
-    """The authorized projection; a stale unit still shows its previous abstract."""
-    if not can_read_media(db, requester_user_id, media_id):
-        raise NotFoundError(message="Media not found")
-    fingerprint = current_content_fingerprint(db, media_id=media_id)
-    head = _head(db, media_id)
-    if head is None:
-        return MediaProjection(media_id, "not_available", fingerprint, None, None)
-    if head.status != "ready":
-        return MediaProjection(media_id, head.status, fingerprint, None, None)
-    status = "ready" if head.content_fingerprint == fingerprint else "stale"
-    return MediaProjection(media_id, status, fingerprint, head.summary_md, head.model_name)
-
-
-def ensure_current_many(
-    db: Session,
-    *,
-    media_ids: list[UUID],
-    requester_user_id: UUID,
-    max_concurrency: int = ENSURE_CURRENT_MANY_DEFAULT_CONCURRENCY,
-) -> list[MediaProjection | MediaOmission]:
-    """One usable projection (readable, ready, current, with a claim) or omission per
-    distinct media, in order; a buildable subject is enqueued and reported pending."""
-    return [
-        _ensure_one(db, media_id, requester_user_id)
-        if index < max_concurrency
-        else MediaOmission(media_id, MediaOmissionReason.Budget)
-        for index, media_id in enumerate(dict.fromkeys(media_ids))
-    ]
-
-
-def _ensure_one(db: Session, media_id: UUID, requester: UUID) -> MediaProjection | MediaOmission:
-    if not can_read_media(db, requester, media_id):
-        return MediaOmission(media_id, MediaOmissionReason.NotAudienceVisible)
-    unit = get_media_unit(db, media_id=media_id)
-    if isinstance(unit, MediaUnit):
-        if not unit.claims:
-            return MediaOmission(media_id, MediaOmissionReason.NoReadyUnit)
-        return MediaProjection(
-            media_id, "ready", unit.content_fingerprint, unit.summary_md, unit.model_name
-        )
-    if not load_candidates(db, media_id=media_id):
-        # Text still being indexed builds its unit when its index publishes (D4).
-        indexing = db.scalar(
-            text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM content_index_states s JOIN background_jobs j
-                      ON j.kind = 'media_content_reindex_job'
-                     AND j.status IN ('pending', 'running', 'failed')
-                     AND j.payload @> jsonb_build_object(
-                         'media_id', s.owner_id::text, 'revision', s.revision)
-                    WHERE s.owner_kind = 'media' AND s.owner_id = :m
-                      AND s.status IN ('pending', 'indexing'))
-            """),
-            {"m": media_id},
-        )
-        reason = (
-            MediaOmissionReason.ProjectionPending if indexing else MediaOmissionReason.NoReadyUnit
-        )
-        return MediaOmission(media_id, reason)
-    if unit is NotReady.Failed:
-        return MediaOmission(media_id, MediaOmissionReason.ProjectionFailed)
-    ensure_media_unit(db, media_id=media_id)
-    return MediaOmission(media_id, MediaOmissionReason.ProjectionPending)
 
 
 def load_candidates(db: Session, *, media_id: UUID) -> list[Candidate]:

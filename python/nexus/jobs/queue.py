@@ -496,7 +496,7 @@ def supersede_unclaimed_job(db: Session, *, job_id: UUID, kind: str) -> None:
 
 
 def revoke_jobs_by_dedupe_keys(db: Session, *, kind: str, dedupe_keys: Collection[str]) -> None:
-    """Chat, dossier, media units: delete owned rows, closing their open generations.
+    """Chat and media units: delete owned rows, closing their open generations.
 
     The caller has invalidated the domain owner under its own lock. Generations
     close first: the tool fence locks a generation before its job.

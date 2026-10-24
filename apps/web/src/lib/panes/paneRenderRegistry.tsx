@@ -18,8 +18,6 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   browsePreview: () =>
     import("@/app/(authenticated)/browse/preview/BrowsePreviewPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
-  artifact: () =>
-    import("@/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody"),
   conversations: () =>
     import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),

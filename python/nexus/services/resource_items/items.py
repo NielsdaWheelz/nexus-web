@@ -351,22 +351,9 @@ def _rows(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
         ids = list({ref.id for ref in refs if ref.scheme == scheme})
-        if scheme in ("artifact", "artifact_revision"):
-            from nexus.services.dossier.subjects import head_visible_sql
-
-            key = "id" if scheme == "artifact" else "revision_id"
-            sql = f"""SELECT a.{key} AS id, 'Dossier — ' || COALESCE(m.title,c.title,CASE WHEN l.is_default THEN 'All' ELSE l.name END,p.title,co.display_name,pg.title,idea.display_title,'Note') AS title
-                FROM artifacts a LEFT JOIN media m ON a.subject_scheme='media' AND m.id=a.subject_id
-                LEFT JOIN conversations c ON a.subject_scheme='conversation' AND c.id=a.subject_id
-                LEFT JOIN libraries l ON a.subject_scheme='library' AND l.id=a.subject_id
-                LEFT JOIN podcasts p ON a.subject_scheme='podcast' AND p.id=a.subject_id
-                LEFT JOIN contributors co ON a.subject_scheme='contributor' AND co.id=a.subject_id
-                LEFT JOIN pages pg ON a.subject_scheme='page' AND pg.id=a.subject_id
-                LEFT JOIN artifact_idea_subjects idea ON a.subject_scheme='idea' AND idea.id=a.subject_id
-                WHERE a.{key} = ANY(:ids) AND {head_visible_sql("a")}"""
-        else:
-            sql = _QUERIES[scheme]
-        for row in db.execute(text(sql), {"ids": ids, "viewer_id": viewer_id}).mappings():
+        for row in db.execute(
+            text(_QUERIES[scheme]), {"ids": ids, "viewer_id": viewer_id}
+        ).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
     return out
 

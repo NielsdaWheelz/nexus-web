@@ -47,7 +47,7 @@ import {
   contributorRoleLabel,
   selectMediaAuthors,
 } from "@/lib/contributors/credits";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   useMediaQueryRevision,
   useMediaSummaries,

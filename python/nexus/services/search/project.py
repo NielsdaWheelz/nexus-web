@@ -48,7 +48,6 @@ SCHEMES = {
     "episode": "media",
     "video": "media",
     "web_result": "external_snapshot",
-    "dossier": "artifact",
 }
 
 
@@ -113,8 +112,6 @@ def _locator(row: RowMapping) -> dict[str, Any] | None:
 def _refs(row: RowMapping) -> tuple[ResourceRef, ResourceRef]:
     """(occurrence, owner): the resource a hit names and the one that receives it."""
     t = row["type"]
-    if t == "artifact":
-        return _ref("artifact_revision", row["revision_id"]), _ref("conversation", row["id"])
     ref = _ref(SCHEMES.get(t) or t, row["id"])
     if t == "message":
         return ref, _ref("conversation", row["conversation_id"])

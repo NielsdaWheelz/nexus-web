@@ -15,7 +15,7 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogPage } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
 import { editText, hasUnsavedText, readText, textDraft, useTextReady } from "@/lib/notes/texts";
 import { readDraft, readWriting } from "@/lib/notes/journal";

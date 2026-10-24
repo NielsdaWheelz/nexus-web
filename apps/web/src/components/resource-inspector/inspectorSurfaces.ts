@@ -1,12 +1,6 @@
-// Pure composition of the Inspector's published surfaces + fallback default
-// (A12 role resolution + A13 composition table). Given the subject's typed
-// `ResourceInspectorResourcePolicy` and the route-owned domain bodies the pane
-// supplies, it wires the tab host's publication: Contents (when a Contents body
-// exists) · optional Members (Library governance) · the single LinkedItems
-// surface (Connections) ·
-// Forks (Conversation only) · the always-published Dossier — in that fixed tab
-// order — and resolves `default_surface_order` (fallback preference, NOT tab
-// order) to the first concrete published surface.
+// Compose route-owned Contents, Members, Connections and Forks in that order.
+// The capability policy owns the default preference; Connections is always
+// published, including when it is the inspector's only tab.
 import type { ReactNode } from "react";
 import type {
   ResourceInspectorLinkedItemsSurface,
@@ -47,17 +41,12 @@ function linkedItemsSurfaceId(
   }
 }
 
-/**
- * Build the ordered surfaces + resolved default. `dossierBody` is the
- * reference-stable Dossier element (so streaming does not republish); Dossier
- * is always appended, so there is always ≥1 surface (A12 guarantee).
- */
+/** Build the ordered surfaces and resolve the policy's default preference. */
 export function planInspectorSurfaces(input: {
   policy: ResourceInspectorResourcePolicy;
   bodies: InspectorDomainBodies;
-  dossierBody: ReactNode;
 }): InspectorSurfacePlan {
-  const { policy, bodies, dossierBody } = input;
+  const { policy, bodies } = input;
   const surfaces: InspectorSurfacePlan["surfaces"] = [];
   const linkedId = linkedItemsSurfaceId(policy.linked_items);
 
@@ -70,7 +59,7 @@ export function planInspectorSurfaces(input: {
     throw new Error("Resource Inspector policy requires a Forks body");
   }
 
-  // Fixed tab order: Contents · Members · LinkedItems · Forks · Dossier.
+  // Fixed tab order: Contents · Members · Connections · Forks.
   if (bodies.contents != null) {
     surfaces.push({ id: "resource-contents", body: bodies.contents });
   }
@@ -81,7 +70,6 @@ export function planInspectorSurfaces(input: {
   if (policy.forks === "ConversationForks") {
     surfaces.push({ id: "resource-forks", body: bodies.forks });
   }
-  surfaces.push({ id: "resource-dossier", body: dossierBody });
 
   const publishedIds = new Set(surfaces.map((surface) => surface.id));
   const roleSurfaceId = (
@@ -94,8 +82,6 @@ export function planInspectorSurfaces(input: {
         return publishedIds.has(linkedId) ? linkedId : null;
       case "Forks":
         return publishedIds.has("resource-forks") ? "resource-forks" : null;
-      case "Dossier":
-        return "resource-dossier";
       default: {
         const exhaustive: never = role;
         throw new Error(`Unhandled surface role: ${String(exhaustive)}`);
@@ -103,10 +89,8 @@ export function planInspectorSurfaces(input: {
     }
   };
 
-  // `default_surface_order` is fallback preference (NOT tab order): first role
-  // that maps to a published surface. It always ends in Dossier, so this
-  // resolves.
-  let defaultSurfaceId: InspectorSurfaceId = "resource-dossier";
+  // Preference order is independent of tab order. Connections is always present.
+  let defaultSurfaceId: InspectorSurfaceId = linkedId;
   for (const role of policy.default_surface_order) {
     const resolved = roleSurfaceId(role);
     if (resolved !== null) {

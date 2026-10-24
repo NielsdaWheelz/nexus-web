@@ -205,12 +205,12 @@ async def _scan(
     """Build the input fresh, generate once; only ``ok`` touches the edges."""
     if not get_settings().connection_discovery_enabled:
         return "skipped", None
-    dossier = _dossier(db, user_id=user_id, ref=ref)
-    excluded = set() if dossier is None else _excluded(db, user_id=user_id, ref=ref)
+    source = _source_context(db, user_id=user_id, ref=ref)
+    excluded = set() if source is None else _excluded(db, user_id=user_id, ref=ref)
     db.commit()  # search() embeds first: it needs a session without a transaction
-    if dossier is None:
+    if source is None:
         return "skipped", None
-    source_text, kin = dossier
+    source_text, kin = source
     response = search(
         db,
         user_id,
@@ -301,7 +301,7 @@ def _publish(
     return retry_serializable(db, "connection_discovery.publish", attempt)
 
 
-def _dossier(
+def _source_context(
     db: Session, *, user_id: UUID, ref: ResourceRef
 ) -> tuple[str, frozenset[ResourceRef]] | None:
     """Source text, plus kin that may never be a candidate; None skips. Only

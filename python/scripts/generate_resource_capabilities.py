@@ -23,11 +23,11 @@ import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import type { ShareMode } from "@/lib/sharing/types";
 
 export type ResourceInspectorSurfaceRole =
-  "Contents" | "LinkedItems" | "Forks" | "Dossier";
+  "Contents" | "LinkedItems" | "Forks";
 export type ResourceInspectorLinkedItemsSurface =
   "MediaEvidence" | "ResourceConnections";
 
-/** `default_surface_order` is fallback preference, not tab order; it ends in Dossier. */
+/** `default_surface_order` is fallback preference, not tab order. */
 export interface ResourceInspectorResourcePolicy {
   readonly linked_items: ResourceInspectorLinkedItemsSurface;
   readonly forks: "ConversationForks" | null;

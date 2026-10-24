@@ -46,7 +46,6 @@ const ROUTES = {
   browse: ["browse", "Browse", Compass],
   browsePreview: ["browse/preview", "Preview", Compass],
   media: ["media/:id", "Media", FileText],
-  artifact: ["artifacts/:artifactRef", "Dossier", BookOpen],
   conversations: ["conversations", "Chats", MessageSquare],
   conversationNew: ["conversations/new", "New chat", MessageSquare],
   conversation: ["conversations/:id", "Chat", MessageSquare],
@@ -79,7 +78,6 @@ type Traits<T> = Partial<Record<PaneRouteId, T>>;
 const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   library: ["library", "id"],
   media: ["media", "id"],
-  artifact: ["artifact", "artifactRef"],
   conversation: ["conversation", "id"],
   podcastDetail: ["podcast", "podcastId"],
   author: ["contributor_handle", "handle"],
@@ -108,7 +106,6 @@ const UNSHARED = new Set<PaneRouteId>(["conversationNew", "pageNew", "search", "
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
-  artifact: "libraries",
   conversations: "chats",
   conversationNew: "chats",
   conversation: "chats",
@@ -120,7 +117,6 @@ const SECTION: Traits<DestinationId> = {
 const PENDING_LABEL: Traits<string> = {
   browsePreview: "Loading preview…",
   media: "Loading media…",
-  artifact: "Loading dossier…",
 };
 export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
 const RETURN_KIND: Traits<PaneReturnKind> = {
@@ -270,9 +266,7 @@ function locatorFor(
     const handle = value;
     return isContributorHandle(handle) ? { kind: "contributor_handle", handle } : null;
   }
-  // artifact refs arrive namespaced; every other param is a bare id.
-  const ref =
-    scheme === "artifact" ? value : formatResourceRef({ scheme, id: value });
+  const ref = formatResourceRef({ scheme, id: value });
   return parseResourceRef(ref)?.scheme === scheme
     ? { kind: "resource_ref", ref }
     : null;
