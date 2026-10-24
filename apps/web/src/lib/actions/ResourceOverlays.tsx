@@ -1,6 +1,5 @@
 "use client";
 
-import { lazy, Suspense } from "react";
 import PodcastAcquisitionDialog from "@/components/podcasts/PodcastAcquisitionDialog";
 import PodcastLibrariesOverlay from "@/components/podcasts/PodcastLibrariesOverlay";
 import PodcastStopDialog from "@/components/podcasts/PodcastStopDialog";
@@ -10,10 +9,6 @@ import PodcastSettingsOverlay from "@/components/podcasts/PodcastSettingsOverlay
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { Overlay } from "@/lib/actions/ResourceActionsProvider";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-
-const MediaAuthorsEditor = lazy(
-  () => import("@/components/contributors/MediaAuthorsEditor"),
-);
 
 /**
  * The overlays verbs open, under one synthetic pane visit so their
@@ -39,16 +34,6 @@ export function ResourceOverlays({
       visitId="resource-action-overlays"
       routeKey="resource-action-overlays"
     >
-      {overlay?.kind === "Authors" ? (
-        <Suspense fallback={null}>
-          <MediaAuthorsEditor
-            key={overlay.key}
-            mediaId={overlay.mediaId}
-            returnFocusTo={overlay.anchor}
-            onClose={close}
-          />
-        </Suspense>
-      ) : null}
       {overlay?.kind === "Metadata" ? (
         <MediaInfoOverlay
           key={overlay.key}

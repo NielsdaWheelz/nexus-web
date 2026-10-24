@@ -332,8 +332,7 @@ def _publish(
         return failed("invalid_output")
     # Every rejection precedes every write; a writer failure rolls back the whole attempt.
     changed = merge_findings(db, media, findings)
-    applied = apply_prepared_role_slices_in_current_transaction(db, prepared=credits)
-    if applied.changed:
+    if apply_prepared_role_slices_in_current_transaction(db, prepared=credits):
         changed.append("contributors")
     return finish(
         MetadataBibliographyCompletedOutcome(
@@ -341,7 +340,6 @@ def _publish(
             completed_at=_stamp(db, media),
             changed_fields=changed,
             unresolved_fields=unresolved,
-            retained_manual_authors=applied.retained_manual_authors,
         )
     )
 

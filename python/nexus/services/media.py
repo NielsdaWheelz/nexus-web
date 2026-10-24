@@ -368,7 +368,7 @@ def media_facts(
 
 _DETAIL_SQL = """
     SELECT m.requested_url, m.canonical_url, m.edition_published_date, m.edition_isbn,
-        m.publisher, m.language, m.description, m.authors_manually_managed,
+        m.publisher, m.language, m.description,
         m.metadata_enriched_at, m.created_at, m.updated_at,
         pe.description_html, pe.description_text
     FROM media m LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
@@ -421,7 +421,6 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         chapters=[PodcastEpisodeChapterOut.model_validate(dict(chapter)) for chapter in chapters],
         capabilities=_capabilities(row, _pdf_readiness(db, rows), summary.x_article_content),
         contributors=summary.contributors,
-        author_mode="manual" if detail.authors_manually_managed else "automatic",
         original_published_date=row.original_published_date,
         edition_published_date=detail.edition_published_date,
         edition_isbn=detail.edition_isbn,

@@ -150,7 +150,6 @@ class MetadataBibliographyCompletedOutcome(_Frozen):
     completed_at: AwareDatetime
     changed_fields: list[MetadataField]
     unresolved_fields: list[MetadataField]
-    retained_manual_authors: bool
 
 
 class MetadataTitleCompletedOutcome(_Frozen):

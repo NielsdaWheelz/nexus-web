@@ -206,7 +206,6 @@ SimpleActionKind = Literal[
     "PlayNext",
     "AddToQueue",
     "DownloadOriginal",
-    "EditAuthors",
     "ResetProgress",
     "RemoveMedia",
     "LibraryPlacement",

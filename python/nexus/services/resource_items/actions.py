@@ -164,8 +164,6 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
         and operation.reviewed_at is None
     ):
         actions.append(ReviewMetadataResultAction(blocked=None, job_id=operation.job_id))
-    # Authors are the creator's to edit, whatever the processing (I4).
-    actions.append(_simple("EditAuthors", _owner(media.is_creator)))
     actions.append(_simple("RemoveMedia", _owner(media.can_delete)))
     if media.progress_resettable:
         actions.append(_simple("ResetProgress"))

@@ -9,7 +9,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.logging import get_request_id
 from nexus.responses import Data
-from nexus.schemas.contributors import MediaAuthorsOut, MediaAuthorsPutRequest
 from nexus.schemas.media import MediaOut
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
@@ -17,7 +16,7 @@ from nexus.schemas.media_summary import (
     ResolveMediaSummariesIn,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
-from nexus.services import contributors, media, media_deletion, metadata_operations
+from nexus.services import media, media_deletion, metadata_operations
 
 router = APIRouter(tags=["media"])
 
@@ -68,16 +67,6 @@ def review_media_metadata_result(
         db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
     )
     return Response(status_code=204)
-
-
-@router.put("/media/{media_id}/authors")
-def put_media_authors(
-    media_id: UUID, request: MediaAuthorsPutRequest, viewer: ViewerDep
-) -> Data[MediaAuthorsOut]:
-    """The contributors facade owns its own session, re-check and mutation."""
-    return Data(
-        data=contributors.put_media_authors(viewer=viewer, media_id=media_id, request=request)
-    )
 
 
 @router.delete("/media/{media_id}", status_code=204)

@@ -162,10 +162,6 @@ class ApiErrorCode(str, Enum):
     E_PDF_PASSWORD_REQUIRED = ("E_PDF_PASSWORD_REQUIRED", 422)
     E_RESOURCE_LIMIT = ("E_RESOURCE_LIMIT", 422)
 
-    # Author errors
-    E_AUTHOR_ALREADY_LISTED = ("E_AUTHOR_ALREADY_LISTED", 422)  # duplicate canonical contributor
-    E_AUTHOR_NOT_SELECTABLE = ("E_AUTHOR_NOT_SELECTABLE", 422)  # unknown or invisible handle
-
     # Link errors
     E_LINK_SELF = ("E_LINK_SELF", 422)  # Link source and target are the same resource
     E_LINK_CAPABILITY = ("E_LINK_CAPABILITY", 422)  # endpoint not admissible for a user Link

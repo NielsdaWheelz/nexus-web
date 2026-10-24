@@ -1837,26 +1837,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/authors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Put Media Authors
-         * @description The contributors facade owns its own session, re-check and mutation.
-         */
-        put: operations["put_media_authors_media__media_id__authors_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/document-map": {
         parameters: {
             query?: never;
@@ -3535,14 +3515,6 @@ export interface components {
              */
             reason: "UnsupportedSubject" | "Deleting" | "InsufficientAuthority" | "HighlightUnresolved" | "ProjectionNotReady" | "ProjectionUnsupported";
         };
-        /** AutomaticMediaAuthorsRequest */
-        AutomaticMediaAuthorsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            mode: "automatic";
-        };
         BrowseCandidate: components["schemas"]["OwnedMediaCandidate"] | components["schemas"]["EpubCandidate"] | components["schemas"]["WebArticleCandidate"] | components["schemas"]["VideoCandidate"] | components["schemas"]["PodcastCandidate"];
         /**
          * BrowseKind
@@ -4813,10 +4785,6 @@ export interface components {
         Data_ListeningPositionOut_: {
             data: components["schemas"]["ListeningPositionOut"];
         };
-        /** Data[MediaAuthorsOut] */
-        Data_MediaAuthorsOut_: {
-            data: components["schemas"]["MediaAuthorsOut"];
-        };
         /** Data[MediaFileOut] */
         Data_MediaFileOut_: {
             data: components["schemas"]["MediaFileOut"];
@@ -5602,16 +5570,6 @@ export interface components {
              * Format: date-time
              */
             started_at: string;
-        };
-        /** ExistingAuthorBinding */
-        ExistingAuthorBinding: {
-            /** Contributor Handle */
-            contributor_handle: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "existing";
         };
         /** ExistingChatDestination */
         ExistingChatDestination: {
@@ -6950,26 +6908,6 @@ export interface components {
             /** Tool Position */
             tool_position: number;
         };
-        /**
-         * ManualAuthorRowIn
-         * @description One ordered manual author row. Every row is role ``author``.
-         */
-        ManualAuthorRowIn: {
-            /** Binding */
-            binding: components["schemas"]["ExistingAuthorBinding"] | components["schemas"]["NewAuthorBinding"];
-            /** Credited Name */
-            credited_name: string;
-        };
-        /** ManualMediaAuthorsRequest */
-        ManualMediaAuthorsRequest: {
-            /** Authors */
-            authors: components["schemas"]["ManualAuthorRowIn"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            mode: "manual";
-        };
         /** MediaAbstractOut */
         MediaAbstractOut: {
             /**
@@ -7002,14 +6940,6 @@ export interface components {
             media_id: string;
             /** Title */
             title: string;
-        };
-        /** MediaAuthorsOut */
-        MediaAuthorsOut: {
-            /**
-             * Author Mode
-             * @enum {string}
-             */
-            author_mode: "automatic" | "manual";
         };
         /** MediaCompletionOut */
         MediaCompletionOut: {
@@ -7069,11 +6999,6 @@ export interface components {
          *     viewer's own consumption; ``player_descriptor`` only for a playable episode.
          */
         MediaOut: {
-            /**
-             * Author Mode
-             * @enum {string}
-             */
-            author_mode: "automatic" | "manual";
             /** Canonical Source Url */
             canonical_source_url: string | null;
             /** Canonical Url */
@@ -7325,8 +7250,6 @@ export interface components {
              * @enum {string}
              */
             purpose: "bibliography";
-            /** Retained Manual Authors */
-            retained_manual_authors: boolean;
             /**
              * Status
              * @default completed
@@ -7746,24 +7669,6 @@ export interface components {
             /** Expected Override Revision */
             expected_override_revision: number | null;
             terminal_listening: components["schemas"]["ListeningIn"];
-        };
-        /**
-         * NewAuthorBinding
-         * @description A person the save creates under the client's ``id``; a resend binds that person.
-         */
-        NewAuthorBinding: {
-            /** Display Name */
-            display_name: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "new";
         };
         /**
          * NewChatDestination
@@ -11115,7 +11020,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "UnsubscribePodcast";
+            kind: "AddToQueue" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "UnsubscribePodcast";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -16446,41 +16351,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_media_authors_media__media_id__authors_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ManualMediaAuthorsRequest"] | components["schemas"]["AutomaticMediaAuthorsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_MediaAuthorsOut_"];
                 };
             };
             /** @description Validation Error */

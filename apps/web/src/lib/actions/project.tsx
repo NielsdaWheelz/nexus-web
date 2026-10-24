@@ -538,7 +538,6 @@ export function projectResourceActions(
         window.location.assign(response.data.url);
       },
     ],
-    EditAuthors: overlay({ kind: "Authors", mediaId: id }),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
     ImportPodcastEpisodes: overlay({ kind: "ImportPodcastEpisodes", target: { kind: "Canonical", podcast_id: id }, title: facts.label }),

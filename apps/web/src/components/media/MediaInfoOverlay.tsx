@@ -210,12 +210,6 @@ function MediaInfo({
             .join(", "),
         ),
         fact(
-          "authors",
-          bibliography?.retained_manual_authors
-            ? "kept manually set authors"
-            : null,
-        ),
-        fact(
           "explanation",
           operation?.status === "failed"
             ? METADATA_FAILURE_COPY[operation.code]
