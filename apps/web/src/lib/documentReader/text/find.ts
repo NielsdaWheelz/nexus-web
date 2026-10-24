@@ -23,7 +23,7 @@ export function createTextFind(
   initialStructure: Structure,
   geometry: TextGeometry,
   painter: Painter,
-  reader: Pick<Reader, "inspect" | "getState">,
+  reader: Pick<Reader, "inspect" | "getState" | "navigation">,
 ): TextFind {
   let doc = initial;
   let structure = initialStructure;
@@ -92,6 +92,9 @@ export function createTextFind(
       if (outcome.kind === "Cancelled") return { kind: "Cancelled" };
       if (outcome.kind !== "Unavailable") return { kind: "Shown" };
       return { kind: "Failed", message: outcome.reason === "CaptureUnavailable" ? "Reading position is unavailable." : "Find request unavailable. Retry." };
+    },
+    href(hit) {
+      return reader.navigation?.href({ source_identity: doc.identity, target: { kind: "range", ...hit } }) ?? null;
     },
     paint(rows, active) {
       last = [rows, active];

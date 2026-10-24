@@ -123,6 +123,7 @@ export type ReaderTarget =
   | { readonly kind: "pdf"; readonly page: number; readonly view: import("./location").PdfView }
   /** A transient match in the current PDF query; never a saved locator. */
   | { readonly kind: "pdfMatch"; readonly page: number; readonly index: number }
+  | import("./location").PdfFindDestination
   | { readonly kind: "edge"; readonly edge: "start" | "end" };
 /** Where the eye is: a point and its pixel offset from the visible reading line.
  * offsetPx is positive below the line and negative above it; never persisted. */

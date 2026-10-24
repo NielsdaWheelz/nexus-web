@@ -739,11 +739,11 @@ pane creation directly.
 - `Fork`: always create and activate a fresh pane immediately after the origin.
 
 ordinary destination opening uses `Follow`; shifted activation uses `Fork`.
-explicit open-in-new-tab commands also use `Fork`. materialising an already
+explicit open-in-new-pane actions also use `Fork`. materialising an already
 placed provisional view replaces that view without another opening.
 acquisition uses `originHistory: "replace"` for its already-placed preview:
 only a `NavigatedOrigin` landing replaces the origin visit instead of pushing.
-matching existing panes and `Fork` keep their normal history. an offered result
+matching existing panes retain their navigation history; `Fork` starts independently. an offered result
 is a fresh opening and never inherits this replacement request.
 
 identity is resource plus material view: arrival parameters and fragments do not
@@ -803,9 +803,20 @@ page delivery replaces only the title; it retains body, editor identities and
 live requests. its title owner and body/request owner read the same draft cell,
 so changing a title never discards an attachment or warns about preserved prose.
 
-a fork copies only the selected source pane's reader view memento, not pending
-commands or domain drafts. new arrival takes precedence over a source-valid
-visit memento, which takes precedence over the shared durable reading cursor.
+`activateWorkspacePane` selects an exact pane or forks its current visit; missing
+panes return null. `goBackPane`/`goForwardPane` require a disposition: `Follow`
+traverses the exact adjacent occurrence; `Fork` peeks without changing either
+source stack. named forks insert after the named pane, preserving minimization.
+all forks create fresh pane/visit ids, empty history, default width and no inspector.
+
+named/history forks copy only shell scroll/eye-line (without keyboard focus) and
+`Reader.InspectionView` from the exact visit/route key. authored data, drafts and
+pending commands retain their owners. generic href forks carry a fresh target.
+`InspectSource.purpose` is required: `Open` invalidates old arrival presentation;
+`RestoreVisit` waits for destination validation of its copied view. a valid view
+wins even over an obsolete locator; absent/obsolete views inspect the canonical
+href; failed restoration refuses visibly. admission precedes capture/copy/delivery
+and one focused commit. refusal changes no workspace state or presentation.
 canonical source hrefs and their single parser cover current resources, captured
 quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
@@ -825,8 +836,9 @@ the helper always removes its input listeners.
 superseded success offers its exact result. that action captures a fresh origin
 and intent; ordinary offered open follows. result offers are session-local.
 targets, surfaces and entries travel through one workspace commit; the workspace
-owns destination focus. the palette keeps its local focus handoff only for named
-tab switches and direct restoration, which do not activate a target.
+owns destination focus, including exact named-pane selection. the palette keeps
+its local handoff only for reopening closed panes. delayed offers inherit neither
+automatic create/send placement nor obsolete source discard owners.
 add's media and import controls share one accepted-source lookup and busy id.
 the durable attempt is read once before placement: a settled media target uses
 its resolved media id; an unsettled target keeps the exact attempt selector on
@@ -841,7 +853,11 @@ Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and
 ordinary input, and only verified return or explicit adoption ends inspection.
 Conversation find keeps its own way back, offered in the find bar and the pane
-header. previews write no pane history entry.
+header. previews write no pane history entry. named result rows also carry pure
+canonical hrefs: ordinary activation reveals locally, shift opens independently.
+`activate(row)` and `targetHref(row)` validate the captured computation/source;
+stale rows never dispatch. local sheets close after successful reveal; fork
+sheets close only after workspace admission.
 
 `lib/ui/targetActivation.ts` is the pure gesture classifier;
 `lib/panes/targetLinkActivation.ts` binds it to a complete workspace target.
@@ -849,9 +865,11 @@ shift-click and shift-enter create one fresh, focused pane after the origin,
 including an already-open/current target. plain activation uses `Follow`.
 `onDefault` is only for same-source local inspection or materialising an already
 placed provisional view; it cannot choose placement. owned repeated enter is
-consumed; composition and multiline shift-enter remain editor-owned. normal
-anchors use pane capture; rich targets bind both handlers and bypass capture.
-presenters suppress return focus after new-pane navigation. Meta/Ctrl/Alt,
+consumed; composition on destination controls is inert and multiline shift-enter
+remains editor-owned. normal anchors use scoped pane/queue/metadata capture;
+rich targets bind both handlers and bypass capture. global controls capture the
+active origin at activation. accepted modal openings close and suppress trigger
+return-focus; cancelled or unavailable openings keep their presenter open. Meta/Ctrl/Alt,
 middle-click, downloads, external links, `_blank`, fragments, browser-owned
 paths and already-prevented events remain browser- or route-owned. Browser-owned
 paths are `/` (the workspace entry) and what Next serves outside the catch-all

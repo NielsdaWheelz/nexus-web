@@ -188,7 +188,11 @@ function CommandCondition({ entry, commands }: { entry: Entry; commands: ReturnT
     priority: "Write", announcement: "Polite",
     content: { tone: sending ? "Neutral" : "Warning", title: `${title} · ${entry.title}`, message: `selection: ${entry.scopeLabel}.${sending ? "" : ` ${message}${entry.failure === null ? "" : ` ${entry.failure.title}. ${entry.failure.message ?? ""}`}`}`, requestId: entry.requestId ?? undefined },
     actions: sending ? undefined : [
-      { label: "view imports", commandKey: entry.commandKey, onClick: () => { commands.inspect(entry.commandKey); workspace().activateWorkspaceTarget({ originPaneId: workspace().state.active_primary_pane_id, target: { href: "/imports" }, disposition: { kind: "Follow" } }); } },
+      { label: "view imports", commandKey: entry.commandKey, onClick: intent => {
+        const current = workspace();
+        const result = current.activateWorkspaceTarget({ originPaneId: current.state.active_primary_pane_id, target: { href: "/imports" }, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
+        if (result.kind !== "Cancelled") commands.inspect(entry.commandKey);
+      } },
       { label: "stop tracking", commandKey: entry.commandKey, onClick: () => commands.forget(entry.commandKey) },
     ],
   });

@@ -1,6 +1,14 @@
 import java.net.URI
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -9,9 +17,10 @@ plugins {
 }
 
 val debugBaseUrl = (providers.gradleProperty("nexusAndroidDebugBaseUrl").orNull
-    ?: "http://10.0.2.2:3000").trim()
+    ?: "https://127.0.0.1:3000").trim()
 val debugOwnedHost = (providers.gradleProperty("nexusAndroidDebugOwnedHost").orNull
-    ?: "10.0.2.2").trim()
+    ?: "127.0.0.1").trim()
+val debugCaFileProperty = providers.gradleProperty("nexusAndroidDebugCaFile").orNull
 val requestedReleaseBuild = gradle.startParameter.taskNames.any {
     it.contains("Release", ignoreCase = true)
 }
@@ -51,8 +60,8 @@ val nexusWire = Regex("""export const WIRE_REVISION = (\d+);""")
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
 }
-require(debugUri.scheme == "http" || debugUri.scheme == "https") {
-    "nexusAndroidDebugBaseUrl must use http or https."
+require(debugUri.scheme == "https") {
+    "nexusAndroidDebugBaseUrl must use https."
 }
 require(
     debugUri.rawUserInfo == null &&
@@ -215,8 +224,62 @@ val buildPackagedUi = tasks.register<BuildPackagedUi>("buildPackagedUi") {
     outputDirectory.set(layout.projectDirectory.dir("src/main/assets"))
 }
 
+// Debug trust is a build input scoped to the exact owned host. The generated
+// resources never enter release, and absent local CA means system trust only.
+abstract class GenerateDebugNetworkSecurity : DefaultTask() {
+    @get:Input
+    abstract val ownedHost: Property<String>
+
+    @get:Optional
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val caFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val output = outputDirectory.get().asFile
+        output.deleteRecursively()
+        val localTrust = caFile.orNull?.asFile?.let { ca ->
+            val raw = output.resolve("raw")
+            raw.mkdirs()
+            ca.copyTo(raw.resolve("nexus_debug_ca.pem"))
+            """
+                <domain-config>
+                    <domain includeSubdomains="false">${ownedHost.get()}</domain>
+                    <trust-anchors>
+                        <certificates src="system" />
+                        <certificates src="@raw/nexus_debug_ca" />
+                    </trust-anchors>
+                </domain-config>
+            """.trimIndent()
+        } ?: ""
+        val xml = output.resolve("xml")
+        xml.mkdirs()
+        xml.resolve("nexus_debug_network_security.xml").writeText("""
+            |<?xml version="1.0" encoding="utf-8"?>
+            |<network-security-config>
+            |    <base-config cleartextTrafficPermitted="true">
+            |        <trust-anchors><certificates src="system" /></trust-anchors>
+            |    </base-config>
+            |$localTrust
+            |</network-security-config>
+        """.trimMargin())
+    }
+}
+
+val generateDebugNetworkSecurity = tasks.register<GenerateDebugNetworkSecurity>("generateDebugNetworkSecurity") {
+    ownedHost.set(debugOwnedHost)
+    if (debugCaFileProperty != null) caFile.set(file(debugCaFileProperty))
+    outputDirectory.set(layout.buildDirectory.dir("generated/debug-network-security"))
+}
+
 androidComponents.onVariants { variant ->
     variant.sources.assets?.addGeneratedSourceDirectory(buildPackagedUi, BuildPackagedUi::outputDirectory)
+    if (variant.buildType == "debug")
+        variant.sources.res?.addGeneratedSourceDirectory(generateDebugNetworkSecurity, GenerateDebugNetworkSecurity::outputDirectory)
 }
 
 kotlin {

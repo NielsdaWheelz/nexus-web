@@ -412,7 +412,11 @@ failure or returnability.
 
 text searches canonical units and paints css highlights; pdf searches and paints
 through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;
-activation succeeds only for `Shown`. `inspect({target, signal?})` links external
+activation succeeds only for `Shown`. `FindSource.href(at)` projects immutable
+canonical targets through the host; standalone hosts return null. named-result
+activation validates the exact row and computation/source before local reveal or
+workspace dispatch. find/contents/chapter menus expose “open in new pane”.
+`inspect({target, signal?})` links external
 abort to one navigation request. pdf match page arrival, canvas/text-layer
 readiness and match positioning form one request with the transient
 `pdfMatch {page, index}` target. every wait checks cancellation before geometry
@@ -506,7 +510,9 @@ an authored destination exceeding the href bound has no raw-hash fallback:
 its focusable link control still inspects locally or reports shifted unavailability.
 
 `ReaderHost.navigation` is a nullable href/activation capability. reader core
-imports no pane/workspace state; public and shelf hosts inspect locally. hosted
+imports no pane/workspace state; public and shelf hosts inspect locally. the port
+reports synchronous `Accepted | Refused` admission; local inspection retains its
+asynchronous outcome. hosted
 contents, section/page navigation, map, authored links and evidence items bind
 the same capability. shift opens the exact destination without inspecting,
 seeking, changing selection or advancing progress in its source. reader chapter
@@ -523,15 +529,36 @@ arrows keep 44px targets while text may increase row height. pdf controls keep
 their separate wrapping layout. shared menu minimums yield to the positioning
 owner's measured viewport cap.
 
-`sourceArrival.ts` applies a union of resolved server source and direct reader
-destination through one saved-intent, claim, cancellation and focus fence.
+`sourceArrival.ts` applies resolved server sources and direct reader/chat
+locations through one saved-intent, claim, cancellation and focus fence.
+`InspectSource.purpose` distinguishes fresh opening from restored visits.
+`ReaderState.viewRestoration` reports the exact snapshot, publication and outcome;
+readiness alone does not prove restoration. initial view snapshots are one-shot.
+a valid copied view bypasses old locator resolution/validation; absent or obsolete
+views use the canonical href, while failed restoration refuses visibly.
+
+pdf find urls carry publication identity, page, frozen query/options, original
+eol-free utf-16 bounds and sha-256 of that page's complete extracted text. local
+indexes remain paint-only. replay uses the same pdf.js matcher and accepts only
+the exact range/digest before movement; extraction changes refuse. arrival owns
+paint until its actual inspection signal retires; cancellable positioning has a
+separate shorter lifetime. idle find/reflow preserve paint; a new query or
+semantic navigation supersedes it. fresh arrival retires prior local find.
+`Reader.restorePdfFind` rebuilds applied exact paint after a remount without
+repositioning the restored view. `pdfviewer` alone attaches its find controller;
+a second attachment would reset early-arrival matches. pdf.js upgrades must
+qualify that lifecycle, normalization, offsets and extraction together.
+
+closed location codecs reject unknown/duplicate fields and invalid coordinates.
+`loc` decoding is shared by workspace, native opening and reload. oversized cold
+links show entry refusal over the resumed workspace and are never persisted.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
 arrival intents remember `Pending`, `Applied` or `Retired`, without storing
 failure presentation. apply returns `Applied`, `Unavailable`, `Cancelled` or
 `FailureHandled`; the last delegates feedback to the reader, preventing duplicate
 notices. newer local intent retires waiting/running arrivals before old resolution
-can move the source. acknowledging an arrival's exact failure retires replay
-without aborting its signal or removing mounted inspection. a retired arrival
+can move the source. rejected attempts release their inspection lifetime;
+acknowledging failure retires replay. a retired arrival
 is skipped on remount; reopening a reference creates a fresh attempt.
 
 media preserves arrival api errors for the existing transport policy. an observed

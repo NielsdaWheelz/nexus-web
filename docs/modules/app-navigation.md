@@ -12,7 +12,9 @@ Neither is a directory of every feature.
 destination controls share the [workspace opening contract](workspace.md#target-activation):
 shift-click/shift-enter create and focus a fresh adjacent pane; ordinary activation
 follows the matching pane or navigates its origin. global controls capture the active origin at
-activation; pane controls retain their bound origin. multiline editing keeps newline.
+activation; pane controls retain their bound origin. queue and metadata portal
+hosts bind the same adapter with explicit runtimes. recovery and delayed-result
+openings retain their own fresh gesture. multiline editing keeps newline.
 one-shot launcher urls use `nexus/urlIntent.ts`; workspace entry strips their
 control params from pane visits/history, while the hydrated receiver dispatches
 the incoming command once. restored data never dispatches commands.

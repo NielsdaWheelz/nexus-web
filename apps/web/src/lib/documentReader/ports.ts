@@ -61,5 +61,6 @@ export interface ReaderHost {
 
 export interface ReaderNavigationPort {
   href(destination: ReaderDestination): string | null;
-  activate(destination: ReaderDestination, intent: OpenIntent, onDefault: () => void): void;
+  /** Synchronous host admission; local asynchronous inspection keeps its own outcome. */
+  activate(destination: ReaderDestination, intent: OpenIntent, onDefault: () => void): "Accepted" | "Refused";
 }

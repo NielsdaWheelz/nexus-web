@@ -7,7 +7,7 @@
 }
 
 [data-mobile-chrome-visibility="Hidden"] {
-  transform: translateY(var(--mobile-chrome-offset));
+  transform: translateY(var(--mobile-chrome-offset, 0px));
   opacity: 0;
   visibility: hidden;
 }

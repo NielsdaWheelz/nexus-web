@@ -7,6 +7,7 @@ export interface LabContext {
   run_id: string;
   worktree: string;
   web_origin: string;
+  web_tls: { ca_file: string; leaf_spki_sha256: string };
   api_origin: string;
   auth_origin: string;
   auth_anon_key: string;

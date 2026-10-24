@@ -13,8 +13,11 @@ close. active, in-view, focused and minimized are separate facts. there is no ta
 menu. [visual system](visual-system.md#workspace-strip) owns target geometry.
 
 plain left/right wrap focus through every title and control; home/end reach the
-ends. one roving stop records pane id and slot. enter/space on a title selects,
-unminimizes if needed, and enters pane content within the current viewing mode.
+ends. one roving stop records pane id and slot. ordinary title activation selects
+and unminimizes that exact pane, then enters its content within the current
+viewing mode. shift-click or shift-enter forks its current visit into a fresh pane
+immediately after it, preserving the clicked pane even when inactive or minimized.
+there is no tab menu or replacement touch-duplication control.
 tab exits the toolbar. delete/backspace close once per press, and shift+m toggles
 maximize once per press for the focused pane. repeated or composing enter/space
 cannot dispatch management again or activate a changing slot.
@@ -69,6 +72,15 @@ it preserves pane objects, activation, visits and histories, returns false for
 missing/self/unchanged moves, and commits one changed array. a changed move
 announces its position. desktop reorder is drag-only: there is no keyboard or
 click/tap alternative. this deliberately gives up accessible dragging parity.
+
+## history
+
+header back/forward use the shared gesture classifier and an explicit store
+disposition. ordinary activation traverses; shifted activation opens the exact
+adjacent visit in a fresh pane. pane menus expose “open previous page in new pane”
+and “open next page in new pane”, with disabled reasons for empty stacks.
+selection rechecks the captured current and adjacent visit ids, including
+equal-href occurrences, before admission; refusal preserves the source and menu.
 
 ## Sequential Traversal
 

@@ -11,6 +11,7 @@ import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import type { PodcastActionFocus } from "./inlineActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 type ReadState =
   | null
@@ -99,7 +100,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
             throw new ApiError(409, "E_ACTION_FACTS_STALE", "reopen actions to check current availability");
           return command.execute();
         },
-      }), pane?.paneId ?? null, state.source, focus).map(action => {
+      }), pane?.paneId ?? null, state.source, focus).map<ActionDescriptor>(action => {
         const transcript = state.facts.actions.find(item => item.kind === "Transcript");
         const tracked = action.id !== "Transcript" || transcript?.kind !== "Transcript" || !["ready", "partial", "queued", "running"].includes(transcript.state);
         if (!installedApp || !resourceActionRequiresRemote(action.id, tracked) || ctx.online && state.generation === remoteGeneration()) return action;

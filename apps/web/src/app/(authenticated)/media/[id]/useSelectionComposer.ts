@@ -818,10 +818,10 @@ export function useSelectionComposer(input: {
       const issue = draft?.chatIssue;
       if (issue?.kind === "Model" || issue?.kind === "Catalog") void sendChat(issue.destination, "default", { selection: issue.selection });
     },
-    openChat() {
+    openChat(intent: OpenIntent) {
       if (!draft || draft.destination.kind !== "Selected") return;
       const tree = draft.destination.snapshot.kind === "Ready" ? draft.destination.snapshot.tree : null;
-      pane.activateTarget({ target: { href: tree ? conversationViewHref(draft.destination.id, tree.active_leaf_message_id) : `/conversations/${draft.destination.id}`, labelHint: draft.destination.title }, disposition: { kind: "Fork" } });
+      pane.activateTarget({ target: { href: tree ? conversationViewHref(draft.destination.id, tree.active_leaf_message_id) : `/conversations/${draft.destination.id}`, labelHint: draft.destination.title }, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     },
     reference(): ReferenceInputHost | null {
       if (!draft || draft.load !== "Ready") return null;

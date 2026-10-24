@@ -4,13 +4,16 @@ import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { cx } from "@/lib/ui/cx";
 import { assertNever } from "@/lib/assertNever";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./ResourceRow.module.css";
 
 /** What activating the row does: follow a link, run a command, or nothing. */
 export type ResourceRowPrimary =
   | {
       kind: "link";
-      href: string;
+      href: string | null;
+      label?: string;
+      onActivate?: (event: TargetActivationEvent) => void;
       paneLabelHint?: string;
       target?: "_self" | "_blank";
       rel?: string;
@@ -52,7 +55,11 @@ export default function ResourceRow({
   switch (primary.kind) {
     case "link": activation = <a
       ref={primary.ref} className={styles.primary} data-row-focusable=""
-      href={primary.href} data-pane-label-hint={primary.paneLabelHint}
+      href={primary.href ?? undefined} data-pane-label-hint={primary.paneLabelHint}
+      role={primary.href === null ? "link" : undefined} tabIndex={primary.href === null ? 0 : undefined}
+      aria-label={primary.label}
+      data-workspace-rich-target={primary.onActivate ? "true" : undefined}
+      onClick={primary.onActivate} onKeyDown={primary.onActivate}
       target={primary.target} rel={primary.rel}
     >{label}</a>; break;
     case "button": activation = <button

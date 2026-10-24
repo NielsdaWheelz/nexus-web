@@ -6,6 +6,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
 
@@ -58,9 +59,15 @@ export default function ContextualActionMenu({
   if (coarse && displayedActivation?.kind === "route" && displayedActivation.href && pane) {
     const href = displayedActivation.href;
     groups.push({ id: "Navigation", label: null, options: [{
-      kind: "command", id: "Row.OpenInNewPane", label: "open in new pane",
+      kind: "link", id: "Row.OpenInNewPane", label: "open in new pane", href,
+      disabled: Boolean(commandDisabledReason), disabledReason: commandDisabledReason,
       restoreFocusOnClose: false,
-      onSelect: () => { pane.activateTarget({ target: { href, labelHint: title }, disposition: { kind: "Fork" } }); },
+      onActivate: event => {
+        const result = activateTargetLink({ event, target: { href, labelHint: title },
+          runtime: { activateTarget: input => pane.activateTarget({ ...input, disposition: { kind: "Fork" } }) },
+        });
+        return result === "handled-default" ? "handled-new-pane" : result;
+      },
     }] });
   }
   if (state?.kind === "Ready") {

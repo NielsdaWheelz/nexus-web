@@ -17,7 +17,9 @@ export function activateReaderDestination(reader: Reader, destination: ReaderDes
     if (destination.target.kind === "evidence_item") throw new Error("evidence destination requires a host activation");
     void reader.inspect({ target: destination.target });
   });
-  if (reader.navigation) reader.navigation.activate(destination, activation.intent, local);
+  if (reader.navigation) {
+    if (reader.navigation.activate(destination, activation.intent, local) === "Refused") return "consumed" as const;
+  }
   else local();
   return activation.intent === "new_pane" && reader.navigation ? "handled-new-pane" as const : "handled-default" as const;
 }

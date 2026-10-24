@@ -356,12 +356,14 @@ export default function MediaInfoOverlay({
   mediaId,
   returnFocusTo,
   returnFocusFallback,
+  skipReturnFocus,
   onClose,
 }: {
   readonly open: boolean;
   readonly mediaId: string;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget;
+  readonly skipReturnFocus?: () => boolean;
   readonly onClose: () => void;
 }) {
   const contentRoot = useRef<HTMLDivElement>(null);
@@ -405,7 +407,7 @@ export default function MediaInfoOverlay({
       />
     );
   return <InformationFrame open={open} title="metadata" returnFocusTo={returnFocusTo}
-    returnFocusFallback={returnFocusFallback} onClose={onClose} contentRef={contentRoot}>
+    returnFocusFallback={returnFocusFallback} skipReturnFocus={skipReturnFocus} onClose={onClose} contentRef={contentRoot}>
     {content}
   </InformationFrame>;
 }

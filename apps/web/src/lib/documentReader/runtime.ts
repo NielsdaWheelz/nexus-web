@@ -28,6 +28,7 @@ import {
 import type { FindSource } from "@/lib/find/find";
 import type { Passage, PassageGeometry, SelectionEvent } from "./DocumentReader";
 import type { ReaderHost, ReaderNavigationPort, ReaderProgressPort, ReaderSource } from "./ports";
+import type { PdfFindDestination } from "./location";
 import {
   createProgressSync,
   savedLocator,
@@ -81,6 +82,12 @@ export interface ReaderState {
   readonly progress: ProgressState | null;
   readonly pdf: PdfState | null;
   readonly restored: boolean;
+  /** The exact visit snapshot attempted against this publication; readiness alone is insufficient. */
+  readonly viewRestoration: {
+    readonly snapshot: ReaderViewSnapshot | null;
+    readonly sourceIdentity: string;
+    readonly outcome: "Restored" | "Absent" | "Failed";
+  } | null;
   readonly savedSpotUnavailable: boolean;
   /** The attached surface's find, keyed by the publication it searches. */
   readonly find: FindSource<unknown> | null;
@@ -97,6 +104,8 @@ export interface Reader {
   focusSource(): void;
   captureView(): ReaderViewSnapshot | null;
   restoreView(snapshot: ReaderViewSnapshot, signal?: AbortSignal): Promise<NavOutcome>;
+  /** Revalidate retained PDF inspection paint without replaying its movement. */
+  restorePdfFind(target: PdfFindDestination, signal: AbortSignal): Promise<boolean>;
   inspect(input: {
     readonly target: ReaderTarget | ((signal: AbortSignal) => ReaderTarget | null | Promise<ReaderTarget | null>);
     readonly signal?: AbortSignal;
@@ -130,6 +139,7 @@ export interface SurfaceHandle extends Positioner {
   /** A newer intent retires geometry queued before the navigator admitted work. */
   retireReflow(): void;
   setZoom?(zoom: number | null): void;
+  restorePdfFind?(target: PdfFindDestination, signal: AbortSignal): Promise<boolean>;
 }
 export interface ReaderRuntime extends Reader {
   readonly source: ReaderSource;
@@ -176,6 +186,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     progress: options.progress && { kind: "Loading" },
     pdf: null,
     restored: false,
+    viewRestoration: null,
     savedSpotUnavailable: false,
     find: null,
   };
@@ -188,6 +199,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     inputCount: number;
   } | null = null;
   let freshUsed = false;
+  let entryView = options.entry.view ?? null;
   let expectedGeneration: number | null = null;
   let input = {
     at: -Infinity,
@@ -332,6 +344,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         viewport: null,
         placement: null,
         restored: false,
+        viewRestoration: null,
         savedSpotUnavailable: false,
       });
       void restoreOnce();
@@ -356,21 +369,24 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     const pending = restore;
     if (!doc || !pending || surface?.identity !== doc.doc.identity) return;
     restore = null;
+    const visit = entryView;
+    entryView = null;
+    let outcome: "Restored" | "Absent" | "Failed" = "Absent";
     if (inputCount === pending.inputCount) {
       const { fresh, saved } = pending;
       if (saved?.kind === "pdf")
         surface.setZoom?.(saved.zoom === null ? null : clampZoom(saved.zoom));
       const savedTarget = saved && targetOfLocator(doc.doc, saved);
-      const visit = options.entry.view;
       if (fresh) await navigator.enter(fresh, saved);
-      else if (visit?.identity === doc.doc.identity)
-        await navigator.restore(visit.placement, visit.navigation);
-      else if (savedTarget) await navigator.apply(savedTarget, "Restore");
+      else if (visit?.identity === doc.doc.identity) {
+        const restored = await navigator.restore(visit.placement, visit.navigation);
+        outcome = restored.kind === "Arrived" || restored.kind === "Unchanged" ? "Restored" : "Failed";
+      } else if (savedTarget) await navigator.apply(savedTarget, "Restore");
       else if (saved) set({ savedSpotUnavailable: true });
       else if (options.entry.cold) await navigator.apply(options.entry.cold, "Open");
     }
     // A title reread keeps this restoration; a different publication retires it.
-    if (ready()?.doc.identity === doc.doc.identity) set({ restored: true });
+    if (ready()?.doc.identity === doc.doc.identity) set({ restored: true, viewRestoration: { snapshot: visit, sourceIdentity: doc.doc.identity, outcome } });
   }
 
   return {
@@ -410,13 +426,22 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         ? { identity, placement, navigation: { mode, origin, originUnavailable } }
         : null;
     },
-    restoreView(snapshot, signal) {
-      if (signal?.aborted) return Promise.resolve({ kind: "Cancelled" });
+    async restoreView(snapshot, signal) {
+      if (signal?.aborted) return { kind: "Cancelled" };
       const { mode, origin, originUnavailable } = navigator.state();
       input = { at: -Infinity, direction: "none" };
+      const identity = ready()?.doc.identity;
+      set({ viewRestoration: null });
       // A foreign placement fails at the surface without installing its mode or origin.
-      return navigator.restore(snapshot.placement, snapshot.identity === ready()?.doc.identity
+      const outcome = await navigator.restore(snapshot.placement, snapshot.identity === identity
         ? snapshot.navigation : { mode, origin, originUnavailable }, signal);
+      if (identity && ready()?.doc.identity === identity && !signal?.aborted)
+        set({ viewRestoration: { snapshot, sourceIdentity: identity, outcome: outcome.kind === "Arrived" || outcome.kind === "Unchanged" ? "Restored" : "Failed" } });
+      return outcome;
+    },
+    restorePdfFind(target, signal) {
+      if (signal.aborted || !surface || surface.identity !== ready()?.doc.identity || !surface.restorePdfFind) return Promise.resolve(false);
+      return surface.restorePdfFind(target, signal);
     },
     mount() {
       void load({ recoverPosition: false });
