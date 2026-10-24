@@ -49,7 +49,7 @@ CWD_VOLUME = "nexus-lab-codex-cwds"
 CWD_ROOT = "/tmp/codex-daemon-10001/cwds"
 WORKER_ENDPOINT = "ws://nexus-codex-agent-host:4500"
 LABEL_PREFIX = "com.nexus.lab.codex."
-HOST_POLICY_REVISION = 1
+HOST_POLICY_REVISION = 2
 SETUP_SECONDS = 125
 
 

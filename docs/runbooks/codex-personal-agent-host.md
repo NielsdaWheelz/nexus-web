@@ -17,7 +17,9 @@ to the shared websocket host below.
   `home/` and `tmp/` in the account directory and the explicit cwd root,
   removes a stale unix socket path, writes the startup model catalog, and starts
   codex with an explicit environment (`CODEX_HOME` is the account directory; no
-  `*_API_KEY`, so subscription work never bills an api key). it exits 0 when
+  `*_API_KEY`, so subscription work never bills an api key). native stderr goes
+  to account-owned `native-stderr.log` (mode 0600), truncated per launch; an
+  unexpected exit names that private file without publishing its contents. it exits 0 when
   stopped and 1 when codex exits on its own.
 - host, api and workers run as uid/gid `10001` and share the socket volume
   `nexus_codex_run` at `/tmp/codex-daemon-10001` (mode `0700`); the api mounts
@@ -229,7 +231,9 @@ permissions. real token refresh remains separately unqualified below.
 ## diagnostics
 
 - why the host exited: `journalctl CONTAINER_NAME=nexus-nexus-codex-agent-host-1`
-  (`codex app-server exited with status <n>`, `... must be mode 0600`).
+  (`codex app-server exited with status <n>; private diagnostics: <path>`,
+  `... must be mode 0600`). read `native-stderr.log` inside the daemon-only
+  account volume for the vendor cause; keep its contents private.
 - probe results and restarts: `docker inspect -f '{{json .State.Health}}
   {{.RestartCount}}' nexus-nexus-codex-agent-host-1`.
 - codex's own log: table `logs` of `logs_2.sqlite` in the account directory.

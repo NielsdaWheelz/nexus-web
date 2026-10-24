@@ -44,7 +44,7 @@ def main() -> None:
         and verifier is not None
         and re.fullmatch(r"[0-9a-f]{64}", verifier)
     ):
-        auth = ("--ws-token-sha256", verifier)
+        auth = ("--ws-auth", "capability-token", "--ws-token-sha256", verifier)
     else:
         raise SystemExit("invalid NEXUS_CODEX_ENDPOINT or NEXUS_CODEX_TRANSPORT_TOKEN_SHA256")
     if stat.S_IMODE(credential.stat().st_mode) != 0o600:
@@ -58,32 +58,36 @@ def main() -> None:
     if socket is not None:
         socket.unlink(missing_ok=True)
     catalog = materialize_codex_containment_catalog(account)
-    process = subprocess.Popen(
-        (
-            codex_cli_bin.bundled_codex_path(),
-            "-c",
-            f"model_catalog_json={json.dumps(str(catalog))}",
-            "app-server",
-            "--listen",
-            listener,
-            *auth,
-            "--strict-config",
-        ),
-        cwd=cwd,
-        # Explicit, so no inherited *_API_KEY or CODEX_HOME can redirect subscription work.
-        env={
-            "CODEX_HOME": str(account),
-            "CODEX_EXEC_SERVER_URL": "none",
-            "HOME": str(account / "home"),
-            "TMPDIR": str(account / "tmp"),
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        },
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    diagnostic = account / "native-stderr.log"
+    with os.fdopen(
+        os.open(diagnostic, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb"
+    ) as native_stderr:
+        process = subprocess.Popen(
+            (
+                codex_cli_bin.bundled_codex_path(),
+                "-c",
+                f"model_catalog_json={json.dumps(str(catalog))}",
+                "app-server",
+                "--listen",
+                listener,
+                *auth,
+                "--strict-config",
+            ),
+            cwd=cwd,
+            # Explicit, so no inherited *_API_KEY or CODEX_HOME can redirect subscription work.
+            env={
+                "CODEX_HOME": str(account),
+                "CODEX_EXEC_SERVER_URL": "none",
+                "HOME": str(account / "home"),
+                "TMPDIR": str(account / "tmp"),
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            },
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=native_stderr,
+        )
     stopping = False
 
     def stop(signum: int, frame: object) -> None:
@@ -99,7 +103,9 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop)
     status = process.wait()
     if not stopping:
-        raise SystemExit(f"codex app-server exited with status {status}")
+        raise SystemExit(
+            f"codex app-server exited with status {status}; private diagnostics: {diagnostic}"
+        )
 
 
 if __name__ == "__main__":

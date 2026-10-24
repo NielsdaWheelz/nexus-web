@@ -74,7 +74,7 @@ services:
       com.nexus.lab.codex.codex_version: ${NEXUS_LAB_CODEX_VERSION:?locked codex version required}
       com.nexus.lab.codex.catalog_revision: ${NEXUS_LAB_CODEX_CATALOG_REVISION:?locked catalog revision required}
       com.nexus.lab.codex.backend_contract_revision: ${NEXUS_LAB_CODEX_BACKEND_REVISION:?locked backend contract required}
-      com.nexus.lab.codex.host_policy_revision: "1"
+      com.nexus.lab.codex.host_policy_revision: "2"
     working_dir: /tmp
     read_only: true
     cap_drop: [ALL]
