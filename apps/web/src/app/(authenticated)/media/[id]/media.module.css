@@ -108,7 +108,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  width: min(36rem, var(--floating-action-content-max-width));
+  width: min(24rem, var(--floating-action-content-max-width));
   max-height: var(--floating-action-content-max-height);
   overflow-y: auto;
   padding: var(--space-2);
@@ -126,7 +126,6 @@
 }
 
 .selectionInput {
-  min-height: 4rem;
   padding: var(--space-2);
   border-top: var(--stroke-hairline) solid var(--edge-subtle);
 }
@@ -137,27 +136,9 @@
   overflow-wrap: anywhere;
 }
 
-.composerHint {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-
-
-
 .selectionIcon {
   --control-icon-size: 16px;
   flex: none;
-}
-
-.selectionStatusMarker {
-  position: absolute;
-  inset-block-start: var(--space-1);
-  inset-inline-end: var(--space-1);
-  width: var(--space-1);
-  height: var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--accent);
 }
 
 .highlightControl {
@@ -185,17 +166,18 @@
 }
 
 .passageCue {
-  display: none;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  max-height: 3em;
+  overflow-wrap: anywhere;
   color: var(--ink-muted);
   font-size: var(--text-sm);
 }
 
-.selectionComposer[data-mobile="true"] .passageCue,
-.composerSurface[data-anchor-state="offscreen"] .passageCue,
-.composerSurface[data-anchor-state="unavailable"] .passageCue {
-  display: block;
+.dock[data-mobile="true"] {
+  --control-min-size: var(--size-xl);
+  padding: var(--space-2) var(--space-4);
 }
 
 .colours {
@@ -404,26 +386,4 @@
 .embedActions {
   display: flex;
   gap: var(--space-3);
-}
-
-.chatFooter {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.destinationAction {
-  flex: 1 1 14rem;
-  min-inline-size: 0;
-  max-inline-size: 100%;
-  overflow: hidden;
-}
-
-.destinationLabel {
-  display: block;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

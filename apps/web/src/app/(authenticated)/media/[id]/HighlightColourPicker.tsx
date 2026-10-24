@@ -41,11 +41,34 @@ export function Colours({ selected, onSelect, disabledReason = null, persisted =
   </div>;
 }
 
-/** A direct highlight command beside a transient choice; neither owns the note editor. */
-export default function HighlightColourPicker({ selected, persisted, disabledReason, onSelect }: {
+/** The direct command shared by desktop split controls and the mobile toolbar. */
+export function HighlightButton({ selected, persisted, disabledReason, busy, onSelect }: {
   readonly selected: HighlightColor;
   readonly persisted: boolean;
   readonly disabledReason: string | null;
+  readonly busy: boolean;
+  readonly onSelect: (color: HighlightColor) => void;
+}) {
+  const id = useId();
+  const label = persisted ? `highlighted ${selected}` : "highlight yellow";
+  const reason = disabledReason ?? (persisted ? "this colour is already applied. choose another colour to change it." : null);
+  return <>
+    <Button iconOnly className={styles.selectionIcon} aria-busy={busy || undefined}
+      aria-label={label} aria-disabled={reason !== null || undefined}
+      aria-describedby={reason ? id : undefined}
+      tooltip={{ text: reason ? `${label}. ${reason}` : label }}
+      onClick={() => onSelect(selected)}
+      icon={<><Highlighter size={16} /><span className={styles.highlightColour} style={{ background: `var(--highlight-${selected})` }} /></>} />
+    {reason ? <span id={id} className="sr-only">{reason}</span> : null}
+  </>;
+}
+
+/** A direct highlight command beside a transient choice; neither owns the note editor. */
+export default function HighlightColourPicker({ selected, persisted, disabledReason, busy, onSelect }: {
+  readonly selected: HighlightColor;
+  readonly persisted: boolean;
+  readonly disabledReason: string | null;
+  readonly busy: boolean;
   readonly onSelect: (color: HighlightColor) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -86,27 +109,18 @@ export default function HighlightColourPicker({ selected, persisted, disabledRea
     return () => composer?.removeEventListener("scroll", close);
   }, [open]);
 
-  const label = persisted ? `highlighted ${selected}` : "highlight yellow";
-  const reason = disabledReason ?? (persisted ? "this colour is already applied. choose another colour to change it." : null);
   return <div className={styles.highlightControl}>
-      <Button iconOnly className={styles.selectionIcon}
-        aria-label={label} aria-disabled={reason !== null || undefined}
-        aria-describedby={reason ? `${id}-primary-reason` : undefined}
-        tooltip={{ text: reason ? `${label}. ${reason}` : label }}
-        onClick={() => onSelect(selected)}
-        icon={<><Highlighter size={16} /><span className={styles.highlightColour} style={{ background: `var(--highlight-${selected})` }} /></>}
-      />
-    {reason ? <span id={`${id}-primary-reason`} className="sr-only">{reason}</span> : null}
-      <Button ref={trigger} iconOnly className={styles.selectionIcon}
+    <HighlightButton selected={selected} persisted={persisted} disabledReason={disabledReason} busy={busy} onSelect={onSelect} />
+    <Button ref={trigger} iconOnly className={styles.selectionIcon}
         aria-label="choose highlight colour" aria-expanded={open} aria-controls={open ? id : undefined}
         aria-disabled={disabledReason !== null || undefined}
         aria-describedby={disabledReason ? `${id}-disclosure-reason` : undefined}
         tooltip={{ text: disabledReason ? `choose highlight colour. ${disabledReason}` : "choose highlight colour" }}
         onClick={() => setOpen(!open)} icon={<ChevronDown size={16} />}
-      />
+    />
     {disabledReason ? <span id={`${id}-disclosure-reason`} className="sr-only">{disabledReason}</span> : null}
     {open && container ? createPortal(
-      <div id={id} ref={position.ref} className={styles.colourPopover} style={{ ...position.style, maxBlockSize: "var(--anchored-max-height)" }} data-selection-composer="true">
+      <div id={id} ref={position.ref} className={styles.colourPopover} style={{ ...position.style, maxBlockSize: "var(--anchored-max-height)" }}>
         <Colours selected={selected} persisted={persisted} disabledReason={disabledReason}
           onSelect={(color) => { setOpen(false); onSelect(color); }} />
       </div>,

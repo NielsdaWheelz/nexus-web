@@ -3,9 +3,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
-import MobileSheet from "@/components/ui/MobileSheet";
+import PickerSurface from "@/components/ui/PickerSurface";
 import { useSettled } from "@/lib/api/serverState";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
@@ -23,25 +22,22 @@ import styles from "./ChatPanels.module.css";
 const TITLE = "choose existing chat";
 
 /** A destination choice changes only reader intent; the reader restores its caret. */
-export default function ConversationDestinationOverlay({ open, mediaId, hasSourceChats, onClose, onSelectConversation }: {
+export default function ConversationDestinationOverlay({ open, mediaId, hasSourceChats, anchor, panelId, onClose, onSelectConversation }: {
   open: boolean;
   mediaId: string;
   hasSourceChats: boolean | null;
+  anchor: () => HTMLElement | null;
+  panelId: string;
   onClose(): void;
   onSelectConversation(conversation: Pick<ConversationListItem, "id" | "title">): void;
 }) {
   const isMobile = useIsMobileViewport();
-  const host = {
-    initialFocus: (container: HTMLElement) => isMobile && wasOverlayInvokedByTouch() ? container
-      : container.querySelector<HTMLInputElement>('input[role="combobox"]'),
-    skipReturnFocus: () => true,
-  };
-  const picker = open ? <Picker mediaId={mediaId} hasSourceChats={hasSourceChats} onSelect={onSelectConversation} /> : null;
-  return isMobile ? (
-    <MobileSheet active={open} onDismiss={onClose} ariaLabel={TITLE} {...host}>
-      {picker}
-    </MobileSheet>
-  ) : <Dialog open={open} onClose={onClose} title={TITLE} {...host}>{picker}</Dialog>;
+  return <PickerSurface active={open} onClose={onClose} anchor={anchor} panelId={panelId} title={TITLE}
+    initialFocus={container => isMobile && wasOverlayInvokedByTouch() ? container
+      : container.querySelector<HTMLInputElement>('input[role="combobox"]')}
+    skipReturnFocus={() => true}>
+    {open ? <Picker mediaId={mediaId} hasSourceChats={hasSourceChats} onSelect={onSelectConversation} /> : null}
+  </PickerSurface>;
 }
 
 /** Title search and source scope admit choices only for the exact settled query. */
