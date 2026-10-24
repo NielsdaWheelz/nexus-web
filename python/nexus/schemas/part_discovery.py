@@ -1,4 +1,4 @@
-"""frozen discovery job inputs and the closed model output; jobs own scan history."""
+"""frozen discovery inputs, closed model replies and normalized domain findings."""
 
 from typing import Literal
 from uuid import UUID
@@ -46,3 +46,11 @@ class PartDiscoveryJob(_Closed):
 
 class PartDiscoveryOutput(_Closed):
     findings: list[PartFinding] = Field(max_length=32)
+
+
+class PartDiscoveryModelFinding(PartFinding):
+    title_basis: Literal["printed", "incipit"] | None
+
+
+class PartDiscoveryModelOutput(_Closed):
+    findings: list[PartDiscoveryModelFinding] = Field(max_length=32)

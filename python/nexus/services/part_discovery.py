@@ -33,6 +33,7 @@ from nexus.ids import new_uuid7
 from nexus.jobs import queue
 from nexus.schemas.media_parts import (
     PartDiscovery,
+    PartFinding,
     PartOperation,
     PartPrepare,
     SectionSelection,
@@ -41,6 +42,7 @@ from nexus.schemas.part_discovery import (
     DiscoveryCapture,
     DiscoverySection,
     PartDiscoveryJob,
+    PartDiscoveryModelOutput,
     PartDiscoveryOutput,
 )
 from nexus.schemas.source_issues import MissingImage, TooManyNotes, UnresolvedNavigationTarget
@@ -75,7 +77,7 @@ from nexus.services.reader_text_slice import (
 from nexus.services.suggestion_changes import record_input_change
 
 JOB_KIND = "discover_document_parts"
-PROMPT_VERSION = 6
+PROMPT_VERSION = 7
 _INPUT_BYTES = 256 * 1024
 _OUTPUT_BYTES = 64 * 1024
 # justify-polling: a waiting discovery observes an existing structural publication;
@@ -95,15 +97,22 @@ account for EVERY owned section exactly
 once, including unpromising sections. use only offered owned section ids in findings;
 ancestor/neighbor context is not owned. group consecutive siblings only when their full
 continuous text and attribution establish one work. a parent's supplied text includes its
-descendants. a poetry cycle or other authored collection containing self-contained works
-is a container: classify that parent as not_independent and each owned self-contained
-work with complete text and a proved finite extent as independent_work. thematic unity,
-a shared title or an authored sequence alone does not make separate works one piece.
-a continuous long poem or narrative remains one work; its movements or sections are not
-independent merely because they have names or headings. judge autonomy from the supplied
-text and publication structure. when a nested parent is one continuous work, name that
-parent ALONE in its finding, then account separately for its owned mere subdivisions as
-not_independent. a container holding separate works is not itself an independent work.
+descendants. decide whether a parent is one work or a collection before classifying its children,
+using the supplied text. require positive source evidence that an autonomous child has
+its own complete occasion and work-level closure, without depending on neighboring
+movements' development or required referents. a locally readable scene or stanza may
+still be a movement. continuous, interdependent development of a situation, action,
+argument or meditation, especially an ending that completes earlier movements, supports
+retaining the whole parent and marking its movements not_independent. numbering,
+headings, stanza divisions and changes of voice or scene alone establish neither
+autonomy nor continuity; shared theme alone does not join autonomous works. a poetry cycle
+or other authored collection containing autonomous works is a container: classify that
+parent as not_independent and each owned autonomous work with complete text and a proved
+finite extent as independent_work. a shared title or authored sequence alone does not
+make separate works one piece. when a nested parent is one continuous work, name that
+parent ALONE in its finding, then account
+separately for its owned mere subdivisions as not_independent. a container holding
+separate works is not itself an independent work.
 never group an ancestor with its descendant, and never group unrelated sections merely
 to account for them; give each such section its own finding. incomplete text or missing
 cross-batch context requires uncertain only for a plausible primary work whose completeness or
@@ -113,9 +122,15 @@ never invent offsets, missing ends or titles. independent_work requires a source
 title and supporting quotes. every evidence quote, for any verdict, must be an exact
 contiguous substring of text_blocks for its section_id. use short excerpts; never add
 quotation marks, punctuation or ellipses, and never quote a label as though it appeared
-in text_blocks. for not_independent use evidence=[] and null title, form, contributors
-and uncertainty_reason. preserve spelling, case and punctuation; for an untitled work
-quote an evidenced incipit. distinguish author, editor
+in text_blocks. for not_independent use evidence=[] and null title, title_basis, form,
+contributors and uncertainty_reason. use title_basis=printed for a source-printed work
+title; an offered owned label qualifies only when it is that work title. a section number
+or movement label alone does not establish a work title. use title_basis=incipit for an
+untitled work's evidenced opening words. title must be raw source text: preserve spelling,
+case, punctuation and literal quotation marks, but add no presentation quotes. the application
+quotes incipits.
+title_basis must be null exactly when title is null. title evidence must come from the
+finding's own selected sections, never ancestor or neighbor context. distinguish author, editor
 and translator; book editors/dates/isbn do not belong to every piece. contributors null
 means unknown; an observed role slice is complete for that role. name an offered handle
 only for that person. contents, indexes, advertisements, epigraph-only material and headings
@@ -442,10 +457,11 @@ def _batch(db: Session, payload: PartDiscoveryJob) -> DiscoveryBatch:
 def _accept(
     value: JsonValue, *, batch: DiscoveryBatch, capture: DiscoveryCapture
 ) -> PartDiscoveryOutput:
+    """Prove the private reply and render incipits into the existing domain findings."""
     if len(_json(value).encode()) > _OUTPUT_BYTES:
         raise InvalidOutput("discovery output exceeds 64 kib")
     try:
-        output = PartDiscoveryOutput.model_validate(value)
+        output = PartDiscoveryModelOutput.model_validate(value)
     except ValidationError:
         raise InvalidOutput("discovery output does not match its closed schema") from None
     owned = {section.section_id for section in batch.owned}
@@ -456,11 +472,16 @@ def _accept(
         if credit.contributor_handle is not None
     }
     offered = {section.section_id: section for section in capture.sections}
+    normalized: list[PartFinding] = []
     for finding in output.findings:
         ids = set(finding.section_ids)
         if len(ids) != len(finding.section_ids) or not ids <= owned or ids & accounted:
             raise InvalidOutput("findings must own distinct offered sections")
         accounted.update(ids)
+        if (finding.title is None) != (finding.title_basis is None):
+            raise InvalidOutput("title and title basis must be supplied together")
+        if finding.verdict == "not_independent" and finding.title is not None:
+            raise InvalidOutput("non-independent sections have no work title")
         if finding.verdict != "not_independent" and len(ids) > 1:
             selected = [section for section in capture.sections if section.section_id in ids]
             if len({section.parent_section_id for section in selected}) != 1:
@@ -500,14 +521,28 @@ def _accept(
                 raise InvalidOutput(
                     "independent works require evidence from their own supplied text"
                 )
-            title = finding.title.strip('"“”‘’«»')
+        title = finding.title
+        if title is not None:
             if not any(
-                title in block for blocks in batch.excerpts.values() for block in blocks
-            ) and not any(finding.title == offered[section_id].label for section_id in ids):
-                raise InvalidOutput("title is not grounded in the supplied source")
+                title in block for section_id in ids for block in batch.excerpts[section_id]
+            ) and not (
+                finding.title_basis == "printed"
+                and any(title == offered[section_id].label for section_id in ids)
+            ):
+                raise InvalidOutput("title is not grounded in the selected source")
+            if finding.title_basis == "incipit":
+                title = f"“{title}”"
+        try:
+            normalized.append(
+                PartFinding.model_validate(
+                    finding.model_dump(exclude={"title_basis"}) | {"title": title}
+                )
+            )
+        except ValidationError:
+            raise InvalidOutput("formatted title does not fit the finding schema") from None
     if accounted != owned:
         raise InvalidOutput("the response omitted owned sections")
-    return output
+    return PartDiscoveryOutput(findings=normalized)
 
 
 def _finish(
@@ -807,7 +842,7 @@ def run_discovery_job(
             intent=build_synthesis_intent(
                 system_prompt=_INSTRUCTIONS,
                 user_content=batch.user_content,
-                schema=PartDiscoveryOutput,
+                schema=PartDiscoveryModelOutput,
             ),
             decode=lambda value: _accept(value, batch=batch, capture=capture),
         )
