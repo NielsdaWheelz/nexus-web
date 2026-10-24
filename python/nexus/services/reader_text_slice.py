@@ -19,7 +19,7 @@ from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.html_tree import inner_html
 from nexus.services.reader_structure import DomCut, NavigationProof, SectionProof
 
-SECTION_DETECTOR_VERSION = 2
+SECTION_DETECTOR_VERSION = 3
 
 
 @dataclass(frozen=True)

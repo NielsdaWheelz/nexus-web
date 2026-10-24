@@ -75,7 +75,7 @@ from nexus.services.reader_text_slice import (
 from nexus.services.suggestion_changes import record_input_change
 
 JOB_KIND = "discover_document_parts"
-PROMPT_VERSION = 5
+PROMPT_VERSION = 6
 _INPUT_BYTES = 256 * 1024
 _OUTPUT_BYTES = 64 * 1024
 # justify-polling: a waiting discovery observes an existing structural publication;
@@ -95,12 +95,18 @@ account for EVERY owned section exactly
 once, including unpromising sections. use only offered owned section ids in findings;
 ancestor/neighbor context is not owned. group consecutive siblings only when their full
 continuous text and attribution establish one work. a parent's supplied text includes its
-descendants: when a whole nested work is independent, name that parent ALONE in its
-finding, then account separately for each owned mere subdivision as not_independent.
-a container holding separate works is not itself an independent work. never group an
-ancestor with its descendant, and never group unrelated sections merely to account for
-them; give each such section its own finding. incomplete text or missing cross-batch
-context requires uncertain only for a plausible primary work whose completeness or
+descendants. a poetry cycle or other authored collection containing self-contained works
+is a container: classify that parent as not_independent and each owned self-contained
+work with complete text and a proved finite extent as independent_work. thematic unity,
+a shared title or an authored sequence alone does not make separate works one piece.
+a continuous long poem or narrative remains one work; its movements or sections are not
+independent merely because they have names or headings. judge autonomy from the supplied
+text and publication structure. when a nested parent is one continuous work, name that
+parent ALONE in its finding, then account separately for its owned mere subdivisions as
+not_independent. a container holding separate works is not itself an independent work.
+never group an ancestor with its descendant, and never group unrelated sections merely
+to account for them; give each such section its own finding. incomplete text or missing
+cross-batch context requires uncertain only for a plausible primary work whose completeness or
 independence is unresolved. established editorial material and subdivisions or embedded
 works of a novel remain not_independent even when their supplied text is incomplete.
 never invent offsets, missing ends or titles. independent_work requires a source-grounded

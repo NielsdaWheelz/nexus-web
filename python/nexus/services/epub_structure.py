@@ -4,6 +4,10 @@ Contents destinations remain distinct from section ownership. Authored roles,
 complete containers and corroborated divisions prove parents; ranks organize
 only a local source container, publisher-backed file root or corroborated part.
 unproved parents or ranges stay absent.
+publisher intervals do not change when routine unheaded prose is split into spine
+files. this convention requires a corroborated authored part and a proved closing
+publisher peer; headings, new divisions, framing, navigation and note bodies remain
+barriers. no guessed continuation or eof supplies an end.
 An anchored `[n] <em>incipit` sequence remains a supported source division.
 """
 
@@ -271,6 +275,22 @@ def bind_epub_source_structure(
         for attribute in ("role", "epub:type", "{http://www.idpf.org/2007/ops}type", "type")
         for token in (body.get(attribute) or "").lower().split()
     )
+    if body_roles and body_id is None:
+        start, end = retained_span(0, 0)
+        elements.append(
+            CanonicalElement(
+                "span",
+                start,
+                end,
+                None,
+                None,
+                (),
+                False,
+                roles=body_roles,
+                in_navigation=bool(body_roles & {"toc", "doc-toc", "landmarks", "page-list"}),
+                dom_path=(),
+            )
+        )
     if body_roles and body_id is not None and body_id in anchors:
         element = elements[anchors[body_id]]
         start, end = retained_span(0, 0)
@@ -427,6 +447,12 @@ def build_epub_structure(
             element_index = index
         else:
             node.target_offset = 0
+        arrival_index = fragment.canonical.anchors.get(href_fragment) if href_fragment else None
+        arrival_path = (
+            fragment.canonical.elements[arrival_index].dom_path if arrival_index is not None else ()
+        )
+        arrival_cut = DomCut(arrival_path, "before") if arrival_path is not None else None
+        arrival_target = DocumentPoint(fragment.fragment_idx, node.target_offset)
         node.resolution = "SourceTarget"
         if node.nav_type != "toc":
             continue
@@ -487,12 +513,21 @@ def build_epub_structure(
             or not fragment.canonical.text.strip()
         ):
             continue
+        if DocumentPoint(fragment.fragment_idx, node.target_offset) != arrival_target:
+            repaired_path = (
+                fragment.canonical.elements[element_index].dom_path
+                if element_index is not None
+                else None
+            )
+            arrival_cut = DomCut(repaired_path, "before") if repaired_path is not None else None
         boundary = (
             DocumentPoint(fragment.fragment_idx, node.target_offset),
             _match_label(node.label),
         )
         prior = publisher_boundaries.get(boundary)
         if prior is not None:
+            if not _same_rich_start(prior.start_cut, arrival_cut):
+                prior.start_cut = None
             node.section_id = prior.location_id
             by_source_node[node.node_id] = prior
             continue
@@ -517,6 +552,7 @@ def build_epub_structure(
             container_end=None,
             source="Publisher",
             boundary_scope="publisher",
+            start_cut=arrival_cut,
         )
         sections.append(section)
         publisher_boundaries[boundary] = section
@@ -611,15 +647,12 @@ def build_epub_structure(
         note_index,
     )
     for section in sections:
-        element = (
-            section.fragment.canonical.elements[section.element_index]
-            if section.element_index is not None
-            else None
-        )
-        if element is not None and element.dom_path is not None:
+        if section.source in {"Publisher", "Both"}:
+            continue
+        assert section.element_index is not None
+        element = section.fragment.canonical.elements[section.element_index]
+        if element.dom_path is not None:
             section.start_cut = DomCut(element.dom_path, "before")
-        elif section.element_index is None and section.target.offset == 0:
-            section.start_cut = DomCut((), "before")
     by_container = _bind_containers(fragments, sections, by_element)
     _assign_parents(sections, by_container)
     by_section_id = {section.location_id: section for section in sections}
@@ -694,27 +727,25 @@ def build_epub_structure(
             continue
         section.container_end = DocumentPoint(last.fragment_idx, len(last.canonical.text))
         section.container_end_cut = DomCut((), "after")
+    range_inputs = [
+        SectionRangeInput(
+            section.location_id,
+            section.target,
+            section.parent,
+            section.container_end,
+            section.owns_container,
+            section.boundary_scope,
+            section.start_cut,
+            section.container_end_cut,
+        )
+        for section in sections
+    ]
     ends = resolve_section_extents(
-        [
-            SectionRangeInput(
-                section.location_id,
-                section.target,
-                section.parent,
-                section.container_end,
-                section.owns_container,
-                section.boundary_scope,
-                section.start_cut,
-                section.container_end_cut,
-            )
-            for section in sections
-        ],
+        range_inputs,
         None,
-        unproved_boundaries=[
-            DocumentPoint(fragment.fragment_idx, 0)
-            for fragment in fragments
-            if fragment.canonical.text.strip()
-            and not any(section.fragment is fragment for section in sections)
-        ],
+        unproved_boundaries=_unproved_spine_boundaries(
+            fragments, sections, range_inputs, note_regions
+        ),
     )
     for section in sections:
         if section.publisher_parent is None:
@@ -1110,6 +1141,161 @@ def _add_inferred_numbered_entries(
         by_element[(fragment.fragment_idx, index)] = [section]
 
 
+def _same_rich_start(left: DomCut | None, right: DomCut | None) -> bool:
+    """same canonical point and an uninterrupted initial-child chain share an edge."""
+    if left is None or right is None or left.edge != "before" or right.edge != "before":
+        return False
+    short, long = sorted((left.path, right.path), key=len)
+    return long[: len(short)] == short and all(child == 0 for child in long[len(short) :])
+
+
+def _unproved_spine_boundaries(
+    fragments: Sequence[EpubStructureFragment],
+    sections: Sequence[_Section],
+    inputs: Sequence[SectionRangeInput],
+    note_regions: Sequence[NoteRegion],
+) -> list[DocumentPoint]:
+    """keep real competing structure; ordinary file splitting cannot create a division.
+
+    only a source-authored part corroborated by a publisher heading may own
+    routine unheaded spine content until an already-proved publisher boundary.
+    no filename, adjacency, label alone or missing closing peer supplies scope.
+    """
+    unindexed = [
+        fragment
+        for fragment in fragments
+        if not any(section.fragment is fragment for section in sections)
+    ]
+    natural = resolve_section_extents(inputs, None)
+    publisher_edges = {
+        (section.target, section.start_cut)
+        for section in sections
+        if section.source in {"Publisher", "Both"} and section.start_cut is not None
+    }
+
+    def competing_structure(fragment: EpubStructureFragment) -> bool:
+        return any(
+            element.tag in HEADING_TAGS | STRUCTURAL_TAGS | {"nav"}
+            or element.in_navigation
+            or element.roles
+            & (
+                _PARATEXT_ROLES
+                | {
+                    "chapter",
+                    "doc-chapter",
+                    "part",
+                    "doc-part",
+                    "volume",
+                    "preface",
+                    "foreword",
+                    "afterword",
+                    "introduction",
+                    "appendix",
+                    "acknowledgments",
+                    "epigraph",
+                    "doc-preface",
+                    "doc-foreword",
+                    "doc-afterword",
+                    "doc-introduction",
+                    "doc-appendix",
+                    "doc-acknowledgments",
+                    "doc-epigraph",
+                    "footnote",
+                    "doc-footnote",
+                    "footnotes",
+                    "doc-footnotes",
+                    "endnote",
+                    "doc-endnote",
+                    "endnotes",
+                    "doc-endnotes",
+                    "rearnote",
+                    "doc-rearnote",
+                    "rearnotes",
+                    "doc-rearnotes",
+                    "note",
+                    "doc-note",
+                    "notes",
+                    "doc-notes",
+                }
+            )
+            for element in fragment.canonical.elements
+        ) or any(region.range.start.fragment_id == fragment.fragment_id for region in note_regions)
+
+    intervals: list[tuple[DocumentPoint, DocumentPoint]] = []
+    for section in sections:
+        end = natural[section.location_id]
+        if (
+            section.source != "Both"
+            or section.element_index is None
+            or section.start_cut is None
+            or section.start_cut.edge != "before"
+            or end is None
+            or (end.point, end.cut) not in publisher_edges
+        ):
+            continue
+        ancestor = section.fragment.canonical.elements[section.element_index].parent_element
+        authored_part = False
+        while ancestor is not None:
+            container = section.fragment.canonical.elements[ancestor]
+            path = container.dom_path
+            if (
+                container.roles & {"part", "doc-part", "volume"}
+                and container.start_offset == section.target.offset
+                and path is not None
+                and _same_rich_start(section.start_cut, DomCut(path, "before"))
+            ):
+                authored_part = True
+                break
+            ancestor = container.parent_element
+        if not authored_part:
+            continue
+        between = [
+            fragment
+            for fragment in unindexed
+            if section.target < DocumentPoint(fragment.fragment_idx, 0) < end.point
+        ]
+        if any(competing_structure(fragment) for fragment in between):
+            continue
+        intervals.append((section.target, end.point))
+    return [
+        DocumentPoint(fragment.fragment_idx, 0)
+        for fragment in unindexed
+        if (fragment.canonical.text.strip() or competing_structure(fragment))
+        and not any(
+            start < DocumentPoint(fragment.fragment_idx, 0) < end for start, end in intervals
+        )
+    ]
+
+
+def _publisher_file_roots(sections: Sequence[_Section]) -> dict[int, _Section]:
+    """unique publisher roots at a real rich content edge, never scalar zero alone."""
+    publisher_roots: dict[int, _Section] = {}
+    for fragment_idx in {section.fragment.fragment_idx for section in sections}:
+        published = {
+            section.location_id: section
+            for section in sections
+            if section.fragment.fragment_idx == fragment_idx
+            and section.source in {"Publisher", "Both"}
+        }
+        roots = [
+            section for section in published.values() if section.publisher_parent not in published
+        ]
+        if len(roots) != 1:
+            continue
+        owner = roots[0]
+        if owner.target.offset != 0 or not _same_rich_start(owner.start_cut, DomCut((), "before")):
+            continue
+        if owner.element_index is not None:
+            element = owner.fragment.canonical.elements[owner.element_index]
+            if element.in_navigation or element.roles & {"titlepage", "doc-titlepage", "cover"}:
+                continue
+        # The publisher's sole local root starts at the actual rich edge. Its
+        # declared descendants share that source file; this proves local
+        # membership, never a container end or a cross-file reading division.
+        publisher_roots[fragment_idx] = owner
+    return publisher_roots
+
+
 def _bind_containers(
     fragments: Sequence[EpubStructureFragment],
     sections: list[_Section],
@@ -1117,6 +1303,7 @@ def _bind_containers(
 ) -> dict[tuple[int, int], _Section]:
     """Bind complete authored divisions; a title wrapper proves no body end."""
     by_container: dict[tuple[int, int], _Section] = {}
+    publisher_roots = _publisher_file_roots(sections)
     for fragment in fragments:
         elements = fragment.canonical.elements
         for index, container in enumerate(elements):
@@ -1128,6 +1315,16 @@ def _bind_containers(
                 if label in fragment.canonical.anchors
             }
             owners = by_element.get((fragment.fragment_idx, index), [])
+            publisher = publisher_roots.get(fragment.fragment_idx)
+            if (
+                publisher is not None
+                and container.dom_path == (0,)
+                and container.start_offset == publisher.target.offset == 0
+                and container.roles & {"chapter", "doc-chapter", "part", "doc-part", "volume"}
+            ):
+                # An authored division and its publisher file root outrank an
+                # incidental numeric heading after an image-only title.
+                owners = [publisher]
             if not owners:
                 candidates = [
                     section
@@ -1151,7 +1348,14 @@ def _bind_containers(
                 owners = [
                     owner
                     for owner in owners
-                    if owner.source == "Both"
+                    if (
+                        owner.source == "Both"
+                        or (
+                            owner is publisher
+                            and container.roles
+                            & {"chapter", "doc-chapter", "part", "doc-part", "volume"}
+                        )
+                    )
                     and (
                         container.roles & {"chapter", "doc-chapter", "part", "doc-part", "volume"}
                         or not any(
@@ -1210,7 +1414,11 @@ def _bind_containers(
                     if boundary.dom_path is not None
                     else None
                 )
-            if container.start_offset == owner.target.offset and container.dom_path is not None:
+            if (
+                owner.source not in {"Publisher", "Both"}
+                and container.start_offset == owner.target.offset
+                and container.dom_path is not None
+            ):
                 owner.start_cut = DomCut(container.dom_path, "before")
     return by_container
 
@@ -1221,33 +1429,7 @@ def _assign_parents(
 ) -> None:
     """Use source containment and independently proved division relationships."""
     by_id = {section.location_id: section for section in sections}
-    publisher_roots: dict[int, _Section] = {}
-    for fragment_idx in {section.fragment.fragment_idx for section in sections}:
-        published = {
-            section.location_id: section
-            for section in sections
-            if section.fragment.fragment_idx == fragment_idx
-            and section.source in {"Publisher", "Both"}
-        }
-        roots = [
-            section for section in published.values() if section.publisher_parent not in published
-        ]
-        if len(roots) != 1:
-            continue
-        owner = roots[0]
-        if owner.target.offset != 0 or owner.start_cut not in {
-            DomCut((), "before"),
-            DomCut((0,), "before"),
-        }:
-            continue
-        if owner.element_index is not None:
-            element = owner.fragment.canonical.elements[owner.element_index]
-            if element.in_navigation or element.roles & {"titlepage", "doc-titlepage", "cover"}:
-                continue
-        # The publisher's sole local root starts at the actual rich edge. Its
-        # declared descendants share that source file; this proves local
-        # membership, never a container end or a cross-file reading division.
-        publisher_roots[fragment_idx] = owner
+    publisher_roots = _publisher_file_roots(sections)
     for section in sections:
         if section.publisher_parent is None:
             continue
