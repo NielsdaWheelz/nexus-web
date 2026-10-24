@@ -496,3 +496,12 @@
   align-items: center;
   gap: var(--space-1);
 }
+
+.queueMoreGlyph { position: relative; display: inline-flex; }
+.queueAttention {
+  position: absolute;
+  inset-block-start: calc(-1 * var(--space-1));
+  inset-inline-end: calc(-1 * var(--space-1));
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}

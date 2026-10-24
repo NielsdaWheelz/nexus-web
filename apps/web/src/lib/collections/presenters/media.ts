@@ -5,7 +5,6 @@ import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
 
 export interface MediaOccurrence {
   readonly id: string;
@@ -13,7 +12,6 @@ export interface MediaOccurrence {
   readonly resourceRef: CanonicalResourceRef;
   readonly selected: boolean;
   readonly knownDescriptor?: PlayerDescriptor | null;
-  readonly searchEvidence?: readonly EmphasisSegment[];
 }
 
 /** Project one stored-media identity into any eligible collection occurrence. */
@@ -28,6 +26,7 @@ export function presentMedia(
     throw new Error("Media occurrence resource ref differs from media summary");
   }
   return {
+    presentation: "Index",
     id: occurrence.id,
     kind: summary.media_kind === "podcast_episode" ? "podcast_episode" : "media",
     resourceActions: { kind: "Media", subject: { kind: "Stored", summary }, knownDescriptor: occurrence.knownDescriptor ?? null },
@@ -35,9 +34,7 @@ export function presentMedia(
     title: { text: summary.title },
     contributors: selectMediaAuthors(summary.contributors),
     publicationDate: summary.original_published_date,
-    context: occurrence.searchEvidence?.length
-      ? { kind: "Snippet", segments: occurrence.searchEvidence }
-      : null,
+    context: null,
     activity: null,
     exceptionalStatus: null,
     resourceRef: occurrence.resourceRef,

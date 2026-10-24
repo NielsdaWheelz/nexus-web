@@ -56,7 +56,11 @@ export default function LibraryPodcastsSection({ library, active, source, source
       aria-label={PODCAST_BROWSE_ACTION.label} tooltip={{ text: PODCAST_BROWSE_ACTION.label }} />}>
     {source.status !== "loading" && source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t load library podcasts.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch }]} /> : null}
     <CollectionView surface={false} returnScope={`Library.Podcasts:${library.id}`} ariaLabel="subscribed podcasts" status={source.status === "failed" ? "error" : source.status}
-      rows={(data?.subscriptions ?? []).map(show => presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, unplayedCount: null, recurring: live ? show.recurring : null }))}
+      rows={(data?.subscriptions ?? []).map(show => ({
+        ...presentPodcast({ facts: null, id: show.podcast.id, title: show.podcast.title, imageUrl: show.podcast.image_url, contributors: show.podcast.contributors, unplayedCount: null, recurring: live ? show.recurring : null }),
+        context: live ? null : { kind: "Text" as const, text: show.recurring.error_code !== null || show.recurring.had_coverage_gaps
+          ? "at last catalog save · last episode check incomplete" : "at last catalog save" },
+      }))}
       renderRow={manage ? props => {
         const { row } = props;
         const focus = {
@@ -81,7 +85,12 @@ export default function LibraryPodcastsSection({ library, active, source, source
         });
         const label = local?.accessibleLabel ?? `${action.label}: ${row.title.text}`;
         const descriptionId = `${reasonId}-${row.id}`;
-        return <CollectionRow {...props} compactPrimaryControl actionFocus={focus}
+        const show = data?.subscriptions.find(show => show.podcast.id === row.id);
+        const attention = show?.recurring.error_code !== null && show?.recurring.error_code !== undefined || show?.recurring.had_coverage_gaps
+          ? "last episode check incomplete; open show details to check again"
+          : show?.imports.some(operation => operation.state === "failed") ? "episode import paused; open show details to retry"
+          : show?.imports.some(operation => operation.state === "pending" || operation.state === "running") ? "importing episodes; open show details for progress" : undefined;
+        return <CollectionRow {...props} attention={attention} compactPrimaryControl actionFocus={focus}
           occurrenceActions={local === null ? undefined : [local]}
           primaryControl={<>
             <Button iconOnly icon={action.icon} aria-label={label} aria-haspopup="dialog"
@@ -92,11 +101,6 @@ export default function LibraryPodcastsSection({ library, active, source, source
             {action.disabledReason ? <span className="sr-only" id={descriptionId}>{action.disabledReason}</span> : null}
           </>} />;
       } : undefined}
-      rowPanels={Object.fromEntries((data?.subscriptions ?? []).flatMap(show => !live || show.recurring.error_code !== null || show.recurring.had_coverage_gaps || show.imports.length > 0 ? [[show.podcast.id, <div key={show.podcast.id}>
-        {show.recurring.error_code !== null || show.recurring.had_coverage_gaps ? <p>the last check could not load all available episodes.{live ? " checking will retry automatically." : null}</p> : null}
-        {!live ? <p>at last catalog save</p> : null}
-        {live ? show.imports.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={show.podcast.title} following={show.destinations.some(destination => destination.library_id === operation.library_id)} />) : null}
-      </div>]] : []))}
       empty={source.status === "ready" && source.error === null ? <p>no subscribed podcasts.</p> : null} />
     {live && data !== null && data.imports.length > 0 ? <section aria-label="episode imports"><h3>episode imports</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} following={data.subscriptions.some(show => show.podcast.id === operation.podcast_id && show.destinations.some(destination => destination.library_id === operation.library_id))} /></div>)}</section> : null}
   </PaneSection>;

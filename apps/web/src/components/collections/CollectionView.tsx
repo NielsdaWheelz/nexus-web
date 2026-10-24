@@ -35,7 +35,6 @@ export interface CollectionViewRowRenderProps {
   readonly afterRemoval: () => HTMLElement | null;
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
-  readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly rowActionsAvailable: boolean;
   readonly viewTransitionName?: string;
@@ -43,7 +42,7 @@ export interface CollectionViewRowRenderProps {
 
 /**
  * Orchestrates the one canonical collection path. Panes own retrieval, toolbar,
- * optional row panels, and at most one row-level primary control; they do not
+ * and at most one row-level primary control; they do not
  * own row chrome, action placement, density, or alternate views.
  */
 export default function CollectionView({
@@ -56,7 +55,6 @@ export default function CollectionView({
   error,
   empty,
   footer,
-  rowPanels,
   rowControls,
   renderRow,
   rowActionsAvailable = true,
@@ -74,7 +72,6 @@ export default function CollectionView({
   readonly error?: ReactNode;
   readonly empty?: ReactNode;
   readonly footer?: ReactNode;
-  readonly rowPanels?: Readonly<Record<string, ReactNode>>;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
   readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
   readonly rowActionsAvailable?: boolean;
@@ -182,7 +179,6 @@ export default function CollectionView({
       },
       row,
       as,
-      panel: rowPanels?.[row.id],
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
       viewTransitionName: viewTransitionsReady && !order

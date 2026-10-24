@@ -2,6 +2,8 @@
 
 Subscriptions have a separate section owned by podcasts.subscriptions_query. They
 never fold episodes, affect media counts, or participate in manual entry order.
+Publication order uses the full original calendar value, with undated works last
+in either direction. Feed release dates never stand in for original publication.
 """
 
 from collections.abc import Sequence
@@ -43,8 +45,8 @@ _SORTS: dict[str, tuple[SortKey, ...]] = {
     "title_desc": (SortKey("title_key", "desc", KeysetValueKind.Text),),
     "creator_asc": _nullable("creator_name", "asc", KeysetValueKind.TextOrNull),
     "creator_desc": _nullable("creator_name", "desc", KeysetValueKind.TextOrNull),
-    "published_desc": _nullable("published_date", "desc", KeysetValueKind.TextOrNull),
-    "published_asc": _nullable("published_date", "asc", KeysetValueKind.TextOrNull),
+    "published_desc": _nullable("original_published_date", "desc", KeysetValueKind.TextOrNull),
+    "published_asc": _nullable("original_published_date", "asc", KeysetValueKind.TextOrNull),
     "remaining_asc": _nullable("remaining_seconds", "asc", KeysetValueKind.FloatOrNull),
     "remaining_desc": _nullable("remaining_seconds", "desc", KeysetValueKind.FloatOrNull),
     "added_desc": (SortKey("added_at", "desc", KeysetValueKind.DateTime),),
@@ -107,10 +109,7 @@ def entry_fact_rows_sql(
 ) -> str:
     """Canonical membership and display-order facts; the caller owns its admitted rows."""
     creator_name = "mc.primary_name" if creator else "NULL"
-    joins = [
-        "JOIN media md ON md.id=membership.media_id",
-        "LEFT JOIN podcast_episodes pe ON pe.media_id=md.id",
-    ]
+    joins = ["JOIN media md ON md.id=membership.media_id"]
     if creator:
         joins.append(f"LEFT JOIN ({primary_creator_rows_sql('media_id')}) mc ON mc.owner_id=md.id")
     if engagement:
@@ -123,9 +122,8 @@ def entry_fact_rows_sql(
         WITH membership AS MATERIALIZED ({membership}), facts AS (
             SELECT membership.*, md.kind AS media_kind, lower(btrim(md.title)) AS title_key,
                    {creator_name}::text AS creator_name, ({creator_name} IS NULL)::int AS creator_name_missing,
-                   COALESCE(md.original_published_date,
-                       to_char(pe.published_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) AS published_date,
-                   (md.original_published_date IS NULL AND pe.published_at IS NULL)::int AS published_date_missing,
+                   md.original_published_date AS original_published_date,
+                   (md.original_published_date IS NULL)::int AS original_published_date_missing,
                    {"eng.read_state" if engagement else "NULL::text"} AS read_state,
                    {"duration.remaining_seconds" if remaining else "NULL::float8"} AS remaining_seconds,
                    {"(duration.remaining_seconds IS NULL)::int" if remaining else "1"} AS remaining_seconds_missing

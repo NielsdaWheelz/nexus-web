@@ -207,7 +207,6 @@
 }
 
 @container (max-width: 520px) {
-  .workspace [data-import-ref] [data-row-primary-control],
   .workspace [data-import-ref] .rowActions {
     display: contents;
   }
@@ -219,7 +218,6 @@
   .workspace [data-import-ref] [data-metadata-feedback] {
     position: relative;
     z-index: 2;
-    grid-column: content / end;
   }
 
   .workspace [data-row-focusable] {

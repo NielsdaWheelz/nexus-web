@@ -1,39 +1,30 @@
-.title {
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-  overflow-wrap: anywhere;
-}
-
+.title { color: var(--ink); font-weight: var(--weight-semibold); }
 .support {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
+  display: inline-flex;
+  flex: 1;
+  min-inline-size: min-content;
+  max-width: 100%;
   align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-1) var(--space-3);
+  gap: var(--space-3);
   color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
-
-.bibliography {
-  min-width: 0;
-}
-
 .facts {
   display: inline-flex;
+  flex: none;
   margin-inline-start: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-
-.separator {
-  padding-inline: var(--space-1);
-  color: var(--ink-faint);
+.support .facts {
+  display: block;
+  flex: 1;
+  inline-size: 0;
+  min-inline-size: 0;
+  max-inline-size: 40%;
 }
-
-.failure {
-  flex-basis: 100%;
-  color: var(--danger);
-}
+.separator { padding-inline: var(--space-1); color: var(--ink-faint); }
+@container indexRow (max-width: calc(32em - 1px)) { .consumption { display: none; } }
+@container indexRow (max-width: calc(24em - 1px)) { .facts, .support .facts { display: none; } }

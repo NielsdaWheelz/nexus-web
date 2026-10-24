@@ -139,6 +139,7 @@ export default function SettingsIdentitiesPaneBody() {
                       ? formatDisplayDate(identity.created_at, display)
                       : null;
                     return presentSettingsRow({
+                      presentation: "Details",
                       id: identity.id,
                       title: PROVIDER_NAMES[identity.provider],
                       description:

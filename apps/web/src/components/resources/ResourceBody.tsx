@@ -10,7 +10,7 @@ export type ResourceMatch = Schema<"SearchMatchOut">;
 const hasExcerpt = (excerpt: Excerpt) => Boolean(excerpt.text || excerpt.truncated_before || excerpt.truncated_after);
 
 /** Omission marks are interface text; the excerpt itself is always literal evidence. */
-function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMatch | null }) {
+export function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMatch | null }) {
   const text = excerpt.text;
   const ranges = match?.excerpt.text === text ? match.ranges : [];
   const points = Array.from(text);

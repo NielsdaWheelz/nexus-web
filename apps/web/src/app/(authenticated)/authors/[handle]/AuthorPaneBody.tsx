@@ -114,6 +114,7 @@ function presentWork(work: ContributorWork): CollectionRowView {
   }
   const row = {
     kind: "contributor_work",
+    presentation: "Index",
     primary: { kind: "link", href: work.href, paneLabelHint: work.title },
     title: { text: work.title },
     publicationDate: null,
@@ -134,7 +135,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
           media_kind: "epub",
           title: work.title,
           contributors: work.contributors,
-          publication_date: null,
         },
         knownDescriptor: null,
       },

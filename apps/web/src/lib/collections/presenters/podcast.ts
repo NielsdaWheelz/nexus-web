@@ -19,6 +19,7 @@ export interface PodcastPresenterItem {
 export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
   const sync = item.recurring;
   return {
+    presentation: "Index",
     id: item.id,
     kind: "podcast",
     ...(item.facts === null ? {} : { resourceActions: { kind: "Podcast" as const, subject: { target: { kind: "Canonical" as const, podcast_id: item.id }, title: item.title, facts: item.facts } } }),
