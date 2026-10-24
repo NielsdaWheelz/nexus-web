@@ -202,7 +202,11 @@ export function useSourceArrival(input: {
       return;
     }
     if (intent.target.kind === "reader_destination" && intent.target.destination.source_identity !== sourceIdentity) {
-      publishStatus({ ...pending, pending: false, failure: { title: sourceIdentity === null ? "this match is no longer available" : "the document changed. search again to find this passage", error: null } });
+      const target = intent.target.destination.target;
+      const title = target.kind === "range" || target.kind === "pdf_find"
+        ? sourceIdentity === null ? "this match is no longer available" : "the document changed. search again to find this passage"
+        : sourceIdentity === null ? "couldn’t open that location" : "this location belongs to a different source version";
+      publishStatus({ ...pending, pending: false, failure: { title, error: null } });
       return;
     }
     if (intent.sourceIdentity !== null && intent.sourceIdentity !== sourceIdentity) {
