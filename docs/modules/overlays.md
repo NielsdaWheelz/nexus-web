@@ -426,7 +426,9 @@ previous candidate kind is recomputed and retained while inside bounds and clear
 of endpoint neighborhoods. otherwise use the first clear candidate; if none is
 clear, minimize endpoint overlap, maximize endpoint distance, then retain listed
 order. selected-body overlap is allowed, so lack of empty space never suppresses
-a valid action group. source scrolling/reflow measures current geometry; opening
+a valid action group. compact actions fade without transforming their geometry,
+so an immediate more activation keeps a stationary trigger.
+source scrolling/reflow measures current geometry; opening
 or hiding these actions never reflows, resizes or scrolls the source.
 
 the annotation controller owns its provisional candidate and quiet timer under

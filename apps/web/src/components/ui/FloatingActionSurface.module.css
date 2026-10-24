@@ -26,6 +26,7 @@
 
 /* One scrollport keeps enlarged compact commands reachable inside live bounds. */
 .surface[data-strategy="mobile-selection-actions"] {
+  animation-name: floatingActionSurfaceFadeOnly;
   overflow: auto;
   overscroll-behavior: contain;
 }

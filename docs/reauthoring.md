@@ -8,8 +8,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-mobile reader selection against `4acdadc1d`: +680 authored runtime lines
-(956 added, 276 deleted), reader web ui +594 and overlays +86. provisional
+mobile reader selection against `4acdadc1d`: +681 authored runtime lines
+(957 added, 276 deleted), reader web ui +594 and overlays +87. provisional
 mobile candidates and explicit capture commands replace automatic mobile
 composition and untouched selection drafts. one composer body serves desktop
 anchoring and explicit mobile sheets; compact placement reuses the overlay and
@@ -299,7 +299,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | db substrate (models, session) | 1,373 | re-sliced (cleanup/db-substrate-reslice) | durable writing +11 · libraries retention +1 · podcast libraries +76 · playback queue +11 · author editing -2 | keep |
 | player | 3,222 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 · playback settings +349 · persistent player +130 · player redesign +60 · media controls +72 · podcast collection +10 · podcast silence -5 · dropdown primitives -3 · native control cutover · playback queue +1514 · mobile reader chrome · popup sizing +0 · bounded indexes +30 · resource menu parity | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,096 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 · #670 +521 · reader python ingest +3 · ingest follow-ups -12 | re-slice: x titles |
-| overlays | 2,954 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 · player redesign +62 · dropdown primitives -28 · native control cutover · mobile reader chrome · compact actions +91 · popup sizing +29 · resource menu parity · mobile reader selection +86 | keep; #631 with selection composer, #650 with feedback admission recovery |
+| overlays | 2,954 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 · player redesign +62 · dropdown primitives -28 · native control cutover · mobile reader chrome · compact actions +91 · popup sizing +29 · resource menu parity · mobile reader selection +87 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,195 | reauthored #589 | #646 -319 · #631 +85 · #678 +111 · #679 +31 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · #700 +1 · shared outline +2,943 · unsaved work +10 · collection loading +2 · notes re-slice (server) -45 · durable writing -54 · native control cutover | keep; #631 with selection composer |
 | offline shelf | 2,631 | reauthored #502 | x threads +45 · reader python ingest -2 · durable writing +242 · shared shelf controls -29 · playback queue +6 | android slice (late) |
 | note bodies and editor | 4,571 | reauthored #589 | #631 +121 · #646 +29 · #679 +22 · resource insertion +448 · empty-resource lifecycle +71 · reader connections +111 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · unsaved work +84 · collection loading +1 · notes re-slice (server) +33 · durable writing +249 · libraries retention +7 · dropdown primitives -20 · native control cutover · offline catalog +2 | keep; #631 with selection composer |
