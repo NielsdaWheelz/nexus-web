@@ -2,25 +2,23 @@
 
 // One show: exact listening counts and visit-local detail above episode pages.
 // Head reads observe lifecycle/settings; episode and ordering changes reload pages.
-// Preparation belongs to this visit until confirmation hands off an immutable
-// command to the account owner. Observation stops outside the visible pane.
+// Reviewed commands belong to the account owner. Observation stops outside
+// the visible pane.
 
-import { useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { PlaybackSourceContext, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { presentMedia } from "@/lib/collections/presenters/media";
-import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
-import { projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
+import { projectCollectionConsumptionAction, projectPodcastTranscriptAction, projectPodcastLibrariesAction, projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
 import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import PodcastDestinationPicker from "@/components/podcasts/PodcastDestinationPicker";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
 import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
@@ -59,8 +57,6 @@ import {
 } from "@/lib/panes/paneFilterRows";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
-  forecastEpisodeTranscripts,
-  prepareEpisodeConsumption,
   getPodcastDetail,
   listEpisodes,
   requestPodcastRefresh,
@@ -73,7 +69,7 @@ import { useCatalogRead, useCatalogState } from "@/lib/catalog/provider";
 import { catalogShow, catalogEpisodes } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
 import { ApiError, isApiError } from "@/lib/api/client";
-import { modeledApiError, useThrowLater, useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
+import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import {
   listRowStatus,
   pageQuery,
@@ -343,81 +339,16 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const text = filterRows.query.trim();
   const known = STATES.find(option => option.value === state)?.value;
   const podcast = ready?.data.podcast;
-  const pending = ctx.podcastEpisodes.pending(podcastId);
-  const sessionSignal = ctx.sessionSignal();
-  const preparationLifetime = useRef<{ controller: AbortController; busy: boolean; state: string; text: string; observing: boolean; accountId: string } | null>(null);
-  const [preparation, setPreparation] = useState<{ signal: AbortSignal; content: FeedbackContent; checking: boolean } | null>(null);
-  const fail = useThrowLater();
-  // This component is keyed by pane visit and show. Sort never changes selection.
-  useLayoutEffect(() => {
-    const lifetime = { controller: new AbortController(), busy: false, state, text, observing, accountId: ctx.accountId };
-    preparationLifetime.current = lifetime;
-    setPreparation(null);
-    const retire = () => lifetime.controller.abort();
-    sessionSignal.addEventListener("abort", retire);
-    return () => {
-      retire();
-      sessionSignal.removeEventListener("abort", retire);
-      if (preparationLifetime.current === lifetime) preparationLifetime.current = null;
-    };
-  }, [ctx.accountId, sessionSignal, podcastId, state, text, observing]);
-  const unavailable = !live || !remoteReady() ? "requires a connection and current episode facts."
-    : pending !== null ? "resolve the pending episode action first."
-    : text !== "" ? "clear the text filter to use episode-wide actions."
-    : head.status === "failed" || (episodes.failure !== null && episodes.failure.op !== "More") ? "retry loading this view first."
-    : ready === null || known === undefined || !episodes.current ? "wait for the selected episode view to load."
-    : episodes.complete && episodes.items.length === 0 ? "no episodes in this selection."
-    : preparation?.checking ? "checking selected episodes…" : undefined;
-  const scope = known === "all" || known === undefined ? "" : ` ${known === "in_progress" ? "in-progress" : known}`;
-  const scopeLabel = `all${scope} episodes`;
-  const prepare = async (desired: "played" | "unplayed" | "transcripts") => {
-    const lifetime = preparationLifetime.current;
-    if (unavailable !== undefined || !observing || podcast === undefined || known === undefined || lifetime === null || lifetime.busy || lifetime.state !== state || lifetime.text !== text || lifetime.observing !== observing || lifetime.accountId !== ctx.accountId) return;
-    const signal = lifetime.controller.signal;
-    const current = () => remoteReady() && preparationLifetime.current === lifetime && !signal.aborted && !sessionSignal.aborted && ctx.isActive() && document.visibilityState === "visible";
-    if (!current() || ctx.podcastEpisodes.pending(podcastId) !== null) return;
-    lifetime.busy = true;
-    setPreparation({ signal, checking: true, content: { tone: "Neutral", title: "checking selected episodes…" } });
-    try {
-      if (desired === "transcripts") {
-        const forecast = await forecastEpisodeTranscripts(podcastId, known, signal);
-        if (!current() || ctx.podcastEpisodes.pending(podcastId) !== null) return;
-        if (forecast.eligible_count === 0) {
-          setPreparation({ signal, checking: false, content: { tone: "Neutral", title: "no eligible episodes to transcribe." } });
-          return;
-        }
-        const count = forecast.eligible_count;
-        if (!window.confirm(`transcribe ${count} eligible ${count === 1 ? "episode" : "episodes"} from “${podcast.title}”?\n\nselection: ${scopeLabel}, including any episodes not loaded in this pane.`)) return;
-        if (!current()) return;
-        ctx.podcastEpisodes.submit({ podcastId, title: podcast.title, scopeLabel, command: {
-          kind: "Transcripts", body: { target: { kind: "PodcastEpisodeQuery", podcast_id: podcastId, selection: { state: known }, reason: "search" }, selection_fingerprint: forecast.selection_fingerprint },
-        } });
-      } else {
-        const prepared = await prepareEpisodeConsumption(podcastId, known, signal);
-        if (!current() || ctx.podcastEpisodes.pending(podcastId) !== null) return;
-        if (prepared.items.length === 0) {
-          setPreparation({ signal, checking: false, content: { tone: "Neutral", title: "no episodes in this selection." } });
-          return;
-        }
-        const count = prepared.items.length;
-        if (!window.confirm(`mark ${count} ${count === 1 ? "episode" : "episodes"} from “${podcast.title}” as ${desired}?\n\nselection: ${scopeLabel}, including any episodes not loaded in this pane. listening positions and history are kept. selected playback pauses while progress is saved.`)) return;
-        if (!current()) return;
-        ctx.podcastEpisodes.submit({ podcastId, title: podcast.title, scopeLabel, command: { kind: "Consumption", body: { desired_state: desired, items: prepared.items } } });
-      }
-    } catch (error) {
-      if (!current()) return;
-      const modeled = modeledApiError(error, fail);
-      if (modeled !== null) setPreparation({ signal, checking: false, content: podcastErrorMessage(modeled, "selected episodes couldn’t be checked") });
-    } finally {
-      lifetime.busy = false;
-      if (current()) setPreparation(value => value?.signal === signal && value.checking ? null : value);
-    }
-  };
-  const bulkActions: readonly ActionDescriptor[] = (["played", "unplayed", "transcripts"] as const).map(target => {
-    const reason = unavailable ?? (target === known ? `these episodes are already ${target}.` : undefined);
-    return { kind: "command", id: target === "transcripts" ? "transcribe-episodes" : `mark-all-${target}`,
-      label: target === "transcripts" ? `transcribe all${scope} episodes` : `mark all${scope} episodes as ${target}`,
-      disabled: reason !== undefined, disabledReason: reason, onSelect: () => { void prepare(target); } };
+  const paneFallback = () => findPaneLandmarkFocusTarget(librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+  const blocked = !live || !remoteReady() || head.status !== "ready" || head.error !== null || head.refreshing || head.generation === authority.current.generation
+    ? "TemporarilyUnavailable" : null;
+  const bulkActions = known === undefined || known === "all" || podcast === undefined ? [] : [
+    projectCollectionConsumptionAction({ selection: { kind: "Podcast", podcast_id: podcastId, state: known }, desiredState: "finished", title: podcast.title, blocked, ctx, run, returnFocus: paneFallback }),
+    projectCollectionConsumptionAction({ selection: { kind: "Podcast", podcast_id: podcastId, state: known }, desiredState: "unread", title: podcast.title, blocked, ctx, run, returnFocus: paneFallback }),
+    projectPodcastTranscriptAction({ podcastId, title: podcast.title, state: known, blocked, ctx, run, returnFocus: paneFallback }),
+  ];
+  const librariesAction = podcast === undefined ? null : projectPodcastLibrariesAction({ target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title, disabledReason: blocked === null ? null : "requires a connection and current podcast facts.", ctx, run,
+    focus: { trigger: null, returnFocus: () => librariesCard.current?.querySelector<HTMLButtonElement>("header button") ?? librariesCard.current ?? paneFallback(), afterRemoval: paneFallback },
   });
   usePaneChrome({
     displayTitle: podcast?.title,
@@ -520,7 +451,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             />
           ) : null}
           {ready && podcast ? <PaneSection ref={librariesCard} title="libraries" aria-label="libraries" tabIndex={-1}
-            actions={live && remoteReady() ? <PodcastDestinationPicker podcastId={podcastId} title={podcast.title} /> : undefined}>
+            actions={librariesAction ? <Button aria-haspopup="dialog" aria-disabled={librariesAction.disabled} tooltip={librariesAction.disabledReason ? { text: librariesAction.disabledReason } : undefined} onClick={event => { if (librariesAction.disabled) return; const detail = prepareActionSelect(event, event.currentTarget); if (detail) librariesAction.onSelect(detail); }}>libraries…</Button> : null}>
             <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
               rows={libraryRows}
               rowControls={live && remoteReady() ? Object.fromEntries(namedDestinations.map(destination => {
@@ -557,9 +488,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             {recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps ? <FeedbackNotice content={{ tone: "Warning", title: "the last check could not load all available episodes.", message: "nexus will try again automatically." }} announcement="Polite" actions={[{ label: "check again", onClick: checkAgain, busy: command.running !== null }]} /> : null}
             {history.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={podcast.title} following={destinations.some(destination => destination.library_id === operation.library_id)} />)}
           </PaneSection> : null}
-        {preparation !== null && preparation.signal === preparationLifetime.current?.controller.signal ? (
-          preparation.checking ? <FeedbackStatus content={preparation.content} announcement="Polite" /> : <FeedbackNotice content={preparation.content} announcement="Polite" />
-        ) : null}
         {command.failure ? <FeedbackNotice content={command.failure} announcement="Assertive" /> : null}
           {episodes.status === "failed" && episodes.failure !== null ? (
             <FeedbackNotice

@@ -79,7 +79,7 @@ export default function CollectionRow({
     subject={media.subject} subjectKey={`collection:${row.id}`}
     viewActions={row.resourceRef ? [] : row.flatActions ?? []} triggerRef={moreRef} returnFocus={returnFocus}
   /> : rowActionsAvailable && podcast !== null && row.resourceRef === null ? <PodcastMenu
-    subject={podcast} subjectKey={`collection:${row.id}`} sections={sections}
+    subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
     actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     label={menuLabel}
     renderTrigger={(props) => <span className={styles.attentionTrigger}>

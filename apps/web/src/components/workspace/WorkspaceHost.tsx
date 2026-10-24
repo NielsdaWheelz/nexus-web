@@ -190,7 +190,12 @@ export default function WorkspaceHost() {
     const lost =
       document.activeElement === null ||
       document.activeElement === document.body;
-    if (flipped && lost) focusPane(activeId);
+    // A removed control's owner restores its specific successor after commit.
+    // The pane fallback yields to that recovery and to intentional focus.
+    if (flipped && lost) queueMicrotask(() => {
+      if (document.activeElement === null || document.activeElement === document.body)
+        focusPane(activeId);
+    });
   }, [activeId, isMobile, focusPane, latestWorkspace]);
   const { scrollPaneIntoView } = canvas;
   useLayoutEffect(() => {

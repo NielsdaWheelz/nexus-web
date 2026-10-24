@@ -286,7 +286,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, primaryAction, mediaActions, query, menuActions,
+`usePaneChrome` (`{ header, navigation, primaryAction, resourceActions, query, menuActions,
 resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -537,6 +537,9 @@ flip moves focus only when the focused element went away (focus on the body):
 a focused editor, find, filter or collection input keeps focus and the soft
 keyboard. an active interaction owner retains focus when one of its commands
 changes the workspace selection.
+removed shortcut recovery runs before the host's generic breakpoint fallback,
+so a surviving more control keeps focus. the host rechecks for lost focus before
+choosing the pane landmark.
 
 pointer or focus entry physically inside a visible pane synchronizes active
 ownership from the live store, preserving the reached control and suppressing

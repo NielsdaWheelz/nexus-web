@@ -200,7 +200,12 @@ DownloadKind = Literal["podcast_episode", "pdf", "epub", "web_article"]
 SimpleActionKind = Literal[
     "Open",
     "OpenInNewPane",
-    "MediaMetadata",
+    "Metadata",
+    "MarkCollectionFinished",
+    "MarkCollectionUnread",
+    "AddUnfinishedToLectern",
+    "LeaveLibrary",
+    "TranscribePodcastEpisodes",
     "Share",
     "Chat",
     "PlayNext",
@@ -279,6 +284,11 @@ class OpenSourceAction(_Action):
     href: str
 
 
+class OpenPodcastFeedAction(_Action):
+    kind: Literal["OpenPodcastFeed"] = "OpenPodcastFeed"
+    href: str
+
+
 class PlaybackAction(_Action):
     kind: Literal["Playback"] = "Playback"
     player_descriptor: PlayerDescriptor
@@ -313,6 +323,7 @@ ResourceActionOut = Annotated[
     | RecoveryAction
     | DownloadAction
     | OpenSourceAction
+    | OpenPodcastFeedAction
     | PlaybackAction
     | ConsumptionAction
     | TranscriptAction

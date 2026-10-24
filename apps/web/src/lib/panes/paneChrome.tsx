@@ -22,6 +22,7 @@ import type {
   WorkspaceSecondarySurfaceIdOf,
 } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
@@ -92,6 +93,7 @@ export interface PaneChrome {
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly primaryAction?: PanePrimaryAction;
   readonly resourceActions?: ResourceActionSubject;
+  readonly podcastMetadata?: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
   readonly resourceRef?: CanonicalResourceRef;

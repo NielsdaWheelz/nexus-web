@@ -20,6 +20,7 @@ from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationsOut,
     LibraryEntriesPageOut,
+    LibraryMetadataOut,
     LibraryOrderOut,
     LibraryOut,
     LibraryPlacementOut,
@@ -94,6 +95,13 @@ def get_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[Libr
     """Members only; anyone else gets 404."""
     library = libraries.access(db, viewer.user_id, library_id, lock=False)
     return Data(data=library.out(viewer.user_id))
+
+
+@router.get("/libraries/{library_id}/metadata")
+def get_library_metadata(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryMetadataOut]:
+    return Data(data=library_listing.metadata(db, viewer.user_id, library_id))
 
 
 @router.patch("/libraries/{library_id}")

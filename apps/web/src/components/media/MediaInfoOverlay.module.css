@@ -30,7 +30,8 @@
   font-size: var(--text-base);
 }
 
-.group dl {
+.group dl,
+.facts {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);

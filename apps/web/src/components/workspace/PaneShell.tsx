@@ -396,6 +396,7 @@ function PaneView({
       header={header}
       identityId={identityId}
       resourceActions={body?.resourceActions}
+      podcastMetadata={body?.podcastMetadata}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
       paneActions={paneActions}

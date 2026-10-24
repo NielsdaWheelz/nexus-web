@@ -74,8 +74,9 @@ export const ACTION_CATALOG = {
     icon: PanelsTopLeft,
     group: "Navigate",
   },
-  OpenSource: { label: "Open source", icon: ExternalLink, group: "Navigate" },
-  MediaMetadata: { label: "metadata…", icon: Info, group: "Navigate" },
+  OpenSource: { label: "open source", icon: ExternalLink, group: "Navigate" },
+  OpenPodcastFeed: { label: "open feed", icon: Rss, group: "Navigate" },
+  Metadata: { label: "metadata…", icon: Info, group: "Navigate" },
   Playback: {
     label: "Play",
     icon: Play,
@@ -102,6 +103,8 @@ export const ACTION_CATALOG = {
       EpisodePlayed: { label: "Mark as unplayed", icon: Undo2 },
     },
   },
+  MarkCollectionFinished: { label: "mark all finished…", icon: CircleCheck, group: "Consume" },
+  MarkCollectionUnread: { label: "mark all unread…", icon: Undo2, group: "Consume" },
   ResetProgress: { label: "Reset progress", icon: RotateCcw, group: "Consume" },
   Transcript: {
     label: "Request transcript…",
@@ -117,6 +120,7 @@ export const ACTION_CATALOG = {
       failed_provider: { label: "Retry transcript", icon: RotateCcw },
     },
   },
+  TranscribePodcastEpisodes: { label: "transcribe all episodes…", icon: Captions, group: "Consume" },
   Download: {
     label: "Download for offline",
     icon: Download,
@@ -137,9 +141,10 @@ export const ACTION_CATALOG = {
       Present: { label: "Remove from Lectern", icon: ListMinus },
     },
   },
+  AddUnfinishedToLectern: { label: "add unfinished contents to lectern…", icon: ListPlus, group: "Organize" },
+  PodcastLibraries: { label: "libraries…", icon: Library, group: "Organize" },
   SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
   UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
-  PodcastLibraries: { label: "libraries…", icon: Library, group: "Organize" },
   ImportPodcastEpisodes: { label: "import available episodes…", icon: Download, group: "Organize" },
   Chat: {
     label: "Chat about this…",
@@ -220,6 +225,9 @@ export const ACTION_CATALOG = {
     icon: CircleCheck,
     group: "Manage",
   },
+  LeaveLibrary: { label: "leave library…", icon: ListMinus, group: "Manage", confirmation: {
+    title: "leave library?", body: "leave “{title}”? its contents remain in the library. you may lose access to items held only here.",
+  } },
   LibrarySettings: {
     label: "Library settings…",
     icon: Settings,

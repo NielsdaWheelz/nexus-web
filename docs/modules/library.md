@@ -31,6 +31,12 @@ preservation to remove every selected placement without recreating holdings.
 other members may leave. nonmembers receive a masked 404. default libraries never
 appear among organizational destinations.
 
+inspection uses `GET /libraries/{id}/metadata`: the native kind, viewer role,
+record timestamps and full visible physical media count. personal consumption and
+[collection lectern actions](collection-actions.md) require reading authority,
+not administration. libraries never nest through these actions. leaving uses the
+existing membership owner and appears in the shared resource menu when eligible.
+
 ## writes and locks
 
 writes acquire viewer serialization when needed, then admission identity, sorted

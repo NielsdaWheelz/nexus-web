@@ -8,8 +8,8 @@
 import { useRef, type ReactNode } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import { formatPublicationDate } from "@/lib/resources/metadata";
-import Dialog from "@/components/ui/Dialog";
-import MobileSheet from "@/components/ui/MobileSheet";
+import InformationFrame from "@/components/resources/InformationFrame";
+import { informationFact as fact, informationGroup as group } from "@/components/resources/InformationFacts";
 import { apiFetch } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -42,7 +42,6 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
 import MetadataResearchActions from "./MetadataResearchActions";
@@ -53,28 +52,6 @@ const COMPLETION = {
   InProgress: "in progress",
   Finished: "finished",
 };
-
-/** One fact; an empty value renders nothing. */
-function fact(label: string, value: ReactNode): ReactNode {
-  if (value === null || value === undefined || value === "") return null;
-  return (
-    <div className={styles.fact} key={label}>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-/** A titled group of facts; a group with none renders nothing. */
-function group(title: string, facts: readonly ReactNode[]): ReactNode {
-  if (facts.every((value) => value === null)) return null;
-  return (
-    <section className={styles.group} key={title}>
-      <h3>{title}</h3>
-      <dl>{facts}</dl>
-    </section>
-  );
-}
 
 const link = (href: string | null): ReactNode =>
   href ? (
@@ -387,7 +364,6 @@ export default function MediaInfoOverlay({
   readonly returnFocusFallback: ReturnFocusTarget;
   readonly onClose: () => void;
 }) {
-  const isMobile = useIsMobileViewport();
   const contentRoot = useRef<HTMLDivElement>(null);
   const observation = useMediaMetadataOperations(open ? mediaId : null);
   const processing = useMediaProcessingStatus(open ? mediaId : null);
@@ -428,19 +404,8 @@ export default function MediaInfoOverlay({
         onReread={media.refetch}
       />
     );
-  const frame = { returnFocusTo, returnFocusFallback };
-  return isMobile ? (
-    <MobileSheet
-      active={open}
-      onDismiss={onClose}
-      ariaLabel="metadata"
-      {...frame}
-    >
-      <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
-    </MobileSheet>
-  ) : (
-    <Dialog open={open} onClose={onClose} title="metadata" {...frame}>
-      <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
-    </Dialog>
-  );
+  return <InformationFrame open={open} title="metadata" returnFocusTo={returnFocusTo}
+    returnFocusFallback={returnFocusFallback} onClose={onClose} contentRef={contentRoot}>
+    {content}
+  </InformationFrame>;
 }

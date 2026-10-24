@@ -44,6 +44,7 @@ export function presentBrowseCandidate(
     presentation: "Index",
     id,
     kind: candidate.kind === "Podcast" ? "podcast" : "search_result",
+    ...(candidate.kind === "Podcast" ? { podcastMetadata: { kind: "DiscoveryPodcast" as const, candidate } } : {}),
     ...(podcast === undefined ? {} : { resourceActions: { kind: "Podcast" as const, subject: podcast } }),
     ...(candidate.kind !== "Podcast" && preview ? {
       resourceActions: {
