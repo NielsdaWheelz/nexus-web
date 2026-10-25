@@ -27,6 +27,7 @@ jobs:
       SOURCE_SHA: ${{ github.sha }}
       API_REPOSITORY: ghcr.io/nielsdawheelz/nexus-api
       WORKER_REPOSITORY: ghcr.io/nielsdawheelz/nexus-worker
+      POSTGRES_REPOSITORY: ghcr.io/nielsdawheelz/nexus-postgres
       DOCKER_BUILD_RECORD_UPLOAD: "false"
       DOCKER_BUILD_SUMMARY: "false"
 
@@ -77,6 +78,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: build and push postgres
+        id: postgres
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/Dockerfile.postgres
+          push: true
+          tags: ${{ env.POSTGRES_REPOSITORY }}:${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+
+      - name: await public postgres digest access
+        shell: bash
+        env:
+          WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
+          POSTGRES_IMAGE: ${{ format('{0}@{1}', env.POSTGRES_REPOSITORY, steps.postgres.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          anonymous_config="$WORKSPACE/anonymous-docker-config"
+          mkdir -p -- "$anonymous_config"
+          chmod 700 -- "$anonymous_config"
+          echo 'postgres package visibility: https://github.com/users/NielsdaWheelz/packages/container/nexus-postgres/settings'
+          postgres_public=false
+          pg_visibility_deadline=$((SECONDS + 300))
+          while (( SECONDS < pg_visibility_deadline )); do
+            pg_visibility_remaining=$((pg_visibility_deadline - SECONDS))
+            if (( pg_visibility_remaining <= 0 )); then break; fi
+            if timeout "${pg_visibility_remaining}s" env DOCKER_CONFIG="$anonymous_config" \
+              docker manifest inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then
+              postgres_public=true
+              break
+            fi
+            pg_visibility_remaining=$((pg_visibility_deadline - SECONDS))
+            if (( pg_visibility_remaining <= 0 )); then break; fi
+            if (( pg_visibility_remaining > 5 )); then sleep 5; else sleep "$pg_visibility_remaining"; fi
+          done
+          if [ "$postgres_public" != true ]; then
+            echo 'postgres digest is not public after 300s; set package visibility at the settings URL above before publishing a fresh source commit' >&2
+            exit 1
+          fi
+
       - name: build and push api
         id: api
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -116,13 +159,15 @@ jobs:
           WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
+          POSTGRES_IMAGE: ${{ format('{0}@{1}', env.POSTGRES_REPOSITORY, steps.postgres.outputs.digest) }}
         run: |
           set -euo pipefail
           api_identity="$WORKSPACE/api-runtime-identity.json"
           worker_identity="$WORKSPACE/worker-runtime-identity.json"
           docker pull "$API_IMAGE"
           docker pull "$WORKER_IMAGE"
-          for image in "$API_IMAGE" "$WORKER_IMAGE"; do
+          docker pull "$POSTGRES_IMAGE"
+          for image in "$API_IMAGE" "$WORKER_IMAGE" "$POSTGRES_IMAGE"; do
             revision='{{ index .Config.Labels "org.opencontainers.image.revision" }}'
             test "$(docker image inspect --format "$revision" "$image")" = "$SOURCE_SHA"
           done
@@ -137,6 +182,19 @@ jobs:
           cmp "$api_identity" "$worker_identity"
 
           mkdir -p -- "$WORKSPACE/bundle"
+          postgres_proof="$WORKSPACE/bundle/postgres-runtime-proof.txt"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --entrypoint sh "$POSTGRES_IMAGE" -ec '
+              postgres --version
+              dpkg-query -W postgresql-15-pg-search
+              test -r /usr/lib/postgresql/15/lib/pg_search.so
+              sha256sum /usr/lib/postgresql/15/lib/pg_search.so /usr/share/postgresql/15/extension/pg_search.control
+              cat /usr/share/postgresql/15/extension/pg_search.control
+            ' >"$postgres_proof"
+          grep -Eq '^postgres \(PostgreSQL\) 15\.' "$postgres_proof"
+          grep -Fqx $'postgresql-15-pg-search\t0.26.2' "$postgres_proof"
+          grep -Fqx "default_version = '0.26.2'" "$postgres_proof"
+          printf '%s\n' "$POSTGRES_IMAGE" >"$WORKSPACE/bundle/postgres-image.txt"
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=python \
             python3 -B -m nexus.release_artifact write-candidate-manifest \
             --source-sha "$SOURCE_SHA" \
@@ -152,6 +210,7 @@ jobs:
           WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
+          POSTGRES_IMAGE: ${{ format('{0}@{1}', env.POSTGRES_REPOSITORY, steps.postgres.outputs.digest) }}
         run: |
           set -euo pipefail
           docker logout ghcr.io
@@ -160,6 +219,7 @@ jobs:
           chmod 700 -- "$anonymous_config"
           DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$API_IMAGE" >/dev/null
           DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$WORKER_IMAGE" >/dev/null
+          DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$POSTGRES_IMAGE" >/dev/null
 
       - name: upload the candidate manifest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -176,8 +236,10 @@ jobs:
           WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
+          POSTGRES_IMAGE: ${{ format('{0}@{1}', env.POSTGRES_REPOSITORY, steps.postgres.outputs.digest) }}
         run: |
           set -euo pipefail
           rm -rf -- "$WORKSPACE"
           if [ -n "${{ steps.api.outputs.digest }}" ]; then docker image rm "$API_IMAGE"; fi
           if [ -n "${{ steps.worker.outputs.digest }}" ]; then docker image rm "$WORKER_IMAGE"; fi
+          if [ -n "${{ steps.postgres.outputs.digest }}" ] && docker image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then docker image rm "$POSTGRES_IMAGE"; fi

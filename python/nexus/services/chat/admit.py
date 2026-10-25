@@ -18,10 +18,12 @@ from typing import Literal, cast, get_args
 from uuid import UUID
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.db.models import ChatRun, Conversation, Message
+from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import enqueue_job, jobs_for_payload
@@ -63,6 +65,7 @@ from nexus.services.resource_graph.context import (
 )
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.seq import assign_next_message_seq
 from nexus.services.tools.run import Toolbox
 
@@ -183,18 +186,23 @@ def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
     """Record stop intent (idempotent); a run whose job already died ends here."""
 
     with get_session_factory()() as db:
-        run = events.lock_run(db, run_id)
-        if run is None or run.owner_user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-        if run.status not in events.TERMINAL:
-            if run.cancel_requested_at is None:
-                run.cancel_requested_at = datetime.now(UTC)
-                run.updated_at = datetime.now(UTC)
-            match = {"run_id": str(run.id)}
-            if jobs_for_payload(db, kind="chat_run", match=match, statuses=("dead",), lock=True):
-                # Its dead-letter projection skipped this then-locked run.
-                events.finalize_dead(db, run)
-        db.commit()
+
+        def attempt() -> None:
+            run = events.lock_run(db, run_id)
+            if run is None or run.owner_user_id != viewer_id:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
+            if run.status not in events.TERMINAL:
+                if run.cancel_requested_at is None:
+                    run.cancel_requested_at = datetime.now(UTC)
+                    run.updated_at = datetime.now(UTC)
+                match = {"run_id": str(run.id)}
+                if jobs_for_payload(
+                    db, kind="chat_run", match=match, statuses=("dead",), lock=True
+                ):
+                    # Its dead-letter projection skipped this then-locked run.
+                    events.finalize_dead(db, run)
+
+        retry_serializable(db, "cancel_chat_run", attempt)
     with get_session_factory()() as db:
         return reads.run_response(db, viewer_id=viewer_id, run_id=run_id)
 
@@ -267,31 +275,44 @@ def _settle(
     """
 
     with get_session_factory()() as db:
-        db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-            {"lock_key": f"chat_admission:{run_id}"},
-        )
-        run = db.get(ChatRun, run_id)
-        if run is not None and run.owner_user_id != viewer_id:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
-        if run is None:
-            try:
+
+        def attempt() -> ChatAdmissionReceipt:
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+                {"lock_key": f"chat_admission:{run_id}"},
+            )
+            run = db.get(ChatRun, run_id)
+            if run is not None and run.owner_user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
+            if run is None:
                 if isinstance(row, ApiError):
                     raise row
-                run = build(db, row)
-            except ApiError as error:
-                if error.code.value not in _REJECTABLE:
-                    raise
-                # Closing the session rolls the attempt back: nothing is stored.
-                reason = ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
-                return ChatAdmissionReceipt(outcome=RejectedChatAdmission(reason=reason))
-            db.commit()
-        outcome = AcceptedChatAdmission(
-            conversation_id=run.conversation_id,
-            run_id=run.id,
-            assistant_message_id=run.assistant_message_id,
-        )
-        return ChatAdmissionReceipt(outcome=outcome)
+                try:
+                    run = build(db, row)
+                except IntegrityError as error:
+                    if integrity_constraint_name(error) != "chat_runs_pkey":
+                        raise
+                    # The advisory-lock wait can predate this fixed snapshot. A
+                    # same-id winner must be reread with all staged writes discarded.
+                    raise TransactionRestart(
+                        "chat admission id committed during lock wait"
+                    ) from error
+            return ChatAdmissionReceipt(
+                outcome=AcceptedChatAdmission(
+                    conversation_id=run.conversation_id,
+                    run_id=run.id,
+                    assistant_message_id=run.assistant_message_id,
+                )
+            )
+
+        try:
+            return retry_serializable(db, "chat_admission", attempt)
+        except ApiError as error:
+            if error.code.value not in _REJECTABLE:
+                raise
+            # The whole failed attempt has rolled back before a rejection is returned.
+            reason = ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
+            return ChatAdmissionReceipt(outcome=RejectedChatAdmission(reason=reason))
 
 
 def _destination(
@@ -430,6 +451,7 @@ def _insert_pair(
         ),
         {"leaf": assistant.id, "id": conversation_id},
     )
+    projection.refresh(db, "message", [user.id])
     return user, assistant
 
 
@@ -502,4 +524,15 @@ def _start_run(
         priority=50,
         dedupe_key=f"chat_run:{run.id}",
     )
+    projection.refresh(db, "conversation", [conversation_id])
+    if db.scalar(
+        text("""SELECT EXISTS (
+            SELECT 1 FROM x_post_sources xp WHERE xp.media_id IN (
+                SELECT media_id FROM message_retrievals WHERE assistant_message_id=:assistant)
+            OR EXISTS (SELECT 1 FROM messages msg WHERE msg.id=:user
+                AND msg.reader_selection_snapshot #>> '{evidence,target,owner_ref}'
+                    = 'media:' || xp.media_id::text))"""),
+        {"assistant": assistant.id, "user": user.id},
+    ):
+        projection.refresh_viewer_contributors(db, [viewer_id])
     return run

@@ -153,6 +153,7 @@ def publish_episodes(
     marker. metadata refresh never supplies ongoing placement authority.
     """
     from nexus.services import libraries, library_entries
+    from nexus.services.search import projection
 
     finite = None
     if import_id is not None:
@@ -222,6 +223,16 @@ def publish_episodes(
             library_entries.deliver_podcast_episode_locked(
                 db, library_id=library_id, media_id=media_id
             )
+    if held_media and target_libraries:
+        projection.refresh_viewer_contributors(
+            db,
+            list(
+                db.scalars(
+                    text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+                    {"ids": target_libraries},
+                )
+            ),
+        )
 
 
 def cancel(
@@ -232,23 +243,21 @@ def cancel(
     body: wire.PodcastImportCancelRequest,
 ) -> wire.PodcastImportOut:
     from nexus.db.retries import retry_read_committed
-    from nexus.db.session import transaction
     from nexus.errors import ApiErrorCode, ConflictError
     from nexus.services import libraries, users
 
     def attempt() -> wire.PodcastImportOut:
-        with transaction(db):
-            users.lock_viewer(db, viewer_id)
-            row = _lock_import(db, viewer_id, library_id, import_id)
-            libraries.lock_library_rows_in_order(db, [library_id])
-            library = libraries.access(db, viewer_id, library_id, lock=False)
-            library.require_add_content(viewer_id)
-            if row["attempt_version"] != body.expected_attempt_version:
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
-            if row["completed_at"] is None and row["cancelled_at"] is None:
-                cancel_in_current_transaction(db, run_id=row["run_id"])
-                users.advance_removal_revision(db, viewer_id)
-            return get_import(db, viewer_id, library_id, import_id)
+        users.lock_viewer(db, viewer_id)
+        row = _lock_import(db, viewer_id, library_id, import_id)
+        libraries.lock_library_rows_in_order(db, [library_id])
+        library = libraries.access(db, viewer_id, library_id, lock=False)
+        library.require_add_content(viewer_id)
+        if row["attempt_version"] != body.expected_attempt_version:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
+        if row["completed_at"] is None and row["cancelled_at"] is None:
+            cancel_in_current_transaction(db, run_id=row["run_id"])
+            users.advance_removal_revision(db, viewer_id)
+        return get_import(db, viewer_id, library_id, import_id)
 
     return retry_read_committed(db, "cancel_podcast_import", attempt)
 
@@ -275,42 +284,40 @@ def retry(
     body: wire.PodcastImportRetryRequest,
 ) -> wire.PodcastImportOut:
     from nexus.db.retries import retry_read_committed
-    from nexus.db.session import transaction
     from nexus.errors import ApiErrorCode, ConflictError
     from nexus.services import libraries, users
     from nexus.services.podcasts import traversal
 
     def attempt() -> wire.PodcastImportOut:
-        with transaction(db):
-            users.lock_viewer(db, viewer_id)
-            row = _lock_import(db, viewer_id, library_id, import_id)
-            libraries.lock_library_rows_in_order(db, [library_id])
-            library = libraries.access(db, viewer_id, library_id, lock=False)
-            library.require_add_content(viewer_id)
-            if (
-                row["attempt_version"] != body.expected_attempt_version
-                or library.order_revision != int(body.expected_order_revision)
-                or row["failed_at"] is None
-            ):
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
-            db.execute(
-                text("""
-                UPDATE podcast_feed_runs r SET attempt_version = attempt_version + 1,
-                    failed_at = NULL,error_code = NULL,error_detail = NULL,job_id = NULL,
-                    pending_urls = CASE WHEN cardinality(pending_urls) = 0 THEN ARRAY[p.feed_url]
-                                        ELSE pending_urls END,
-                    visited_urls = CASE WHEN cardinality(pending_urls) = 0 THEN '{}'::text[]
-                                        ELSE visited_urls END,
-                    had_coverage_gaps = CASE WHEN cardinality(pending_urls) = 0 THEN false
-                                            ELSE had_coverage_gaps END,
-                    updated_at = now()
-                FROM podcasts p WHERE r.id = :id AND p.id = r.podcast_id
-            """),
-                {"id": row["run_id"]},
-            )
-            traversal.enqueue_step(db, run_id=row["run_id"])
-            libraries.advance_order_revision(db, library_id)
-            return get_import(db, viewer_id, library_id, import_id)
+        users.lock_viewer(db, viewer_id)
+        row = _lock_import(db, viewer_id, library_id, import_id)
+        libraries.lock_library_rows_in_order(db, [library_id])
+        library = libraries.access(db, viewer_id, library_id, lock=False)
+        library.require_add_content(viewer_id)
+        if (
+            row["attempt_version"] != body.expected_attempt_version
+            or library.order_revision != int(body.expected_order_revision)
+            or row["failed_at"] is None
+        ):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
+        db.execute(
+            text("""
+            UPDATE podcast_feed_runs r SET attempt_version = attempt_version + 1,
+                failed_at = NULL,error_code = NULL,error_detail = NULL,job_id = NULL,
+                pending_urls = CASE WHEN cardinality(pending_urls) = 0 THEN ARRAY[p.feed_url]
+                                    ELSE pending_urls END,
+                visited_urls = CASE WHEN cardinality(pending_urls) = 0 THEN '{}'::text[]
+                                    ELSE visited_urls END,
+                had_coverage_gaps = CASE WHEN cardinality(pending_urls) = 0 THEN false
+                                        ELSE had_coverage_gaps END,
+                updated_at = now()
+            FROM podcasts p WHERE r.id = :id AND p.id = r.podcast_id
+        """),
+            {"id": row["run_id"]},
+        )
+        traversal.enqueue_step(db, run_id=row["run_id"])
+        libraries.advance_order_revision(db, library_id)
+        return get_import(db, viewer_id, library_id, import_id)
 
     return retry_read_committed(db, "retry_podcast_import", attempt)
 

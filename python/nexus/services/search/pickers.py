@@ -1,4 +1,8 @@
-"""Link target search: strict passage admission and durable quote identity."""
+"""Link target search: strict passage admission and durable quote identity.
+
+Identity lookups use the caller's snapshot; text searches embed before acquiring
+their owned, database-wide admitted backend and materialize before retiring it.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.resource_items.items import resource_items_out
+from nexus.services.search.admission import search_session
 from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
@@ -71,7 +76,12 @@ def search_targets(
     parsed = parse_resource_ref(q)
     exact = parsed if isinstance(parsed, ResourceRef) else None
     embedding = embed_text(q) if exact is None and len(q) >= MIN_QUERY_LENGTH else None
-    return read_snapshot(db, lambda s: _targets(s, viewer_id, request, q, exact, embedding))
+    if exact is not None or len(q) < MIN_QUERY_LENGTH:
+        return read_snapshot(db, lambda s: _targets(s, viewer_id, request, q, exact, embedding))
+    with search_session() as search_db:
+        return read_snapshot(
+            search_db, lambda s: _targets(s, viewer_id, request, q, exact, embedding)
+        )
 
 
 def _targets(
@@ -102,17 +112,17 @@ def _targets(
         candidates = _refs(hits[: r.k])
         reading_owners = {_refs([hit])[0].uri: hit.reading_media_id for hit in hits[: r.k]}
     candidates = [ref for ref in candidates if ref.uri not in excluded]
-    items = {}
-    for owner in dict.fromkeys(reading_owners.get(ref.uri) for ref in candidates):
-        items.update(
-            (item.ref, item)
-            for item in resource_items_out(
-                db,
-                viewer_id=viewer_id,
-                refs=[ref for ref in candidates if reading_owners.get(ref.uri) == owner],
-                reading_media_id=owner,
-            )
+    items = {
+        item.ref: item
+        for item in resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=candidates,
+            reading_media_ids={
+                uri: owner for uri, owner in reading_owners.items() if owner is not None
+            },
         )
+    }
     admitted: dict[str, ResourceTargetOut] = {}
     for ref in candidates:
         passage = capability(ref.scheme).link_mode == "materialize_passage"

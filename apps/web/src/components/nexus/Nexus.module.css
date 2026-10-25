@@ -91,10 +91,10 @@
 
 .rowSnippet {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
+.rowBody .rowLabel:has([data-resource-inline-evidence]) { white-space: normal; overflow-wrap: anywhere; }
 
 .primaryCell .rowLabel { color: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); }
 

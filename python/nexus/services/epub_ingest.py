@@ -109,6 +109,7 @@ from nexus.services.sanitize_html import (
     sanitize_epub_chapter,
     sanitize_svg_asset_element,
 )
+from nexus.services.search import projection
 from nexus.services.source_outcome import (
     SourceDiagnostics,
     SourceRunOutcome,
@@ -784,6 +785,7 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
     if metadata.edition_isbn is not None:
         media.edition_isbn = metadata.edition_isbn
     db.flush()
+    projection.refresh(db, "fragment", [fragment.id for fragment in plan.fragments])
     diagnostics: SourceDiagnostics = {
         "status": "success",
         "fragment_count": len(plan.fragments),

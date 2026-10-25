@@ -117,13 +117,19 @@ def _capture(
     locator: dict[str, Any] | None = None
     owner = ref
     scoped = media_passages(
-        db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+        db,
+        viewer_id=viewer_id,
+        refs=[ref],
+        reading_media_ids={ref.uri: reading_media_id} if reading_media_id is not None else None,
     ).get(ref.uri)
     if scoped is not None:
         owner, quote, locator = scoped.owner, scoped.quote, scoped.locator
     elif ref.scheme in ("evidence_span", "content_chunk", "oracle_passage_anchor"):
         passage = current_passages(
-            db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+            db,
+            viewer_id=viewer_id,
+            refs=[ref],
+            reading_media_ids={ref.uri: reading_media_id} if reading_media_id is not None else None,
         ).get(ref.uri)
         if passage is None or passage.owner.scheme == "media":
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")

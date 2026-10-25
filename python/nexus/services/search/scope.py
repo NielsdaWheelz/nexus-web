@@ -2,11 +2,14 @@
 
 A predicate binds ``:{s}`` (the scope id, renamed per scope) and ``:viewer_id``. Media-anchored
 families alias their media ``m``; the other aliases are their family's (see ``sources``).
+Shared composition owns materialized library relations, bindings and family predicates;
+standalone predicates inline the same scope rules.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -79,15 +82,15 @@ _CONTEXT_PODCASTS = (
 )
 
 
-def _media_cells(conversation: str) -> dict[str, str]:
+def _media_cells(conversation: str, library_media: str) -> dict[str, str]:
     return {
         "media": f"m.id IN ({_MEDIA})",
-        "library": f"m.id IN ({_LIBRARY_MEDIA})",
+        "library": f"m.id IN ({library_media})",
         "conversation": conversation,
     }
 
 
-def _note_cells(scheme: str, column: str) -> dict[str, str]:
+def _note_cells(scheme: str, column: str, library_media: str) -> dict[str, str]:
     """A note joins a media or library scope only through its user or highlight-note edges."""
     edge = f"""EXISTS (SELECT 1 FROM resource_edges e
         LEFT JOIN highlights h ON (e.source_scheme = 'highlight' AND h.id = e.source_id)
@@ -96,53 +99,59 @@ def _note_cells(scheme: str, column: str) -> dict[str, str]:
             OR (e.target_scheme = '{scheme}' AND e.target_id = {column}))
           AND e.kind = 'context' AND e.origin IN ('user', 'highlight_note')
           AND e.user_id = :viewer_id AND e.ordinal IS NULL
-          AND (MEDIA IN (CASE WHEN e.source_scheme = 'media' THEN e.source_id END,
-              CASE WHEN e.target_scheme = 'media' THEN e.target_id END, h.anchor_media_id)
-              OR (h.id IS NOT NULL AND {highlight_in_reading_scope_sql("h.id", "MEDIA")})))"""
+          AND EXISTS (SELECT 1 FROM (MEDIA_SET) reading
+              WHERE reading.media_id IN (
+                  CASE WHEN e.source_scheme = 'media' THEN e.source_id END,
+                  CASE WHEN e.target_scheme = 'media' THEN e.target_id END, h.anchor_media_id)
+                  OR (h.id IS NOT NULL AND {highlight_in_reading_scope_sql("h.id", "reading.media_id")})))"""
     return {
-        "media": f"""EXISTS (SELECT 1 FROM ({_MEDIA}) reading
-            WHERE {edge.replace("MEDIA", "reading.media_id")})""",
-        "library": f"""EXISTS (SELECT 1 FROM ({_LIBRARY_MEDIA}) lib
-            WHERE {edge.replace("MEDIA", "lib.media_id")})""",
+        "media": edge.replace("MEDIA_SET", _MEDIA),
+        "library": edge.replace("MEDIA_SET", library_media),
         "conversation": _context(scheme, column),
     }
 
 
 # family -> scope kind -> predicate; a missing cell means the family contributes nothing.
-_CELLS: dict[str, dict[str, str]] = {
-    "media": _media_cells(_context("media", "m.id")),
-    "content_chunk": _media_cells(_context("media", "m.id")),
-    "fragment": _media_cells(_context("media", "m.id")),
-    "reader_apparatus_item": _media_cells(_context("media", "m.id")),
-    "highlight": _media_cells(f"({_context('highlight', 'h.id')} OR {_context('media', 'm.id')})"),
-    "podcast": {
-        "library": f"p.id IN ({_LIBRARY_PODCASTS})",
-        "conversation": f"p.id IN ({_CONTEXT_PODCASTS})",
-    },
-    "contributor": {
-        "media": f"vc.media_id IN ({_MEDIA})",
-        "library": f"(vc.media_id IN ({_LIBRARY_MEDIA}) OR vc.podcast_id IN ({_LIBRARY_PODCASTS}))",
-        "conversation": f"""((vc.media_id IS NOT NULL AND {_context("media", "vc.media_id")})
+def _cells(library_media: str) -> dict[str, dict[str, str]]:
+    return {
+        "media": _media_cells(_context("media", "m.id"), library_media),
+        "content_chunk": _media_cells(_context("media", "m.id"), library_media),
+        "fragment": _media_cells(_context("media", "m.id"), library_media),
+        "reader_apparatus_item": _media_cells(_context("media", "m.id"), library_media),
+        "highlight": _media_cells(
+            f"({_context('highlight', 'h.id')} OR {_context('media', 'm.id')})", library_media
+        ),
+        "podcast": {
+            "library": f"p.id IN ({_LIBRARY_PODCASTS})",
+            "conversation": f"p.id IN ({_CONTEXT_PODCASTS})",
+        },
+        "contributor": {
+            "media": f"vc.media_id IN ({_MEDIA})",
+            "library": f"(vc.media_id IN ({library_media}) OR vc.podcast_id IN ({_LIBRARY_PODCASTS}))",
+            "conversation": f"""((vc.media_id IS NOT NULL AND {_context("media", "vc.media_id")})
             OR vc.podcast_id IN ({_CONTEXT_PODCASTS}))""",
-    },
-    "page": _note_cells("page", "p.id"),
-    "note_block": _note_cells("note_block", "nb.id"),
-    "message": {
-        "conversation": f"""(ms.conversation_id = :{{s}} OR {_context("message", "ms.id")}
+        },
+        "page": _note_cells("page", "p.id", library_media),
+        "note_block": _note_cells("note_block", "nb.id", library_media),
+        "message": {
+            "conversation": f"""(ms.conversation_id = :{{s}} OR {_context("message", "ms.id")}
             OR {_context("conversation", "ms.conversation_id")})"""
-    },
-    "conversation": {"conversation": f"(c.id = :{{s}} OR {_context('conversation', 'c.id')})"},
-    "web_result": {"conversation": "msg.conversation_id = :{s}"},
-    "passage_anchor": {
-        kind: f"""((pa.owner_scheme = 'media' AND m.id IN ({media}))
+        },
+        "conversation": {"conversation": f"(c.id = :{{s}} OR {_context('conversation', 'c.id')})"},
+        "web_result": {"conversation": "msg.conversation_id = :{s}"},
+        "passage_anchor": {
+            kind: f"""((pa.owner_scheme = 'media' AND m.id IN ({media}))
             OR (pa.owner_scheme = 'note_block'
-                AND {_note_cells("note_block", "pa.owner_id")[kind]}))"""
-        for kind, media in (("media", _MEDIA), ("library", _LIBRARY_MEDIA))
+                AND {_note_cells("note_block", "pa.owner_id", library_media)[kind]}))"""
+            for kind, media in (("media", _MEDIA), ("library", library_media))
+        }
+        | {
+            "conversation": f"({_context('passage_anchor', 'pa.id')} OR (pa.owner_scheme='media' AND {_context('media', 'm.id')}))"
+        },
     }
-    | {
-        "conversation": f"({_context('passage_anchor', 'pa.id')} OR (pa.owner_scheme='media' AND {_context('media', 'm.id')}))"
-    },
-}
+
+
+_CELLS = _cells(_LIBRARY_MEDIA)
 
 # family -> the (scheme, column) pairs a frozen chat context admits by exact ref; a frozen
 # conversation admits its completed messages.
@@ -166,8 +175,11 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-def scope_predicate(
-    family: str, scopes: Sequence[SearchScope], frozen: tuple[ResourceRef, ...] | None
+def _scope_predicate(
+    family: str,
+    scopes: Sequence[SearchScope],
+    frozen: tuple[ResourceRef, ...] | None,
+    cells: Sequence[Mapping[str, Mapping[str, str]]],
 ) -> tuple[str, dict[str, Any]] | None:
     """``AND (...)`` admitting the union of ``scopes`` for ``family``, or None for nothing.
 
@@ -184,14 +196,74 @@ def scope_predicate(
             for scheme, column in _FROZEN.get(family, ()):
                 params[f"frozen_{scheme}"] = [ref.id for ref in frozen if ref.scheme == scheme]
                 clauses.append(f"{column} = ANY(:frozen_{scheme})")
-        elif (cell := _CELLS.get(family, {}).get(scope.kind)) is not None:
+        elif (cell := cells[n].get(family, {}).get(scope.kind)) is not None:
             params[f"scope_{n}"] = scope.id
             clauses.append(cell.replace("{s}", f"scope_{n}"))
     return (f" AND ({' OR '.join(clauses)})", params) if clauses else None
 
 
+@dataclass(frozen=True)
+class ScopeSQL:
+    """Attach ctes once; cells and their bindings belong to this composition only."""
+
+    ctes: tuple[str, ...]
+    bindings: Mapping[str, Any]
+    predicates: Mapping[str, str]
+    library_media: Mapping[int, str]
+
+    def cell(self, family: str) -> tuple[str, dict[str, Any]] | None:
+        predicate = self.predicates.get(family)
+        if predicate is None:
+            return None
+        return predicate, dict(self.bindings)
+
+
+def compose_scopes(
+    families: Sequence[str], scopes: Sequence[SearchScope], frozen: tuple[ResourceRef, ...] | None
+) -> ScopeSQL:
+    """One exact materialized reading-media set per bound library scope.
+
+    The consumer attaches ctes once and uses cells from this value; authorization
+    remains the caller's responsibility. Standalone predicates own their inline sets.
+    """
+    if any(scope.kind == "all" for scope in scopes) and frozen is None:
+        return ScopeSQL((), {}, dict.fromkeys(families, ""), {})
+    ctes: list[str] = []
+    bindings: dict[str, Any] = {}
+    cells = []
+    library_relations: dict[int, str] = {}
+    for n, scope in enumerate(scopes):
+        library_media = _LIBRARY_MEDIA
+        if scope.kind == "library":
+            name = f"search_scope_library_{n}"
+            relation = reading_media_ids_sql(library_media_ids_cte_sql(library_param=f":scope_{n}"))
+            ctes.append(f"{name} AS MATERIALIZED ({relation})")
+            assert scope.id is not None
+            bindings[f"scope_{n}"] = scope.id
+            library_media = f"SELECT media_id FROM {name}"
+            library_relations[n] = library_media
+        cells.append(_cells(library_media))
+    predicates: dict[str, str] = {}
+    for family in families:
+        cell = _scope_predicate(family, scopes, frozen, cells)
+        if cell is not None:
+            predicates[family] = cell[0]
+            bindings.update(cell[1])
+    return ScopeSQL(tuple(ctes), bindings, predicates, library_relations)
+
+
+def scope_predicate(
+    family: str, scopes: Sequence[SearchScope], frozen: tuple[ResourceRef, ...] | None
+) -> tuple[str, dict[str, Any]] | None:
+    """Self-contained family predicate, including its inline scope relations."""
+    return _scope_predicate(family, scopes, frozen, [_CELLS] * len(scopes))
+
+
 def admitted_reading_media_sql(
-    scopes: Sequence[SearchScope], frozen: tuple[ResourceRef, ...] | None
+    scopes: Sequence[SearchScope],
+    frozen: tuple[ResourceRef, ...] | None,
+    *,
+    library_media: Mapping[int, str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """The visible reading identities the requested union explicitly admits.
 
@@ -205,24 +277,32 @@ def admitted_reading_media_sql(
             if frozen is None:
                 return visible_media_ids_cte_sql(), {}
             params["frozen_media"] = [ref.id for ref in frozen if ref.scheme == "media"]
-            roots.append("SELECT unnest(CAST(:frozen_media AS uuid[])) AS media_id")
+            roots.append(
+                reading_media_ids_sql("SELECT unnest(CAST(:frozen_media AS uuid[])) AS media_id")
+            )
         else:
             param = f"scope_{index}"
             params[param] = scope.id
             if scope.kind == "media":
-                roots.append(f"SELECT CAST(:{param} AS uuid) AS media_id")
+                roots.append(reading_media_ids_sql(f"SELECT CAST(:{param} AS uuid) AS media_id"))
             elif scope.kind == "library":
-                roots.append(library_media_ids_cte_sql(library_param=f":{param}"))
+                roots.append(
+                    library_media[index]
+                    if library_media is not None and index in library_media
+                    else reading_media_ids_sql(library_media_ids_cte_sql(library_param=f":{param}"))
+                )
             elif scope.kind == "conversation":
                 roots.append(
-                    f"SELECT target_id AS media_id FROM ({context_facts_sql(f':{param}')}) context WHERE target_scheme='media'"
+                    reading_media_ids_sql(
+                        f"SELECT target_id AS media_id FROM ({context_facts_sql(f':{param}')}) context WHERE target_scheme='media'"
+                    )
                 )
     selected = (
         " UNION ".join(f"SELECT media_id FROM ({root}) root" for root in roots)
         if roots
         else "SELECT NULL::uuid AS media_id WHERE FALSE"
     )
-    reading = reading_media_ids_sql(selected)
+    reading = selected
     return (
         f"SELECT DISTINCT reading.media_id FROM ({reading}) reading JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id=reading.media_id",
         params,

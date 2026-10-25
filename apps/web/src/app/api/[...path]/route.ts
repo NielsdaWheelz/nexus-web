@@ -23,6 +23,13 @@ async function handle(
   request: Request,
   { params }: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname === "/api/search" && url.searchParams.get("phase") === "hybrid") {
+    console.info(JSON.stringify({
+      event: "search_transport", owner: "route", stage: "entry",
+      request_id: request.headers.get("x-request-id"), epoch_ms: Date.now(),
+    }));
+  }
   const { path } = await params;
   if (DENIED.has(path[0])) {
     return Response.json(

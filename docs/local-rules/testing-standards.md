@@ -300,10 +300,25 @@ cache owner acquires and retains them. teardown performs no host image inventory
 
 ## retained foundation
 
-keep the reusable runtime, provider composition, browser helpers and static gate.
-scenario cases and their fixtures are temporary: delete them after final
-qualification. retain no regression suite, coverage target or test-only
-application seam.
+keep the reusable runtime and static gate. retain exactly three search integration
+checks, invoked manually through the existing `./scripts/lab` disposable runtime:
+
+1. scope isolation: viewer permissions and requested scopes admit exactly the
+   intended resources, including exclusions.
+2. atomic replacement: search publication replacement exposes a complete old or
+   new revision, never a mixture.
+3. owner evidence: the strongest eligible passage and deterministic tie winner
+   have literal displayed evidence and preserve canonical bodies and activation.
+
+the single retained entry is `apps/web/scripts/lab/search.ts`, beside the existing
+browser helpers: `./scripts/lab -- bun apps/web/scripts/lab/search.ts`.
+use a small owned synthetic fixture and real application
+writers and readers; retain no private corpus, new testing framework or test-only
+product seams. these checks stay outside `./scripts/test` and ci; ci starts no
+services or browsers.
+
+all other scenario cases and their fixtures are temporary: delete them after
+final qualification. retain no additional regression suite or coverage target.
 
 historical test commands and proof checklists describe their original change;
 they do not revive retired work. actual product defects and unresolved manual

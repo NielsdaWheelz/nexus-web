@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import LLMCall
 from nexus.db.retries import retry_read_committed
-from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobRow, enqueue_job
@@ -434,7 +433,6 @@ def admit_metadata_enrichment(
                     ApiErrorCode.E_RESOURCE_CONFLICT,
                     "metadata activity changed; refresh and try again",
                 )
-            db.rollback()
             return MetadataEnrichmentAccepted(
                 media_id=media_id, job_id=latest, last_enriched_at=media.metadata_enriched_at
             )
@@ -450,7 +448,6 @@ def admit_metadata_enrichment(
         job = enqueue_metadata_enrichment(
             db, media_id=media_id, requester_user_id=viewer_id, request_id=request_id
         )
-        db.commit()
         return MetadataEnrichmentAccepted(
             media_id=media_id, job_id=job.id, last_enriched_at=media.metadata_enriched_at
         )
@@ -462,38 +459,37 @@ def review_metadata_result(db: Session, *, viewer_id: UUID, media_id: UUID, job_
     """Mark one no-findings result reviewed for this viewer (I11); an existing review stands."""
 
     def review() -> None:
-        with transaction(db):
-            db.execute(text("SELECT 1 FROM media WHERE id = :m FOR UPDATE"), {"m": media_id})
-            if not can_read_media(db, viewer_id, media_id):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            row = (
-                db.execute(
-                    text(f"""
-                        SELECT effective_status, reviewed_at FROM ({metadata_operations_sql()}) ops
-                        WHERE job_id = :job AND media_id = :m
-                    """),
-                    {"viewer_id": viewer_id, "job": job_id, "m": media_id},
-                )
-                .mappings()
-                .one_or_none()
+        db.execute(text("SELECT 1 FROM media WHERE id = :m FOR UPDATE"), {"m": media_id})
+        if not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        row = (
+            db.execute(
+                text(f"""
+                    SELECT effective_status, reviewed_at FROM ({metadata_operations_sql()}) ops
+                    WHERE job_id = :job AND media_id = :m
+                """),
+                {"viewer_id": viewer_id, "job": job_id, "m": media_id},
             )
-            if row is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Metadata result not found")
-            if row["effective_status"] != "no_findings":
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT,
-                    "only a no-findings metadata result can be marked reviewed",
-                )
-            if row["reviewed_at"] is None:
-                db.execute(
-                    text("""
-                        INSERT INTO metadata_result_reviews (id, viewer_id, job_id, reviewed_at)
-                        VALUES (:id, :viewer, :job, clock_timestamp())
-                        ON CONFLICT (viewer_id, job_id) DO NOTHING
-                    """),
-                    {"id": new_uuid7(), "viewer": viewer_id, "job": job_id},
-                )
-                db.execute(text("SELECT pg_notify('media_events', :m)"), {"m": str(media_id)})
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Metadata result not found")
+        if row["effective_status"] != "no_findings":
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "only a no-findings metadata result can be marked reviewed",
+            )
+        if row["reviewed_at"] is None:
+            db.execute(
+                text("""
+                    INSERT INTO metadata_result_reviews (id, viewer_id, job_id, reviewed_at)
+                    VALUES (:id, :viewer, :job, clock_timestamp())
+                    ON CONFLICT (viewer_id, job_id) DO NOTHING
+                """),
+                {"id": new_uuid7(), "viewer": viewer_id, "job": job_id},
+            )
+            db.execute(text("SELECT pg_notify('media_events', :m)"), {"m": str(media_id)})
 
     retry_read_committed(db, "metadata_result.review", review)
 

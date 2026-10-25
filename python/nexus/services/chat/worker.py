@@ -18,6 +18,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
+from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import JobExecutionContext, JobRow
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import ChatRunAssistantTextDeltaEventPayload
@@ -144,51 +145,57 @@ async def _execute(
         await streamed.flush()
     finally:
         streamed.close()
-    # Publication and deletion both lock conversation → run → job.
-    db.execute(
-        text(
-            "SELECT c.id FROM conversations c JOIN chat_runs r ON r.conversation_id=c.id WHERE r.id=:id FOR UPDATE OF c"
-        ),
-        {"id": run_id},
-    )
-    run = events.lock_run(db, run_id)
-    if run is None:  # deleted mid-generation, together with its job
-        db.commit()
-        return
-    events.fence(db, context)
-    # A stop that lands after the model finished does not discard its answer.
-    if isinstance(terminal, Cancelled):
-        content = citations.unpublished(terminal.partial_text)
-        events.finalize(db, run, status="cancelled", content=content)
-    elif isinstance(terminal, Succeeded):
-        published = citations.publish(db, run, terminal.value)
-        support_id = None
-        if isinstance(published, citations.Degraded):
-            support_id = uuid4().hex[:12]
-            logger.warning(
-                "chat_citations_degraded",
-                chat_run_id=str(run_id),
+
+    def publish() -> tuple[str, str] | None:
+        # The serializable attempt preserves conversation → run → job ordering.
+        db.execute(
+            text(
+                "SELECT c.id FROM conversations c JOIN chat_runs r ON r.conversation_id=c.id WHERE r.id=:id FOR UPDATE OF c"
+            ),
+            {"id": run_id},
+        )
+        run = events.lock_run(db, run_id)
+        if run is None:  # deleted mid-generation, together with its job
+            return None
+        events.fence(db, context)
+        # A stop that lands after the model finished does not discard its answer.
+        if isinstance(terminal, Cancelled):
+            content = citations.unpublished(terminal.partial_text)
+            events.finalize(db, run, status="cancelled", content=content)
+        elif isinstance(terminal, Succeeded):
+            published = citations.publish(db, run, terminal.value)
+            degraded = published if isinstance(published, citations.Degraded) else None
+            support_id = uuid4().hex[:12] if degraded is not None else None
+            events.finalize(
+                db,
+                run,
+                status="complete",
+                content=published.content,
                 support_id=support_id,
-                detail=published.detail,
+                warning="CitationsUnavailable" if support_id else None,
             )
-        events.finalize(
-            db,
-            run,
-            status="complete",
-            content=published.content,
+            if support_id is not None and degraded is not None:
+                return support_id, degraded.detail
+        else:
+            events.finalize(
+                db,
+                run,
+                status="error",
+                content=citations.unpublished(terminal.partial_text),
+                error_code=terminal.code,
+                support_id=terminal.generation_id.hex[:12],
+            )
+        return None
+
+    degraded = retry_serializable(db, "chat_run.publish", publish)
+    if degraded is not None:
+        support_id, detail = degraded
+        logger.warning(
+            "chat_citations_degraded",
+            chat_run_id=str(run_id),
             support_id=support_id,
-            warning="CitationsUnavailable" if support_id else None,
+            detail=detail,
         )
-    else:
-        events.finalize(
-            db,
-            run,
-            status="error",
-            content=citations.unpublished(terminal.partial_text),
-            error_code=terminal.code,
-            support_id=terminal.generation_id.hex[:12],
-        )
-    db.commit()
 
 
 class _Text:

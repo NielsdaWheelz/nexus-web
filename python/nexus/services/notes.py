@@ -50,6 +50,7 @@ from nexus.services.resource_graph.cleanup import (
 from nexus.services.resource_graph.highlight_notes import note_blocks_for_highlight
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, require_ref
 from nexus.services.resource_items import versions
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -197,8 +198,7 @@ def create_page(
             outline.apply_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
     return retry_serializable(db, "create_page", op)
@@ -234,6 +234,8 @@ def write_title(
     page.updated_at = func.now()
     retention.touch_owners(db, [ref])
     versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="title")
+    db.flush()
+    projection.refresh(db, "page", [page_id])
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> WritingAck:
@@ -243,8 +245,7 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> WritingAck:
         delete_page_in_current_transaction(db, viewer_id, page_id)
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
     return retry_serializable(db, "delete_page", op)
@@ -271,6 +272,7 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(page)
     db.flush()
+    projection.refresh(db, "page", [page_id])
 
 
 def page_facts(db: Session, viewer_id: UUID, page_ids: Sequence[UUID]) -> dict[UUID, PageFacts]:
@@ -335,8 +337,7 @@ def capture(
         )
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
     return retry_serializable(db, "daily_capture", op)
@@ -489,8 +490,7 @@ def set_highlight_note(
             )
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
     return retry_serializable(db, "set_highlight_note", op)
@@ -596,8 +596,7 @@ def detach_highlight_note(
                 writing.identity(db, binding.out())
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
     return retry_serializable(db, "detach_highlight_note", op)
@@ -627,8 +626,7 @@ def delete_highlight_note(
         note_bodies.delete_note(db, viewer_id=viewer_id, note_id=note_id)
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
     return retry_serializable(db, "delete_highlight_note", op)
@@ -704,6 +702,8 @@ def _new_page(db: Session, viewer_id: UUID, page_id: UUID, title: str) -> bool:
             db, viewer_id=viewer_id, ref=page_ref(page_id), name=lane, before=None, checked=1
         )
         versions.ensure_version(db, viewer_id=viewer_id, ref=page_ref(page_id), lane=lane)
+    db.flush()
+    projection.refresh(db, "page", [page_id])
     return True
 
 

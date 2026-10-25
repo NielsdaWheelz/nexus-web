@@ -3,7 +3,8 @@
 ``run_tool`` is the only callback generation core holds. A granted call writes its row
 (and, in a chat, its start frames) before it runs, then completes the row in the
 transaction that commits its local effects, under the fence: generation open, job claim
-live, chat run running. Nothing is replayed; a repeated call runs again.
+live, chat run running. Only complete database attempts replay; external tools run once. A repeated model
+call runs again with a new call identity.
 """
 
 from __future__ import annotations
@@ -55,13 +56,15 @@ from llm_tools import (
     web_family,
 )
 from pydantic import BaseModel
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from nexus.config import Settings
-from nexus.db.models import ChatRun
+from nexus.db.models import ChatRun, XPostSource
+from nexus.db.retries import retry_serializable
 from nexus.db.session import open_async_session
 from nexus.jobs.queue import lock_running_job_claim
 from nexus.schemas.conversation import (
@@ -73,7 +76,7 @@ from nexus.services.chat.citations import number_candidates
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.ledger import lock_open_generation
-from nexus.services.suggestion_changes import record_input_change
+from nexus.services.search import projection
 from nexus.services.tools import contract, memory, reads, writes
 
 type ArgumentRefusal = Literal["InvalidJson", "InputTooLarge"]
@@ -206,6 +209,7 @@ class Call:
     tool_id: str
     database: AsyncSession
     grant: EffectiveToolGrant  # llm_tools' web handlers read ``grant.limits``
+    deadline: float | None = None
     created_refs: list[dict[str, Any]] = field(default_factory=list)
     retrieved: list[RetrievalCitation] = field(default_factory=list)
     selected: list[RetrievalCitation] = field(default_factory=list)
@@ -259,22 +263,46 @@ async def run_tool(
     binding = run.plan.tools.catalog_view.binding(ToolId(tool_id))
     async with open_async_session() as database:
         call = Call(run, uuid4(), tool_id, database, run.plan.tools.grant(binding.spec.id))
-        position = await database.run_sync(lambda _: _start(call, arguments))
+        position = await database.run_sync(
+            lambda db: retry_serializable(db, "start_tool_call", lambda: _start(call, arguments))
+        )
         try:
-            result = await _dispatch(call, binding, arguments)
-            model_text = await database.run_sync(lambda _: _complete(call, position, result))
+            result, model_text = await _dispatch(call, binding, arguments, position)
+            if model_text is None:
+                if result["type"] == "Failure":
+                    # Abort a refused local attempt before its separate failure receipt.
+                    # A remote memory save may have committed; never dispatch it again.
+                    await database.rollback()
+                    call.created_refs, call.retrieved, call.selected = [], [], []
+                retrieved, selected = tuple(call.retrieved), tuple(call.selected)
+
+                def complete() -> str:
+                    # Web-result projection appends citations; replay starts from the
+                    # immutable external/read receipt, not a previous failed attempt.
+                    call.retrieved, call.selected = list(retrieved), list(selected)
+                    return _complete(call, position, result)
+
+                model_text = await database.run_sync(
+                    lambda db: retry_serializable(db, "complete_tool_call", complete)
+                )
         except BaseException as error:
+            status = "cancelled" if isinstance(error, asyncio.CancelledError) else "error"
             await database.rollback()
-            await database.execute(
-                text(
-                    "UPDATE tool_calls SET status = :status WHERE id = :id AND status = 'running'"
-                ),
-                {
-                    "id": call.id,
-                    "status": "cancelled" if isinstance(error, asyncio.CancelledError) else "error",
-                },
+
+            def mark_failed() -> None:
+                call.db.execute(
+                    text(
+                        "UPDATE tool_calls SET status = :status WHERE id = :id AND status = 'running'"
+                    ),
+                    {
+                        "id": call.id,
+                        "status": status,
+                    },
+                )
+
+            await database.run_sync(
+                lambda db: retry_serializable(db, "fail_tool_call", mark_failed)
             )
-            await database.commit()
             raise
     return ToolOutput(call.id, result, model_text)
 
@@ -309,55 +337,77 @@ def _start(call: Call, arguments: dict[str, Any] | ArgumentRefusal) -> int:
     if chat_run is not None:
         started = ChatRunToolCallStartEventPayload(tool_call_id=call.id, tool_call_index=position)
         events.append(db, chat_run, started)
-    db.commit()
     return position
 
 
 async def _dispatch(
-    call: Call, binding: ToolBinding[Any, Any, Any], arguments: dict[str, Any] | ArgumentRefusal
-) -> ToolResult:
+    call: Call,
+    binding: ToolBinding[Any, Any, Any],
+    arguments: dict[str, Any] | ArgumentRefusal,
+    position: int,
+) -> tuple[ToolResult, str | None]:
     """Validate, bound and run the handler; every expected refusal is a Failure result."""
 
     limits = call.grant.limits
     if isinstance(arguments, str):
-        return _failure("InvalidInput" if arguments == "InvalidJson" else "BudgetExceeded")
+        return _failure("InvalidInput" if arguments == "InvalidJson" else "BudgetExceeded"), None
     if (
         len(canonical_json_bytes({"type": "ParsedJson", "value": arguments}))
         > limits.max_input_bytes
     ):
-        return _failure("BudgetExceeded")
+        return _failure("BudgetExceeded"), None
     if not isinstance(binding.execute, Available):
-        return _failure("ToolUnavailable")
+        return _failure("ToolUnavailable"), None
     try:
         value = validate_tool_input(binding, arguments)
     except SchemaDecodeError:
-        return _failure("InvalidInput")
+        return _failure("InvalidInput"), None
+    call.deadline = asyncio.get_running_loop().time() + limits.deadline_seconds
     try:
-        async with asyncio.timeout(limits.deadline_seconds):
+        async with asyncio.timeout_at(call.deadline):
+            if call.tool_id in contract.WRITES:
+
+                def write_and_complete() -> tuple[ToolResult, str]:
+                    call.created_refs, call.retrieved, call.selected = [], [], []
+                    success = writes.HANDLERS[call.tool_id](value, call)
+                    result: ToolResult = {
+                        "type": "Success",
+                        "value": success.model_dump(mode="json"),
+                    }
+                    return result, _complete(call, position, result)
+
+                return await call.database.run_sync(
+                    lambda db: retry_serializable(db, "write_tool_call", write_and_complete)
+                )
             success = await binding.execute.handler(value, call)
     except DeclaredToolFailure as failure:
         error = failure.error
         encoded = error.model_dump(mode="json") if isinstance(error, BaseModel) else error
-        return {"type": "Failure", "error": encoded}
+        return {"type": "Failure", "error": encoded}, None
     except BoundaryFailure as failure:
-        return _failure(failure.error_type)
+        return _failure(failure.error_type), None
     except TimeoutError:
-        return _failure("DeadlineExceeded")
+        return _failure("DeadlineExceeded"), None
+    except DBAPIError as exc:
+        if (
+            getattr(exc.orig, "sqlstate", None) != "57014"
+            or asyncio.get_running_loop().time() < call.deadline
+        ):
+            raise
+        return _failure("DeadlineExceeded"), None
     if isinstance(success, HandlerSuccess):  # llm_tools' own web handlers
         success = success.value
-    return {"type": "Success", "value": success.model_dump(mode="json")}
+    return {"type": "Success", "value": success.model_dump(mode="json")}, None
 
 
 def _complete(call: Call, position: int, result: ToolResult) -> str:
     """Complete the row with locally staged effects, then the chat's view."""
 
     db = call.db
-    if result["type"] == "Failure":
-        db.rollback()  # local effects only; a remote memory save may have committed
-        call.created_refs, call.retrieved, call.selected = [], [], []
     encoded = canonical_json_bytes(result)
     if len(encoded) > call.grant.limits.max_output_bytes:
         raise AssertionError(f"{call.tool_id} result exceeds its declared output limit")
+    # Read owners closed their snapshots; citations publish in this fresh attempt.
     # the run before the row, as every chat writer locks them.
     chat_run = call.fence()
     completed = db.execute(
@@ -377,9 +427,6 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
     model_text = encoded.decode()
     if chat_run is not None:
         model_text = _project(call, chat_run, position, result) or model_text
-    if result["type"] == "Success" and call.tool_id in contract.WRITES:
-        record_input_change(db)
-    db.commit()
     return model_text
 
 
@@ -399,6 +446,11 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
             citation=citation,
             selected=citation in call.selected,
         )
+    media_ids = {UUID(c.media_id) for c in call.retrieved if c.media_id}
+    if media_ids and db.scalar(
+        select(XPostSource.id).where(XPostSource.media_id.in_(media_ids)).limit(1)
+    ):
+        projection.refresh_viewer_contributors(db, [call.principal])
     error = str(result["error"]["type"]) if result["type"] == "Failure" else None
     finished = ChatRunToolResultEventPayload(
         error_type=error,

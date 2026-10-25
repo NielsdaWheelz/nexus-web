@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import ContentIndexState, Media, MediaSourceAttempt, ReaderPublication
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError
 from nexus.ids import new_uuid7
@@ -74,7 +74,6 @@ from nexus.services.reader_text_slice import (
     clip_reader_fragment,
     section_witness_key,
 )
-from nexus.services.suggestion_changes import record_input_change
 
 JOB_KIND = "discover_document_parts"
 PROMPT_VERSION = 7
@@ -145,6 +144,15 @@ class DiscoveryBatch:
     excerpts: dict[str, tuple[str, ...]]
     complete: frozenset[str]
     next_cursor: int
+
+
+class _PreparationNeeded(Exception):
+    def __init__(self, payload: PartDiscoveryJob) -> None:
+        self.payload = payload
+
+
+class _ClaimLost(Exception):
+    """Abort a snapshot that may already have created the source's part set."""
 
 
 def _json(value: object) -> str:
@@ -258,9 +266,7 @@ def discover_parts(
                 raise ConflictError(
                     ApiErrorCode.E_PART_CONFLICT, "this operation id names another request"
                 )
-            result = operation_for_job(existing)
-            db.commit()
-            return result
+            return operation_for_job(existing)
         lock_source_parts(db, source_media_id)
         proof = _navigation(db, source)
         jobs = queue.jobs_for_payload(
@@ -294,11 +300,9 @@ def discover_parts(
         job = queue.enqueue_job(
             db, kind=JOB_KIND, id=request.id, payload=payload.model_dump(mode="json")
         )
-        result = operation_for_job(job)
-        db.commit()
-        return result
+        return operation_for_job(job)
 
-    return retry_read_committed(db, "discover_parts", admit)
+    return retry_serializable(db, "discover_parts", admit)
 
 
 def enqueue_initial_part_discovery(
@@ -557,7 +561,6 @@ def _finish(
         "total_sections": 0 if payload.capture is None else len(payload.capture.sections),
     }
     queue.finish_job(db, context=context, result=result)
-    db.commit()
     return result
 
 
@@ -573,15 +576,13 @@ def _snapshot(
         source = _source(db, payload.requester_user_id, payload.source_media_id)
     except ApiError:
         if queue.lock_running_job_claim(db, context=context) is None:
-            db.rollback()
-            return {"disposition": "claim_lost"}
+            raise _ClaimLost from None
         return _finish(db, context, payload, "superseded")
     lock_source_parts(db, source.id)
     proof = _navigation(db, source)
     claim = queue.lock_running_job_claim(db, context=context)
     if claim is None:
-        db.rollback()
-        return {"disposition": "claim_lost"}
+        raise _ClaimLost
     payload = PartDiscoveryJob.model_validate(claim.payload)
     if proof.navigation.generation != payload.expected_source_generation:
         return _finish(db, context, payload, "superseded")
@@ -593,58 +594,7 @@ def _snapshot(
     if state is None or state.section_witness_key != section_witness_key(
         proof.navigation.generation, proof.sections
     ):
-        db.rollback()
-        from nexus.services.content_indexing import prepare_media_parts
-
-        preparation = prepare_media_parts(
-            db,
-            viewer_id=payload.requester_user_id,
-            source_media_id=payload.source_media_id,
-            request=PartPrepare(
-                id=uuid5(context.job_id, "prepare-sections"),
-                expected_source_generation=payload.expected_source_generation,
-            ),
-        )
-        # Structural preparation may complete before embeddings; check the witness
-        # on the next claim instead of waiting for generic index success.
-        if queue.lock_running_job_claim(db, context=context) is None:
-            db.rollback()
-            return {"disposition": "claim_lost"}
-        # Preparation may have reprojected historical navigation without changing
-        # the source body. Compare its new witness to the new catalogue.
-        proof = _navigation(db, source)
-        prepared_key = db.scalar(
-            select(ContentIndexState.section_witness_key).where(
-                ContentIndexState.owner_kind == "media",
-                ContentIndexState.owner_id == payload.source_media_id,
-            )
-        )
-        preparation_job = queue.get_job(db, preparation.job_id)
-        ready = prepared_key == section_witness_key(proof.navigation.generation, proof.sections)
-        if (
-            not ready
-            and preparation_job is not None
-            and preparation_job.status in ("dead", "succeeded")
-        ):
-            failure = queue.TerminalJobFailure(
-                {"outcome": None, "completed_sections": payload.cursor, "total_sections": 0},
-                "E_PART_STRUCTURE_PREPARATION_FAILED",
-                "couldn’t prepare sections",
-            )
-            queue.finish_job(db, context=context, result=failure)
-            db.commit()
-            return failure
-        at = (
-            None
-            if ready
-            else db.scalar(
-                text("SELECT clock_timestamp()+make_interval(secs=>:seconds)"),
-                {"seconds": _PREPARATION_POLL_SECONDS},
-            )
-        )
-        queue.reschedule_running_job(db, context=context, at=at)
-        db.commit()
-        return {"disposition": "preparing_structure"}
+        raise _PreparationNeeded(payload)
     captured = _capture(db, source, proof)
     if payload.capture is not None and payload.capture.fingerprint != captured.fingerprint:
         return _finish(db, context, payload, "superseded")
@@ -668,9 +618,7 @@ def _snapshot(
             "source context exceeds discovery input bound",
         )
         queue.finish_job(db, context=context, result=failure)
-        db.commit()
         return failure
-    db.commit()
     return payload, batch
 
 
@@ -740,15 +688,13 @@ def _publish(
         source = _source(db, payload.requester_user_id, payload.source_media_id)
     except ApiError:
         if queue.lock_running_job_claim(db, context=context) is None:
-            db.rollback()
-            return {"disposition": "claim_lost"}
+            raise _ClaimLost from None
         return _finish(db, context, payload, "superseded")
     lock_source_parts(db, source.id)
     proof = _navigation(db, source)
     claim = queue.lock_running_job_claim(db, context=context)
     if claim is None:
-        db.rollback()
-        return {"disposition": "claim_lost"}
+        raise _ClaimLost
     current = PartDiscoveryJob.model_validate(claim.payload)
     capture = payload.capture
     assert capture is not None
@@ -772,7 +718,6 @@ def _publish(
             "couldn’t find pieces",
         )
         queue.finish_job(db, context=context, result=result)
-        db.commit()
         return result
     for finding in terminal.value.findings:
         candidate = observe_part_finding(db, source=source, proof=proof, finding=finding)
@@ -810,24 +755,92 @@ def _publish(
         )
     updated = payload.model_copy(update={"cursor": batch.next_cursor})
     queue.update_running_job_payload(db, context=context, payload=updated.model_dump(mode="json"))
-    record_input_change(db)
     db.execute(text("SELECT pg_notify('media_events',:id)"), {"id": str(source.id)})
     if updated.cursor == len(capture.sections):
         return _finish(db, context, updated, "completed")
     queue.reschedule_running_job(
         db, context=context, at=None, payload=updated.model_dump(mode="json")
     )
-    db.commit()
     return {"disposition": "next_batch"}
 
 
 def run_discovery_job(
     *, payload: Mapping[str, Any], context: queue.JobExecutionContext
 ) -> queue.JobResult:
-    with get_session_factory()() as db:
-        snapshot = retry_read_committed(
-            db, "part_discovery.snapshot", lambda: _snapshot(db, context)
-        )
+    try:
+        with get_session_factory()() as db:
+            snapshot = retry_serializable(
+                db, "part_discovery.snapshot", lambda: _snapshot(db, context)
+            )
+    except _ClaimLost:
+        return {"disposition": "claim_lost"}
+    except _PreparationNeeded as needed:
+        snapshot = needed
+    if isinstance(snapshot, _PreparationNeeded):
+        from nexus.services.content_indexing import prepare_media_parts
+
+        pending = snapshot.payload
+        with get_session_factory()() as db:
+            preparation = prepare_media_parts(
+                db,
+                viewer_id=pending.requester_user_id,
+                source_media_id=pending.source_media_id,
+                request=PartPrepare(
+                    id=uuid5(context.job_id, "prepare-sections"),
+                    expected_source_generation=pending.expected_source_generation,
+                ),
+            )
+
+        def settle(db: Session) -> queue.JobResult:
+            library_entries.lock_media_rows_in_order(db, [pending.source_media_id])
+            try:
+                source = _source(db, pending.requester_user_id, pending.source_media_id)
+            except ApiError:
+                if queue.lock_running_job_claim(db, context=context) is None:
+                    raise _ClaimLost from None
+                return _finish(db, context, pending, "superseded")
+            lock_source_parts(db, source.id)
+            proof = _navigation(db, source)
+            if queue.lock_running_job_claim(db, context=context) is None:
+                raise _ClaimLost
+            if proof.navigation.generation != pending.expected_source_generation:
+                return _finish(db, context, pending, "superseded")
+            prepared_key = db.scalar(
+                select(ContentIndexState.section_witness_key).where(
+                    ContentIndexState.owner_kind == "media",
+                    ContentIndexState.owner_id == pending.source_media_id,
+                )
+            )
+            preparation_job = queue.get_job(db, preparation.job_id)
+            ready = prepared_key == section_witness_key(proof.navigation.generation, proof.sections)
+            if (
+                not ready
+                and preparation_job is not None
+                and preparation_job.status in ("dead", "succeeded")
+            ):
+                failure = queue.TerminalJobFailure(
+                    {"outcome": None, "completed_sections": pending.cursor, "total_sections": 0},
+                    "E_PART_STRUCTURE_PREPARATION_FAILED",
+                    "couldn’t prepare sections",
+                )
+                queue.finish_job(db, context=context, result=failure)
+                return failure
+            at = (
+                None
+                if ready
+                else db.scalar(
+                    text("SELECT clock_timestamp()+make_interval(secs=>:seconds)"),
+                    {"seconds": _PREPARATION_POLL_SECONDS},
+                )
+            )
+            queue.reschedule_running_job(db, context=context, at=at)
+            return {"disposition": "preparing_structure"}
+
+        with get_session_factory()() as db:
+            try:
+                return retry_serializable(db, "part_discovery.preparation", lambda: settle(db))
+            except _ClaimLost:
+                return {"disposition": "claim_lost"}
     if not isinstance(snapshot, tuple):
         return snapshot
     frozen, batch = snapshot
@@ -847,11 +860,14 @@ def run_discovery_job(
             decode=lambda value: _accept(value, batch=batch, capture=capture),
         )
         with runtime.session_factory() as publication:
-            return retry_read_committed(
-                publication,
-                "part_discovery.publish",
-                lambda: _publish(publication, context, frozen, batch, terminal),
-            )
+            try:
+                return retry_serializable(
+                    publication,
+                    "part_discovery.publish",
+                    lambda: _publish(publication, context, frozen, batch, terminal),
+                )
+            except _ClaimLost:
+                return {"disposition": "claim_lost"}
 
     return run_generation_job("part_discovery", context, work)
 

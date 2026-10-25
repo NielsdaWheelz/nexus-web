@@ -97,6 +97,22 @@ def identity(db: Session, value: WritingIdentity) -> None:
             state.addressed.add(ref)
 
 
+def input_owners(db: Session) -> set[str]:
+    """Stable source keys addressed by one changed authored operation.
+
+    Use only recorded transaction-local facts; invalidation must not rediscover
+    global dependencies or read the aggregate clock inside the writer.
+    """
+    state = effects(db)
+    return {
+        *(ref.uri for ref in state.addressed),
+        *(ref.uri for _, ref, _ in state.lanes),
+        *state.deleted,
+        *(f"{value.kind}:{value.canonical_id}" for value in state.identities.values()),
+        *(f"link:{id_}" for id_ in state.link_ids | state.removed),
+    }
+
+
 def ack(db: Session, viewer_id: UUID) -> WritingAck:
     from nexus.services import authored_identities
     from nexus.services.highlights import compact_highlight

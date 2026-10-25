@@ -188,14 +188,16 @@ def project(
                 continue
             locator = scoped.locator
         placed.append((row, hit.score, locator, *_refs(row)))
-    activations = {}
-    for owner in dict.fromkeys(row.get("reading_media_id") for row, *_ in placed):
-        group_refs = [ref for row, _, _, ref, _ in placed if row.get("reading_media_id") == owner]
-        activations.update(
-            resource_activations_for_refs(
-                db, viewer_id=viewer_id, refs=group_refs, reading_media_id=owner
-            )
-        )
+    activations = resource_activations_for_refs(
+        db,
+        viewer_id=viewer_id,
+        refs=[ref for _, _, _, ref, _ in placed],
+        reading_media_ids={
+            ref.uri: row["reading_media_id"]
+            for row, _, _, ref, _ in placed
+            if row.get("reading_media_id") is not None
+        },
+    )
     source_metadata = source_attributions(
         db, viewer_id=viewer_id, refs=list({owner for *_, owner in placed})
     )

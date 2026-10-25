@@ -31,7 +31,7 @@ from nexus.db.models import (
     ProcessingStatus,
     ReaderPublication,
 )
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_serializable
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -70,6 +70,7 @@ from nexus.services.reader_text_slice import (
     dom_cuts_equivalent,
     section_witness_key,
 )
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -513,9 +514,13 @@ def publish_part(
     from nexus.services.content_indexing import reconcile_media_section_bounds
 
     reconcile_media_section_bounds(db, media_id=extent.source_media_id)
+    projection.refresh_source_highlights(db, extent.source_media_id)
     for changed_id in (part_id, extent.source_media_id):
         db.execute(text("SELECT pg_notify('media_events',:id)"), {"id": str(changed_id)})
-    record_input_change(db)
+    projection.refresh(db, "media", [part_id])
+    record_input_change(
+        db, owners=(f"media:{owner}" for owner in (extent.source_media_id, part_id))
+    )
     return _receipt(db, part)
 
 
@@ -579,9 +584,7 @@ def create_part(
                 != normalized_selection(request.selection).model_dump(mode="json")
             ):
                 raise _conflict("identity_conflict", "this piece id names a different creation")
-            receipt = _receipt(db, part)
-            db.commit()
-            return receipt
+            return _receipt(db, part)
         source = _source(db, viewer_id, source_media_id, creator=True)
         lock_source_parts(db, source_media_id)
         extent = resolve_part_selection(db, source=source, selection=request.selection)
@@ -601,10 +604,9 @@ def create_part(
             ),
             decision="accepted",
         )
-        db.commit()
         return receipt
 
-    return retry_read_committed(db, "create_part", create)
+    return retry_serializable(db, "create_part", create)
 
 
 def update_part(
@@ -675,13 +677,16 @@ def update_part(
 
                 reconcile_part_bounds(db, media_id=media_id)
                 reconcile_media_section_bounds(db, media_id=part.source_media_id)
+                projection.refresh_source_highlights(db, part.source_media_id)
             advance_part_definition(db, media_id=media_id)
-            record_input_change(db)
+            projection.refresh(db, "media", [media_id])
+            record_input_change(
+                db, owners=(f"media:{owner}" for owner in (part.source_media_id, media_id))
+            )
         receipt = _receipt(db, part)
-        db.commit()
         return receipt
 
-    return retry_read_committed(db, "update_part", update)
+    return retry_serializable(db, "update_part", update)
 
 
 def decide_candidate(
@@ -708,6 +713,7 @@ def decide_candidate(
         if candidate is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "proposal not found")
         receipt = None
+        published_here = False
         desired = candidate.user_decision == request.decision and (
             request.decision == "rejected" or candidate.part_id == request.part_id
         )
@@ -776,8 +782,16 @@ def decide_candidate(
                     candidate=candidate,
                     decision="accepted",
                 )
+                published_here = True
             db.flush()
-            record_input_change(db)
+            if (
+                not published_here
+                and request.decision == "accepted"
+                and candidate.part_id is not None
+            ):
+                owners = [f"media:{source_media_id}"]
+                owners.append(f"media:{candidate.part_id}")
+                record_input_change(db, owners=owners)
         if receipt is None and request.decision == "accepted" and candidate.part_id is not None:
             receipt = read_part_receipt(db, media_id=candidate.part_id)
         result = CandidateReceipt(
@@ -790,10 +804,9 @@ def decide_candidate(
             part=receipt,
             set_revision=part_set.revision,
         )
-        db.commit()
         return result
 
-    return retry_read_committed(db, "decide_part_candidate", decide)
+    return retry_serializable(db, "decide_part_candidate", decide)
 
 
 def reject_removed_part(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:

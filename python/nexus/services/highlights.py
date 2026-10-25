@@ -43,7 +43,7 @@ from nexus.db.models import (
     ResourceEdge,
     ResourceVersion,
 )
-from nexus.db.retries import integrity_constraint_name, retry_read_committed
+from nexus.db.retries import integrity_constraint_name, retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -81,6 +81,7 @@ from nexus.services.resource_graph.highlight_notes import (
 )
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import versions
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import QuoteStatus
 
@@ -759,6 +760,8 @@ def _build_fragment_highlight(
         ref=ResourceRef(scheme="highlight", id=highlight.id),
         reason="highlight_create",
     )
+    projection.refresh(db, "highlight", [highlight.id])
+    projection.refresh_viewer_contributors(db, [viewer_id])
     return result
 
 
@@ -902,11 +905,10 @@ def ensure_highlight(
                 )
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
-    return retry_read_committed(db, "ensure_highlight", op)
+    return retry_serializable(db, "ensure_highlight", op)
 
 
 def create_fragment_highlight_in_txn(
@@ -998,7 +1000,8 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
         annotations_changed(db, highlight)
     db.flush()
     if writing.effects(db).changed:
-        record_input_change(db)
+        projection.refresh(db, "highlight", [highlight.id for highlight in stale])
+        record_input_change(db, owners=(f"media:{media_id}",))
 
 
 def list_highlights_for_media(
@@ -1104,6 +1107,14 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
 def update_highlight(
     db: Session, viewer_id: UUID, highlight_id: UUID, req: UpdateHighlightRequest
 ) -> WritingAck:
+    return retry_serializable(
+        db, "update_highlight", lambda: _update_highlight(db, viewer_id, highlight_id, req)
+    )
+
+
+def _update_highlight(
+    db: Session, viewer_id: UUID, highlight_id: UUID, req: UpdateHighlightRequest
+) -> WritingAck:
     writing.effects(db).addressed.add(ResourceRef("highlight", highlight_id))
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
     media_id = _parent_media_id(highlight)
@@ -1174,8 +1185,7 @@ def update_highlight(
             annotations_changed(db, highlight)
         response = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return response
 
     moved_to = (
@@ -1230,7 +1240,6 @@ def update_highlight(
     moved = relocating or (start, end) != (fragment_anchor.start_offset, fragment_anchor.end_offset)
     if not moved and color == highlight.color:
         response = writing.ack(db, viewer_id)
-        db.commit()
         return response
     require_highlight_version(highlight, req.expected_version)
     if moved:
@@ -1289,11 +1298,11 @@ def update_highlight(
             fragment_anchor.end_offset = end
         db.flush()
         annotations_changed(db, highlight)
+        if any(field in values for field in ("exact", "prefix", "suffix")):
+            projection.refresh(db, "highlight", [highlight_id])
         response = writing.ack(db, viewer_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=writing.input_owners(db))
     except IntegrityError as e:
-        db.rollback()
         raise map_integrity_error(e) from e
     return response
 
@@ -1324,6 +1333,8 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
         delete(HighlightFragmentAnchor).where(HighlightFragmentAnchor.highlight_id == locked.id)
     )
     db.execute(delete(Highlight).where(Highlight.id == locked.id))
+    projection.refresh(db, "highlight", [locked.id])
+    projection.refresh_viewer_contributors(db, [locked.user_id])
     claim_document_teardown_if_unreferenced_locked(db, media_id)
 
 
@@ -1332,11 +1343,10 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> Writin
         delete_highlight_in_current_transaction(db, viewer_id, highlight_id)
         out = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return out
 
-    return retry_read_committed(db, "delete_highlight", attempt)
+    return retry_serializable(db, "delete_highlight", attempt)
 
 
 def delete_highlight_in_current_transaction(

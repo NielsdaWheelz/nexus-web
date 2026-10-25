@@ -39,6 +39,7 @@ from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_or
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.search import projection
 
 
 def note_ref(note_id: UUID) -> ResourceRef:
@@ -293,6 +294,7 @@ def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(block)
     db.flush()
+    projection.refresh(db, "note_block", [note_id])
 
 
 def _version(db: Session, viewer_id: UUID, note_id: UUID) -> int:
@@ -314,6 +316,8 @@ def _changed(db: Session, viewer_id: UUID, block: NoteBlock, reason: str) -> Non
         ],
     )
     enqueue_note_reindex(db, note_block_id=block.id, reason=reason)
+    db.flush()
+    projection.refresh(db, "note_block", [block.id])
 
 
 def _embeds(value: object) -> list[ResourceRef]:

@@ -17,7 +17,6 @@ from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.config import get_settings
 from nexus.db.models import Highlight, MediaTeardownIntent, ResourceGrant, User
 from nexus.db.retries import retry_serializable
-from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_sharing import (
     AudienceAvailableOut,
@@ -155,44 +154,43 @@ def create_share(
     """Grant the subject to one audience, or answer the grant that already does."""
 
     def attempt() -> CreateResourceShareOut:
-        with transaction(db):
-            reason = _unavailable(db, viewer_user_id, subject, lock=True)
-            if reason is not None:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
-                )
-            grantee, email = None, None
-            if isinstance(body.audience, UserAudienceIn):
-                grantee, email = _grantee(db, viewer_user_id, body.audience), body.audience.email
-            grantee_id = grantee.id if grantee else None
-            same = (viewer_user_id, subject.scheme, subject.id, grantee_id)
-            grant = db.get(ResourceGrant, body.id)
-            if grant is not None and same != (
-                grant.created_by_user_id,
-                grant.subject_scheme,
-                grant.subject_id,
-                grant.grantee_user_id,
-            ):
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Share id is taken")
-            grant = grant or resource_grants.find_grant(
-                db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
+        reason = _unavailable(db, viewer_user_id, subject, lock=True)
+        if reason is not None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
             )
-            if grant is not None:
-                return CreateResourceShareOut(share=_owned(grant, grantee), created=False)
-            if grantee is None and (reason := public_resource_sharing.link_readiness(db, subject)):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
-                )
-            grant = resource_grants.insert_grant(
-                db,
-                id=body.id,
-                creator_id=viewer_user_id,
-                subject=subject,
-                grantee_id=grantee_id,
-                grantee_email=email,
+        grantee, email = None, None
+        if isinstance(body.audience, UserAudienceIn):
+            grantee, email = _grantee(db, viewer_user_id, body.audience), body.audience.email
+        grantee_id = grantee.id if grantee else None
+        same = (viewer_user_id, subject.scheme, subject.id, grantee_id)
+        grant = db.get(ResourceGrant, body.id)
+        if grant is not None and same != (
+            grant.created_by_user_id,
+            grant.subject_scheme,
+            grant.subject_id,
+            grant.grantee_user_id,
+        ):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Share id is taken")
+        grant = grant or resource_grants.find_grant(
+            db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
+        )
+        if grant is not None:
+            return CreateResourceShareOut(share=_owned(grant, grantee), created=False)
+        if grantee is None and (reason := public_resource_sharing.link_readiness(db, subject)):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
             )
-            result = CreateResourceShareOut(share=_owned(grant, grantee), created=True)
-            record_input_change(db)
-            return result
+        grant = resource_grants.insert_grant(
+            db,
+            id=body.id,
+            creator_id=viewer_user_id,
+            subject=subject,
+            grantee_id=grantee_id,
+            grantee_email=email,
+        )
+        result = CreateResourceShareOut(share=_owned(grant, grantee), created=True)
+        record_input_change(db, owners=[subject.uri])
+        return result
 
     return retry_serializable(db, "create_resource_grant", attempt)

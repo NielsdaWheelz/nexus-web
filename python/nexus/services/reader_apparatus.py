@@ -1,6 +1,7 @@
 """Reader apparatus store: one state row, its items and edges, keyed by stable_key.
 
-Replacement stays in the caller's transaction; a retry keeps matched item ids.
+replacement stays in the caller's publication-locked transaction; a retry keeps matched
+item ids. old and new item identities refresh together, including empty replacements.
 Each upsert's JSON is bounded by 128 rows and 512 KiB, or one larger valid row.
 The byte envelope is max(512 KiB, the largest encoded row plus array brackets).
 The map reads bounded owner summaries and ordered target refs, never note bodies.
@@ -78,6 +79,7 @@ from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resou
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.items import resource_items_out
 from nexus.services.resource_items.routing import route_for_visible_apparatus_item
+from nexus.services.search import projection
 
 SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
 _UPSERT_MAX_ROWS = 128
@@ -598,7 +600,7 @@ def get_reader_apparatus_detail(
         db,
         viewer_id=viewer_id,
         refs=[ResourceRef("reader_apparatus_item", target.id) for target in targets],
-        reading_media_id=media_id,
+        reading_media_ids={f"reader_apparatus_item:{target.id}": media_id for target in targets},
     )
     fragment_indexes = {
         str(row.id): int(row.idx)
@@ -782,6 +784,11 @@ def replace_media_apparatus(
     rows are updated in place and only rows this extraction no longer produces are
     deleted — with their dependents, and before the items they hang off.
     """
+    old_ids = list(
+        db.scalars(
+            text("SELECT id FROM reader_apparatus_items WHERE media_id=:id"), {"id": media_id}
+        )
+    )
     items = items or []
     edges = edges or []
     if status is None:
@@ -907,6 +914,12 @@ def replace_media_apparatus(
             text("DELETE FROM reader_apparatus_items WHERE id = ANY(:ids)"), {"ids": removed}
         )
     db.flush()
+    new_ids = list(
+        db.scalars(
+            text("SELECT id FROM reader_apparatus_items WHERE media_id=:id"), {"id": media_id}
+        )
+    )
+    projection.refresh(db, "reader_apparatus_item", [*old_ids, *new_ids])
 
 
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
@@ -921,6 +934,7 @@ def delete_media_apparatus(db: Session, media_id: UUID) -> None:
     for table in ("reader_apparatus_edges", "reader_apparatus_items", "reader_apparatus_states"):
         db.execute(text(f"DELETE FROM {table} WHERE media_id = :media_id"), {"media_id": media_id})
     db.flush()
+    projection.refresh(db, "reader_apparatus_item", item_ids)
 
 
 def _delete_apparatus_item_dependents(db: Session, item_ids: list[UUID]) -> None:

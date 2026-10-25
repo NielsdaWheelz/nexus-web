@@ -66,6 +66,11 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     title: "This capture is too large to import.",
     explanation: "Capture a smaller part of the page.",
   },
+  E_EMBEDDING_NOT_CONFIGURED: {
+    reason: "related matches are unavailable",
+    title: "text search is ready; related matches are unavailable",
+    explanation: "the embedding provider is not configured.",
+  },
   E_EMBEDDING_PROVIDER_UNAVAILABLE: {
     reason: "Search provider unavailable",
     title: "The search indexing provider did not respond.",
@@ -485,6 +490,7 @@ function statusLine(
         slot,
         item.media_id === null && slot === source,
         formatTime,
+        item.primary === "search" ? item : null,
       );
 }
 
@@ -525,7 +531,18 @@ export function obligationStatusLine(
   slot: ImportObligation,
   upload = false,
   formatTime?: (value: string) => string,
+  search: Pick<ImportItem, "text_search_ready" | "media_kind"> | null = null,
 ): string {
+  if (search !== null) {
+    if (slot.classification === "Complete") {
+      if (!search.text_search_ready) return search.media_kind === "pdf"
+        ? "this copy needs text recognition before its text can be searched"
+        : "no searchable text was found in this copy";
+    } else {
+      if (!search.text_search_ready) return "preparing text search";
+      return slot.classification === "Active" ? "text search is ready; related matches are preparing" : "text search is ready; related matches are unavailable";
+    }
+  }
   switch (slot.classification) {
     case "Active": {
       if (slot.status === "Queued") {
@@ -638,7 +655,7 @@ function offerLine(offer: RecoveryOffer): string {
         ? "Runs the stopped attempt again from the stored file. No new attempt is created."
         : "Fetches the source again for the stopped attempt. No new attempt is created.";
     case "RepairSearch":
-      return "Rebuilds the search index from the text already imported. The source is not fetched or extracted again.";
+      return "continues search preparation from the imported text";
     default:
       return assertNever(offer, "Unreachable recovery offer");
   }

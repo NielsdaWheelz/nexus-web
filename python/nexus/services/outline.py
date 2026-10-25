@@ -139,8 +139,7 @@ def execute(db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand])
         apply_in_current_transaction(db, viewer_id=viewer_id, commands=commands)
         result = writing.ack(db, viewer_id)
         if writing.effects(db).changed:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=writing.input_owners(db))
         return result
 
     return retry_serializable(db, "outline_commands", op)

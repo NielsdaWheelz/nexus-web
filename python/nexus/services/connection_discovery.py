@@ -6,6 +6,8 @@ successful scan owns the whole set, even when it empties it; every other
 outcome leaves it untouched. Exclusion is at work grain (a passage, highlight
 or anchor counts as its media): the source's own work and works it already
 relates to. Removing an edge does not prevent a later scan from proposing it.
+Only publication retries, as one fresh serializable database attempt with its
+claim fence and source clock; generation stays outside that retry boundary.
 """
 
 from __future__ import annotations
@@ -212,7 +214,6 @@ async def _scan(
         return "skipped", None
     source_text, kin = source
     response = search(
-        db,
         user_id,
         SearchQuery(
             text=source_text[:800],
@@ -269,10 +270,8 @@ def _publish(
 
     def attempt() -> tuple[ScanResult, None]:
         if not lock_running_job_claim(db, context=context):
-            db.rollback()
             return "skipped", None
         if resolve_ref(db, viewer_id=user_id, ref=ref).missing:
-            db.commit()
             return "skipped", None
         targets = [assert_resource_ref(target) for target, _ in picks]
         excluded = _excluded(db, user_id=user_id, ref=ref)
@@ -294,8 +293,7 @@ def _publish(
                 if not item.missing and _work(db, target) not in excluded
             ],
         )
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=[ref.uri])
         return "ok", None
 
     return retry_serializable(db, "connection_discovery.publish", attempt)
