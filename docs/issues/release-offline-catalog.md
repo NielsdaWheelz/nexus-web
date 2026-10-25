@@ -1,22 +1,19 @@
-# offline catalog release
+# deployed offline catalog acceptance
 
-pair the catalog endpoint/web and android apk from the same source. the route is
-additive: retain wire 15 under the existing release rule. there is no migration,
-new environment variable or server export job. existing startup release checks
-remain in `release-offline-startup.md`.
+paired source `c5cf4bc27`, wire 15, signed android `0.3.7` / code 28 is active.
+the actual account's startup and manual catalog saves returned 200. cold
+force-stop/airplane startup retained the catalog and opened previously unvisited
+library, podcast, note and chat indexes; library detail opened. note/chat detail
+boundaries truthfully reported text unavailable offline. catalog saving was
+correctly disabled without a connection. #805 owns physical observations and
+keeps isolated proof separate. the old account writing store was removed exactly;
+no app-data reset occurred.
 
-before release, qualify the signed installed upgrade against production: save a
-complete catalog for the actual account, force-stop, enter airplane mode and open
-previously unvisited library/podcast/note/chat indexes and detail boundaries.
-verify foreground/manual refresh, retained freshness after failure, and sign-out
-cleanup. preserve installed downloads and pending progress through upgrade;
-save memory-only drafts before replacing the apk. retire old writing stores
-through the exact procedure in `release-online-first-writing.md`.
+remaining deployed acceptance: settled podcast detail, retained saved freshness
+after a failed refresh, and sign-out cleanup. do not infer those from successful
+index browsing or wipe the personal namespace to test them. old catalog data was
+rebuilt online, without a compatibility reader. keep installed download/progress
+acceptance in [downloaded episodes](release-offline-episodes.md).
 
-old catalog format/wire is rebuilt online, never migrated through a compatibility
-reader. catalog failure must leave the shell and unrelated stores usable. full
-refreshes may use mobile data while the app is open. this release adds metadata
-browsing, not episode downloads or reading/playback parity.
-
-resolved when the paired signed upgrade and production-account journeys pass.
-isolated-device implementation proof belongs in the implementation pr.
+resolve when these remaining journeys pass or receive an explicit owner
+disposition. catalog failure must preserve usable shell and unrelated state.

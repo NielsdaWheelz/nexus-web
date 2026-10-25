@@ -1,65 +1,37 @@
-# contained works release
+# deployed contained works acceptance
 
-source-dependent media adds a generated reader variant and bounded public sharing.
-revision 0316 follows the offline-listening watermark migration, 0315.
-recheck the actual migration head before merging the single contained-works
-migration. existing text and annotations stay intact; existing imports are not
-automatically segmented. rehearse on the newest production backup before merge.
-take the deployment owner's verified backup with writers stopped; verify constraints
-and root/part collection before reopening writes.
+paired activation completed at `c5cf4bc27` (schema 0316, wire 15), with signed
+android `0.3.7` / code 28. the pre-release verified production restore passed
+`0312 → 0316` and retained-data comparisons; the canonical release took its own
+verified stopped-writer backup and reached the exact head. the frozen census
+found no live reindex jobs. [#805](https://github.com/NielsdaWheelz/nexus-web/pull/805)
+owns this release proof; [#784](https://github.com/NielsdaWheelz/nexus-web/pull/784)
+owns the isolated corpus, reader, search and sharing qualification.
 
-wire 15 currently follows released wire 14. recheck actual paired release state
-and apply the once-per-release revision rule,
-regenerate types and pair api/web/native consumers. the new explicit part reader
-variant normalizes into the existing renderer; private whole-source reader wire
-and downloaded reading-copy shapes remain current and unchanged. public text
-asset/note requests all gain captured identity fencing, with no old request arm.
-audit exhaustive kind switches
-and refuse part reading-copy creation at both capability and service boundaries.
-no compatibility branch. piece downloads remain unavailable. complete the shared
-[https/http2 release prerequisites](release-web-http2.md) and
-[offline-episode client pairing](release-offline-episodes.md) for the same release.
+migration adds no pieces or automatic corpus scan. existing text, annotations
+and reading copies remain intact; pieces remain unavailable for download.
+provider-runtime #48 and kernel #20 are merged with the qualified matching pins;
+the codex host daemon is unchanged. deployed generation through those clients
+still needs its own observed result.
 
-drain existing `media_content_reindex_job` work before cutover: the new payload
-requires explicit structural and partition keys plus nullable preparation-command
-identity. the migration refuses live old jobs and converts terminal payloads to
-explicit null fields; no old payload passes through a compatibility reader.
-bibliography jobs receive null piece-definition versions, and persisted retrieval
-contexts receive null passage targets. malformed stored shapes refuse conversion.
-no pieces exist before this migration. settle pending writes and authored input
-before the paired client change to highlight and captured-passage commands.
-follow the [online writing cutover](release-online-first-writing.md); unfinished
-writing now belongs to account-scoped memory, without a durable recovery path.
+remaining deployed acceptance:
 
-qualify automatic new-import discovery, explicit old-source discovery, source pin
-races, independent reading state, annotation survival, scoped search and live public
-links with stale image/note ordinals. source-index rebuilding/witness preparation
-uses the existing queue; migration adds nullable witness columns without scanning
-the corpus. publish structural preparation before embeddings; embedding failure
-must not block manual pieces. preparation launches no discovery generation, but
-the index rebuild may incur existing embedding cost. explicit preparation of old
-epubs reprojects navigation from their verified retained packages without changing
-canonical bodies, publication generations, accepted piece cuts, highlights or
-reading positions. a changed partition uses the normal new reindex revision.
-public svg text and coordinates
-now share the retained content policy. source svg package-relative image loss remains
-a separate import issue.
+- automatic new-import discovery and explicit old-source discovery with
+  `gpt-6.1-sol` / `xhigh` through the existing authenticated codex host;
+- independent piece progress, annotation survival and scoped search;
+- source-pin races, retained-family collection and corrected public links that
+  refuse stale image/note identities.
 
-discovery uses `gpt-6.1-sol` with `xhigh` through the existing pinned authenticated
-codex personal host. provision production through
-[the existing runbook](../runbooks/codex-personal-agent-host.md); disposable
-qualification uses the enrolled shared host through `./scripts/lab --live-codex`.
-ordinary attachment never replaces that installation. a newer daemon does not
-satisfy a different pinned host contract.
-merge [provider-runtime #48](https://github.com/NielsdaWheelz/llm-calling/pull/48)
-and its matching [kernel pin #20](https://github.com/NielsdaWheelz/llm-agent-kernel/pull/20)
-before this release. these client dependencies remove the redundant native event-count
-limit while retaining the pending-payload bound; the host daemon does not change.
-their refreshed required checks and audits pass. retain the exact matching pins;
-the current dependency graph includes the fixed opentelemetry resolution.
+preparing old epub navigation must preserve canonical bodies, generations,
+accepted cuts, highlights and positions. structural preparation precedes
+embeddings and launches no discovery generation; an index rebuild may incur the
+existing embedding cost. qualify these boundaries on the deployed path before
+claiming the local results as production observations.
 
-live repair uses the normal creator commands or exact, backed-up owner repair;
-never rewrite shared source offsets or introduce production test seams. rollback
-after parts exist restores the paired backup/build; a downgrade must refuse to
-discard retained parts. record actual release identities and qualification in the
-pr. remove this record only after the paired release is qualified and activated.
+paired offline acceptance remains in [downloaded episodes](release-offline-episodes.md).
+the svg package-relative image defect remains in
+[its import issue](epub-svg-nested-assets.md). repairs use ordinary creator
+commands or an exact backed-up owner repair; recovery belongs to
+[the canonical runbook](../../deployment.md).
+
+delete this record once the remaining deployed checks are recorded.

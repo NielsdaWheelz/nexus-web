@@ -1,37 +1,21 @@
-# offline startup release
+# deployed offline startup acceptance
 
-pair the installed-workspace bff/web and android apk; retire native hosted-root
-startup and old handoff/bridge contracts
-together. wire 15 follows released wire 14; keep this bump for subsequent breaking changes
-until the next release. no database migration or new environment variable.
+paired source `c5cf4bc27`, wire 15, signed android `0.3.7` / code 28 is active.
+namespace-preserving 26→maintenance 27→28 retained the account, native files,
+cookies and grants. first online bootstrap returned one fresh lectern without
+login. cold force-stop/airplane startup, saved catalog browsing and ordinary-note
+autosave/cold reopen passed on the physical phone. #805 owns exact artifacts,
+observations and limits; old writing disposal is complete in
+[the writing cutover](release-online-first-writing.md).
 
-before installing, save or explicitly discard open authoring: an apk update
-cannot preserve memory-only drafts. pause playback and drain pending native
-progress where possible; preserve the existing download namespace and pending
-records through upgrade. the first launch needs one online verification of the
-same account to provision the new startup record. never silently delete another
-account's namespace or overwrite corrupt state with defaults.
+remaining deployed acceptance: google/github sign-in and identity linking,
+offline sign-out, provider handoff boundaries and same-account sign-in with open
+memory-only input. do not clear the personal namespace to manufacture those
+checks. isolated-device proof remains distinct; installed failure branches retain
+their own records. downloads/playback acceptance is in
+[downloaded episodes](release-offline-episodes.md), and metadata browsing is in
+[offline catalog](release-offline-catalog.md).
 
-package all ui chunks, fonts, images and pdf.js assets from the paired source.
-pass the paired server’s existing `R2_S3_API_ORIGIN` into the apk build; it seals
-the installed upload csp allowlist.
-verify ordinary assets cannot fall through to remote fetching. give the installed
-build clear manual apk-update instructions; add no distribution service or
-automatic updater. wire mismatch must not offer a reload loop.
-
-the implementation pr owns isolated-device qualification and its exact limits.
-before release, qualify the signed installed upgrade on the physical phone
-against the paired production server: cold airplane-mode launch after
-force-stop, acknowledged navigation, cookie durability, same-account sign-in
-preserving open text, offline sign-out, downloads exit/return and ordinary
-online journeys. verify production https and normal browser-to-app handoff
-dispatch with the installed package. run successful google/github sign-in and
-identity linking with configured providers.
-
-resolved when the paired cutover and these journeys are qualified. episode
-offline playback, catalog and reading parity are separate releases.
-
-the installed upgrade and live provider checks remain release work. the owner's
-2026-10-23 [online-first writing cutover](release-online-first-writing.md)
-supersedes journal preservation with exact-store disposal through a temporary
-maintenance build. unrelated memory-only forms retain their update protection.
+resolve after the remaining named journeys pass or receive an explicit owner
+disposition. normal certificate verification and account-bound startup remain
+required; no reload-loop or compatibility path is authorized.

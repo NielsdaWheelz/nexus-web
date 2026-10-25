@@ -1,30 +1,28 @@
-# shared live codex release steps
+# shared live codex local rollout
 
-clients and native hosts replace `NEXUS_CODEX_NATIVE_SOCKET` with
-`NEXUS_CODEX_ENDPOINT=unix:///tmp/codex-daemon-10001/app-server.sock` and the
-separate absolute `NEXUS_CODEX_CWD_ROOT=/tmp/codex-daemon-10001/cwds`.
-production compose owns these settings; remove the old variable from operator
-configuration. unix has no transport token. websocket clients require the secret
-`NEXUS_CODEX_TRANSPORT_TOKEN`; the launcher receives only its sha256 verifier as
-`NEXUS_CODEX_TRANSPORT_TOKEN_SHA256`.
+production `c5cf4bc27` now uses
+`NEXUS_CODEX_ENDPOINT=unix:///tmp/codex-daemon-10001/app-server.sock` and
+`NEXUS_CODEX_CWD_ROOT=/tmp/codex-daemon-10001/cwds` in the api and both workers.
+the retired `NEXUS_CODEX_NATIVE_SOCKET` is absent from their environments and the
+operator configuration. the encrypted production account bind is unchanged.
+[#805](https://github.com/NielsdaWheelz/nexus-web/pull/805) owns the paired release proof.
 
-local unix composition retires `NEXUS_LOCAL_CODEX_ACCOUNT_DIR` and its mac bind.
-it enrolls a native uid/gid-10001-owned `nexus_codex_account` volume at
-`/var/lib/nexus-codex`, with credential `auth.json`. existing bound account state
-is neither copied nor deleted; enroll the new volume explicitly. production's
-encrypted linux bind and fake providers retain unix behavior.
+production activation does not establish every local operator checkout.
+remaining operator action is to inventory active local unix compositions and
+enroll their dedicated volume if they still use `NEXUS_LOCAL_CODEX_ACCOUNT_DIR`.
+the new `nexus_codex_account` volume is owned by uid/gid 10001; existing bound
+account state stays untouched. follow [local enrollment](../runbooks/codex-personal-agent-host.md#local-enrollment).
 
-live labs replace `--codex-socket` with `--live-codex`. enroll the dedicated
-account with `./scripts/lab-codex enroll`, then use `up` and `status` before the
-first lab. the host loopback publication belongs to the existing nginx peer,
-which forwards tcp unchanged to the native authenticated listener; the daemon
-stays on internal networks with no directly published port. never copy personal
-or production auth. a pin upgrade requires drained labs, explicit `down`, then
-`up` from the qualified new checkout. no automatic
-credential migration or downgrade is authorized.
+live labs use `--live-codex`. an unenrolled installation needs
+`./scripts/lab-codex enroll`, then `up` and `status` before its first lab. ordinary
+attachment reuses its compatible enrolled host. a later pin upgrade requires
+drained labs, explicit `down`, then `up` from the qualified checkout; account-state
+migration needs its own qualification. endpoint, transport-token and cwd contracts
+remain in [the host runbook](../runbooks/codex-personal-agent-host.md).
 
-resolve the rollout record after deployed unix services use the endpoint/cwd
-settings and local operators enroll the new native volume where needed. future
-native pin upgrades require qualification of account-state migration before use;
-never infer migration safety from catalog readiness. real refresh remains tracked
-in `codex-auth-refresh-not-qualified.md`.
+deployed generation acceptance remains in
+[codex host acceptance](codex-egress-compose-release.md); real token refresh stays
+in [its own issue](codex-auth-refresh-not-qualified.md).
+
+delete this rollout record once the active local compositions are accounted for
+and any required dedicated enrollment is complete.

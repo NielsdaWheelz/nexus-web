@@ -8,9 +8,9 @@ unsigned payload with explicit nexus and storage origins.
 
 use the verified native-client release zip and its source/wire provenance.
 keep `capture@nexus.local` stable: firefox storage and the identity redirect
-origin depend on it. every changed package needs a new extension version;
-mozilla already holds `1.0.0` for production wire 14. signing main's wire-15
-client does not make it compatible with that production release.
+origin depend on it. every changed package needs a new extension version.
+the package must use the qualified release's source, wire and production origins;
+signing alone does not establish compatibility with a hosted release.
 
 mozilla developer credentials belong in
 `~/.config/fleet-security/mozilla-signing.env`, mode `0600`, as
@@ -48,5 +48,8 @@ open the signed xpi in normal firefox, accept its declared data permissions,
 then connect to nexus and complete a disposable capture. verify persistent
 signed installation; temporary debugging installation is not distribution.
 
-the remaining [client-release integration](../../docs/issues/release-firefox-signing.md)
-must couple this signed artifact to future qualified native-client releases.
+the [client release operator](../../README.md#android-release-distribution) owns
+versioning, unlisted signing, reviewer source, signed-installer publication and
+the persistent update/capture check for every changed package. publish the
+signed xpi and its source/checksums with the paired native-client release;
+`build-extension.mjs` produces only the unsigned input.

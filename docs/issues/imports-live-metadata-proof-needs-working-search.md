@@ -28,3 +28,13 @@ limit; the [raw campaign evidence was not retained](wire10-qualification-evidenc
 the typed failure is not successful research or a no-findings outcome, and
 does not qualify the exact-job review or retry paths above. no new owner waiver
 is claimed.
+
+2026-10-25 paired-release observation at `c5cf4bc27`, wire 15: the signed
+firefox 1.0.1 public-page capture was acknowledged. its production
+`enrich_metadata` job `01a1711f-f0f7-79d7-b363-e4e4e4809d02` settled dead after
+two attempts with `E_METADATA_MODEL_UNAVAILABLE`. the first attempt logged
+`RouteUnavailable: tools unavailable: web.search` at 03:34:43 utc;
+`generation/run.py:150-165` retries that pre-dispatch refusal within the existing
+budget. this is the unavailable-tool boundary, not successful research and not
+new evidence of a provider 402. no operator retry, provider substitution or
+new waiver was used. #805 owns the release observation.
