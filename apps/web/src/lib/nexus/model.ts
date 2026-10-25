@@ -35,7 +35,7 @@ export type MaterializedOpenDailyPageTarget = {
     | { readonly kind: "FocusNote"; readonly noteBlockId: string };
 };
 
-/** Every navigation is an InternalHref; the rest open a tab, Today, the player, or a page. */
+/** Every navigation is an InternalHref; the rest open a pane, Today, the player, or a page. */
 export type NexusTarget =
   | { readonly kind: "Resource"; readonly activation: Schema<"ResourceActivationOut">; readonly label: string }
   | {
@@ -65,7 +65,7 @@ export type NexusTarget =
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | { readonly kind: "ManageTabs" };
+  | { readonly kind: "ManagePanes" };
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
@@ -101,7 +101,7 @@ export interface NexusRow {
   readonly action: NexusAction;
   readonly secondary?:
     | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
-    | { readonly kind: "CloseTab"; readonly paneId: string };
+    | { readonly kind: "ClosePane"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;
   readonly rank: { readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
@@ -159,7 +159,7 @@ export type NexusPage =
       readonly submit: ReplayableSubmitState;
     }
   | { readonly kind: "Add"; readonly sessionId: string }
-  | { readonly kind: "ManageTabs" };
+  | { readonly kind: "ManagePanes" };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

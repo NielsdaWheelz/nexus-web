@@ -29,7 +29,7 @@ import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
-import { PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
+import { NEW_PANE_HINT, PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
 import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -61,7 +61,7 @@ const SILENT_DRAG = {
   onDragCancel: () => undefined,
 };
 
-function TabIdentity({ item }: { readonly item: StripItem }) {
+function ChipIdentity({ item }: { readonly item: StripItem }) {
   const RouteIcon = getPaneRouteIcon(item.href);
   return (
     <>
@@ -72,7 +72,7 @@ function TabIdentity({ item }: { readonly item: StripItem }) {
 }
 
 /** A sortable chip; its title alone starts a drag. */
-function StripTab(props: {
+function PaneChip(props: {
   readonly item: StripItem;
   readonly controls: readonly PaneControl[];
   readonly maximized: boolean;
@@ -93,7 +93,7 @@ function StripTab(props: {
   return (
     <div
       ref={sortable.setNodeRef}
-      className={styles.tab}
+      className={styles.chip}
       style={{ transform: props.cancelled ? undefined : CSS.Translate.toString(sortable.transform) }}
       data-active={item.isActive || undefined}
       data-in-view={item.isInView || undefined}
@@ -111,8 +111,8 @@ function StripTab(props: {
         tabIndex={props.focusable === "activate" ? 0 : -1}
         aria-current={item.isActive ? "page" : undefined}
         aria-describedby={props.descriptionId}
-        aria-keyshortcuts="ArrowLeft ArrowRight Home End Delete Backspace Shift+M"
-        title={`${item.label}. shift-click or shift-enter opens in a new pane`}
+        aria-keyshortcuts="ArrowLeft ArrowRight Home End Shift+Enter Delete Backspace Shift+M"
+        title={`${item.label} · ${NEW_PANE_HINT}`}
         onMouseDown={(event) => {
           if (!hasActiveInteractionOwner()) sortable.listeners?.onMouseDown?.(event);
         }}
@@ -123,7 +123,7 @@ function StripTab(props: {
         onFocus={() => props.onFocus("activate")}
         onKeyDown={(event) => props.onKeyDown(event, "activate")}
       >
-        <TabIdentity item={item} />
+        <ChipIdentity item={item} />
         {item.isActive ? <span className="sr-only"> Active pane.</span> : null}
         {item.minimized ? <span className="sr-only"> Minimized.</span> : null}
         {props.maximized ? <span className="sr-only"> Maximized.</span> : null}
@@ -181,11 +181,11 @@ export default function WorkspacePaneStrip(props: {
   const heldPointer = useRef<number | null>(null);
   const descriptionId = useId();
   const ids = items.map((item) => item.paneId);
-  const tabs = items.map((item) => ({ item, controls: paneControls({
+  const chips = items.map((item) => ({ item, controls: paneControls({
     state: props.state, paneId: item.paneId, title: item.label,
     desktopMaximized: props.isMaximized, isMobile: false,
   }) }));
-  const targets: FocusTarget[] = tabs.flatMap(({ item, controls }) => [
+  const targets: FocusTarget[] = chips.flatMap(({ item, controls }) => [
     { paneId: item.paneId, control: "activate" },
     ...controls.map((control) => ({ paneId: item.paneId, control: control.slot })),
   ]);
@@ -221,10 +221,10 @@ export default function WorkspacePaneStrip(props: {
 
   const reveal = useCallback((paneId: string) => {
     const viewport = strip.current;
-    const tab = buttons.current.get(`${paneId}:activate`)?.parentElement;
-    if (!viewport || !tab) return;
+    const chip = buttons.current.get(`${paneId}:activate`)?.parentElement;
+    if (!viewport || !chip) return;
     const frame = viewport.getBoundingClientRect();
-    const rect = tab.getBoundingClientRect();
+    const rect = chip.getBoundingClientRect();
     const left = frame.left + viewport.clientLeft;
     const right = left + viewport.clientWidth;
     if (rect.left < left) viewport.scrollLeft += rect.left - left;
@@ -386,8 +386,8 @@ export default function WorkspacePaneStrip(props: {
           }}
         >
           <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
-            {tabs.map(({ item, controls }) => (
-              <StripTab
+            {chips.map(({ item, controls }) => (
+              <PaneChip
                 key={item.paneId}
                 item={item}
                 controls={controls}
@@ -426,8 +426,8 @@ export default function WorkspacePaneStrip(props: {
       </div>
       {draggedItem ? createPortal(
         <DragOverlay adjustScale={false} dropAnimation={null}>
-          <div className={`${styles.tab} ${styles.dragOverlay}`} data-active={draggedItem.isActive || undefined} aria-hidden inert>
-            <span className={styles.activator}><TabIdentity item={draggedItem} /></span>
+          <div className={`${styles.chip} ${styles.dragOverlay}`} data-active={draggedItem.isActive || undefined} aria-hidden inert>
+            <span className={styles.activator}><ChipIdentity item={draggedItem} /></span>
             <span className={styles.actions}>
               {paneControls({ state: props.state, paneId: draggedItem.paneId, title: draggedItem.label, desktopMaximized: props.isMaximized, isMobile: false }).map((control) => {
                 const Icon = control.icon;

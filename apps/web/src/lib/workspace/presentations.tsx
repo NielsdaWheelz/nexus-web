@@ -17,7 +17,8 @@ import type { PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type { AuthoredQuery, ResourceProjection } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
-export interface PanePresentation { title: string; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
+export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
+export interface PanePresentation { title: string; name:string|null; detail: string | null; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
 interface Presentations { forVisit(visit: PaneVisit): PanePresentation; resourceRefForVisit(visit: PaneVisit): string | null; retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
 function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
@@ -61,16 +62,18 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
   const remoteFacts = remote.status === "ready" ? remote.data : null;
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
-    if (route.labelMode === "static") return { title: route.defaultLabel, detail: null, status: "Ready" };
+    if (route.labelMode === "static") return { title: route.defaultLabel, name:route.defaultLabel, detail: null, status: "Ready" };
     const locator = route.titleLocator;
     const kind = route.id === "dailyDate" ? "page" : route.defaultLabel.toLowerCase();
-    if (!locator) return { title: visit.title_hint ?? kind, detail: "unavailable", status: "Unavailable" };
+    if (!locator) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "unavailable", status: "Unavailable" };
     const key = panePresentationLocatorKey(locator);
     if (authored(locator)) {
       const resource = local.get(key);
-      if (resource === undefined) return { title: visit.title_hint ?? kind, detail: "loading title…", status: "Loading" };
-      if (resource === null) return { title: route.id === "dailyDate" ? route.defaultLabel : visit.title_hint ?? `unavailable ${kind}`, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
-      return { title: projectTitle(resource).trim() ? projectTitle(resource) : route.defaultLabel, detail: kind, status: "Ready" };
+      if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
+      if (resource === null) return { title: route.id === "dailyDate" ? route.defaultLabel : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate"?route.defaultLabel:visit.title_hint, detail: route.id === "dailyDate" ? "page" : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
+      const title = projectTitle(resource);
+      const name = title.trim() ? title : resource.local_date !== null ? route.defaultLabel : null;
+      return { title: name ?? route.defaultLabel, name, detail: kind, status: "Ready" };
     }
     const canonical: Canonical | null | undefined = remoteFacts?.get(key);
     let saved: string | null = null;
@@ -81,17 +84,19 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       else if (scheme === "podcast") saved = catalog.shows.get(id)?.detail.podcast.title ?? null;
       else if (scheme === "conversation") saved = catalog.chats.get(id)?.title ?? null;
     }
-    const title = canonical?.title ?? saved ?? visit.title_hint ?? kind;
+    const rawName=canonical?.title ?? saved ?? visit.title_hint;
+    const name=rawName?.trim()?rawName:null;
+    const title=rawName??kind;
     if (canonical) {
       const noun = canonical.media_kind ? mediaKindLabel(canonical.media_kind) : kind;
       const authors = selectMediaAuthors(canonical.contributors).flatMap(credit => { const name = creditName(credit); return name ? [name.label] : []; });
       const byline = authors.slice(0, 2).join(", ") || canonical.source_label;
-      return { title: title.trim() ? title : `untitled ${noun}`, detail: byline ? `${byline} · ${noun}` : noun, status: "Ready" };
+      return { title: title.trim() ? title : `untitled ${noun}`, name, detail: byline ? `${byline} · ${noun}` : noun, status: "Ready" };
     }
-    if (saved !== null) return { title, detail: kind, status: "Ready" };
-    if (remote.status === "failed" || (remote.status === "ready" && remote.error)) return { title, detail: "couldn’t refresh title", status: "Failed" };
-    if (remote.status !== "ready") return { title, detail: "loading title…", status: "Loading" };
-    return { title, detail: "removed or no longer accessible", status: "Unavailable" };
+    if (saved !== null) return { title, name, detail: kind, status: "Ready" };
+    if (remote.status === "failed" || (remote.status === "ready" && remote.error)) return { title, name, detail: "couldn’t refresh title", status: "Failed" };
+    if (remote.status !== "ready") return { title, name, detail: "loading title…", status: "Loading" };
+    return { title, name, detail: "removed or no longer accessible", status: "Unavailable" };
   }, [local, remoteFacts, remote, catalog]);
   const resourceRefForVisit = useCallback((visit: PaneVisit) => {
     const locator = resolvePaneRouteModel(visit.href).titleLocator;

@@ -2,9 +2,15 @@
 
 create reuses its client id and bound initial import: an extant matching resource
 returns current state without repeating acquisition. fresh admission checks exact
-library/account guards before any placement. scoped stop compares the complete
+library/account guards before any placement. discovery replay validates its sealed
+source against retained identities before provider work; a removed rule's retained
+initial import refuses recreation. preflight ends before provider reads, and the
+final locked owner rechecks identity and authority. scoped stop compares the complete
 frozen destination set and identities atomically. keep ignores arriving-entry
-revisions; remove requires them. cancellation never waits on queue rows.
+revisions and independent additions; remove requires them and fences all selected
+additions. rules leave before placements. bulk addition and cleanup touch only
+their chosen destinations, never manufacture personal holdings, and preserve
+authored work, listening state and queue/device state. cancellation never waits on queue rows.
 """
 
 from typing import Literal
@@ -18,8 +24,9 @@ from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFo
 from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
 from nexus.services import libraries, library_entries, users
-from nexus.services.browse.targets import ResolvedPodcast
+from nexus.services.browse.targets import PodcastIndexPodcastTarget, ResolvedPodcast, unseal_target
 from nexus.services.podcasts import imports, sync
+from nexus.services.podcasts.provider import PROVIDER
 from nexus.services.podcasts.shows import upsert_show
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
@@ -34,19 +41,88 @@ def admit(
     """Create one finite operation, optionally its ongoing rule, with one frozen intent."""
     from nexus.services.browse.service import resolve_podcast_discovery_target
 
+    discovery_ref = None
     if isinstance(body.target, wire.PodcastCanonicalCommitTarget):
         show: UUID | ResolvedPodcast = body.target.podcast_id
     else:
-        resolved = resolve_podcast_discovery_target(body.target.target)
-        if not isinstance(resolved, ResolvedPodcast):
+        handle = body.target.target
+        target = unseal_target(handle)
+        if not isinstance(target, PodcastIndexPodcastTarget):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a podcast"
             )
-        show = resolved
+        discovery_ref = target.podcast_ref
+
+        def existing_identity() -> UUID | None:
+            libraries.access(db, viewer_id, library_id, lock=False)
+            if isinstance(body, wire.PodcastSubscriptionCreateRequest):
+                existing = db.execute(
+                    text("""
+                    SELECT s.library_id,s.initial_import_id,p.id AS podcast_id,
+                           p.provider,p.provider_podcast_id
+                    FROM library_podcast_subscriptions s JOIN podcasts p ON p.id=s.podcast_id
+                    WHERE s.id=:id
+                """),
+                    {"id": body.id},
+                ).first()
+                if existing is not None:
+                    if (
+                        existing.library_id != library_id
+                        or existing.initial_import_id != body.import_id
+                        or existing.provider != PROVIDER
+                        or existing.provider_podcast_id != discovery_ref
+                    ):
+                        raise ConflictError(
+                            ApiErrorCode.E_RESOURCE_CONFLICT, "Subscription id is taken"
+                        )
+                    return existing.podcast_id
+            existing = db.execute(
+                text("""
+                SELECT i.library_id,p.id AS podcast_id,p.provider,p.provider_podcast_id
+                FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
+                JOIN podcasts p ON p.id=r.podcast_id WHERE i.id=:id
+            """),
+                {
+                    "id": body.import_id
+                    if isinstance(body, wire.PodcastSubscriptionCreateRequest)
+                    else body.id
+                },
+            ).first()
+            if existing is None:
+                return None
+            if (
+                isinstance(body, wire.PodcastSubscriptionCreateRequest)
+                or existing.library_id != library_id
+                or existing.provider != PROVIDER
+                or existing.provider_podcast_id != discovery_ref
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Import id is taken")
+            return existing.podcast_id
+
+        known = retry_serializable(db, "read_podcast_admission_identity", existing_identity)
+        if known is not None:
+            show = known
+        else:
+            resolved = resolve_podcast_discovery_target(handle)
+            if not isinstance(resolved, ResolvedPodcast):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a podcast"
+                )
+            show = resolved
 
     def attempt() -> wire.PodcastAdmissionOut:
         users.lock_viewer(db, viewer_id)
         podcast_id = show if isinstance(show, UUID) else upsert_show(db, show)
+        if discovery_ref is not None and isinstance(show, UUID):
+            identity = db.execute(
+                text("""SELECT provider,provider_podcast_id FROM podcasts
+                        WHERE id=:id FOR UPDATE"""),
+                {"id": podcast_id},
+            ).first()
+            if identity is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+            if identity.provider != PROVIDER or identity.provider_podcast_id != discovery_ref:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast identity changed")
         return admit_in_current_transaction(
             db,
             viewer_id=viewer_id,
@@ -154,12 +230,17 @@ def admit_in_current_transaction(
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Review or cancel the existing import"
         )
-    if following and db.scalar(
+    if db.scalar(
         text("""SELECT 1 FROM library_podcast_subscriptions
                                        WHERE library_id=:library AND podcast_id=:podcast"""),
         {"library": library_id, "podcast": podcast_id},
     ):
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast is already followed here")
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT
+            if following
+            else ApiErrorCode.E_PODCAST_SUBSCRIPTION_ACTIVE,
+            "Podcast is already subscribed here",
+        )
     media = list(
         db.scalars(
             text("""
@@ -171,11 +252,8 @@ def admit_in_current_transaction(
             {"id": podcast_id},
         )
     )
-    library_entries.lock_media_rows_in_order(db, media)
-    for media_id in media:
-        library_entries.lock_media_for_reference(db, media_id)
-    default_id = libraries.default_library_id(db, viewer_id)
-    libraries.lock_library_rows_in_order(db, [default_id, library_id])
+    library_entries.lock_media_for_references(db, media)
+    libraries.lock_library_rows_in_order(db, [library_id])
     library = libraries.access(db, viewer_id, library_id, lock=False)
     library.require_add_content(viewer_id)
     users.require_removal_revision(db, viewer_id, expected_removal_revision)
@@ -209,8 +287,8 @@ def admit_in_current_transaction(
         if created is None:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Subscription id is taken")
         sync.ensure_scheduled(db, podcast_id=podcast_id)
-    added, present = library_entries.acquire_podcast_episodes_locked(
-        db, viewer_id=viewer_id, library_id=library_id, media_ids=media
+    added, present = library_entries.add_podcast_episodes_locked(
+        db, library_id=library_id, media_ids=media
     )
     db.execute(
         text("""
@@ -257,7 +335,9 @@ def removal_preview(
         raise InvalidRequestError(message="Library scope requires a library id")
     if library_id is not None:
         library = libraries.access(db, viewer_id, library_id, lock=False)
-        library.require_mutable()
+        library.require_not_system()
+        if library.is_default:
+            library.require_owner(viewer_id)
     rows = db.execute(
         text("""
         WITH destinations AS (
@@ -274,14 +354,15 @@ def removal_preview(
                 JOIN podcast_feed_runs run ON run.id=candidate.run_id
                 WHERE candidate.library_id=l.id AND run.podcast_id=:podcast
                   AND run.completed_at IS NULL AND run.cancelled_at IS NULL
+                  AND (:episodes='remove' OR candidate.id=s.initial_import_id)
             ) i ON true
             LEFT JOIN podcast_feed_runs r ON r.id=i.run_id
             WHERE l.system_key IS NULL AND (NOT l.is_default OR l.owner_user_id=:viewer)
         ), selected AS (
-            SELECT * FROM destinations d WHERE
-                (:scope='library' AND d.library_id=:library) OR
-                (:scope='all' AND (d.subscription_id IS NOT NULL OR d.import_id IS NOT NULL OR
-                                  (:episodes='remove' AND d.episode_count>0)))
+            SELECT * FROM destinations d
+            WHERE (:scope='all' OR d.library_id=:library)
+              AND (d.subscription_id IS NOT NULL OR
+                   (:episodes='remove' AND (d.import_id IS NOT NULL OR d.episode_count>0)))
         )
         SELECT u.removal_revision,p.id AS podcast_exists,
                (SELECT count(DISTINCT le.media_id) FROM library_entries le
@@ -338,7 +419,6 @@ def stop(
     db: Session, viewer_id: UUID, podcast_id: UUID, body: wire.PodcastStopRequest
 ) -> wire.PodcastStopOut:
     """Apply a frozen complete scope, or refuse without partial effects."""
-    from nexus.services import media_deletion
 
     def attempt() -> wire.PodcastStopOut:
         users.lock_viewer(db, viewer_id)
@@ -376,11 +456,7 @@ def stop(
             else []
         )
         library_entries.lock_media_rows_in_order(db, media)
-        if body.scope == "library":
-            for media_id in media:
-                library_entries.lock_media_for_reference(db, media_id)
-        default_id = libraries.default_library_id(db, viewer_id)
-        libraries.lock_library_rows_in_order(db, [default_id, *selected])
+        libraries.lock_library_rows_in_order(db, selected)
         current = removal_preview(
             db,
             viewer_id,
@@ -409,29 +485,24 @@ def stop(
                 viewer_id
             )
         for destination in current.destinations:
+            if destination.subscription_id is not None:
+                db.execute(
+                    text("DELETE FROM library_podcast_subscriptions WHERE id=:id"),
+                    {"id": destination.subscription_id},
+                )
+        for destination in current.destinations:
             if destination.import_id is not None:
                 run_id = db.execute(
                     text("SELECT run_id FROM podcast_library_imports WHERE id=:id"),
                     {"id": destination.import_id},
                 ).scalar_one()
                 imports.cancel_in_current_transaction(db, run_id=run_id)
-            if destination.subscription_id is not None:
-                db.execute(
-                    text("DELETE FROM library_podcast_subscriptions WHERE id=:id"),
-                    {"id": destination.subscription_id},
-                )
         if body.episodes == "remove":
             library_entries.remove_podcast_episodes_locked(
                 db,
-                viewer_id=viewer_id,
                 library_ids=selected,
                 media_ids=media,
-                preserve_personal=body.scope == "library",
             )
-            if body.scope == "all":
-                media_deletion.remove_podcast_workspace_access_locked(
-                    db, viewer_id=viewer_id, media_ids=media
-                )
         for destination in current.destinations:
             libraries.advance_order_revision(db, destination.library_id)
         sync.stop_if_unused(db, podcast_id=podcast_id)

@@ -1,7 +1,7 @@
 .root {
   display: flex;
   min-width: 0;
-  min-height: var(--tabsbar-height);
+  min-height: var(--pane-strip-height);
   border-bottom: 1px solid var(--edge-subtle);
   background: var(--surface-2);
 }
@@ -17,7 +17,7 @@
   padding-inline: var(--space-2);
 }
 
-.tab {
+.chip {
   position: relative;
   display: flex;
   align-items: center;
@@ -33,14 +33,14 @@
     box-shadow var(--duration-fast) var(--ease-glide);
 }
 
-.tab[data-sorting] {
+.chip[data-sorting] {
   transition: transform var(--duration-fast) var(--ease-snap);
 }
 
 /* The translated source leaves a full-width insertion slot; the inert
-   overlay follows the pointer without scaling or registering another tab. */
-.tab[data-dragging] .activator,
-.tab[data-dragging] .actions {
+   overlay follows the pointer without scaling or registering another chip. */
+.chip[data-dragging] .activator,
+.chip[data-dragging] .actions {
   opacity: 0;
 }
 
@@ -92,29 +92,29 @@
   transition: color var(--duration-fast) var(--ease-glide);
 }
 
-.tab:hover:not([data-active]) {
+.chip:hover:not([data-active]) {
   background: var(--surface-hover);
 }
 
-.tab:hover:not([data-active]) .title {
+.chip:hover:not([data-active]) .title {
   color: var(--ink);
 }
 
-.tab[data-active] {
+.chip[data-active] {
   background: var(--surface-active);
   box-shadow: var(--shadow-1);
 }
 
-.tab[data-active] .title {
+.chip[data-active] .title {
   color: var(--ink);
 }
 
-.tab[data-active] .icon {
+.chip[data-active] .icon {
   color: var(--accent);
 }
 
 /* In-view is a tick, distinct from the active fill. */
-.tab::after {
+.chip::after {
   content: "";
   position: absolute;
   left: 0;
@@ -129,19 +129,19 @@
   transition: opacity var(--duration-base) var(--ease-bloom);
 }
 
-.tab[data-in-view]::after {
+.chip[data-in-view]::after {
   opacity: 1;
 }
 
-.tab[data-minimized] {
+.chip[data-minimized] {
   background: var(--surface-sunken);
 }
 
-.tab[data-minimized] .icon {
+.chip[data-minimized] .icon {
   opacity: 0.5;
 }
 
-.tab[data-dragging] {
+.chip[data-dragging] {
   background: var(--surface-sunken);
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -174,10 +174,10 @@
 
 @media (any-pointer: coarse) {
   .root {
-    min-height: calc(var(--tabsbar-height) + var(--size-xl) - var(--size-md));
+    min-height: calc(var(--pane-strip-height) + var(--size-xl) - var(--size-md));
   }
 
-  .tab {
+  .chip {
     height: var(--size-xl);
     min-width: calc(12rem + var(--size-xl));
     max-width: calc(15rem + var(--size-xl));
@@ -190,26 +190,26 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab,
-  .tab[data-sorting],
+  .chip,
+  .chip[data-sorting],
   .icon,
   .title,
   .action,
-  .tab::after {
+  .chip::after {
     transition: none;
   }
 }
 
 @media (forced-colors: active) {
-  .tab[data-active] {
+  .chip[data-active] {
     outline: 1px solid Highlight;
   }
 
-  .tab[data-in-view]::after {
+  .chip[data-in-view]::after {
     background: Highlight;
   }
 
-  .tab[data-dragging] {
+  .chip[data-dragging] {
     outline: 2px dashed Highlight;
   }
 }

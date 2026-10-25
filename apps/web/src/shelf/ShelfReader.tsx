@@ -3,7 +3,7 @@
 // port keeps the position on the device through the bridge, which syncs it.
 // Annotations are the account's local authored state, not part of the copy.
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackProvider, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_HEADER } from "@/lib/api/client";
@@ -154,11 +154,11 @@ export default function ShelfReader({
   useEffect(() => reader.revalidate(), [item.progress, reader]);
   // The copy's bytes never wait on the account store: annotations join when it opens.
   // the shelf hosts the same editor through reader ports: drafts, feedback and the account store.
-  const layer = account.kind === "Ready" ? <FeedbackProvider><WorkProvider><AuthoredProvider accountId={account.id} host="shelf">
+  const layer = account.kind === "Ready" ? <WorkProvider><AuthoredProvider accountId={account.id} host="shelf">
     <ReaderNoteEditorHost identity={`shelf:${item.media_id}:${item.saved_at}`}>
       <CompactAnnotationLayer reader={reader} mediaId={item.media_id} source={{ kind: item.kind, label: item.title }} available report={setAnnotations} />
     </ReaderNoteEditorHost>
-  </AuthoredProvider></WorkProvider></FeedbackProvider> : account.kind === "Unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
+  </AuthoredProvider></WorkProvider> : account.kind === "Unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
     actions={[{ label: "retry", onClick: account.retry }]} /> : null;
 
   const text =

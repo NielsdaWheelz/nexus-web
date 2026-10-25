@@ -80,7 +80,7 @@ their existing permission/fencing boundary. no direct highlight projection write
 or whole-body annotation-note endpoint remains. server reads honor semantic
 liveness and keep captured writing available independently of source access.
 
-revision 0318 freezes old grammar conversion and preserves current highlight,
+revision 0320 freezes old grammar conversion and preserves current highlight,
 note, link and passage ids. old annotations without proved publication provenance
 seed `publication:null`; their literal quotes and locators survive. unsupported
 records and conflicting live semantic bindings refuse the transaction. paired

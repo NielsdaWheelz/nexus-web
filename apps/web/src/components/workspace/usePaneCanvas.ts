@@ -51,7 +51,7 @@ function reachesCanvas(
 
 /**
  * The desktop pane canvas: a vertical wheel over content that cannot scroll,
- * and a drag on a header's empty area, pan it; edge fades and in-view tabs
+ * and a drag on a header's empty area, pan it; edge fades and in-view chips
  * follow its real extent; activation scrolls a pane into view. Disabled
  * (mobile) it does nothing and reports nothing.
  */

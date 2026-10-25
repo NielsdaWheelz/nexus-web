@@ -6,8 +6,8 @@ identity. An item whose identity is ambiguous is skipped and counted, never gues
 
 Caller lock order is queue claim (when applicable), actor (when applicable), sorted
 aliases, show and owning run; this writer locks the complete existing media set.
-It writes catalog facts only. The imports owner processes finite observations and
-fans out canonical insertions after the complete page has been resolved. Repeated
+It writes catalog facts only. Both resolution and traversal publish inserted ids
+through the imports owner after their complete observation set has resolved. Repeated
 observations are harmless; conflicting strong identifiers are rejected, never guessed.
 No automatic model enrichment, download or transcript work is admitted.
 """
@@ -23,7 +23,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
@@ -379,21 +378,3 @@ def _update(
         for key in ("published_at", "duration_seconds")
     )
     return dirty, changed
-
-
-def select_visible_episode_media_id_by_podcast_index_ref(
-    db: Session, *, viewer_id: UUID, podcast_ref: str, episode_ref: str
-) -> UUID | None:
-    """An acquired Podcast Index episode the viewer can see (browse's owned check)."""
-    return db.scalar(
-        text(f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT i.episode_media_id
-            FROM podcasts p
-            JOIN podcast_episode_identities i
-              ON i.podcast_id = p.id AND i.scheme = 'PodcastIndex' AND i.value = :episode_ref
-            JOIN visible_media v ON v.media_id = i.episode_media_id
-            WHERE p.provider = 'podcast_index' AND p.provider_podcast_id = :podcast_ref
-        """),
-        {"viewer_id": viewer_id, "podcast_ref": podcast_ref, "episode_ref": episode_ref},
-    )

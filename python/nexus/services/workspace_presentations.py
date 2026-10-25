@@ -13,9 +13,9 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
+    requested_media_ids_cte_sql,
     visible_contributor_ids_cte_sql,
     visible_conversation_ids_cte_sql,
-    visible_media_ids_cte_sql,
 )
 from nexus.db.models import DailyPageBinding, MediaKind
 from nexus.schemas.workspace_presentations import (
@@ -69,7 +69,7 @@ def read_presentations(
                 FROM media m
                 LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
                 LEFT JOIN podcasts p ON p.id = pe.podcast_id
-                WHERE m.id = ANY(:ids) AND m.id IN ({visible_media_ids_cte_sql()})
+                WHERE m.id = ANY(:ids) AND m.id IN ({requested_media_ids_cte_sql()})
             """),
             {"ids": list(ids["media"]), "viewer_id": viewer_id},
         ).all()

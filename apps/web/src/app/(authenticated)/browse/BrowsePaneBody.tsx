@@ -207,8 +207,9 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
     if (item.resolution.kind !== "InNexusMedia") {
       return [presentBrowseCandidate(item, item.kind === "Podcast" ? {
         target: { kind: "Discovery", target: item.target }, title: item.title,
-        facts: list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
-          : !list.fresh || list.running !== null ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Discovery", target: item.target }),
+        facts: podcastActionFacts(actionFacts, { kind: "Discovery", target: item.target },
+          list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
+            : !list.fresh || list.running !== null ? { kind: "Resolving" } : null),
       } : undefined)];
     }
     const resolution = item.resolution;

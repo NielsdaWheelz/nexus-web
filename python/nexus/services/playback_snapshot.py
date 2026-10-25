@@ -1,6 +1,6 @@
 """Frozen playback sources. Listing owners supply exact membership and total order.
 
-A read-only repeatable-read transaction freezes provenance and identities together.
+A read-only repeatable-read transaction freezes ordered identities.
 Filtering pins browser NFC/lowercase substring matching to Unicode 15 (Python 3.12) over title and every
 credited/canonical author name. Only playable episodes enter a queue; shows never
 expand. Selection loss and oversized results refuse the entire capture.
@@ -12,8 +12,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
+from nexus.auth.permissions import requested_media_ids_cte_sql
+from nexus.errors import ApiErrorCode, ConflictError
 from nexus.schemas import playback_sessions as wire
 from nexus.services import library_listing
 from nexus.services.playback_source import episode_playback_source
@@ -30,7 +30,7 @@ def capture(
     source = body.source
     query = normalize("NFC", source.query.strip(_JS_WHITESPACE)).lower()
     if isinstance(source, wire.LibraryQueueCapture):
-        label, ids = library_listing.ordered_selection_ids(
+        _, ids = library_listing.ordered_selection_ids(
             db,
             viewer_id,
             source.library_id,
@@ -38,18 +38,10 @@ def capture(
                 source.sort, source.entry_type, source.projection, source.completion
             ),
         )
-        provenance = wire.LibraryQueueSource(**source.model_dump(), label=label)
     else:
-        if not db.scalar(
-            text(f"SELECT :podcast_id IN ({visible_podcast_ids_cte_sql()})"),
-            {"viewer_id": viewer_id, "podcast_id": source.podcast_id},
-        ):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-        label, ids = episodes.ordered_selection_ids(
+        _, ids = episodes.ordered_selection_ids(
             db, viewer_id, source.podcast_id, state=source.state, sort=source.sort
         )
-        provenance = wire.PodcastQueueSource(**source.model_dump(), label=label)
-    provenance.query = query
     eligible = playable_episode_fields(db, viewer_id, ids)
     matches = [
         media_id
@@ -64,7 +56,7 @@ def capture(
         raise ConflictError(ApiErrorCode.E_LIMIT, "Too many episodes; narrow this view")
     if body.selected_media_id not in matches:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Selected episode left the view")
-    return wire.PlaybackSnapshotOut(source=provenance, media_ids=matches)
+    return wire.PlaybackSnapshotOut(media_ids=matches)
 
 
 def playable_episode_fields(
@@ -78,7 +70,7 @@ def playable_episode_fields(
             SELECT m.id, m.kind, m.title, m.external_playback_url, m.canonical_source_url,
                    m.provider, m.provider_id
             FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
-            WHERE m.id = ANY(:media_ids) AND m.id IN ({visible_media_ids_cte_sql()})
+            WHERE m.id = ANY(:media_ids) AND m.id IN ({requested_media_ids_cte_sql()})
               AND m.kind = 'podcast_episode'
         """),
         {"viewer_id": viewer_id, "media_ids": media_ids},

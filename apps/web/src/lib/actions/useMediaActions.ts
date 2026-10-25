@@ -73,12 +73,12 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const label = verb;
     if (mediaId !== null && !loadedPreview) {
       const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, playbackSource: source, ctx, run });
-      actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", label: projected.label, icon: projected.icon, busy: false,
+      actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", menuLabel: projected.label, accessibleLabel: `${projected.label}: ${title}`, icon: projected.icon, busy: false,
         disabled: projected.disabled === true || !available,
         disabledReason: projected.disabledReason ?? (available ? null : "audio unavailable"),
         invoke: ({ trigger }) => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
       });
-    } else actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", label, icon: createElement(playing ? Pause : Play), busy: false,
+    } else actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", menuLabel: label, accessibleLabel: `${label}: ${title}`, icon: createElement(playing ? Pause : Play), busy: false,
       disabled: updateRequired || !available,
       disabledReason: updateRequired ? "update nexus for android to play audio" : available ? null : "audio unavailable",
       invoke: () => {
@@ -111,7 +111,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const projected = projectLecternAction({ mediaId, title, intent, blocked: null, ctx, busy, run });
     const label = request === undefined && present !== null && ctx.lectern.revision !== null
       ? present ? "remove from lectern" : "add to lectern" : projected.label;
-    actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", label,
+    actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", menuLabel: label, accessibleLabel: `${label}: ${title}`,
       icon: createElement((request?.intent.kind ?? intent) === "Remove" ? ListMinus : ListPlus),
       disabled: projected.disabled === true,
       disabledReason: projected.disabledReason ?? null,
@@ -123,18 +123,33 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     });
   } else {
     if (recovery?.destination === "Lectern") actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership",
-      label: recovery.label, icon: createElement(ListPlus), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
+      menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(ListPlus), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
       invoke: recovery.invoke });
-    else actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", label: "add to lectern", icon: createElement(ListPlus),
+    else actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", menuLabel: "add to lectern", accessibleLabel: `add to lectern: ${title}`, icon: createElement(ListPlus),
       disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding && recovery === null,
       invoke: () => { if (subject.kind === "External" && !holding && (!installedApp || remoteReady())) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
     });
   }
+  if (kind === "podcast_episode" && mediaId === null) {
+    const heldRecovery = recovery?.destination === "All" ? recovery : null;
+    const label = heldRecovery?.label ?? "add to all";
+    actions.push({ controlKey: "AddEpisodeToAll", hasPopup: null, id: "AddEpisodeToAll", menuLabel: label,
+      accessibleLabel: `${label}: ${title}`, icon: createElement(ListPlus),
+      disabled: disconnected || holding && heldRecovery === null,
+      disabledReason: disconnected ? "requires a connection" : holding && heldRecovery === null ? heldReason : null,
+      busy: holding && heldRecovery === null,
+      invoke: () => {
+        if (heldRecovery) { heldRecovery.invoke(); return; }
+        if (subject.kind === "External" && !holding && (!installedApp || remoteReady()))
+          ctx.mediaContinuations.start(subject, { kind: "All" }, null);
+      },
+    });
+  }
   if (recovery?.destination === "Library") actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement",
-    label: recovery.label, icon: createElement(Library), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
+    menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(Library), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
     invoke: recovery.invoke });
   // A failed library creation keeps "manage libraries" open: its editor holds the retry.
-  else actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", label: "manage libraries", icon: createElement(Library),
+  else actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: "manage libraries", accessibleLabel: `manage libraries: ${title}`, icon: createElement(Library),
     disabled: holding && !creationFailed || disconnected,
     disabledReason: disconnected ? "requires a connection" : holding && !creationFailed ? heldReason : null, busy: holding && !creationFailed && recovery === null,
     invoke: ({ trigger, returnFocus }) => {

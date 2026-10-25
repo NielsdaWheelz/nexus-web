@@ -1,6 +1,6 @@
 """Seed one durable authored graph, preserving identities, prose and relationships.
 
-0318 follows actual head 0317. All writers must be stopped. Conversion uses the
+0320 follows actual head 0319. All writers must be stopped. Conversion uses the
 frozen sibling semantic bundle, never application imports. Any unsupported body,
 duplicate semantic binding or missing annotation extent aborts this transaction.
 Existing source provenance is unknown unless independently proved; this migration
@@ -19,8 +19,8 @@ from uuid import UUID, uuid5
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0318"
-down_revision = "0317"
+revision = "0320"
+down_revision = "0319"
 branch_labels = None
 depends_on = None
 
@@ -45,7 +45,7 @@ def _helper(value: object) -> dict:
         [
             _node_binary(),
             "--max-old-space-size=128",
-            str(Path(__file__).with_name("0318_authored_seed.mjs")),
+            str(Path(__file__).with_name("0320_authored_seed.mjs")),
         ],
         input=_json(value),
         text=True,
@@ -62,7 +62,7 @@ def _insert(
 ) -> None:
     if len(_json(state).encode()) > 2 * 1024 * 1024:
         raise RuntimeError(
-            f"0318 {table} {identity} exceeds the 2 MiB atomic-change budget"
+            f"0320 {table} {identity} exceeds the 2 MiB atomic-change budget"
         )
     if table == "authored_resources" and state["kind"] in ("note", "page"):
         value = dict(state)
@@ -379,7 +379,7 @@ def _highlights(connection, account, dot, stamp) -> None:
                 ).mappings()
             ]
             if not quads:
-                raise RuntimeError(f"0318 highlight {row['id']} has no geometry")
+                raise RuntimeError(f"0320 highlight {row['id']} has no geometry")
             locator = {
                 "type": "pdf_page_geometry",
                 "media_id": str(row["anchor_media_id"]),
@@ -391,7 +391,7 @@ def _highlights(connection, account, dot, stamp) -> None:
             }
         else:
             raise RuntimeError(
-                f"0318 cannot convert highlight {row['id']} anchor {row['anchor_kind']}"
+                f"0320 cannot convert highlight {row['id']} anchor {row['anchor_kind']}"
             )
         ref = f"highlight:{row['id']}"
         capture = {
@@ -437,7 +437,7 @@ def _passages(connection, account, stamp) -> None:
         ).hexdigest()
         if key != row["anchor_key"]:
             raise RuntimeError(
-                f"0318 passage {row['id']} has an inconsistent semantic key"
+                f"0320 passage {row['id']} has an inconsistent semantic key"
             )
         source = f"{row['owner_scheme']}:{row['owner_id']}"
         hint = row["selector"].get("locator_hint")
@@ -485,7 +485,7 @@ def _locator(source: str, quote: dict, hint: dict | None) -> dict | None:
             locator.update(block_id=ident, body_version=None)
         else:
             if not hint.get("fragment_id"):
-                raise RuntimeError("0318 text passage lacks fragment identity")
+                raise RuntimeError("0320 text passage lacks fragment identity")
             locator.update(
                 media_id=ident, fragment_id=hint["fragment_id"], media_kind=None
             )
@@ -516,7 +516,7 @@ def _locator(source: str, quote: dict, hint: dict | None) -> dict | None:
             "t_end_ms": hint["t_end_ms"],
             "text_quote_selector": quote,
         }
-    raise RuntimeError(f"0318 unsupported passage locator {hint!r}")
+    raise RuntimeError(f"0320 unsupported passage locator {hint!r}")
 
 
 def _links(connection, account, dot, stamp) -> None:
@@ -578,7 +578,7 @@ def _links(connection, account, dot, stamp) -> None:
                     is None
                 ):
                     raise RuntimeError(
-                        f"0318 link {row['id']} has unresolved authored endpoint {endpoint}"
+                        f"0320 link {row['id']} has unresolved authored endpoint {endpoint}"
                     )
             elif scheme == "passage_anchor":
                 if (
@@ -591,7 +591,7 @@ def _links(connection, account, dot, stamp) -> None:
                     is None
                 ):
                     raise RuntimeError(
-                        f"0318 link {row['id']} has unresolved passage endpoint {endpoint}"
+                        f"0320 link {row['id']} has unresolved passage endpoint {endpoint}"
                     )
         identity = str(row["id"])
         _insert(
@@ -712,5 +712,5 @@ def _stubs(connection, account, stamp) -> None:
 
 def downgrade() -> None:
     raise NotImplementedError(
-        "0318 is irreversible; restore the drained pre-release backup"
+        "0320 is irreversible; restore the drained pre-release backup"
     )

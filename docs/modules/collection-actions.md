@@ -8,7 +8,9 @@ arrivals and subsequent source ordering do not change reviewed ids.
 `consumption/collections.py` composes canonical ordered selectors and consumption
 state; `consumption/lectern.py` owns lectern changes. a library selects physically
 contained media, never episodes implied by its subscriptions. all selects its
-canonical distinct physical union. catalog inspection does not grant playback.
+canonical distinct physical union. a podcast selects its full known catalogue,
+including unsaved episodes; point tools admit those episodes without filing them.
+catalogue access does not expand library, search or suggestion enumeration.
 
 ## state and exact inverse
 

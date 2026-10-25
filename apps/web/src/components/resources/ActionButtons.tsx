@@ -7,9 +7,8 @@ import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import styles from "./ActionButtons.module.css";
 
 /** Presentation only: command identity may change while its focused control remains. */
-export default function ActionButtons({ actions, title, density, returnFocus, afterRemoval }: {
+export default function ActionButtons({ actions, density, returnFocus, afterRemoval }: {
   readonly actions: readonly ActionButtonSpec[];
-  readonly title: string;
   readonly density: "Row" | "Header";
   readonly returnFocus: () => HTMLElement | null;
   readonly afterRemoval: () => HTMLElement | null;
@@ -20,7 +19,7 @@ export default function ActionButtons({ actions, title, density, returnFocus, af
   return <div ref={root} className={styles.actions} data-resource-actions="" data-density={density}>
     {actions.map(action => {
       const reasonId = `${id}-${action.controlKey}`;
-      const label = `${action.label}: ${title}`;
+      const label = action.accessibleLabel;
       return <span key={action.controlKey} className={styles.control} data-action-control-key={action.controlKey}>
         <Button iconOnly icon={action.icon} className={styles.button}
           aria-label={label} aria-disabled={action.disabled || undefined} aria-busy={action.busy || undefined}

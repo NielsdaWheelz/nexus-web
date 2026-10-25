@@ -7,7 +7,8 @@ import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
 import { assertNever } from "@/lib/assertNever";
-import { tabState } from "@/lib/nexus/rows";
+import type { NexusPane } from "@/lib/nexus/model";
+import { paneState } from "@/lib/nexus/rows";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import { paneControls } from "@/lib/workspace/paneControls";
@@ -33,7 +34,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
   );
 }
 
-function ManageTabs({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
+function ManagePanes({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
   const triggers = useRef(new Map<string, HTMLButtonElement>());
   const stateDescriptionId = useId();
   const [focusPaneId, setFocusPaneId] = useState<string | null>(null);
@@ -51,20 +52,23 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
     if (selection === null) return;
     setFocusPaneId(neighbor?.id ?? selection.paneId);
   };
+  // the default open state says nothing; only desktop maximizes.
+  const stateText = (pane: NexusPane) => !mobile && controller.desktopMaximized && pane.current ? "maximized"
+    : paneState(pane) === "Open" ? null : paneState(pane).toLowerCase();
   return (
     <section className={styles.page}>
       <Header
-        title={mobile ? "all tabs" : "Manage tabs"}
+        title={mobile ? "all panes" : "Manage panes"}
         onBack={controller.back}
       />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} />
-      <section className={styles.tabs} aria-labelledby="nexus-open-tabs">
-        <h3 id="nexus-open-tabs">{mobile ? "open" : "Open"}</h3>
+      <section className={styles.panes} aria-labelledby="nexus-open-panes">
+        <h3 id="nexus-open-panes">{mobile ? "open" : "Open"}</h3>
         <ul>
           {controller.panes.map((pane) => (
             <li key={pane.id}>
-              <button className={styles.tabOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={mobile && pane.visibility === "minimized" ? `restore ${pane.presentation.title}` : pane.presentation.title} aria-current={pane.current ? "page" : undefined}
-                aria-describedby={mobile ? undefined : `${stateDescriptionId}-${pane.id}`}
+              <button className={styles.paneOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={mobile && pane.visibility === "minimized" ? `restore ${pane.presentation.title}` : pane.presentation.title} aria-current={pane.current ? "page" : undefined}
+                aria-describedby={mobile || stateText(pane) === null ? undefined : `${stateDescriptionId}-${pane.id}`}
                 ref={(element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); }}
                 onClick={(event) => {
                   const detail = prepareActionSelect(event, null);
@@ -78,11 +82,11 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
                   const detail = prepareActionSelect(event, null);
                   if (detail) controller.openPane(pane.id, detail.openIntent);
                 }}>
-                <span className={styles.tabIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
-                  {mobile ? tabState(pane) === "Open" ? null : <small>{tabState(pane).toLowerCase()}</small> : <small id={`${stateDescriptionId}-${pane.id}`}>{controller.desktopMaximized && pane.current ? "maximized" : tabState(pane).toLowerCase()} tab</small>}
+                <span className={styles.paneIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
+                  {stateText(pane) === null ? null : <small id={mobile ? undefined : `${stateDescriptionId}-${pane.id}`}>{stateText(pane)}</small>}
                 </span>
               </button>
-              <div className={styles.tabActions}>
+              <div className={styles.paneActions}>
                 {paneControls({ state: controller.workspaceState, paneId: pane.id, title: pane.presentation.title, desktopMaximized: controller.desktopMaximized, isMobile: mobile }).map((control) => {
                   const Icon = control.icon;
                   return <Button
@@ -123,12 +127,12 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
         </ul>
       </section>
       {controller.closedPanes.length > 0 ? (
-        <section className={styles.tabs} aria-labelledby="nexus-closed-tabs">
-          <h3 id="nexus-closed-tabs">{mobile ? "recently closed" : "Recently closed"}</h3>
+        <section className={styles.panes} aria-labelledby="nexus-closed-panes">
+          <h3 id="nexus-closed-panes">{mobile ? "recently closed" : "Recently closed"}</h3>
           <ul>
             {controller.closedPanes.map((pane) => (
               <li key={pane.id}>
-                <button className={styles.tabOpen} type="button" aria-label={`${mobile ? "restore" : "Restore"} ${pane.presentation.title}`} onClick={() => controller.restoreClosedPane(pane.id)}
+                <button className={styles.paneOpen} type="button" aria-label={`${mobile ? "restore" : "Restore"} ${pane.presentation.title}`} onClick={() => controller.restoreClosedPane(pane.id)}
                   onKeyDown={(event) => {
                     if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing)) event.preventDefault();
                   }}>
@@ -230,8 +234,8 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           />
         </AddPanelBoundary>
       );
-    case "ManageTabs":
-      return <ManageTabs controller={controller} mobile={mobile} />;
+    case "ManagePanes":
+      return <ManagePanes controller={controller} mobile={mobile} />;
   }
 }
 

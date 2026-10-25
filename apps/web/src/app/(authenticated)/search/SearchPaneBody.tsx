@@ -150,8 +150,9 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
   const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? {
     target: { kind: "Canonical", podcast_id: row.item.ref.slice(8) }, title: row.item.label,
-    facts: list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
-      : !list.fresh || list.running !== null ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: row.item.ref.slice(8) }),
+    facts: podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: row.item.ref.slice(8) },
+      failure !== null ? { kind: "Failed", error: failure.error, retry: list.failure !== null ? list.retry : refreshResults, retrying: list.running !== null }
+        : !list.fresh || list.running !== null ? { kind: "Resolving" } : null),
   } : undefined;
   const afterRemoval = (following: readonly Row[]) => () => following.map(row =>
     root.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(row.item.ref)}"] [data-row-focusable]`)).find(element => element !== null && element !== undefined)

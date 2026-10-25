@@ -14,6 +14,5 @@ export default function MediaActions({ subject, knownDescriptor, density, return
   readonly afterRemoval?: () => HTMLElement | null;
 }) {
   const actions = useMediaActions(subject, knownDescriptor);
-  return <ActionButtons actions={actions} title={subject.kind === "Stored" ? subject.summary.title : subject.title}
-    density={density} returnFocus={returnFocus} afterRemoval={afterRemoval} />;
+  return <ActionButtons actions={actions} density={density} returnFocus={returnFocus} afterRemoval={afterRemoval} />;
 }

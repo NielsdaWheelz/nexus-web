@@ -227,6 +227,8 @@ enabled links retain native navigation. no action is inferred from styling.
 
 help, busy and selection changes preserve the native root. tooltip composition
 retains actual refs, react callback cleanup, caller handlers and description ids.
+an explicit caller description owns complete spoken help; the tooltip supplies
+a description only when none is provided. visual tooltip text stays independent.
 disabled paint overrides every tone/selection state; focus stays visible.
 forced colors use system colors; reduced motion stops color transitions and busy
 rotation. colors, type and spacing use existing tokens; no geometry animation.
@@ -282,7 +284,7 @@ in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
 retain selection and focus. controls use shared `Button` paint, tooltips and
 decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
-`lib/workspace/paneControls.ts` owns content shared with manage-tabs. mobile keeps
+`lib/workspace/paneControls.ts` owns content shared with manage-panes. mobile keeps
 48px controls and wrapping titles. reorder completion uses one polite position
 announcement; layout management emits no success toast.
 

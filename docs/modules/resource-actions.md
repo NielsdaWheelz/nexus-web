@@ -30,7 +30,8 @@ selection scope while execution keeps the same catalog command ids.
 
 - `GET /resource-items/{ref}/actions` → `ResourceActionsOut {ref, label, activation, missing,
   actions}` (`services/resource_items/actions.py`). each action is `{kind, blocked, …facts}`;
-  `blocked` is `PermissionDenied | Locked | Processing | TemporarilyUnavailable | null`.
+  `blocked` is `PermissionDenied | Locked | Processing | TemporarilyUnavailable |
+  PodcastSubscription | null`.
   inapplicable verbs are omitted; forbidden ones are present and blocked. an invisible ref
   answers 200 `missing: true`, no actions, a `none` activation. a bad ref is 400. a media
   carries at most one `Recovery` per import obligation (source, then search); the web keys
@@ -59,7 +60,7 @@ selection scope while execution keeps the same catalog command ids.
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
   the overlays (metadata, library settings, podcast settings and fixed
-  podcast subscription/import/unsubscribe/cleanup reviews).
+  podcast addition, unsubscribe, cleanup and episode-removal reviews).
   `ResourceActionPresentation` renders overlays and throws reported action defects
   beneath the existing workspace boundary. overlay state, identity-gated dismissal,
   account command owners and their feedback remain above containment. a review
@@ -68,9 +69,11 @@ selection scope while execution keeps the same catalog command ids.
   therefore survive an action defect.
 - a row ellipsis supplies `action_ref` in either family. when it differs from the
   displayed passage, management appears in `source: {label}`. row composition
-  omits loaded open/fork; `any-pointer: coarse` adds exactly one local fork from
-  displayed activation, preserving location. that activation participates in menu
-  subject identity, so a changed route retires the open menu.
+  omits loaded open/fork, as do menus on the subject their pane publishes
+  ([workspace](workspace.md#target-activation) rule 3); `any-pointer: coarse`
+  adds exactly one local fork from displayed activation, preserving location.
+  that activation participates in menu subject identity, so a changed route
+  retires the open menu.
 - a bullet relationship menu supplies no resource ref/fork. right-click,
   context-menu key, shift-f10 and stationary touch hold use the shared context
   anchor. native title link menus stay native. movement, scroll, cancellation,
@@ -105,12 +108,30 @@ selection scope while execution keeps the same catalog command ids.
   revision cannot authorize a new write.
   libraries receives the actual trigger and owning-pane focus fallback. relationship
   menus retain their occurrence principal; media quick actions retain the media id.
+- canonical episode actions use requested-media authority even without a holding.
+  playback, explicit transcript work, own annotations, state, queue/lectern and
+  device downloads acquire no library membership. existing content readiness,
+  explicit transcript forecasts/admissions and device ownership still govern them.
+  collection commands delegate scope to their owner: known catalogue episodes for
+  a show, physical memberships for a library.
+- `AddEpisodeToAll` appears only when effective all membership is absent;
+  `RemoveEpisodeFromAll` appears only when present. their facts use
+  `LibraryPlacementsOut.all_membership`, whose id/revision address the actual
+  personal default. removal projects subscription protection as
+  `PodcastSubscription` and read-only contributions as `PermissionDenied`.
+  named `LibraryPlacement` stays separate, with subscribed placements locked.
+  episode removal uses its full guarded preview and command; generic `RemoveMedia`
+  serves other media.
 - `resourceActions` is the finite media/podcast subject contract shared by pane
-  chrome and collection rows. domain hooks own command projection; `ActionButtons`
+  chrome and collection rows. domain hooks supply complete `accessibleLabel`
+  values for inline controls and short `menuLabel` values for menu adapters.
+  descriptors retain their own menu labels.
+  `ActionButtons` does not assemble names or know domain state. it
   owns only button anatomy, disabled explanations, event isolation and focus
   recovery. podcast subscription keeps one control key while its verb changes.
   show indexes, discovery rows and headers expose subscription, libraries and
-  one complete more menu; compact hosts demote both shortcuts at 479px. library
+  one complete more menu; rows demote shortcuts below their 32em boundary and
+  headers at 479px. library
   cards retain their scoped single-shortcut policy. shows receive no playback controls.
   live search/chat rows receive explicit subjects matching their own podcast ref;
   captured evidence and editable references receive none.
@@ -140,21 +161,28 @@ selection scope while execution keeps the same catalog command ids.
   podcast-directory episode rows expose the same playback/more composition; the
   directory's bounded snapshot limits listing completeness, not sealed-target
   command authority. find results and stale query rows retain their existing gates.
-- external subjects use their sealed target as identity. `mediaContinuation` retains
-  explicit membership intent above row/picker lifetime. acquisition freezes its source,
-  retry identity and removal/destination revisions before provider i/o. unknown
-  admission retries the exact command; refusal needs explicit review and fresh
-  choice. acceptance identity is retained before availability reads. URL settlement
-  supplies the final media id, including deduplication. library admission already
-  filed it; settlement reads current membership and never reapplies an old filing.
-  lectern membership waits for identity, not processing success. failure keeps saved
-  media and retries only the remaining stage; removed receipts claim no current saving.
-  the existing imports observer stays retained while identity resolves. libraries
-  retargets only its still-current picker session; completion never navigates or
-  reopens a dismissed picker. account teardown/reload ends client continuation.
-  pending destination creation blocks competing membership commands for that sealed
-  target through the existing creation owner. acknowledged canonical deletion
-  forgets completed receipts for that media id.
+- external subjects retain their sealed target as identity. opening an unknown
+  directory show or episode posts `POST /podcasts/resolve` or
+  `POST /podcast-episodes/resolve` with `{target}`, then opens the returned canonical
+  href. replies carry `podcast_id`, and episode replies also carry `media_id`.
+  resolution dedupes by source, creates no personal holding/rule and requests no
+  transcript or model work. new identities still deliver to existing show rules.
+  known local targets bypass resolution; preview/action-facts reads create nothing.
+- `mediaContinuation` retains explicit destination intent above row/picker lifetime.
+  url acquisition freezes source, retry id and removal/destination revisions before
+  provider i/o; its accepted library admission already filed the item. settlement
+  reads current membership and never reapplies an old filing.
+  episode saves freeze the removal fence before catalogue resolution, then read
+  canonical destination/order facts without replacing that fence. the account
+  command owner retains the exact `PlaceItemRequest`; all addresses the actual
+  default and never fans out. resolve, open and playback alone never save.
+  unknown writes retain exact-request recovery after dismissal; refusal requires
+  explicit review before fresh intent. acceptance identity survives later reads.
+  lectern membership waits for identity, not transcript readiness, and saves no
+  episode. libraries retarget only their current picker session; completion never
+  navigates or reopens a dismissed picker. account teardown/reload ends the
+  continuation. pending destination creation blocks competing commands for that
+  sealed target through the existing creation owner.
 - destination links and create commands carry explicit opening intent through
   `ActionSelectDetail`. bound links retain full targets and own pointer/keyboard
   handling; shared presenters classify commands and suppress new-pane return focus.
@@ -222,9 +250,10 @@ retain their separate settlement contracts.
 - confirmations substitute the resource's `label` literally into body `{title}`
   tokens (a media's bare title, without authors); label text is never a replacement
   pattern. confirmation precedes execution and busy tracking. podcast actions use
-  distinct `SubscribePodcast`, `ImportPodcastEpisodes`, `UnsubscribePodcast` and
-  `RemovePodcastEpisodes` ids and fixed overlays; their guarded review is the
-  confirmation. the subscription projector also serves loaded pane-header facts.
+  distinct `SubscribePodcast`, `PodcastLibraries`, `UnsubscribePodcast`,
+  `RemovePodcastEpisodes` and `RemoveEpisodeFromAll` ids and fixed overlays; their
+  guarded review is the confirmation. finite show additions stay behind
+  `PodcastLibraries`. the subscription projector also serves loaded pane-header facts.
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
 - visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
   actions read and the item read agree on `missing`; a podcast is a public catalog row (any

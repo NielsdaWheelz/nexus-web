@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef, type MouseEvent, type KeyboardEvent } from "react";
 import PodcastAcquisitionDialog from "@/components/podcasts/PodcastAcquisitionDialog";
+import EpisodeRemovalDialog from "@/components/podcasts/EpisodeRemovalDialog";
 import PodcastStopDialog from "@/components/podcasts/PodcastStopDialog";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import ResourceMetadataOverlay from "@/components/resources/ResourceMetadataOverlay";
@@ -96,7 +97,7 @@ export function ResourceOverlays({
         />
       ) : null}
       {overlay?.kind === "SubscribePodcast" ? <PodcastAcquisitionDialog key={overlay.key} mode="follow" target={overlay.target} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
-      {overlay?.kind === "ImportPodcastEpisodes" ? <PodcastAcquisitionDialog key={overlay.key} mode="current_episodes" target={overlay.target} title={overlay.title} libraryId={null} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "RemoveEpisodeFromAll" ? <EpisodeRemovalDialog key={overlay.key} mediaId={overlay.mediaId} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "UnsubscribePodcast" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={overlay.libraryId} episodes="keep" successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "RemovePodcastEpisodes" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={null} episodes="remove" returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
     </PaneReturnVisitScope>

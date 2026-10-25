@@ -12,8 +12,11 @@ never follows the reverse storage dependency. final family teardown deletes boun
 candidates and child identities before releasing source fragments/publication. Teardown locks
 contained candidates in media-id order and claims newly unrooted children through
 the same jobs. Retry rule: removal is idempotent; teardown acts on its exact intent.
-normal episode removal retains media and aliases, and always records the viewer's
-removal marker so automatic acquisition cannot restore the episode.
+episode removal is a separate guarded placement command. it preserves canonical
+identity, authored work, listening, queue and device state. active rules refuse;
+unfinished finite additions retain a processed exclusion. an absent retry is inert
+only when every current unfinished addition already excludes the episode. newer
+placements or unprocessed additions must pass the original guards.
 """
 
 from __future__ import annotations
@@ -39,10 +42,17 @@ from nexus.db.retries import (
     retry_serializable,
 )
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiErrorCode, ForbiddenError
+from nexus.errors import (
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_job
 from nexus.logging import get_logger
+from nexus.schemas import podcast as wire
 from nexus.services import (
     contributors,
     libraries,
@@ -193,30 +203,167 @@ def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> N
     )
 
 
-def remove_podcast_workspace_access_locked(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_ids: list[UUID],
-) -> None:
-    """Scoped podcast removal hides access while preserving authored work and history.
-
-    caller has the actor, complete media and destination locks. grants remain;
-    viewer markers hide their paths until an explicit fresh acquisition clears them.
-    """
-    from nexus.services.consumption import lectern
-
-    projections = resource_grants.annotation_visibility(
-        db, user_ids={viewer_id}, media_ids=set(media_ids)
-    )
-    for media_id in media_ids:
-        db.execute(
-            text("""INSERT INTO user_media_deletions(user_id,media_id) VALUES (:u,:m)
-                           ON CONFLICT DO NOTHING"""),
-            {"u": viewer_id, "m": media_id},
+def episode_removal_preview(
+    db: Session, viewer_id: UUID, media_id: UUID
+) -> wire.PodcastEpisodeRemovalPreviewOut:
+    """Snapshot every contributing placement/rule/addition, including read-only libraries."""
+    rows = db.execute(
+        text("""
+        WITH destinations AS (
+            SELECT l.id AS library_id,l.name,l.is_default,l.order_revision,
+                   (l.is_default AND l.owner_user_id=:viewer) OR m.role='admin' AS can_add_content,
+                   (SELECT count(*)>1 FROM memberships member WHERE member.library_id=l.id) AS is_shared,
+                   s.id AS subscription_id,i.id AS import_id,r.attempt_version AS import_attempt_version,
+                   CASE WHEN EXISTS (SELECT 1 FROM library_entries le
+                       WHERE le.library_id=l.id AND le.media_id=:media) THEN 1 ELSE 0 END AS episode_count
+            FROM libraries l JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer
+            JOIN podcast_episodes pe ON pe.media_id=:media
+            LEFT JOIN library_podcast_subscriptions s
+              ON s.library_id=l.id AND s.podcast_id=pe.podcast_id
+            LEFT JOIN LATERAL (
+                SELECT candidate.* FROM podcast_library_imports candidate
+                JOIN podcast_feed_runs run ON run.id=candidate.run_id
+                WHERE candidate.library_id=l.id AND run.podcast_id=pe.podcast_id
+                  AND run.completed_at IS NULL AND run.cancelled_at IS NULL
+            ) i ON true
+            LEFT JOIN podcast_feed_runs r ON r.id=i.run_id
+            WHERE l.system_key IS NULL AND (NOT l.is_default OR l.owner_user_id=:viewer)
         )
-        lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
-    resource_grants.invalidate_annotation_visibility(db, projections)
+        SELECT u.removal_revision,media.kind,pe.media_id AS episode_id,
+               EXISTS (SELECT 1 FROM media_teardown_intents ti WHERE ti.media_id=:media) AS deleting,
+               destination.*
+        FROM users u LEFT JOIN media ON media.id=:media
+        LEFT JOIN podcast_episodes pe ON pe.media_id=media.id
+        LEFT JOIN destinations destination ON destination.episode_count>0
+          OR destination.subscription_id IS NOT NULL OR destination.import_id IS NOT NULL
+        WHERE u.id=:viewer ORDER BY destination.library_id
+    """),
+        {"viewer": viewer_id, "media": media_id},
+    ).all()
+    if not rows or rows[0].kind is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if rows[0].kind != "podcast_episode" or rows[0].episode_id is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Expected a podcast episode")
+    if rows[0].deleting:
+        raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+    destinations = [
+        wire.PodcastRemovalDestinationOut(
+            library_id=row.library_id,
+            name=row.name,
+            is_default=row.is_default,
+            is_shared=row.is_shared,
+            subscription_id=row.subscription_id,
+            import_id=row.import_id,
+            import_attempt_version=row.import_attempt_version,
+            order_revision=str(row.order_revision),
+            episode_count=row.episode_count,
+            can_add_content=row.can_add_content,
+        )
+        for row in rows
+        if row.library_id is not None
+    ]
+    blocked = [
+        wire.PodcastRemovalBlockedOut(
+            library_id=destination.library_id,
+            name=destination.name,
+            reason="subscription_active"
+            if destination.subscription_id is not None
+            else "requires_admin",
+        )
+        for destination in destinations
+        if destination.subscription_id is not None or not destination.can_add_content
+    ]
+    return wire.PodcastEpisodeRemovalPreviewOut(
+        media_id=media_id,
+        removal_revision=str(rows[0].removal_revision),
+        destinations=destinations,
+        can_execute=not blocked,
+        blocked=blocked,
+    )
+
+
+def remove_episode(
+    db: Session, viewer_id: UUID, media_id: UUID, body: wire.PodcastEpisodeRemovalRequest
+) -> wire.PodcastEpisodeRemovalOut:
+    """Remove the reviewed memberships without acquiring or destroying other episode state."""
+    from nexus.services.podcasts import imports
+
+    def attempt() -> wire.PodcastEpisodeRemovalOut:
+        users.lock_viewer(db, viewer_id)
+        podcast_id = library_entries.lock_parent_podcast(db, media_id)
+        if podcast_id is not None:
+            db.execute(
+                text(
+                    "SELECT id FROM podcast_feed_runs WHERE podcast_id=:id ORDER BY id FOR UPDATE"
+                ),
+                {"id": podcast_id},
+            )
+        library_entries.lock_media_rows_in_order(db, [media_id])
+        before = episode_removal_preview(db, viewer_id, media_id)
+        selected = [destination.library_id for destination in before.destinations]
+        libraries.lock_library_rows_in_order(db, selected)
+        current = episode_removal_preview(db, viewer_id, media_id)
+        if any(destination.subscription_id is not None for destination in current.destinations):
+            raise ConflictError(
+                ApiErrorCode.E_PODCAST_SUBSCRIPTION_ACTIVE,
+                "Podcast subscription protects this episode",
+            )
+        can_restore = db.scalar(
+            text("""
+            SELECT 1 FROM podcast_library_imports i
+            JOIN podcast_feed_runs run ON run.id=i.run_id
+            JOIN podcast_episodes pe ON pe.podcast_id=run.podcast_id AND pe.media_id=:media
+            WHERE i.library_id=ANY(:libraries)
+              AND run.completed_at IS NULL AND run.cancelled_at IS NULL
+              AND NOT EXISTS (SELECT 1 FROM podcast_import_processed_episodes processed
+                  WHERE processed.import_id=i.id AND processed.media_id=:media)
+            LIMIT 1
+        """),
+            {"media": media_id, "libraries": selected},
+        )
+        if (
+            not any(destination.episode_count for destination in current.destinations)
+            and not can_restore
+        ):
+            return wire.PodcastEpisodeRemovalOut(
+                media_id=media_id, removal_revision=current.removal_revision
+            )
+        users.require_removal_revision(db, viewer_id, int(body.expected_removal_revision))
+        expected = {destination.library_id: destination for destination in body.destinations}
+        if set(expected) != {destination.library_id for destination in current.destinations}:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Episode destinations changed")
+        for destination in current.destinations:
+            guard = expected[destination.library_id]
+            if (
+                destination.subscription_id != guard.expected_subscription_id
+                or destination.import_id != guard.expected_import_id
+                or destination.import_attempt_version != guard.expected_import_attempt_version
+                or destination.order_revision != guard.expected_order_revision
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed")
+            libraries.access(db, viewer_id, destination.library_id, lock=False).require_add_content(
+                viewer_id
+            )
+        imports.mark_processed(db, library_ids=selected, media_id=media_id)
+        library_entries.remove_podcast_episodes_locked(
+            db, library_ids=selected, media_ids=[media_id]
+        )
+        for library_id in selected:
+            libraries.advance_order_revision(db, library_id)
+        removal = users.advance_removal_revision(db, viewer_id)
+        projection.refresh_viewer_contributors(
+            db,
+            list(
+                db.scalars(
+                    text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+                    {"ids": selected},
+                )
+            ),
+        )
+        record_input_change(db, owners=(f"media:{media_id}", f"podcast:{podcast_id}"))
+        return wire.PodcastEpisodeRemovalOut(media_id=media_id, removal_revision=str(removal))
+
+    return retry_serializable(db, "remove_podcast_episode", attempt)
 
 
 def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -235,22 +382,11 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     # The lectern's lock order, as teardown takes it: the viewer before the media.
     users.lock_viewer(db, viewer_id)
     users.advance_removal_revision(db, viewer_id)
-    from nexus.services.podcasts import imports
-
-    parent = library_entries.lock_parent_podcast(db, media_id)
-    if parent is not None:
-        managed = list(
-            db.scalars(
-                text("""
-            SELECT l.id FROM libraries l JOIN memberships m ON m.library_id=l.id
-            WHERE m.user_id=:viewer AND l.system_key IS NULL
-              AND ((l.is_default AND l.owner_user_id=:viewer) OR (NOT l.is_default AND m.role='admin'))
-        """),
-                {"viewer": viewer_id},
-            )
-        )
-        imports.mark_processed(db, library_ids=managed, media_id=media_id)
     kind = _lock_kind(db, media_id)
+    if kind == "podcast_episode":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND, "Podcast episode removal requires a reviewed scope"
+        )
     if kind is None or not can_read_media(db, viewer_id, media_id):
         return
     source_id = db.scalar(
@@ -332,9 +468,8 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         )
     if kind in _DOCUMENT_KINDS and not _references(db, media_id):
         _claim_teardown(db, media_id)
-    elif kind == "podcast_episode" or can_read_media(db, viewer_id, media_id):
-        # Episodes retain removal intent even after their last readable path goes.
-        # Other retained media need hiding when a path the viewer cannot remove stays.
+    elif can_read_media(db, viewer_id, media_id):
+        # Retained media need hiding when a path the viewer cannot remove stays.
         _run(
             db,
             """

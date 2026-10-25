@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas import collection_actions as wire
 from nexus.services import library_listing
@@ -24,7 +24,7 @@ from nexus.services.suggestion_changes import record_input_change
 def ordered_source_ids(
     db: Session, viewer_id: UUID, target: wire.CollectionTarget
 ) -> tuple[str, list[UUID]]:
-    """Complete physical resource contents in its canonical fixed order."""
+    """Known show catalogue or physical library contents, in the owner's fixed order."""
     if isinstance(target, wire.PodcastCollectionTarget):
         return episodes.ordered_selection_ids(
             db, viewer_id, target.podcast_id, state="all", sort="oldest"
@@ -41,7 +41,7 @@ def require_source_members(
     readable = set(
         db.scalars(
             text(
-                f"SELECT media_id FROM ({visible_media_ids_cte_sql()}) visible "
+                f"SELECT media_id FROM ({requested_media_ids_cte_sql()}) visible "
                 "WHERE media_id = ANY(:media_ids)"
             ),
             {"viewer_id": viewer_id, "media_ids": media_ids},

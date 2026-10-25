@@ -364,13 +364,30 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             val inbound = try { JSONObject(raw) } catch (_: JSONException) { null } // justify-ignore-error: malformed input is answered below.
             val op = inbound?.optString("op")
             val ownsDocument = inbound != null && inbound.optString("document_id") == documentId && controller == documentOwner
+            val admissionError = try {
+                if (ownsDocument && op == "queue_command") queueCommandRefusal(checkNotNull(inbound)) else null
+            } catch (_: JSONException) {
+                // justify-ignore-error: malformed queue commands are refused before activation retirement.
+                "Invalid"
+            } catch (_: IllegalArgumentException) {
+                // justify-ignore-error: malformed queue commands are refused before activation retirement.
+                "Invalid"
+            }
+            if (admissionError != null) {
+                result.set(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                    putString(ARG_JSON, failure(admissionError).toString())
+                }))
+                return result
+            }
             val mine = if (
                 (ownsDocument && (
                     (op == "queue_read" && inbound.optBoolean("reconcile")) ||
                     op in setOf("cancelPlayback", "play", "pause", "seekAndPlay", "seek", "skip", "load", "preview", "fence", "unbind", "dismiss", "queue_commit") ||
-                    (op == "queue_command" && inbound.optJSONObject("command")?.optString("kind") in setOf("select", "next", "previous", "stop", "clear", "restore"))
+                    (op == "queue_command" && inbound.optJSONObject("command")?.optString("kind") in setOf("select", "next", "previous", "stop"))
                 ))
-            ) retireActivation() else null
+            ) retireActivation()
+            else if (ownsDocument && op == "queue_command" && inbound.optJSONObject("command")?.optString("kind") == "restore") activationGeneration
+            else null
             scope.launch {
                 val reply = try {
                     handle(JSONObject(raw), controller, mine)
@@ -449,6 +466,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             require(request.keys().asSequence().toSet() == setOf("id", "op", "document_id", "media_id"))
             recorder.retry(UUID.fromString(request.getString("media_id"))); ok()
         }
+        if (op == "queue_command") queueCommandRefusal(request)?.let { return failure(it) }
         val prepared = prepareRequest(request)
         if (op.startsWith("queue_")) return loads.withLock {
             if (mine != null && mine != activationGeneration) return failure("Stale")
@@ -754,9 +772,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             "queue_begin" -> {
                 val begin = JSONObject(request.toString()).apply { remove("id"); remove("op"); remove("document_id") }
                 UUID.fromString(begin.getString("queue_id"))
+                require(begin.get("count") is Int)
                 val count = begin.getInt("count")
                 if (count !in 0..PlaybackStore.MAX_ENTRIES) return failure("Limit")
-                PlaybackStore.validateSource(begin.optJSONObject("source"))
+                require(begin.keys().asSequence().toSet() == setOf("queue_id", "expected_revision", "count", "current_entry_id"))
+                begin.nullableString("current_entry_id")?.let(UUID::fromString)
                 val existing = draft
                 if (existing != null && existing.begin.getString("queue_id") == begin.getString("queue_id"))
                     return if (existing.begin.toString() == begin.toString()) ok() else failure("Stale")
@@ -790,7 +810,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 if (input.controller != controller || input.document != document || input.begin.getString("queue_id") != id || input.entries.any { it == null }) return failure("Stale")
                 if (input.begin.nullableString("expected_revision") != queue.getLong("revision").toString()) return failure("Stale")
                 val next = JSONObject().put("queue_id", id).put("entries", JSONArray(input.entries.toList()))
-                    .put("current_entry_id", input.begin.get("current_entry_id")).put("source", input.begin.get("source"))
+                    .put("current_entry_id", input.begin.get("current_entry_id"))
                     .put("revision", queue.getLong("revision") + 1)
                 PlaybackStore.validateQueue(next)
                 val generation = retireActivation()
@@ -800,9 +820,9 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 if (generation != activationGeneration) return failure("Stale")
                 playback.update {
                     it.put("queue", next).put("checkpoint", JSONObject.NULL)
-                    trimDescriptors(it, queue)
+                    trimDescriptors(it, queue.takeIf { previous -> previous.getJSONArray("entries").length() > 0 })
                 }
-                undoQueue = JSONObject(queue.toString())
+                undoQueue = queue.takeIf { it.getJSONArray("entries").length() > 0 }?.let { JSONObject(it.toString()) }
                 draft = null
                 drop()
                 return ok()
@@ -819,6 +839,32 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val next = if (index == null) { if (delta < 0) entries.length() - 1 else -1 }
             else if (delta < 0) maxOf(0, index - 1) else index + 1
         queue.put("current_entry_id", if (next in 0 until entries.length()) entries.getJSONObject(next).getString("id") else JSONObject.NULL)
+    }
+
+    /** Playback commands are admitted before retiring an activation or reading a descriptor. */
+    private fun queueCommandRefusal(request: JSONObject): String? {
+        val command = request.getJSONObject("command")
+        val kind = command.getString("kind")
+        if (kind !in setOf("select", "next", "previous", "stop", "restore")) return null
+        require(request.keys().asSequence().toSet() == setOf("id", "op", "document_id", "queue_id", "expected_revision", "command"))
+        require(request.get("queue_id") is String && request.get("expected_revision") is String)
+        val queue = store?.queue ?: return "NotConnected"
+        if (request.getString("queue_id") != queue.getString("queue_id") ||
+            request.getString("expected_revision") != queue.getLong("revision").toString()) return "Stale"
+        if (kind != "select") {
+            require(command.keys().asSequence().toSet() == setOf("kind"))
+            return if (kind == "restore" && undoQueue == null) "Stale" else null
+        }
+        require(command.keys().asSequence().toSet() == setOf("kind", "entry_id", "play", "position_ms"))
+        require(command.get("play") is Boolean)
+        if (!command.isNull("position_ms")) {
+            require(command.get("position_ms") is Number)
+            val position = command.getDouble("position_ms")
+            require(position.isFinite() && position >= 0)
+        }
+        val id = command.getString("entry_id")
+        val entries = queue.getJSONArray("entries")
+        return if ((0 until entries.length()).any { entries.getJSONObject(it).getString("id") == id }) null else "Stale"
     }
 
     private suspend fun queueCommand(request: JSONObject, prepared: RemoteActivation?): JSONObject {
@@ -880,7 +926,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 }
                 val id = command.getString("entry_id")
                 if ((0 until entries.length()).none { entries.getJSONObject(it).getString("id") == id }) return failure("Stale")
-                if (!exact) return if (positionMs == null && request.getString("queue_id") == old.getString("queue_id") && current == id) ok() else failure("Stale")
+                if (!exact) return failure("Stale")
                 next.put("current_entry_id", id)
                 play = command.getBoolean("play")
                 activate = true
@@ -906,21 +952,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 if (!exact) return failure("Stale")
                 val previous = undoQueue ?: return failure("Stale")
                 next.put("queue_id", UUID.randomUUID().toString()).put("entries", previous.getJSONArray("entries"))
-                    .put("current_entry_id", previous.get("current_entry_id")).put("source", previous.get("source"))
-                activate = true; play = false
-            }
-            "clear" -> {
-                if (!exact && entries.length() == 0 && next.isNull("source")) return ok()
-                if (!exact) return failure("Stale")
-                next.put("queue_id", UUID.randomUUID().toString()).put("entries", JSONArray())
-                    .put("current_entry_id", JSONObject.NULL).put("source", JSONObject.NULL)
+                    .put("current_entry_id", previous.get("current_entry_id"))
                 activate = true; play = false
             }
             else -> return failure("Invalid")
         }
         PlaybackStore.validateQueue(next)
         val changed = next.toString() != old.toString()
-        val selectionChanged = next.nullableString("current_entry_id") != current || kind == "clear" || kind == "restore"
+        val selectionChanged = next.nullableString("current_entry_id") != current || kind == "restore"
         var generation = activationGeneration
         val admittedPreparation = prepared?.takeIf { it.accountId == account && it.generation == generation }
         if (activate || selectionChanged) {
@@ -934,9 +973,9 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             next.put("revision", old.getLong("revision") + 1)
             it.put("queue", next)
             if (selectionChanged) it.put("checkpoint", JSONObject.NULL)
-            trimDescriptors(it, if (kind == "clear") old else null)
+            trimDescriptors(it, null)
         }
-        if (changed) undoQueue = if (kind == "clear") JSONObject(old.toString()) else null
+        if (changed) undoQueue = null
         val activated = !activate || activateCurrent(play, checkpoint = !selectionChanged, positionMs = positionMs, prepared = admittedPreparation?.copy(generation = generation))
         if (positionMs != null) {
             if (generation != activationGeneration) return failure("Stale")
@@ -1057,7 +1096,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         val entry = header.optJSONObject("current_entry")
         if (entry == null) { drop(); return true }
         val entryId = entry.getString("id")
-        if (loadedEntryId == entryId && source != null && recorder.attached() && checkpoint && positionMs == null) {
+        if (loadedEntryId == entryId && source != null && !playbackFailed && player.playbackState != Player.STATE_ENDED && recorder.attached() && checkpoint && positionMs == null) {
             if (play) return resume(key(), loadId, activationGeneration, prepared) == null
             player.pause()
             return true

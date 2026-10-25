@@ -158,7 +158,7 @@ Mobile mode:
   horizontal swipe on the Nexus control
 - presents random pane access, recently closed restoration, and minimized-pane
   restore through the shell-mounted full-screen Nexus task and its dedicated
-  Manage Tabs page
+  Manage Panes page
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -181,7 +181,7 @@ in the requested mode does not publish again. mode-only changes preserve
 `state` identity and schedule no cloud or native save. these management commands
 request no content focus, history entry or loss decision. title activation keeps
 the current mode. the host owns effective visibility, inertness and geometry;
-[panes and tabs](panes-tabs.md) owns controls and focus.
+[panes](panes.md) owns controls and focus.
 
 The workspace store is the sole owner of sequential traversal. It follows
 stored-visible panes in strip order, clamps at the first and last pane,
@@ -201,9 +201,11 @@ for deleted media shows the body's own not-found. editors that open a typed link
 ## workspace titles
 
 [`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
-account-scoped projection for nexus, all tabs, pane chrome and the document title.
-`useWorkspacePresentations().forVisit(visit)` returns its title, detail and status;
-`retryTitles()` refreshes the shared read. readers never publish canonical titles.
+account-scoped projection for nexus, all panes, pane chrome and the document title.
+`useWorkspacePresentations().forVisit(visit)` returns its title, name, detail and
+status; `name` is the real name the title shows, or null while the title is a
+placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
+refreshes the shared read. readers never publish canonical titles.
 
 `POST /me/workspace-presentations` resolves the distinct current locators,
 including minimized panes, in ordered batches of at most 100. batches run
@@ -303,7 +305,8 @@ resourceRef, refresh }` with independent navigation, principal-task and query ca
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
 clears its own value as it unmounts; the shell subscribes in a layout effect
-and so re-renders before paint. The body's mount is the publication and its
+and so re-renders before paint. Other descendants read only the published
+`resourceRef`, through `usePaneSubject`. The body's mount is the publication and its
 unmount the withdrawal: there are no route or source keys, registries, prunes
 or equality checks. The last writer of a slot wins (the exclusive publishers,
 `PagePaneBody` and the imports list, hand over within one commit). The store
@@ -314,8 +317,9 @@ React commit that holds a suspended lazy body can delay the shell's follow-up
 render past a paint). A body that stays mounted across an in-place navigation
 republishes in the same commit. Find's results and the Companion's return
 focus live in the store too, so they end with the body. A body that passes a fresh object
-republishes on every render and re-renders only the shell; hot publishers
-(media, `Conversation`) memoize theirs.
+republishes on every render, which re-renders the shell and each `usePaneSubject`
+reader (the republish passes through null); hot publishers (media,
+`Conversation`) memoize theirs.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
 
@@ -436,13 +440,14 @@ evidence, including native page/text zoom, with no spoken assistive-technology c
 a resource pane publishes its canonical `resourceRef`
 (`CanonicalResourceRef`) and explicit inline `resourceActions` subject.
 `PaneShell` composes its pane commands and the body's
-`menuActions` through `ContextualActionMenu`; the unchanged canonical resource
+`menuActions` through `ContextualActionMenu`; the canonical resource
 descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
-order, and danger-last come from the server's verbs, read when the menu opens,
-so the pane menu includes `Open`. Pane bodies never build resource action
-arrays. Both header projections render inside the pane, so a menu defect breaks
-only that pane.
+order, and danger-last come from the server's verbs, read when the menu opens;
+a pane's own subject omits open and fork
+([target activation](#target-activation) rule 3). Pane bodies never build
+resource action arrays. Both header projections render inside the pane, so a
+menu defect breaks only that pane.
 
 podcast discovery headers additionally publish their current explicit podcast
 subject through `resourceActions`; their immediate menu shares the shortcut
@@ -558,7 +563,7 @@ ownership from the live store, preserving the reached control and suppressing
 canvas reveal. react events from a portaled menu or modal do not count as pane
 entry. a newer focus/pointer action or interaction owner cancels delayed host
 focus. strip management retains strip focus; its contract lives in
-[panes and tabs](panes-tabs.md).
+[panes](panes.md).
 
 ### mobile reader chrome
 
@@ -591,7 +596,7 @@ the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
 media pane composes chrome and viewport `registerReaderScrollport` capabilities.
 the viewport registry gates local reader geometry by the active route-owned
 `data-reader-composition` marker, including breakpoint and active-pane changes. the newest mobile registration
-accepts taps; desktop has no driver. fresh reader entry, tab return and viewport
+accepts taps; desktop has no driver. fresh reader entry, pane return and viewport
 breakpoint changes start shown. scrolling, reflow and same-mounted reader
 navigation preserve the target. a new chrome surface inherits it immediately.
 reader disposal restores the surrounding shell.
@@ -627,8 +632,9 @@ the phone's top bar is the active pane's own header: `PaneShell` renders
 Inspector, after the recovery button) as the pane section's child before
 `.primaryPane`, whose inline-size container would otherwise become the fixed
 bar's containing block. nothing publishes chrome out of a pane, so the bar's
-links, defects and focus stay with that pane; its More trigger carries
-`data-pane-chrome-focus`.
+links, defects and focus stay with that pane; its More trigger, when present,
+carries `data-pane-chrome-focus`, and every chrome focus path falls back to the
+pane landmark without it.
 
 ## Companion
 
@@ -739,8 +745,27 @@ pane creation directly.
 - `Fork`: always create and activate a fresh pane immediately after the origin.
 
 ordinary destination opening uses `Follow`; shifted activation uses `Fork`.
-explicit open-in-new-pane actions also use `Fork`. materialising an already
-placed provisional view replaces that view without another opening.
+explicit open-in-new-pane actions also use `Fork`. fork affordances follow these
+rules:
+
+1. a menu offers verbs on its own subject. adjacent pages are not the pane
+   menu's subject.
+2. no menu or trigger exists only to carry a fork; the player chapter menu is
+   the one recorded violation ([issue](../issues/chapter-shift-changes-verb.md)).
+3. a menu inside a pane never offers to open the pane's own subject:
+   `ContextualActionMenu` omits `Open` and `OpenInNewPane` when its resource is
+   the subject the pane's body publishes (`PaneChrome.resourceRef`, read through
+   `usePaneSubject`), not the route's ref, which author and daily routes lack.
+4. a fork is shift on the visible control. pointer-visible help discloses it
+   with `NEW_PANE_HINT`; keyboard-only help (nexus, the pane strip) names
+   shift+enter.
+5. exception: a multi-verb row menu on a coarse pointer may offer
+   `open in new pane` (`Row.OpenInNewPane`), because shift does not exist there;
+   resource menus with no displayed activation, unless their resource is the
+   pane's own, keep the server `OpenInNewPane`.
+
+materialising an already placed provisional view replaces that view without
+another opening.
 acquisition uses `originHistory: "replace"` for its already-placed preview:
 only a `NavigatedOrigin` landing replaces the origin visit instead of pushing.
 matching existing panes retain their navigation history; `Fork` starts independently. an offered result
@@ -763,8 +788,8 @@ there is no pane-count cap or eviction. activation commits directly; close and
 minimize return the exact committed `{paneId, visitId}` selection. nexus absorbs
 only its own close/minimize/restore selection into its navigation baseline;
 outside navigation or target activation dismisses it, including activation of
-the current target. root tab results expose direct close;
-held enter cannot close surviving rows repeatedly. manage tabs remains
+the current target. root pane results expose direct close;
+held enter cannot close surviving rows repeatedly. manage panes remains
 available at every pane count.
 
 the daily page is one explicit rule: a page body publishes its

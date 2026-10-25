@@ -80,10 +80,14 @@ export default function LibraryPodcastsSection({ library, active, source, source
           canRemove: data?.can_add_content === true, blocked, ctx, run, focus,
         });
         const action = local ?? projectPodcastSubscriptionAction({
-          target: { kind: "Canonical", podcast_id: row.id }, title: row.title.text, subscribed: true,
-          disabledReason: blocked === null ? null : "checking subscription…", ctx, run, focus,
+          target: { kind: "Canonical", podcast_id: row.id }, title: row.title.text,
+          facts: source.status === "ready" && source.error !== null
+            ? { kind: "Failed", observedSubscribed: true, error: source.error, retry: source.refetch, retrying: source.refreshing }
+            : blocked !== null ? { kind: "Resolving", observedSubscribed: true }
+            : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: row.id, subscribed: true } },
+          disabledReason: null, ctx, run, focus,
         });
-        const label = local?.accessibleLabel ?? `${action.label}: ${row.title.text}`;
+        const label = action.accessibleLabel;
         const descriptionId = `${reasonId}-${row.id}`;
         const show = data?.subscriptions.find(show => show.podcast.id === row.id);
         const attention = show?.recurring.error_code !== null && show?.recurring.error_code !== undefined || show?.recurring.had_coverage_gaps
@@ -102,6 +106,6 @@ export default function LibraryPodcastsSection({ library, active, source, source
           </>} />;
       } : undefined}
       empty={source.status === "ready" && source.error === null ? <p>no subscribed podcasts.</p> : null} />
-    {live && data !== null && data.imports.length > 0 ? <section aria-label="episode imports"><h3>episode imports</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} following={data.subscriptions.some(show => show.podcast.id === operation.podcast_id && show.destinations.some(destination => destination.library_id === operation.library_id))} /></div>)}</section> : null}
+    {live && data !== null && data.imports.length > 0 ? <section aria-label="episode additions"><h3>episode additions</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} /></div>)}</section> : null}
   </PaneSection>;
 }

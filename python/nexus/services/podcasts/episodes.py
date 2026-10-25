@@ -1,7 +1,7 @@
-"""A show's visible ordered episode selections, exact counts and transcript eligibility.
+"""A show's known catalogue, ordered selections, exact counts and transcript eligibility.
 
-Catalogue inspection does not require subscription. Ordered selection always applies
-media readability; playback applies its narrower show authorization separately.
+Catalogue inspection and point tools require no subscription or library membership.
+Selections exclude teardown, retain unsaved identities and never acquire holdings.
 """
 
 from hashlib import sha256
@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.db.models import TranscriptState
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
@@ -30,7 +30,7 @@ def episode_publication_rows_sql() -> str:
 
 
 def episode_rows_sql() -> str:
-    """Every readable episode and its canonical state/publication/duration order facts."""
+    """Known eligible episodes with viewer state and canonical publication/duration facts."""
     state = projection.episode_state_case_sql(listening_alias="pls", override_alias="co")
     joins = projection.episode_state_joins_sql(
         user_param=":viewer_id",
@@ -39,7 +39,7 @@ def episode_rows_sql() -> str:
         override_alias="co",
     )
     return f"""
-        WITH visible_media AS ({visible_media_ids_cte_sql()})
+        WITH visible_media AS ({requested_media_ids_cte_sql()})
         SELECT pe.media_id, pe.podcast_id, pe.published_at, pe.duration_seconds * 1000 AS source_duration_ms,
                COALESCE(pe.duration_seconds, 0) AS duration_sort,
                (pe.published_at IS NULL)::int AS published_missing,
@@ -54,7 +54,7 @@ def episode_rows_sql() -> str:
 
 
 def _episodes_sql(where: str = "") -> str:
-    """The viewer's visible episodes of ``:podcast_id`` in listening state ``:state``."""
+    """The viewer's known episodes of ``:podcast_id`` in listening state ``:state``."""
     return f"""
         SELECT * FROM ({episode_rows_sql()}) e
         WHERE podcast_id = :podcast_id {where}
@@ -63,11 +63,11 @@ def _episodes_sql(where: str = "") -> str:
 
 
 def episode_counts(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastEpisodeCountsOut:
-    """Exact visible aggregate, independent of the episode list's view and pages."""
+    """Exact known catalogue aggregate, independent of the episode list's view and pages."""
     row = (
         db.execute(
             text(f"""
-        SELECT count(DISTINCT media_id)::integer AS available_count,
+        SELECT count(DISTINCT media_id)::integer AS known_count,
                count(DISTINCT media_id) FILTER (WHERE episode_state <> 'played')::integer AS unfinished_count
         FROM ({_episodes_sql()}) visible_episodes
     """),
@@ -82,7 +82,9 @@ def episode_counts(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.Podca
 def selection_ids(
     db: Session, viewer_id: UUID, podcast_id: UUID, state: str, *, transcribable: bool = False
 ) -> list[UUID]:
-    """The selection's media ids, ordered by id."""
+    """The selection's known media ids, ordered by id; a missing show refuses."""
+    if db.scalar(text("SELECT 1 FROM podcasts WHERE id=:id"), {"id": podcast_id}) is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
     sql = _episodes_sql(where=f"AND {_TRANSCRIBABLE}" if transcribable else "")
     params = {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state}
     return list(db.scalars(text(f"SELECT media_id FROM ({sql}) s ORDER BY media_id"), params))
@@ -161,7 +163,7 @@ def list_episodes(
 def ordered_selection_ids(
     db: Session, viewer_id: UUID, podcast_id: UUID, *, state: str, sort: wire.EpisodeSort
 ) -> tuple[str, list[UUID]]:
-    """Complete visible episode list in its owner's total order; no live cursor walk."""
+    """Complete known episode list in its owner's total order; no live cursor walk."""
     from nexus.services.collection_keyset import order_by_sql
 
     label = db.scalar(

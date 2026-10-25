@@ -11,10 +11,11 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import { assertNever } from "@/lib/assertNever";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusRow } from "@/lib/nexus/model";
-import { rowFacts } from "@/lib/nexus/rows";
+import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
+import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
@@ -107,9 +108,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     if (row.key !== controller.activeKey && spacePress.current) spacePress.current.target = null;
     controller.setActive(row.key, deliberate);
   };
-  const closeTab = (paneId: string) => {
-    if (controller.closePane(paneId) !== null) inputRef.current?.focus({ preventScroll: true });
-  };
   const typed = controller.query.trim().length > 0;
   const queryActions = controller.groups.find((group) => group.id === "QuickActions")?.rows.length ?? 0;
   const status = typed
@@ -133,13 +131,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         break;
       case "ResumeCurrentPlayback":
       case "OpenAdd":
-      case "ManageTabs":
+      case "ManagePanes":
         break;
       default: assertNever(target);
     }
   }
   const menuAvailable = mode === "Browsing" && active?.secondary?.kind === "ResourceMenu";
-  const help = [rows.length > 0 ? "up/down browse" : null, canSelect ? opensDestination ? "enter open · shift+enter new tab" : "enter select" : null, menuAvailable ? "space options" : null].filter(Boolean).join(" · ");
+  const help = [rows.length > 0 ? "up/down browse" : null, canSelect ? opensDestination ? "enter open · shift+enter new pane" : "enter select" : null, menuAvailable ? "space options" : null].filter(Boolean).join(" · ");
 
   const root = (
     <>
@@ -257,11 +255,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       <div className={styles.help} aria-hidden="true">{help}</div>
       <span id={HELP_ID} className="sr-only">
         {rows.length > 0 ? "up and down arrows browse results. " : ""}
-        {canSelect ? opensDestination ? "enter opens the selected result. shift plus enter opens in a new tab. " : "enter selects the highlighted action. " : ""}
+        {canSelect ? opensDestination ? "enter opens the selected result. shift plus enter opens in a new pane. " : "enter selects the highlighted action. " : ""}
         {menuAvailable ? "space opens options on release." : ""}
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
-      <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this tab.</span>
+      <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this pane.</span>
       <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
       <div
@@ -307,7 +305,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                   <div
                     id={candidateId(row.key)}
                     role="gridcell"
-                    aria-label={[row.label, rowFacts(row, true), snippet, passageFacts, reason].filter(Boolean).join(". ")}
+                    aria-label={rowName([row.label, rowFacts(row, true), snippet, passageFacts, reason])}
                     className={styles.candidateCell}
                     aria-disabled={reason ? true : undefined}
                     data-browsing-active={(selected && mode === "Browsing" && inputFocused) || undefined}
@@ -345,7 +343,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     >
                       <NexusRowBody row={row} desktop />
                     </div>
-                    {row.secondary?.kind === "CloseTab" ? (
+                    {row.secondary?.kind === "ClosePane" ? (
                       <Button
                         iconOnly
                         tabIndex={selected ? 0 : -1}
@@ -363,7 +361,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                         }}
                         onClick={() => {
                           select(row);
-                          if (row.secondary?.kind === "CloseTab") closeTab(row.secondary.paneId);
+                          if (row.secondary?.kind === "ClosePane" && controller.closePane(row.secondary.paneId) !== null) inputRef.current?.focus({ preventScroll: true });
                         }}
                         icon={<X size={18} aria-hidden="true" />} />
                     ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
@@ -406,7 +404,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         ))}
       </div>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, [controller.searchProgress.text, controller.titlesFailed ? "couldn’t refresh tab titles." : null, !controller.pending ? status : null].filter(Boolean).join(" ")].filter(Boolean).join(" ")}
+        {[controller.announcement, [controller.searchProgress.text, controller.titlesFailed ? PANE_TITLES_FAILED : null, !controller.pending ? status : null].filter(Boolean).join(" ")].filter(Boolean).join(" ")}
       </div>
     </>
   );

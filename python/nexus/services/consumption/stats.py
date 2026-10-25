@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.errors import InvalidRequestError
 from nexus.schemas import consumption_activity as wire
 from nexus.services.contributor_credits import current_media_contributor_rows_sql
@@ -161,7 +161,7 @@ def _params(scope: Scope, as_of: datetime) -> dict[str, Any]:
 def _flagged_sql(scope: Scope) -> str:
     """The base relation every history query starts from, as a ``flagged`` CTE."""
     return f"""
-        WITH visible_media AS ({visible_media_ids_cte_sql()}),
+        WITH visible_media AS ({requested_media_ids_cte_sql()}),
         spans AS (
             SELECT s.id, s.media_id, s.modality, s.device_id, s.device_class, s.occurred_at,
                    s.occurred_at + s.duration_ms * interval '1 millisecond' AS span_end, m.title,
@@ -372,7 +372,7 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
     )
     completions = _rows(
         db,
-        f"""WITH visible_media AS ({visible_media_ids_cte_sql()})
+        f"""WITH visible_media AS ({requested_media_ids_cte_sql()})
         SELECT f.media_id, min(m.title) AS title,
                count(*) AS total
         FROM consumption_completion_facts f

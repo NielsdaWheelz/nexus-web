@@ -129,7 +129,7 @@ export function useNexusController() {
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
-  const pendingTabFocus = useRef<string | null>(null);
+  const handoffPaneId = useRef<string | null>(null);
   const opener = useRef<HTMLElement | null>(null);
   const rootFocus = useRef<string | null>(null);
   const rootScroll = useRef({ Overview: 0, Search: 0 });
@@ -176,14 +176,14 @@ export function useNexusController() {
     })));
   }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision]);
 
-  // Navigation from outside the launcher's own tab commands (such as a resource
+  // Navigation from outside the launcher's own pane commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
   const activePane = state.panes.find((pane) => pane.id === state.active_primary_pane_id);
   const navigationToken = `${state.active_primary_pane_id}\0${activePane?.current_visit.id ?? ""}`;
   const navigationBaseline = useRef(navigationToken);
   useEffect(() => {
     if (open && navigationToken !== navigationBaseline.current) {
-      pendingTabFocus.current = null;
+      handoffPaneId.current = null;
       suppressReturnFocus.current = true;
       setOpen(false);
     }
@@ -203,7 +203,7 @@ export function useNexusController() {
       previous = request;
       if (!request || request === prior || request.paneId !== paneId ||
         request.visitId !== current.state.panes.find((pane) => pane.id === paneId)?.current_visit.id) return;
-      pendingTabFocus.current = null;
+      handoffPaneId.current = null;
       suppressReturnFocus.current = true;
       setOpen(false);
     });
@@ -214,11 +214,11 @@ export function useNexusController() {
     return selection;
   }
 
-  // Reopening a closed tab is management, with its local focus handoff after closure.
+  // Reopening a closed pane is management, with its local focus handoff after closure.
   useEffect(() => {
-    if (open || pendingTabFocus.current === null) return;
-    const paneId = pendingTabFocus.current;
-    pendingTabFocus.current = null;
+    if (open || handoffPaneId.current === null) return;
+    const paneId = handoffPaneId.current;
+    handoffPaneId.current = null;
     const focused = document.activeElement;
     const generation = getInteractionGeneration();
     const frame = requestAnimationFrame(() => {
@@ -260,7 +260,7 @@ export function useNexusController() {
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
     if (current.kind === "Add") return addSession.workOwnerIds;
-    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManageTabs") return [];
+    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManagePanes") return [];
     if (current.kind === "ChooseCreate" && target !== null) {
       const transferred = target.kind === "CreatePage" ? target.titleDraft
         : target.kind === "CreateLibrary" ? target.nameDraft
@@ -301,7 +301,7 @@ export function useNexusController() {
 
   function finishNavigation(focusPaneId: string | null): void {
     visible.current = false;
-    pendingTabFocus.current = focusPaneId;
+    handoffPaneId.current = focusPaneId;
     suppressReturnFocus.current = true;
     addSession.discard();
     setPage({ kind: "Root" });
@@ -350,8 +350,8 @@ export function useNexusController() {
         setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin(row), activation });
         setOpen(true);
         return null;
-      case "ManageTabs":
-        setPage({ kind: "ManageTabs" });
+      case "ManagePanes":
+        setPage({ kind: "ManagePanes" });
         setOpen(true);
         return null;
       case "ResumeCurrentPlayback":
@@ -581,7 +581,7 @@ export function useNexusController() {
     }
     const origin = page.kind === "ChooseCreate" || page.kind === "ChooseBrowse" ? page.origin
       : page.kind === "CreateLibrary" && page.returnTo.kind === "Root" ? page.returnTo.origin
-        : page.kind === "ManageTabs" ? { mode: "Overview", control: "AllTabs" } as const : null;
+        : page.kind === "ManagePanes" ? { mode: "Overview", control: "AllPanes" } as const : null;
     if (origin) {
       setRootMode(origin.mode);
       rootFocus.current = origin.control;
@@ -608,7 +608,7 @@ export function useNexusController() {
   function closePane(paneId: string) {
     if (!latestWorkspace().state.panes.some((pane) => pane.id === paneId)) return null;
     const keys = rows.filter((row) => rootMode === "Search" || row.key.startsWith("Pane:")).map((row) => row.key);
-    const row = rows.find((row) => row.secondary?.kind === "CloseTab" ? row.secondary.paneId === paneId
+    const row = rows.find((row) => row.secondary?.kind === "ClosePane" ? row.secondary.paneId === paneId
       : row.secondary?.kind === "ResourceMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
     const index = keys.indexOf(row?.key ?? `Pane:${paneId}`);
     const following = [...(row?.secondary?.kind === "ResourceMenu" ? [row.key] : []), ...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
@@ -622,7 +622,7 @@ export function useNexusController() {
       const controls = document.querySelectorAll<HTMLElement>("[data-nexus-control]");
       const control = (key: string) => [...controls].find((node) => node.dataset.nexusControl === key && !node.closest("[hidden], [inert]"));
       const target = following.map(control).find(Boolean)
-        ?? control(rootMode === "Search" ? "Search" : "AllTabs");
+        ?? control(rootMode === "Search" ? "Search" : "AllPanes");
       target?.focus({ preventScroll: true });
     });
     return selected;
@@ -800,7 +800,7 @@ export function useNexusController() {
       setAddDefect({ sessionId: addSession.state.sessionId, error });
     },
     clearAddDefect: () => setAddDefect(null),
-    manageTabs: () => { if (guardExit({ kind: "Root" }) === "accepted") setPage({ kind: "ManageTabs" }); },
+    managePanes: () => { if (guardExit({ kind: "Root" }) === "accepted") setPage({ kind: "ManagePanes" }); },
     openPane(paneId: string, intent: OpenIntent) {
       return run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     },

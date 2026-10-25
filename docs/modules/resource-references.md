@@ -88,6 +88,13 @@ controls and text minima cannot fit side by side, `ResourceRow` places controls
 beside the title and gives metadata/excerpt the full row width, with tighter
 spacing. these rows may grow taller; no bibliography or facts disappear to preserve
 the former geometry. operational `Details` rows keep their wrapping layout.
+`ResourceRow`'s optional compact density keeps this geometry with smaller shared
+title/metadata type and padding; native touch target minima remain. the queue
+composes the shell with its own occurrence commands rather than generic media
+actions. finite lists use real row geometry, without guessed intrinsic extent.
+the queue's bounded dom measures these homogeneous compact rows; its rendering,
+anchoring and partial accessibility-tree contract belongs to
+[playback sessions](playback-sessions.md#index-and-interaction).
 the row's `indexRow`
 container owns adaptation at its explicit base text size: above `32em - 1px`,
 show up to three observed author names; at or below that boundary, show the first

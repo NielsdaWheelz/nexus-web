@@ -47,9 +47,10 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   const failure = context.status === "loading" ? null : context.error;
   const podcastFor = (item: Schema<"ContextOut">["items"][number]["item"]): PodcastActionSubject | undefined => item.ref.startsWith("podcast:") && item.preview.body.kind === "named" && !item.missing ? {
     target: { kind: "Canonical", podcast_id: item.ref.slice(8) }, title: item.label,
-    facts: failure !== null
-      ? { kind: "Failed", error: failure, retry: context.refetch, retrying: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }
-      : context.status !== "ready" || context.refreshing ? { kind: "Resolving" } : podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: item.ref.slice(8) }),
+    facts: podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: item.ref.slice(8) },
+      failure !== null
+        ? { kind: "Failed", error: failure, retry: context.refetch, retrying: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }
+        : context.status !== "ready" || context.refreshing ? { kind: "Resolving" } : null),
   } : undefined;
   return <section ref={root} aria-label="Chat context" {...attachments.dropProps}>
     <div className={styles.tools}><ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "add to future context", onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>

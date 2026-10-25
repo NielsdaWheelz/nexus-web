@@ -4,16 +4,20 @@ Fragments bind ``:viewer_id``. Point checks take a session and answer a bool; "n
 "not visible" are the same False. Two ORM adapters wrap the highlight rules as ``text`` clauses
 correlated to the unaliased ``highlights`` table.
 
-Media: library membership, exact grants (on the media or one of its highlights) and the viewer's
-retained x-post evidence are the roots; actual x containment (thread posts, resolved x embeds)
+Workspace enumeration: library membership, exact media/highlight grants and retained
+x-post evidence are the roots; actual x containment (thread posts, resolved x embeds)
 and source→piece containment close over them. piece→source storage dependency
 never grants access. The viewer's tombstones and every teardown intent exclude each step, roots
 included. ``library_entries.library_media_ids_cte_sql`` layers "My Library" on top.
 Highlights: a consistent typed anchor on readable media whose author is the viewer, shares a
 non-system library holding the media with the viewer, or granted it exactly. A system library
 (the Oracle corpus) reaches media, never fellow members' highlights.
-Podcasts: an active member-library rule or a readable episode. Contributors: a visible credit or a viewer-owned
-graph edge (pickers: credits only). Conversations: the owner only.
+Requested media: workspace-readable media or any canonical podcast episode. The catalogue
+arm ignores personal removal markers; teardown still excludes it. Point tools and source
+hydration use this relation; search, library and suggestion roots remain workspace-scoped.
+Podcast enumeration: an active member-library rule or a retained episode. Contributors:
+a visible credit or a viewer-owned graph edge (pickers: credits only). Conversations:
+the owner only.
 """
 
 from uuid import UUID
@@ -132,22 +136,39 @@ def visible_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
     )
 
 
+def requested_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
+    """Point-read authority; this relation never enrolls catalogue episodes in a collection."""
+    teardown = (
+        ""
+        if include_tearing_down
+        else """AND NOT EXISTS (
+        SELECT 1 FROM media_teardown_intents ti WHERE ti.media_id = pe.media_id)"""
+    )
+    return f"""
+        SELECT media_id FROM ({visible_media_ids_cte_sql(include_tearing_down=include_tearing_down)}) workspace
+        UNION
+        SELECT pe.media_id FROM podcast_episodes pe
+        JOIN media m ON m.id = pe.media_id AND m.kind = 'podcast_episode'
+        WHERE TRUE {teardown}
+    """
+
+
 def can_read_media(
     session: Session, viewer_user_id: UUID, media_id: UUID, *, include_tearing_down: bool = False
 ) -> bool:
-    """``include_tearing_down`` keeps the tombstone exclusion but admits media mid-teardown, so a
-    write can raise ``E_MEDIA_DELETING`` for it while a non-reader still sees only 404."""
-    readable = visible_media_ids_cte_sql(include_tearing_down=include_tearing_down)
+    """Requested-media authority; teardown-inclusive checks let writes report deleting state."""
+    readable = requested_media_ids_cte_sql(include_tearing_down=include_tearing_down)
     params = {"viewer_id": viewer_user_id, "media_id": media_id}
     return bool(session.scalar(text(f"SELECT :media_id IN ({readable})"), params))
 
 
 def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
-    """Membership reach alone (system libraries included), ignoring the viewer's tombstone and
-    teardown: a strict superset of ``can_read_media``, so re-filing deleted media is allowed."""
+    """Membership reach or a canonical episode, ignoring removal and teardown for re-filing."""
     sql = f"""SELECT EXISTS (
         SELECT 1 FROM library_entries le JOIN memberships m ON m.library_id = le.library_id
         WHERE le.media_id = :media_id AND m.user_id = :viewer_id)
+        OR EXISTS (SELECT 1 FROM podcast_episodes pe JOIN media m ON m.id=pe.media_id
+                   WHERE pe.media_id=:media_id AND m.kind='podcast_episode')
         OR EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=:media_id
                    AND p.source_media_id IN ({visible_media_ids_cte_sql()}))"""
     return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "media_id": media_id}))
@@ -273,7 +294,7 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
 
 def highlight_readability_sql(highlight_alias: str = "h") -> str:
     """canonical identity remains source-local; a readable piece admits complete anchors."""
-    readable = visible_media_ids_cte_sql()
+    readable = requested_media_ids_cte_sql()
     return f"""(
         (
             ({highlight_alias}.anchor_kind='fragment_offsets' AND EXISTS (

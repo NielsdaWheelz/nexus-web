@@ -1,6 +1,11 @@
-# delayed workspace removal can overtake fresh acquisition
+# delayed document removal can overtake fresh acquisition
 
-problem: workspace removal identifies its target without an expected acquisition
+remaining scope: documents through generic `DELETE /media/{id}`. podcast episodes
+now refuse that route and use frozen removal preview/destination guards; a stale
+episode removal refuses a newer save or unprocessed addition. episode unfiling
+preserves catalogue identity and authored work.
+
+problem: document removal identifies its target without an expected acquisition
 generation. a delayed destructive request can remove a later explicit save.
 
 evidence: `python/nexus/api/routes/media.py:83-87` takes only media id.

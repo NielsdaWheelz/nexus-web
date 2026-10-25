@@ -20,6 +20,7 @@ from nexus.auth.permissions import (
     can_read_media,
     is_library_member,
     media_containment_edges_sql,
+    requested_media_ids_cte_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
@@ -270,13 +271,15 @@ def admitted_reading_media_sql(
 
     Canonical passage refs do not admit their whole source. Their own family
     keeps exact-ref admission; a media context admits its bounded reading identity.
+    Only the all arm enumerates workspace roots; explicit media may be catalogue-only.
     """
     roots: list[str] = []
     params: dict[str, Any] = {}
     for index, scope in enumerate(scopes):
         if scope.kind == "all":
             if frozen is None:
-                return visible_media_ids_cte_sql(), {}
+                roots.append(visible_media_ids_cte_sql())
+                continue
             params["frozen_media"] = [ref.id for ref in frozen if ref.scheme == "media"]
             roots.append(
                 reading_media_ids_sql("SELECT unnest(CAST(:frozen_media AS uuid[])) AS media_id")
@@ -305,6 +308,6 @@ def admitted_reading_media_sql(
     )
     reading = selected
     return (
-        f"SELECT DISTINCT reading.media_id FROM ({reading}) reading JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id=reading.media_id",
+        f"SELECT DISTINCT reading.media_id FROM ({reading}) reading JOIN ({requested_media_ids_cte_sql()}) visible ON visible.media_id=reading.media_id",
         params,
     )

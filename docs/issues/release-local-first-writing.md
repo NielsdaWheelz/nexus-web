@@ -54,13 +54,17 @@ more complex grant/containment path may seed its literal ref as unavailable labe
 until a new legitimate capture refreshes it. lingering references never authorize
 new private metadata. canonical writing and captures remain intact.
 
-current merge includes indexed-search revision 0317; local-first conversion is
-revision 0318 after that head. satisfy the native pg_search 0.26.2 binary/preload
-and publication prerequisites in [the search release](release-search.md) before
-running the chain. both pending breaking changes ride wire 16 while production
-remains wire 15; do not bump it again before this paired release.
+current merge includes indexed-search revision 0317, podcast catalogue revision
+0318 and queue revision 0319; local-first conversion is revision 0320 after that
+head. satisfy the native pg_search 0.26.2 binary/preload and publication
+prerequisites in [the search release](release-search.md) before running the chain.
+search shipped wire 16/schema 0317 on 2026-10-25 at
+`3d81ef45ef28f637a4de07c66ab172bbab9e22c2`; podcast's pending wire 17 bump is
+the first break after that release. local-first rides wire 17 with the pending
+podcast release. recheck actual activation before release; do not add another
+bump without a newer paired release boundary.
 
-0318 republishes every note keyword occurrence with its exact canonical text
+0320 republishes every note keyword occurrence with its exact canonical text
 sha256 admission token. only notes whose text projection changes get a new
 revision-fenced reindex intent; old active/unclaimed intents for those notes
 settle superseded. unchanged lexical/materialized evidence remains available.

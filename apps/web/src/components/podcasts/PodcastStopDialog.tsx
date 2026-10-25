@@ -7,6 +7,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
+import RadioGroup from "@/components/ui/RadioGroup";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { podcastPendingNotice } from "@/lib/podcasts/commands";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -36,6 +37,8 @@ export default function PodcastStopDialog(props: StopProps) {
   const [scope, setScope] = useState<{ readonly id: string; readonly name: string } | null>(null);
   const accepted = useRef(false);
   const cleanup = props.episodes === "remove";
+  const [episodes, setEpisodes] = useState<"keep" | "remove">("keep");
+  const reviewedEpisodes = cleanup ? "remove" : episodes;
   const libraryId = cleanup ? scope?.id ?? null : props.libraryId;
   const sending = ctx.podcasts.pending(`stop:${props.podcastId}`)?.phase === "Sending";
   const stamp = useChangeStamp("Libraries", "Podcasts", "Entries");
@@ -55,11 +58,18 @@ export default function PodcastStopDialog(props: StopProps) {
   const local = !cleanup && libraryId !== null;
   const localReady = !local || library.status === "ready";
   const name = library.status === "ready" ? libraryDisplayName(library.data) : "library";
-  const title = cleanup ? `remove ${props.title} and episodes?` : libraryId === null ? `unsubscribe from ${props.title}?` : `remove ${props.title} from ${name}?`;
+  const title = cleanup ? "remove episodes from libraries?" : libraryId === null ? `unsubscribe from ${props.title}?` : `unsubscribe in ${name}?`;
   return <Dialog open onClose={props.onClose}
     returnFocusTo={() => (accepted.current ? props.successFocus?.() : null) ?? props.returnFocusTo?.() ?? null}
     returnFocusFallback={props.returnFocusFallback} title={title}>
     <div className={styles.form}>
+      {!cleanup ? <RadioGroup label="episodes" value={episodes} disabled={sending} choices={[
+        { value: "keep", label: "keep episodes" },
+        { value: "remove", label: props.libraryId === null ? "remove episodes from all libraries" : "remove episodes from this library" },
+      ]} onChange={value => {
+        if (value !== "keep" && value !== "remove") throw new Error("unknown unsubscribe mode");
+        setEpisodes(value);
+      }} /> : null}
       {local && library.status === "loading" ? <PaneLoadingState label="checking library…" announcement="Polite" /> : null}
       {local && (library.status === "failed" || library.status === "ready" && library.error !== null) ? <FeedbackNotice content={podcastErrorMessage(library.error, "couldn’t load the library.")} announcement="Polite" actions={[{ label: "retry library", onClick: library.refetch }]} /> : null}
       {cleanup ? scopes.status === "loading" ? <PaneLoadingState label="checking removal scopes…" announcement="Polite" />
@@ -77,12 +87,12 @@ export default function PodcastStopDialog(props: StopProps) {
             </div>
             {scopes.error !== null ? <FeedbackNotice content={podcastErrorMessage(scopes.error, "couldn’t refresh removal scopes.")} announcement="Polite" actions={[{ label: "retry scopes", onClick: scopes.refetch }]} /> : null}
           </> : null}
-      {localReady && (!cleanup || scopes.status === "ready") ? <StopReview key={libraryId ?? "all"} {...props} libraryId={libraryId}
+      {localReady && (!cleanup || scopes.status === "ready") ? <StopReview key={`${libraryId ?? "all"}:${reviewedEpisodes}`} {...props} libraryId={libraryId} episodes={reviewedEpisodes} cleanup={cleanup}
         onSaved={() => { accepted.current = true; props.onClose(); }} /> : <div className={styles.actions}><Button onClick={props.onClose}>cancel</Button></div>}
     </div>
   </Dialog>;
 }
-function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }: StopProps & { readonly onSaved: () => void }) {
+function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved, cleanup }: StopProps & { readonly onSaved: () => void; readonly cleanup: boolean }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
   const live = useRef(false);
@@ -103,6 +113,8 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }:
   const preview = source.data;
   const all = libraryId === null;
   const count = preview.episode_count;
+  const hasRules = preview.destinations.some(destination => destination.subscription_id !== null);
+  const scope = all ? "all libraries" : preview.destinations.map(libraryDisplayName).join(", ");
   const submit = async () => {
     if (sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null) return;
     setSending(true);
@@ -119,12 +131,12 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }:
   return <>
     <p>{all ? "affected libraries:" : "library:"}</p>
     <ul className={styles.destinations}>{preview.destinations.map(destination => <li key={destination.library_id}>{libraryDisplayName(destination)}{destination.is_shared ? " · shared library; other members’ access may change" : ""}</li>)}</ul>
-    {episodes === "remove" ? <p>{count} distinct {count === 1 ? "episode" : "episodes"}{all ? " will be removed from the affected libraries and your lectern, including individually added episodes." : " will be removed from this library, including individually added episodes."}</p> : null}
-    <p>stop new episodes and cancel unfinished imports{all ? " in the affected libraries." : " in this library."}</p>
-    {episodes === "keep" ? <p>episodes already added stay.</p> : <>
-      {!all ? <p>personal retention and placements in other libraries stay.</p> : null}
-      <p>notes, highlights, listening history and playback settings stay.</p>
-    </>}
+    {episodes === "remove" ? <>
+      <p>remove {count} episodes from {scope}?</p>
+      <p>includes individually added episodes. unfinished additions in this scope will be cancelled.</p>
+    </> : <p>episodes already added stay. independent once-only additions keep running.</p>}
+    {hasRules ? <p>stop automatic delivery and this subscription’s unfinished initial history{all ? " in the affected libraries." : " in this library."}</p> : null}
+    <p>catalogue access, transcripts, notes, highlights, listening history, playback settings, queue, lectern and device downloads stay.</p>
     {preview.blocked.length > 0 ? <FeedbackNotice content={{ tone: "Warning", title: "this change needs a library admin.", message: preview.blocked.map(item => item.name).join(", ") }} announcement="Polite" /> : null}
     {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh this preview.")} announcement="Polite" /> : null}
     {pending?.phase === "Unknown" && notice !== null ? <FeedbackNotice content={notice} announcement="Polite"
@@ -132,7 +144,7 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }:
       : stale || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "the affected libraries changed. review them before confirming.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review this scope", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }] : undefined} /> : null}
     <div className={styles.actions}>
       <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
-        {episodes === "remove" ? `remove podcast and ${count} episodes${all ? " everywhere" : ""}` : all ? "unsubscribe" : "remove from library"}
+        {cleanup ? `remove ${count} episodes` : episodes === "remove" ? "unsubscribe and remove episodes" : "unsubscribe"}
       </Button>
       <Button onClick={onClose}>cancel</Button>
     </div>

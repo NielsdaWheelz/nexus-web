@@ -73,11 +73,12 @@ import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescr
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
-import type { WorkspacePane } from "@/lib/workspace/model";
+import type { PaneVisit, WorkspacePane } from "@/lib/workspace/model";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
-import { useLatestWorkspace, useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
+import { useWorkspacePresentations } from "@/lib/workspace/presentations";
+import { useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
 
 /** One route-owned composition, derived by the workspace before its body mounts. */
@@ -186,7 +187,6 @@ function PaneView({
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
-  const latestWorkspace = useLatestWorkspace();
   const activateHistory = (back: boolean, event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Unowned") return;
@@ -342,28 +342,7 @@ function PaneView({
         companionExpanded(state, pane.secondary),
       )
     : undefined;
-  const paneActions = [true, false].map<ActionDescriptor>(back => {
-    const visit = back ? pane.history.back.at(-1) : pane.history.forward[0];
-    return {
-      id: `${back ? "Pane.HistoryPrevious" : "Pane.HistoryNext"}:${pane.current_visit.id}:${visit?.id ?? "none"}`,
-      kind: "link",
-      label: back ? "open previous page in new pane" : "open next page in new pane",
-      ...(visit ? { href: visit.href } : { href: null, disabled: true as const }),
-      disabledReason: visit ? undefined : back ? "no earlier visit" : "no later visit",
-      onActivate: event => {
-        const activation = workspaceTargetActivationIntent(event);
-        if (activation.kind === "Unowned") return "unhandled";
-        event.preventDefault();
-        if (activation.kind === "Consume") return "consumed";
-        const current = latestWorkspace().state.panes.find(current => current.id === paneId);
-        const adjacent = back ? current?.history.back.at(-1) : current?.history.forward[0];
-        if (!visit || current?.current_visit.id !== pane.current_visit.id || adjacent?.id !== visit.id) return "consumed";
-        const options: PaneHistoryOptions = { disposition: { kind: "Fork" } };
-        const result = back ? router.back(options) : router.forward(options);
-        return result === "committed" ? "handled-new-pane" : "consumed";
-      },
-    };
-  });
+  const paneActions: ActionDescriptor[] = [];
   if (query) {
     const isFind = query.kind === "Find";
     const verb = isFind ? "Find" : query.label;
@@ -424,6 +403,8 @@ function PaneView({
         }),
     });
   }
+  const presentations = useWorkspacePresentations();
+  const adjacent = (visit: PaneVisit | undefined) => visit ? { title: presentations.forVisit(visit).name } : null;
   const surfaceHeader = (
     <SurfaceHeader
       projection={isMobile ? "Mobile" : "Desktop"}
@@ -437,8 +418,8 @@ function PaneView({
       menuActions={menuActions}
       resourceRef={body?.resourceRef}
       navigation={{
-        canGoBack: router.canGoBack,
-        canGoForward: router.canGoForward,
+        back: adjacent(pane.history.back.at(-1)),
+        forward: adjacent(pane.history.forward[0]),
         onBack: event => activateHistory(true, event),
         onForward: event => activateHistory(false, event),
       }}

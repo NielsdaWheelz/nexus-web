@@ -24,7 +24,7 @@ import regex
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import highlight_readability_sql, visible_media_ids_cte_sql
+from nexus.auth.permissions import highlight_readability_sql, requested_media_ids_cte_sql
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -55,7 +55,7 @@ from nexus.services.resource_items.routing import (
     _activations_from_resolved_passages,
 )
 
-_VISIBLE = f"({visible_media_ids_cte_sql()})"
+_VISIBLE = f"({requested_media_ids_cte_sql()})"
 
 
 def excerpt(value: str, limit: int = 600, *, tail: bool = False) -> ExcerptOut:

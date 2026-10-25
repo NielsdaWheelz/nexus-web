@@ -15,10 +15,13 @@ import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { admitPodcast, changePodcastImport, getPodcastImport, stopPodcast } from "./api";
+import { admitPodcast, changePodcastImport, getPodcastImport, stopPodcast, removeEpisodeFromAll } from "./api";
+import { setPlacement } from "@/lib/libraries/api";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 
 export type PodcastCommand =
+  | { kind: "EpisodeSave"; mediaId: string; libraryId: string; body: Schema<"PlaceItemRequest"> }
+  | { kind: "EpisodeRemove"; mediaId: string; body: Schema<"PodcastEpisodeRemovalRequest"> }
   | { kind: "Admission"; libraryId: string; mode: "follow"; body: Schema<"PodcastSubscriptionCreateRequest"> }
   | { kind: "Admission"; libraryId: string; mode: "current_episodes"; body: Schema<"PodcastImportCreateRequest"> }
   | { kind: "Stop"; podcastId: string; body: Schema<"PodcastStopRequest"> }
@@ -68,6 +71,8 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
     try {
       await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: async signal => {
         switch (command.kind) {
+          case "EpisodeSave": await setPlacement({ kind: "Media", id: command.mediaId }, command.libraryId, command.body, signal); break;
+          case "EpisodeRemove": await removeEpisodeFromAll(command.mediaId, entry.body, signal); break;
           case "Admission": await admitPodcast(command.libraryId, command.mode, entry.body, signal); break;
           case "Stop": await stopPodcast(command.podcastId, entry.body, signal); break;
           case "Import": await changePodcastImport(command.libraryId, command.importId, command.action, entry.body, signal); break;
@@ -82,7 +87,9 @@ function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackCont
         entry.phase = entry.uncertain ? "Unknown" : "Refused";
         entry.failure = entry.uncertain
           ? { tone: "Warning", title: "change not confirmed", message: "the exact retry was refused. the original request may have succeeded. review the current state before choosing again.", requestId: error.requestId }
-          : { tone: "Warning", title: error.status === 409 ? "library changed. review it and choose again." : "podcast change refused.", message: "review the current state before choosing again.", requestId: error.requestId };
+          : { tone: "Warning", title: error.code === "E_PODCAST_SUBSCRIPTION_ACTIVE" ? "included by a podcast subscription"
+            : error.status === 409 ? "library changed. review it and choose again." : "podcast change refused.",
+            message: error.code === "E_PODCAST_SUBSCRIPTION_ACTIVE" ? "review the podcast subscription before changing its episodes or initial history." : "review the current state before choosing again.", requestId: error.requestId };
       } else {
         entry.uncertain = true;
         entry.phase = "Unknown";

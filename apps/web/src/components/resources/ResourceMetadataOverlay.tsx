@@ -45,7 +45,7 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
       <Fact label="website">{sourceLink(podcast.website_url)}</Fact>
       <Fact label="rss feed">{sourceLink(podcast.feed_url)}</Fact>
       <Fact label="provider">{podcast.provider === "podcast_index" ? "Podcast Index" : podcast.provider}</Fact>
-      <Fact label="available episodes">{formatDisplayNumber(counts.available_count, display)}</Fact>
+      <Fact label="known episodes">{formatDisplayNumber(counts.known_count, display)}</Fact>
       <Fact label="unfinished episodes">{formatDisplayNumber(counts.unfinished_count, display)}</Fact>
       <Fact label="catalog record created">{date(podcast.created_at)}</Fact>
       <Fact label="catalog record updated">{date(podcast.updated_at)}</Fact>

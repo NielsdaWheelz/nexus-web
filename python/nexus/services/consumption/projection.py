@@ -17,7 +17,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import requested_media_ids_cte_sql, visible_media_ids_cte_sql
 from nexus.schemas import consumption as wire
 from nexus.schemas.media_summary import ConsumptionState, MediaDurationOut
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
@@ -224,6 +224,7 @@ def player_descriptors(
             LEFT JOIN podcast_playback_settings ps
               ON ps.user_id = :viewer_id AND ps.podcast_id = pe.podcast_id
             WHERE m.id = ANY(:media_ids) AND m.kind = 'podcast_episode'
+              AND m.id IN ({requested_media_ids_cte_sql()})
         """),
         {"viewer_id": viewer_id, "media_ids": media_ids},
     ).all()

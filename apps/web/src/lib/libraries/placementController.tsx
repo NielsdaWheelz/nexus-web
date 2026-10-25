@@ -78,6 +78,7 @@ interface Creation {
 }
 const REQUEST_TIMEOUT_MS = 30_000;
 const BLOCKED: Record<NonNullable<LibraryPlacement["blocked"]>, string> = {
+  PodcastSubscription: "included by this podcast subscription",
   RequiresAdmin: "only a library admin can change this placement",
   SystemManaged: "this system library is managed automatically",
 };
@@ -289,7 +290,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         progress: uncertain ? "Uncertain" : lane.length > 0 ? "Pending" : "Settled",
         note: details || undefined,
         action: reason === null ? { kind: "Set", included: intended !== rows.length,
-          label: intended === rows.length ? "remove" : "add" }
+          label: intended === rows.length ? `remove from ${library.name}` : `add to ${library.name}` }
           : { kind: "Blocked", reason } };
     });
     const readFailure = all.find(row => row.readError !== null)?.readError ?? null;

@@ -3,8 +3,8 @@
 Writes lock viewer then session. Absolute state already present is inert success;
 otherwise the captured revision must match. Creation uses the client UUID once,
 with no other-device fallback. A terminal retry additionally inspects consumption's
-finished/epoch/lectern postcondition, never reapplying it. Clearing retains the row
-and its revision. Present malformed persisted state is a defect, never absence.
+finished/epoch/lectern postcondition, never reapplying it. Present malformed
+persisted state is a defect, never absence.
 """
 
 from uuid import UUID
@@ -71,7 +71,6 @@ def put_session(
             if created is None:
                 raise _conflict()
             _validate_entries(db, user_id, None, body.state)
-            db.commit()
             return wire.BrowserSessionOut(id=body.id, revision="1", state=body.state)
         if row.id != body.id:
             raise _conflict()
@@ -103,27 +102,23 @@ def put_session(
             if current == body.state:
                 if not consumption.natural_end_is_settled(db, user_id, media_id, end):
                     raise _conflict()
-                db.commit()
                 return _out(row)
             if (
                 str(row.revision) != body.expected_revision
                 or current.queue_id != body.state.queue_id
                 or current.current_entry_id != terminal.ended_entry_id
                 or current.entries != body.state.entries
-                or current.source != body.state.source
             ):
                 raise _conflict()
             consumption.settle_natural_end_in_txn(db, user_id, media_id, end)
         else:
             if current == body.state:
-                db.commit()
                 return _out(row)
             if str(row.revision) != body.expected_revision:
                 raise _conflict()
             _validate_entries(db, user_id, current, body.state)
         row.state = body.state.model_dump(mode="json")
         row.revision += 1
-        db.commit()
         return _out(row)
 
     return viewer_txn("put_playback_session", user_id, run)
@@ -137,12 +132,6 @@ def _validate_entries(
         if current is not None and current.queue_id == desired.queue_id
         else {}
     )
-    if (
-        current is not None
-        and current.queue_id == desired.queue_id
-        and current.source != desired.source
-    ):
-        raise _conflict()
     added: list[UUID] = []
     for entry in desired.entries:
         if entry.id in unchanged:
