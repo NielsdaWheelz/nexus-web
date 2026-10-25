@@ -3,9 +3,10 @@
 // between its points and the cursor's wire locator. Offsets are codepoints
 // into a unit's canonical text, half-open.
 import type { Schema } from "@/lib/api/wire";
+import type { ReaderDestination } from "./location";
 
 export type ReaderDocumentOut =
-  Schema<"ReaderTextDocumentOut"> | Schema<"ReaderTranscriptDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
+  Schema<"ReaderTextDocumentOut"> | Schema<"ReaderPartDocumentOut"> | Schema<"ReaderTranscriptDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
 export type Locator = Schema<"CursorWrite">["locator"];
 export type CursorSnapshot =
   Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned"> | Schema<"ReaderCursorUnresolved">;
@@ -17,6 +18,7 @@ export type DocumentEmbed = Schema<"DocumentEmbedOut">;
 
 export interface TextUnit {
   readonly id: string;
+  readonly sourceStartOffset: number;
   readonly html: string;
   readonly text: string;
   readonly length: number;
@@ -170,9 +172,10 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
       },
     };
   }
-  const units = out.units.map((unit): TextUnit => {
+  const mapUnit = (unit: Schema<"ReaderUnitOut">, sourceStartOffset: number): TextUnit => {
     const mapped = {
       id: unit.id,
+      sourceStartOffset,
       html: unit.html_sanitized,
       text: unit.canonical_text,
       length: unit.char_count,
@@ -188,7 +191,10 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
       speaker: unit.speaker_label,
     };
     return mapped;
-  });
+  };
+  const units = out.kind === "text_part"
+    ? out.units.map((unit) => mapUnit(unit, unit.source_start_offset))
+    : out.units.map((unit) => mapUnit(unit, 0));
   // The wire contains only roots and their direct X context, in stable slot order.
   const ranges: SourceRange[] = [];
   let length = 0;
@@ -236,7 +242,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
   } : null;
   return {
     kind: "text",
-    format: out.kind === "web_article" ? "web" : out.kind,
+    format: out.kind === "text_part" ? out.source_format === "web_article" ? "web" : "epub" : out.kind === "web_article" ? "web" : out.kind,
     identity: out.identity,
     title: out.title,
     units,
@@ -333,8 +339,10 @@ export function locatorAt(
   const at =
     extra.terminal && last ? { unit: last.unit, offset: last.end } : point;
   const unit = structure.unit(at.unit);
+  const source = sourcePoint(doc, at);
+  if (!unit || !source) throw new Error("reader point is outside its mounted source");
   const locations = {
-    text_offset: at.offset,
+    text_offset: source.offset,
     progression: null,
     total_progression: extra.terminal
       ? 1
@@ -399,12 +407,52 @@ export function targetOfLocator(
       id: locator.target.anchor_id,
     };
   }
-  return {
-    kind: "point",
-    point: {
-      kind: "text",
-      unit: unit.id,
-      offset: Math.min(offset ?? 0, unit.length),
-    },
-  };
+  const point = localPoint(doc, { unit: unit.id, offset: offset ?? unit.sourceStartOffset });
+  return point ? { kind: "point", point: { kind: "text", ...point } } : null;
+}
+
+/** Durable source offsets enter the mounted slice only through this mapping. */
+export function localPoint(doc: ReaderDocument, point: TextPoint): TextPoint | null {
+  if (doc.kind !== "text") return null;
+  const unit = doc.units.find((unit) => unit.id === point.unit || unit.xPost?.owner?.fragment_id === point.unit);
+  if (!unit) return null;
+  const offset = point.offset - unit.sourceStartOffset;
+  return offset >= 0 && offset <= unit.length ? { unit: unit.id, offset } : null;
+}
+
+/** Mounted points leave the reader in canonical source coordinates. */
+export function sourcePoint(doc: ReaderDocument, point: TextPoint): TextPoint | null {
+  if (doc.kind !== "text") return null;
+  const unit = doc.units.find((unit) => unit.id === point.unit);
+  return unit && point.offset >= 0 && point.offset <= unit.length
+    ? { unit: unit.id, offset: point.offset + unit.sourceStartOffset }
+    : null;
+}
+
+
+/** Portable destinations use source offsets; mounted targets use local offsets. */
+export function sourceTarget(doc: ReaderDocument, target: ReaderDestination["target"]): ReaderDestination["target"] | null {
+  if (target.kind === "point") {
+    const point = sourcePoint(doc,target.point);
+    return point ? {kind:"point",point:{kind:"text",...point}} : null;
+  }
+  if (target.kind === "range") {
+    const start=sourcePoint(doc,{unit:target.unit,offset:target.start});
+    const end=sourcePoint(doc,{unit:target.unit,offset:target.end});
+    return start && end ? {kind:"range",unit:start.unit,start:start.offset,end:end.offset} : null;
+  }
+  return target;
+}
+
+export function localTarget(doc: ReaderDocument, target: ReaderDestination["target"]): ReaderDestination["target"] | null {
+  if (target.kind === "point") {
+    const point=localPoint(doc,target.point);
+    return point ? {kind:"point",point:{kind:"text",...point}} : null;
+  }
+  if (target.kind === "range") {
+    const start=localPoint(doc,{unit:target.unit,offset:target.start});
+    const end=localPoint(doc,{unit:target.unit,offset:target.end});
+    return start && end ? {kind:"range",unit:start.unit,start:start.offset,end:end.offset} : null;
+  }
+  return target;
 }

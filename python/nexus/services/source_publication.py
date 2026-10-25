@@ -100,7 +100,10 @@ def run_source_publication_phase[T](
     def phase() -> T:
         if lock_identities is not None:
             lock_identities(db)
-        ordered = sorted({*media_ids, *(discover(db) if discover is not None else ())})
+        from nexus.services.library_entries import media_family_ids
+
+        requested = sorted({*media_ids, *(discover(db) if discover is not None else ())})
+        ordered = media_family_ids(db, requested)
         locked = list(
             db.scalars(
                 text("SELECT id FROM media WHERE id = ANY(:ids) ORDER BY id FOR NO KEY UPDATE"),
@@ -112,7 +115,11 @@ def run_source_publication_phase[T](
             .where(MediaSourceAttempt.id == fence.attempt_id)
             .with_for_update()
         )
-        if locked != ordered:
+        if (
+            not set(requested).issubset(ordered)
+            or locked != ordered
+            or media_family_ids(db, requested) != ordered
+        ):
             raise SourcePublicationSuperseded("media_identity_changed")
         if (
             attempt is None

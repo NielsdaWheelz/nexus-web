@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast, get_args
 from uuid import UUID
 
-from sqlalchemy import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -30,6 +29,7 @@ from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import source_attributions
+from nexus.services.resource_items.locations import scoped_media_passage
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.search.candidates import (
     RESULT_MODELS,
@@ -84,24 +84,28 @@ def build_source_label(source: SearchResultSourceOut | MediaSummaryOut) -> str:
     """``title - credited names - date - kind``; chat labels its citations with it too."""
     names = ", ".join(c.credited_name for c in source.contributors if c.credited_name)
     date = source.original_published_date
-    kind = (source.media_kind or "").replace("_", " ")
+    kind = (
+        "piece" if source.media_kind == "text_part" else (source.media_kind or "").replace("_", " ")
+    )
     parts = [source.title, names, date if date is not None else "", kind]
     return " - ".join(part for part in parts if part)
 
 
-def _locator(row: RowMapping) -> dict[str, Any] | None:
+def _locator(row: Mapping[str, Any]) -> dict[str, Any] | None:
     """The row's reader locator, or None where its evidence span no longer resolves."""
     if row["type"] not in ("content_chunk", "evidence_span"):
         return row.get("locator")
     resolution = evidence_resolution(
         evidence_span_id=row["span_id"],
-        owner_id=row["media_id"],
+        owner_id=row.get("source_media_id", row["media_id"]),
         span_text=row["span_text"],
         selector=row["selector"],
         resolver_kind=row["resolver_kind"],
     )
     locator = locator_from_resolution(
-        resolution, media_id=row["media_id"], media_kind=row["media_kind"]
+        resolution,
+        media_id=row.get("source_media_id", row["media_id"]),
+        media_kind=row.get("source_media_kind", row["media_kind"]),
     )
     if locator is not None and locator["type"] == "note_block_offsets":
         locator["body_version"] = row.get("note_body_version") or 1
@@ -109,7 +113,7 @@ def _locator(row: RowMapping) -> dict[str, Any] | None:
     return locator
 
 
-def _refs(row: RowMapping) -> tuple[ResourceRef, ResourceRef]:
+def _refs(row: Mapping[str, Any]) -> tuple[ResourceRef, ResourceRef]:
     """(occurrence, owner): the resource a hit names and the one that receives it."""
     t = row["type"]
     ref = _ref(SCHEMES.get(t) or t, row["id"])
@@ -135,12 +139,15 @@ def project(
     without a locator), so a page can be short while the ranking has more.
     """
     ids: dict[str, list[Any]] = {}
+    groups: dict[tuple[str, UUID | None], list[Any]] = {}
     for hit in hits:
-        ids.setdefault(family_of(hit.type), []).append(hit.id)
+        family = family_of(hit.type)
+        ids.setdefault(family, []).append(hit.id)
+        groups.setdefault((family, hit.reading_media_id), []).append(hit.id)
     rows = {
-        (family, row["id"]): row
-        for family, family_ids in ids.items()
-        for row in hydrate(db, viewer_id, family, family_ids, terms)
+        (family, row["id"], owner): dict(row)
+        for (family, owner), family_ids in groups.items()
+        for row in hydrate(db, viewer_id, family, family_ids, terms, reading_media_id=owner)
     }
     sourced = [row["media_id"] for row in rows.values() if "media_title" in row]
     credits = load_contributor_credits_for_media(db, sourced)
@@ -149,7 +156,7 @@ def project(
     excerpts = highlight_excerpts_for_note_blocks(db, viewer_id, ids.get("note_block", []))
     placed = []
     for hit in hits:
-        row = rows.get((family_of(hit.type), hit.id))
+        row = rows.get((family_of(hit.type), hit.id, hit.reading_media_id))
         locator = None if row is None else _locator(row)
         if (
             row is None
@@ -162,9 +169,33 @@ def project(
             )
         ):
             continue
+        if row.get("reading_media_id") is not None:
+            scoped = scoped_media_passage(
+                db,
+                viewer_id=viewer_id,
+                source_media_id=row.get("source_media_id", row["media_id"]),
+                reading_media_id=row["reading_media_id"],
+                locator=locator,
+                apparatus_item_id=row["id"] if row["type"] == "reader_apparatus_item" else None,
+                quote=CapturedQuote(
+                    exact=row.get("span_text") or row.get("exact") or row.get("text") or "",
+                    prefix=(locator or {}).get("text_quote_selector", {}).get("prefix"),
+                    suffix=(locator or {}).get("text_quote_selector", {}).get("suffix"),
+                    color=row.get("color"),
+                ),
+            )
+            if scoped is None:
+                continue
+            locator = scoped.locator
         placed.append((row, hit.score, locator, *_refs(row)))
-    refs = [ref for *_, ref, _ in placed]
-    activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=refs)
+    activations = {}
+    for owner in dict.fromkeys(row.get("reading_media_id") for row, *_ in placed):
+        group_refs = [ref for row, _, _, ref, _ in placed if row.get("reading_media_id") == owner]
+        activations.update(
+            resource_activations_for_refs(
+                db, viewer_id=viewer_id, refs=group_refs, reading_media_id=owner
+            )
+        )
     source_metadata = source_attributions(
         db, viewer_id=viewer_id, refs=list({owner for *_, owner in placed})
     )
@@ -212,6 +243,7 @@ def project(
                 type="media" if t in MEDIA_TYPES else t,
                 id=handle or rid,
                 evidence_span_ids=[row["span_id"]] if t == "content_chunk" else [],
+                passage_target=None,
             ),
             "locator": locator,
         }
@@ -269,6 +301,10 @@ def project(
             if locator is not None
             else CapturedResourceTarget(owner_ref=owner.uri)
         )
+        if isinstance(frozen_target, CapturedPassageTarget):
+            values["context_ref"] = values["context_ref"].model_copy(
+                update={"passage_target": frozen_target}
+            )
         values["captured_evidence"] = CapturedEvidence(
             quote=quote, source=frozen_source, target=frozen_target
         )

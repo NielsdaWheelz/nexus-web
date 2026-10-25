@@ -96,6 +96,7 @@ class FragmentOffsets(BaseModel):
 
 
 class FragmentAnchorUpdateRequest(FragmentOffsets):
+    reading_media_id: UUID
     type: Literal["fragment_offsets"] = "fragment_offsets"
     unit_id: UUID
 

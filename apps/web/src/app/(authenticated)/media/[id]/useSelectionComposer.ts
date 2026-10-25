@@ -2,6 +2,7 @@
 
 // One ephemeral rich composer. Explicit submissions freeze their input; their
 // owners settle independently of dismissal and never replace newer input.
+// The reading owner stays fixed; canonical fragment anchors may belong to its source.
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
@@ -62,6 +63,17 @@ async function liveHighlight(id: string): Promise<Highlight | null> {
     const { data } = await apiFetch<ApiJson<"/highlights/{highlight_id}", "get">>(`/api/highlights/${id}`);
     return { ...data, linked_note_blocks: data.linked_note_blocks.filter((note) => !isDeletedResource(`note_block:${note.note_block_id}`)) };
   } catch (error) { if (isApiError(error) && error.status === 404) return null; throw error; }
+}
+
+/** Text fragment identity proves the source; PDF anchors belong to their whole media. */
+function matchesSourceAnchor(highlight: Highlight, source: ReturnType<AnnotationStore["source"]>): boolean {
+  const saved = highlight.anchor;
+  const anchor = source.anchor;
+  return anchor.kind === "text"
+    ? saved.type === "fragment_offsets" && saved.fragment_id === anchor.unit &&
+      saved.start_offset === anchor.start && saved.end_offset === anchor.end
+    : saved.type === "pdf_page_geometry" && saved.media_id === source.mediaId &&
+      saved.page_number === anchor.page && JSON.stringify(saved.quads) === JSON.stringify(anchor.quads);
 }
 
 /** A settled draft cannot claim a later command that happens to use the same chat. */
@@ -260,13 +272,9 @@ export function useSelectionComposer(input: {
         store.update(draftId, (entry) => ({ ...entry, load: previous.load === "Ready" ? "Ready" : "Failed", issue: { kind: "Failed", message: "this highlight is no longer available. your input remains in this tab." } }));
         return;
       }
-      const saved = data.anchor;
-      const anchor = saved.type === "fragment_offsets"
-        ? { kind: "text" as const, unit: saved.fragment_id, start: saved.start_offset, end: saved.end_offset }
-        : { kind: "pdf" as const, page: saved.page_number, quads: saved.quads };
       const shown = reader.getState().document;
       if (shown.status !== "ready" || shown.doc.identity !== requested.passage.identity ||
-        JSON.stringify(anchor) !== JSON.stringify({ ...annotations.source(requested.passage.anchor).anchor, exact: undefined })) {
+        !matchesSourceAnchor(data, annotations.source(requested.passage.anchor))) {
         store.update(draftId, (entry) => ({ ...entry, load: previous.load === "Ready" ? "Ready" : "Failed", issue: { kind: "Source", message: "the source changed. select it again before saving or sending." } }));
         return;
       }
@@ -286,7 +294,7 @@ export function useSelectionComposer(input: {
             expected: base.kind === "Present" ? { kind: "version", version: base.version } : { kind: "absent", version: data.links_version },
           } },
         } : {}),
-        passage: { ...entry.passage, quote: data.exact }, sourceMediaId: data.anchor.media_id,
+        passage: { ...entry.passage, quote: data.exact },
         chatIssue: entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" ? null : entry.chatIssue,
         ...(replaceInput ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null }
           : { issue: sameBase ? null : { kind: "Conflict", message: "this note changed elsewhere. your input remains in this tab.", saved: base, linksVersion: data.links_version } }),
@@ -326,6 +334,7 @@ export function useSelectionComposer(input: {
     const referenceSource: ComposerDraft["referenceSource"] = anchor.kind === "text"
       ? {
         kind: "fragment_selection",
+        reading_media_id: boundSource.mediaId,
         fragment_id: anchor.unit,
         start_offset: anchor.start,
         end_offset: anchor.end,
@@ -713,12 +722,12 @@ export function useSelectionComposer(input: {
         store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Source", message: "the passage changed. select it again before saving or sending." } })); return null;
       }
       const live = await liveHighlight(ensured);
-      if (!live || live.anchor.media_id !== entry.sourceMediaId || live.exact !== entry.passage.quote || (entry.highlight &&
+      if (!live || !matchesSourceAnchor(live, sourceNow) || live.exact !== entry.passage.quote || (entry.highlight &&
         live.version !== entry.highlight.version)) {
         store.update(entry.id, value => ({ ...value, operation: null, highlight: entry.highlight ?? value.highlight,
           chatIssue: { kind: "Passage", message: "the passage changed. select it again before saving or sending." } })); return null;
       }
-      const key = assumeReaderSelectionKey({ mediaId: live.anchor.media_id, highlightId: ensured });
+      const key = assumeReaderSelectionKey({ mediaId: entry.sourceMediaId, highlightId: ensured });
       const preview = await getReaderQuotePreview({ key });
       // Preview has a revision, but its displayed excerpt may be truncated. Verify
       // its surrounding full highlight observation instead of rebasing the quote.

@@ -4,9 +4,12 @@ A block is one citable slice of an owner's text with the locator that cites it. 
 is at most 420 whitespace tokens: a window of one long block (windows step 360 tokens,
 so consecutive windows overlap by 60), or a run of whole blocks that touch
 (``previous.start + len(previous.text) == next.start``) and share one citable anchor
-(fragment, pdf page, transcript segment time, note block). Its locator is the first
-block's, widened to the chunk, quoting exactly the chunk's text. Text planning never
-calls a provider. A separate embedding spool names the exact published chunk ids; vectors travel as float32 bytes, the precision pgvector stores.
+(fragment, pdf page, transcript segment time, note block) and one partition. A media's
+blocks are cut at detected section and accepted piece boundaries, so a chunk lies wholly
+inside or outside each bounded reading scope. Its locator quotes the exact text. Pure
+text planning never calls a provider. A separate embedding spool names the published
+chunk ids; vectors travel as float32 bytes, the precision pgvector stores. The chunker
+contract version is part of the index partition key.
 
 A document's chunks stream through a JSONL spool inside its job's parser-temp
 directory, so neither the embeddings nor the chunk texts are held twice in memory. The
@@ -32,6 +35,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.embeddings import embed_texts
 from nexus.services.parser_temp import utf8_byte_length
 
+CHUNKER_CONTRACT_VERSION = 1
 CHUNK_MAX_TOKENS = 420
 CHUNK_OVERLAP_TOKENS = 60
 EMBED_BATCH = 64
@@ -55,6 +59,7 @@ class IndexableBlock:
     start: int
     locator: dict[str, object]
     heading_path: tuple[str, ...] = ()
+    partition: int = 0
 
 
 @dataclass(frozen=True)
@@ -185,6 +190,7 @@ def _chunk_parts(blocks: Sequence[IndexableBlock]) -> Iterator[list[tuple[int, i
                     or start != 0
                     or last_end != len(last.text)
                     or last.start + len(last.text) != block.start
+                    or last.partition != block.partition
                     or _anchor(last) != _anchor(block)
                 ):
                     yield parts

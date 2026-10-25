@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from nexus.schemas.resource_evidence import CapturedPassageTarget
+
 SEARCH_RESULT_TYPES = Literal[
     "media",
     "podcast",
@@ -33,6 +35,7 @@ class SearchResultContextRefOut(BaseModel):
     type: SEARCH_RESULT_TYPES
     id: UUID | str
     evidence_span_ids: list[UUID]
+    passage_target: CapturedPassageTarget | None
 
 
 class SearchPageInfo(BaseModel):

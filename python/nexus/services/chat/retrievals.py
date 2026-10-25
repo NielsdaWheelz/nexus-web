@@ -5,7 +5,8 @@ enter through ``citation_from_search_result`` (provider web hits through ``web_c
 the stored ``result_ref`` shape lives here once. It is also the model-visible
 ``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
 every built key, minus the ones whose value is null, an empty list or ``selected`` false
-(byte for byte what the retired validators stored).
+a context ref always keeps its ``passage_target`` so reopening a piece passage
+never widens it to the source.
 Numbering and publication belong to ``citations``. The caller starts its serializable
 attempt before source reads and fences, and refreshes retained-X viewer
 contributor text once after its complete insertion batch. This helper never commits.
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import bindparam, select, text
@@ -33,8 +34,11 @@ from nexus.schemas.resource_evidence import (
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.project import build_source_label
+from nexus.services.search.service import get_search_result
 
 STRICT_LOCATOR = frozenset(
     {
@@ -56,6 +60,10 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "message": ("conversation_id", "seq"),
     "reader_apparatus_item": ("apparatus_kind",),
 }
+# Media passages whose reopen goes through a reading owner.
+_READING_OWNED = frozenset(
+    {"content_chunk", "fragment", "highlight", "evidence_span", "reader_apparatus_item"}
+)
 _WEB_KEYS = (
     "result_ref",
     "url",
@@ -70,12 +78,14 @@ _WEB_KEYS = (
 
 
 def compact(value: Mapping[str, Any]) -> dict[str, Any]:
-    """The stored form: absent, empty and unselected facts are omitted (as ever)."""
+    """The stored form: absent, empty and unselected facts are omitted, except a context
+    ref's always-present ``passage_target``."""
 
     return {
         key: compact(item) if key == "context_ref" else item
         for key, item in value.items()
-        if item is not None and item != [] and not (key == "selected" and item is False)
+        if key == "passage_target"
+        or (item is not None and item != [] and not (key == "selected" and item is False))
     }
 
 
@@ -145,7 +155,7 @@ def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
     kind = str(payload["type"])
     if kind == "web_result":
         source_id = str(payload["source_id"])
-        payload |= {"id": source_id, "context_ref": {"type": "web_result", "id": source_id}}
+        payload |= {"id": source_id, "context_ref": payload["context_ref"] | {"id": source_id}}
     deep_link = (payload["activation"] or {}).get("href")
     if not isinstance(deep_link, str):
         raise AssertionError(f"{kind} search result is not activatable")
@@ -192,6 +202,29 @@ def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
     )
 
 
+def reopen_search_result(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result_type: str,
+    source_id: str,
+    passage_target: CapturedPassageTarget | None = None,
+) -> SearchResultOut:
+    """One search result reopened by identity for a single read or an attached resource.
+
+    A media passage reopens through the reading owner captured for it now: the ref alone
+    names no reading context, so that is the viewer-wide owner (a piece when its source
+    is unreadable). A supplied target instead requires its exact reading owner and
+    publication; failure never falls back. 404 when the viewer cannot capture it.
+    """
+    target = passage_target
+    if target is None and result_type in _READING_OWNED:
+        ref = ResourceRef(cast(ResourceScheme, result_type), UUID(source_id))
+        captured = capture_evidence(db, viewer_id=viewer_id, ref=ref).target
+        target = captured if isinstance(captured, CapturedPassageTarget) else None
+    return get_search_result(db, viewer_id, result_type, source_id, passage_target=target)
+
+
 def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -> RetrievalCitation:
     """One provider web hit whose snapshot the caller just stored."""
 
@@ -228,7 +261,7 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
         citation_target=ref,
         citation_label=None,
         locator=locator,
-        context_ref={"type": "web_result", "id": str(snapshot_id)},
+        context_ref={"type": "web_result", "id": str(snapshot_id), "passage_target": None},
         evidence_span_id=None,
         media_id=None,
         media_kind=None,

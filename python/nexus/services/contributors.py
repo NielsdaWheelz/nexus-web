@@ -474,6 +474,27 @@ def prepare_observed_role_slices_in_current_transaction(
     return PreparedContributorPublication(target, observation.managed_roles, plan, source)
 
 
+def prepare_contained_work_role_slices_in_current_transaction(
+    db: Session,
+    *,
+    source_media_id: UUID,
+    part_media_id: UUID,
+    observation: ObservedRoleSlices,
+) -> PreparedContributorPublication:
+    """prepare a new piece's finding against its source's offered contributor handles.
+
+    only the observed role slices move to the new child target; source credits are
+    not inherited. the caller owns source authority and creates the child in this
+    transaction. ordinary research still validates handles against its own target.
+    """
+    prepared = prepare_observed_role_slices_in_current_transaction(
+        db, target=MediaTarget(source_media_id), observation=observation, source="part_discovery"
+    )
+    return PreparedContributorPublication(
+        MediaTarget(part_media_id), prepared.managed_roles, prepared.identities, prepared.source
+    )
+
+
 def apply_prepared_role_slices_in_current_transaction(
     db: Session, *, prepared: PreparedContributorPublication
 ) -> bool:

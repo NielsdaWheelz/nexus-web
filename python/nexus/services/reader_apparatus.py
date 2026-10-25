@@ -19,7 +19,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import UUID, uuid4
 
 from pydantic import JsonValue
@@ -56,11 +56,19 @@ from nexus.schemas.reader_document_map import (
     ReaderSourceUnavailableOut,
     SourceContent,
 )
-from nexus.schemas.retrieval import MediaRetrievalLocator, RetrievalLocator, retrieval_locator_json
+from nexus.schemas.retrieval import (
+    EpubFragmentOffsetsLocator,
+    MediaRetrievalLocator,
+    RetrievalLocator,
+    WebTextOffsetsLocator,
+    retrieval_locator_json,
+)
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import bind_epub_fragment_link
 from nexus.services.html_tree import inner_html, parse_html_document
+from nexus.services.locator_resolver import permitted_note_ranges
+from nexus.services.media_text_scope import MediaTextScope, read_media_text_scope
 from nexus.services.reader_locations import (
     locator_is_current_for_media,
     locator_json,
@@ -143,6 +151,7 @@ class _ApparatusState:
     status: ReaderApparatusStatus
     media_kind: str
     page_count: int | None
+    scope: MediaTextScope | None = None
 
 
 _ITEM_UPSERT = text(
@@ -298,7 +307,9 @@ def _read_state(db: Session, *, viewer_id: UUID, media_id: UUID) -> _ApparatusSt
     )
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if str(media["kind"]) not in SUPPORTED_MEDIA_KINDS:
+    scope = read_media_text_scope(db, media_id) if str(media["kind"]) == "text_part" else None
+    source_id = scope.source_media_id if scope is not None else media_id
+    if str(media["kind"]) not in SUPPORTED_MEDIA_KINDS and scope is None:
         return _ApparatusState(None, "unsupported", str(media["kind"]), None)
     if not is_document_status_ready(str(media["processing_status"])):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
@@ -306,7 +317,7 @@ def _read_state(db: Session, *, viewer_id: UUID, media_id: UUID) -> _ApparatusSt
     state = (
         db.execute(
             text("SELECT id, status FROM reader_apparatus_states WHERE media_id = :media_id"),
-            {"media_id": media_id},
+            {"media_id": source_id},
         )
         .mappings()
         .fetchone()
@@ -318,7 +329,8 @@ def _read_state(db: Session, *, viewer_id: UUID, media_id: UUID) -> _ApparatusSt
     return _ApparatusState(
         id=state["id"],
         status=cast(ReaderApparatusStatus, state["status"]),
-        media_kind=str(media["kind"]),
+        media_kind=scope.source_format if scope is not None else str(media["kind"]),
+        scope=scope,
         page_count=int(media["page_count"]) if media["page_count"] is not None else None,
     )
 
@@ -326,6 +338,62 @@ def _read_state(db: Session, *, viewer_id: UUID, media_id: UUID) -> _ApparatusSt
 def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderApparatusResponse:
     """Only reference/forward owners and untargeted orphans enter the map."""
     state = _read_state(db, viewer_id=viewer_id, media_id=media_id)
+    return _media_apparatus(db, media_id=media_id, state=state)
+
+
+def note_reference_for_locator(
+    db: Session, *, viewer_id: UUID, media_id: UUID, locator: RetrievalLocator
+) -> UUID | None:
+    """The first retained in-body reference disclosing this exact outside-body note."""
+    if not isinstance(locator, (EpubFragmentOffsetsLocator, WebTextOffsetsLocator)):
+        return None
+    if not db.scalar(text("SELECT 1 FROM media_parts WHERE media_id=:id"), {"id": media_id}):
+        return None
+    state = _read_state(db, viewer_id=viewer_id, media_id=media_id)
+    scope = state.scope
+    if scope is None or str(locator.media_id) != str(scope.source_media_id):
+        return None
+    fragment_id = UUID(str(locator.fragment_id))
+    if scope.contains(fragment_id, locator.start_offset, locator.end_offset):
+        return None
+    targets = {
+        id
+        for id, (fragment, start, end) in permitted_note_ranges(db, scope).items()
+        if fragment == fragment_id and start <= locator.start_offset and locator.end_offset <= end
+    }
+    if not targets:
+        return None
+    apparatus = _media_apparatus(db, media_id=media_id, state=state)
+    references = {edge.from_stable_key for edge in apparatus.edges if edge.to_item_id in targets}
+    indexes = {interval.fragment_id: interval.fragment_idx for interval in scope.fragment_intervals}
+    choices: list[tuple[int, int, int, str, UUID]] = []
+    for item in apparatus.items:
+        point = item.locator
+        if (
+            item.stable_key not in references
+            or not item.kind.endswith("_ref")
+            or item.locator_status != "exact"
+            or not isinstance(point, (EpubFragmentOffsetsLocator, WebTextOffsetsLocator))
+            or str(point.media_id) != str(scope.source_media_id)
+        ):
+            continue
+        marker_fragment = UUID(str(point.fragment_id))
+        if scope.contains(marker_fragment, point.start_offset, point.end_offset):
+            choices.append(
+                (
+                    indexes[marker_fragment],
+                    point.start_offset,
+                    point.end_offset,
+                    item.stable_key,
+                    item.id,
+                )
+            )
+    return min(choices)[-1] if choices else None
+
+
+def _media_apparatus(
+    db: Session, *, media_id: UUID, state: _ApparatusState
+) -> ReaderApparatusResponse:
     if state.id is None:
         return ReaderApparatusResponse(media_id=media_id, status=state.status, items=[], edges=[])
     item_rows = db.execute(
@@ -347,7 +415,11 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
         {"state_id": state.id},
         execution_options={"yield_per": 128},
     ).mappings()
-    items = [_item_from_row(row) for row in item_rows]
+    items = [
+        _item_from_row(row)
+        for row in item_rows
+        if state.scope is None or row["id"] in state.scope.permitted_apparatus
+    ]
     item_rows.close()
     # Keep the existing stable tie order: reference/forward owners, then orphans.
     items.sort(key=lambda item: item.sort_key)
@@ -355,7 +427,15 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
         media_id=media_id,
         status=state.status,
         items=items,
-        edges=_read_edges(db, state_id=state.id),
+        edges=[
+            edge
+            for edge in _read_edges(db, state_id=state.id)
+            if state.scope is None
+            or (
+                edge.to_item_id in state.scope.permitted_apparatus
+                and edge.from_stable_key in {item.stable_key for item in items}
+            )
+        ],
     )
 
 
@@ -474,7 +554,9 @@ def get_reader_apparatus_detail(
         ),
         {"state_id": state.id, "item_id": item_id},
     )
-    if owner_kind is None:
+    if owner_kind is None or (
+        state.scope is not None and item_id not in state.scope.permitted_apparatus
+    ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source reference not found")
     target_ids = list(
         dict.fromkeys(
@@ -483,6 +565,8 @@ def get_reader_apparatus_detail(
     )
     if not target_ids and not str(owner_kind).endswith("_ref"):
         target_ids = [item_id]
+    if state.scope is not None:
+        target_ids = [id for id in target_ids if id in state.scope.permitted_apparatus]
     target_rows = db.execute(
         text("""
             SELECT id, stable_key, kind, label, body_text, body_html_sanitized,
@@ -506,19 +590,23 @@ def get_reader_apparatus_detail(
     ).mappings()
     targets = [_item_from_row(row) for row in target_rows]
     target_rows.close()
+    source_media_id = state.scope.source_media_id if state.scope is not None else media_id
     _source_body_html(
-        db, media_id=media_id, state_id=state.id, state_status=state.status, items=targets
+        db, media_id=source_media_id, state_id=state.id, state_status=state.status, items=targets
     )
+    if state.scope is not None:
+        _bound_scope_body_html(db, scope=state.scope, targets=targets)
     previews = resource_items_out(
         db,
         viewer_id=viewer_id,
         refs=[ResourceRef("reader_apparatus_item", target.id) for target in targets],
+        reading_media_id=media_id,
     )
     fragment_indexes = {
         str(row.id): int(row.idx)
         for row in db.execute(
             text("SELECT id, idx FROM fragments WHERE media_id = :media_id"),
-            {"media_id": media_id},
+            {"media_id": source_media_id},
         )
     }
     targets_out: list[ReaderEvidenceSourceTargetOut] = []
@@ -540,7 +628,7 @@ def get_reader_apparatus_detail(
                 content=content,
                 resolution=apparatus_resolution(
                     target,
-                    media_id=media_id,
+                    media_id=source_media_id,
                     fragment_indexes=fragment_indexes,
                     page_count=state.page_count,
                 ),
@@ -552,6 +640,111 @@ def get_reader_apparatus_detail(
         reference_ref=f"reader_apparatus_item:{item_id}",
         targets=targets_out,
     )
+
+
+def read_scoped_apparatus_bodies(db: Session, scope: MediaTextScope) -> list[ReaderApparatusItem]:
+    """Complete admitted note bodies for an already-authorized reading scope."""
+    state = db.execute(
+        text("SELECT id,status FROM reader_apparatus_states WHERE media_id=:id"),
+        {"id": scope.source_media_id},
+    ).one()
+    rows = db.execute(
+        text("""
+        SELECT id,stable_key,kind,label,body_text,body_html_sanitized,locator,locator_status,
+               confidence,extraction_method,source_ref,sort_key
+        FROM reader_apparatus_items WHERE state_id=:state AND id=ANY(:ids)
+        ORDER BY sort_key,stable_key
+    """),
+        {"state": state.id, "ids": list(scope.permitted_apparatus)},
+    ).mappings()
+    items = [_item_from_row(row) for row in rows]
+    _source_body_html(
+        db,
+        media_id=scope.source_media_id,
+        state_id=state.id,
+        state_status=state.status,
+        items=items,
+    )
+    _bound_scope_body_html(db, scope=scope, targets=items)
+    return items
+
+
+def _bound_scope_body_html(
+    db: Session, *, scope: MediaTextScope, targets: Sequence[ReaderApparatusItem]
+) -> None:
+    source_media_id, media_id = scope.source_media_id, scope.reading_media_id
+    permitted = {
+        row.id: row
+        for row in db.execute(
+            text("SELECT id,locator,source_ref FROM reader_apparatus_items WHERE id=ANY(:ids)"),
+            {"ids": list(scope.permitted_apparatus)},
+        )
+    }
+    for target in targets:
+        if target.body_html_sanitized is None:
+            continue
+        root = parse_html_document(target.body_html_sanitized)
+        for node in root.iter():
+            for attr, value in list(node.attrib.items()):
+                node.set(
+                    attr,
+                    value.replace(
+                        f"/media/{source_media_id}/assets/", f"/media/{media_id}/assets/"
+                    ),
+                )
+            destination = node.get("data-nexus-fragment-id")
+            if destination is not None:
+                fragment_id = UUID(destination)
+                interval = next(
+                    (item for item in scope.fragment_intervals if item.fragment_id == fragment_id),
+                    None,
+                )
+                anchor = node.get("data-nexus-anchor-id")
+                allowed = interval is not None
+                if allowed and anchor is not None:
+                    html = db.scalar(
+                        text("SELECT html_sanitized FROM fragments WHERE id=:id"),
+                        {"id": fragment_id},
+                    )
+                    structure = canonicalize_structure(html)
+                    index = structure.anchors.get(anchor)
+                    allowed = (
+                        index is not None
+                        and interval is not None
+                        and interval.start_offset
+                        <= structure.elements[index].start_offset
+                        < interval.end_offset
+                    )
+                if not allowed:
+                    for attr in ("href", "data-nexus-fragment-id", "data-nexus-anchor-id"):
+                        node.attrib.pop(attr, None)
+            href = node.get("href")
+            if href and urlsplit(href).path == f"/media/{source_media_id}":
+                ids = parse_qs(urlsplit(href).query).get("apparatus_id", [])
+                binding = permitted.get(UUID(ids[0])) if len(ids) == 1 else None
+                if binding is None:
+                    node.attrib.pop("href", None)
+                    continue
+                locator = binding.locator
+                node.set("href", "#")
+                if (
+                    locator is not None
+                    and locator.get("type") in ("web_text_offsets", "epub_fragment_offsets")
+                    and scope.contains(
+                        UUID(locator["fragment_id"]), locator["start_offset"], locator["end_offset"]
+                    )
+                ):
+                    node.set("data-nexus-fragment-id", locator["fragment_id"])
+                    anchor = binding.source_ref.get("marker_id") or binding.source_ref.get(
+                        "target_id"
+                    )
+                    if anchor:
+                        node.set("data-nexus-anchor-id", anchor)
+                    node.attrib.pop("data-reader-apparatus-item-id", None)
+                else:
+                    node.set("data-reader-apparatus-item-id", str(binding.id))
+        body = root.body if root.body is not None else root
+        target.body_html_sanitized = inner_html(body)
 
 
 def apparatus_resolution(

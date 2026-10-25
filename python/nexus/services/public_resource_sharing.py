@@ -15,12 +15,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Literal, NoReturn
+from urllib.parse import parse_qs, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from lxml.html import fragment_fromstring
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.db.retries import retry_read_committed
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.document_embeds import (
     DocumentEmbedDisplayActionOut,
     DocumentEmbedDisplayOut,
@@ -32,6 +35,8 @@ from nexus.schemas.document_embeds import (
     DocumentEmbedUrlOut,
 )
 from nexus.schemas.public_resource_sharing import (
+    PublicApparatusContentOut,
+    PublicApparatusOut,
     PublicHighlightOut,
     PublicPdfAnchorOut,
     PublicShareOut,
@@ -39,6 +44,7 @@ from nexus.schemas.public_resource_sharing import (
 )
 from nexus.schemas.reader import PdfPageGeometryTargetOut
 from nexus.schemas.reader_document import (
+    ReaderPartDocumentOut,
     ReaderPdfDocumentOut,
     ReaderPdfFileOut,
     ReaderPointOut,
@@ -55,14 +61,17 @@ from nexus.schemas.reader_document import (
     TranscriptReaderChapterOut,
     TranscriptReaderSearchExtentOut,
 )
-from nexus.services import resource_grants
-from nexus.services.canonicalize import canonicalize_structure
+from nexus.services import library_entries, resource_grants
+from nexus.services.canonicalize import canonicalize_structure, generate_canonical_text
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.contributor_credits import load_current_source_author_bylines
 from nexus.services.epub_assets import list_public_epub_asset_sources
+from nexus.services.image_validation import fetch_validated_image
 from nexus.services.locator_resolver import resolve_highlight_reader_target
+from nexus.services.media_text_scope import MediaTextScope, html_asset_urls, read_media_text_scope
 from nexus.services.public_html import sanitize_public_html
 from nexus.services.public_source_urls import public_source_url
+from nexus.services.reader_apparatus import read_scoped_apparatus_bodies
 from nexus.services.reader_document import build_reader_document
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.x_identity import (
@@ -105,6 +114,7 @@ class _Share:
     kind: str
     title: str
     source_url: str | None
+    source_label: str | None
     highlight: PublicHighlightOut | None
     pdf: tuple[str, int] | None  # (storage path, size) of a readable PDF
 
@@ -118,14 +128,32 @@ def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
     media = (
         ":id" if scheme == "media" else "(SELECT anchor_media_id FROM highlights WHERE id = :id)"
     )
-    lock = text(f"SELECT m.id FROM media m WHERE m.id = {media} FOR SHARE OF m")
-    media_id = db.execute(lock, {"id": subject_id}).scalar()
-    if media_id is None:
+    media_id = db.execute(
+        text(f"SELECT m.id FROM media m WHERE m.id = {media}"), {"id": subject_id}
+    ).scalar()
+    if media_id is None or not library_entries.lock_media_rows_in_order(db, [media_id]):
         return _UNSUPPORTED
     facts = db.execute(text(_FACTS_SQL), {"media_id": media_id}).mappings().one()
     kind = facts["kind"]
     if facts["tearing_down"]:
         return _UNSUPPORTED
+    if kind == "text_part":
+        try:
+            scope = read_media_text_scope(db, media_id)
+        except ApiError:
+            return "ProjectionNotReady"
+        source_title = db.scalar(
+            text("SELECT title FROM media WHERE id=:id"), {"id": scope.source_media_id}
+        )
+        return _Share(
+            media_id=media_id,
+            kind=kind,
+            title=facts["title"],
+            source_url=None,
+            source_label=source_title,
+            highlight=None,
+            pdf=None,
+        )
     if not is_text_document_ready(
         kind, facts["processing_status"], facts["transcript_state"], facts["transcript_coverage"]
     ):
@@ -149,6 +177,7 @@ def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
         kind=kind,
         title=facts["title"],
         source_url=source_url,
+        source_label=None,
         highlight=highlight,
         pdf=(facts["storage_path"], facts["size_bytes"]) if pdf else None,
     )
@@ -214,8 +243,15 @@ def _highlight(db: Session, highlight_id: UUID) -> PublicHighlightOut | None:
 
 def _open(db: Session, token: str) -> _Share:
     grant = resource_grants.link_grant(db, token)
-    share = None if grant is None else _load(db, grant.subject_scheme, grant.subject_id)
+    if grant is None:
+        _gone()
+    subject = (grant.subject_scheme, grant.subject_id)
+    share = _load(db, *subject)
     if not isinstance(share, _Share):
+        _gone()
+    # Revocation may have committed while _load waited for the subject's family lock.
+    current = resource_grants.link_grant(db, token)
+    if current is None or (current.subject_scheme, current.subject_id) != subject:
         _gone()
     return share
 
@@ -226,17 +262,18 @@ def link_readiness(db: Session, subject: ResourceRef) -> Readiness | None:
     return None if isinstance(share, _Share) else share
 
 
-def read_share(db: Session, token: str) -> PublicShareOut:
+def _read_share(db: Session, token: str) -> PublicShareOut:
     share = _open(db, token)
     return PublicShareOut(
         title=share.title,
         bylines=load_current_source_author_bylines(db, media_id=share.media_id),
         source_url=share.source_url,
+        source_label=share.source_label,
         highlight=share.highlight,
     )
 
 
-def read_document(
+def _read_document(
     db: Session, token: str
 ) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
     """The shared media's reader document, rebuilt field by field: an allowlist, so a field
@@ -263,11 +300,18 @@ def read_document(
             page_count=document.page_count,
             file=document.file,
         )
-    epub = share.kind == "epub"
-    images = list_public_epub_asset_sources(db, media_id=share.media_id) if epub else []
-    assets = {image.asset_key: str(image.ordinal) for image in images}
+    manifest = _text_manifest(db, share, document)
+    assets = {image.key: str(index) for index, image in enumerate(manifest.assets)}
     ordinals = {unit.id: str(unit.idx) for unit in document.units}
     section_ids = {section.id: f"s{index}" for index, section in enumerate(document.sections)}
+    toc_ids: dict[str, str] = {}
+
+    def toc_identity(nodes: list[ReaderTocNodeOut]) -> None:
+        for node in nodes:
+            toc_ids[node.id] = f"t{len(toc_ids)}"
+            toc_identity(node.children)
+
+    toc_identity(document.toc_nodes)
     slots = {
         unit.x_post.embed_occurrence_key: f"x{unit.idx}"
         for unit in document.units
@@ -439,12 +483,26 @@ def read_document(
             )
         )
 
+    def public_html(html: str) -> str:
+        try:
+            return sanitize_public_html(
+                html,
+                units=ordinals,
+                assets=assets,
+                embed_slots=slots,
+                apparatus=manifest.note_ordinals,
+                anchors=manifest.anchors,
+                expected_identity=document.identity,
+            )
+        except ValueError:
+            _gone()
+
     def point(at: ReaderPointOut) -> ReaderPointOut:
         return ReaderPointOut(unit_id=ordinals[at.unit_id], offset=at.offset)
 
     def node(toc: ReaderTocNodeOut) -> ReaderTocNodeOut:
         return ReaderTocNodeOut(
-            id=toc.id,
+            id=toc_ids[toc.id],
             label=toc.label,
             at=None if toc.at is None else point(toc.at),
             section_id=None if toc.section_id is None else section_ids[toc.section_id],
@@ -458,9 +516,7 @@ def read_document(
             ReaderUnitOut(
                 id=ordinals[unit.id],
                 idx=unit.idx,
-                html_sanitized=sanitize_public_html(
-                    unit.html_sanitized, units=ordinals, assets=assets, embed_slots=slots
-                ),
+                html_sanitized=public_html(unit.html_sanitized),
                 canonical_text=unit.canonical_text,
                 char_count=unit.char_count,
                 href_path=None,
@@ -512,7 +568,9 @@ def read_document(
                 label=section.label,
                 depth=section.depth,
                 at=point(section.at),
-                anchor_id=section.anchor_id,
+                anchor_id=manifest.anchors.get(section.anchor_id)
+                if section.anchor_id is not None
+                else None,
             )
             for section in document.sections
         ],
@@ -561,21 +619,182 @@ def read_document(
                 ],
             ),
         )
-    return ReaderTextDocumentOut(**body.model_dump(), kind=document.kind)
+    return ReaderTextDocumentOut(
+        **body.model_dump(),
+        kind=document.source_format if document.kind == "text_part" else document.kind,
+    )
 
 
-def read_asset(db: Session, token: str, ordinal: str) -> tuple[bytes, str]:
-    """An EPUB image's bytes and content type, by its ordinal in the public image list.
+@dataclass(frozen=True, slots=True)
+class _PublicAsset:
+    key: str
+    storage_path: str | None
+    content_type: str | None
+    size_bytes: int | None
+    image_url: str | None
 
-    Published EPUB content is immutable, so an ordinal names one image for as long as the
-    link lives."""
+
+@dataclass(frozen=True, slots=True)
+class _PublicNoteBody:
+    label: str | None
+    html: str
+    canonical_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PublicNote:
+    label: str | None
+    content: tuple[_PublicNoteBody, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TextManifest:
+    assets: tuple[_PublicAsset, ...]
+    notes: tuple[_PublicNote, ...]
+    note_ordinals: dict[str, str]
+    anchors: dict[str, str]
+
+
+def _text_manifest(
+    db: Session, share: _Share, document: ReaderTextBodyOut | ReaderPartDocumentOut
+) -> _TextManifest:
+    """One bounded manifest for every public text document, asset and apparatus read.
+
+    The scope owner admits dependencies. This edge assigns only local ordinals;
+    it never authorizes an asset from a caller-supplied source id or URL.
+    """
+    scope: MediaTextScope | None = None
+    if share.kind in {"epub", "web_article", "text_part"}:
+        scope = read_media_text_scope(db, share.media_id)
+    notes: list[_PublicNote] = []
+    note_ordinals: dict[str, str] = {}
+    note_html: list[str] = []
+    if scope is not None and scope.permitted_apparatus:
+        rows = read_scoped_apparatus_bodies(db, scope)
+        targets = {
+            row.id: row
+            for row in rows
+            if row.body_html_sanitized is not None and not row.kind.endswith("_ref")
+        }
+        for row in targets.values():
+            html = row.body_html_sanitized
+            assert html is not None
+            ordinal = str(len(notes))
+            note_ordinals[str(row.id)] = ordinal
+            note_ordinals[row.stable_key] = ordinal
+            notes.append(
+                _PublicNote(
+                    row.label,
+                    (
+                        _PublicNoteBody(
+                            row.label,
+                            html,
+                            row.body_text or generate_canonical_text(html),
+                        ),
+                    ),
+                )
+            )
+            note_html.append(html)
+        references: dict[UUID, tuple[str, list[int]]] = {}
+        for edge in db.execute(
+            text("""
+            SELECT marker.id,marker.stable_key,edge.to_item_id FROM reader_apparatus_edges edge
+            JOIN reader_apparatus_items marker ON marker.id=edge.from_item_id
+            WHERE edge.media_id=:source AND edge.from_item_id=ANY(:ids)
+            ORDER BY edge.sort_key,edge.id
+        """),
+            {"source": scope.source_media_id, "ids": list(scope.permitted_apparatus)},
+        ):
+            if str(edge.to_item_id) in note_ordinals:
+                references.setdefault(edge.id, (edge.stable_key, []))[1].append(
+                    int(note_ordinals[str(edge.to_item_id)])
+                )
+        by_id = {row.id: row for row in rows}
+        for marker_id, (stable_key, target_ordinals) in references.items():
+            content = tuple(
+                body for index in dict.fromkeys(target_ordinals) for body in notes[index].content
+            )
+            ordinal = str(len(notes))
+            notes.append(_PublicNote(by_id[marker_id].label, content))
+            note_ordinals[str(marker_id)] = ordinal
+            note_ordinals[stable_key] = ordinal
+    html_bodies = [unit.html_sanitized for unit in document.units] + note_html
+    anchors: dict[str, str] = {}
+    for html in html_bodies:
+        root = fragment_fromstring(html, create_parent=True)
+        for node in root.xpath(".//*[@id]"):
+            anchors.setdefault(node.get("id"), f"a{len(anchors)}")
+    referenced = sorted(set().union(*(html_asset_urls(html) for html in html_bodies)))
+    images = (
+        {}
+        if scope is None or scope.source_format != "epub"
+        else {
+            image.asset_key: image
+            for image in list_public_epub_asset_sources(db, media_id=scope.source_media_id)
+        }
+    )
+    assets: list[_PublicAsset] = []
+    for src in referenced:
+        match = re.fullmatch(
+            r"/api/media/[0-9a-fA-F-]{36}/assets/([A-Za-z0-9_./-]+)", urlsplit(src).path
+        )
+        key = match[1] if match else src
+        if any(asset.key == key for asset in assets):
+            continue
+        if key in images:
+            image = images[key]
+            assets.append(
+                _PublicAsset(key, image.storage_path, image.content_type, image.size_bytes, None)
+            )
+        elif (
+            scope is not None
+            and scope.source_format == "web_article"
+            and src in scope.permitted_assets
+        ):
+            proxy = urlsplit(src)
+            urls = parse_qs(proxy.query).get("url", []) if proxy.path == "/api/media/image" else []
+            if len(urls) == 1:
+                assets.append(_PublicAsset(src, None, None, None, urls[0]))
+    return _TextManifest(tuple(assets), tuple(notes), note_ordinals, anchors)
+
+
+def _captured_manifest(
+    db: Session, token: str, expected_identity: str | None
+) -> tuple[ReaderTextBodyOut | ReaderPartDocumentOut, _TextManifest]:
     share = _open(db, token)
-    if share.kind != "epub" or not re.fullmatch(r"[0-9]{1,9}", ordinal):
+    document = build_reader_document(
+        db,
+        media_id=share.media_id,
+        viewer_id=None,
+        pdf_file=lambda: ReaderPdfFileOut(url="/api/public/resource-share/file", expires_at=None),
+    )
+    if expected_identity is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "expected_identity is required")
+    if expected_identity != document.identity:
+        raise ConflictError(
+            ApiErrorCode.E_READER_CONTENT_CHANGED, "this piece changed. reload to continue."
+        )
+    if not isinstance(document, (ReaderTextBodyOut, ReaderPartDocumentOut)):
         _gone()
-    images = list_public_epub_asset_sources(db, media_id=share.media_id)
-    if int(ordinal) >= len(images):
+    return document, _text_manifest(db, share, document)
+
+
+def _read_asset(
+    db: Session, token: str, ordinal: str, expected_identity: str | None
+) -> tuple[bytes, str]:
+    """Authenticate, fence the captured body, then resolve its local asset ordinal."""
+    _, manifest = _captured_manifest(db, token, expected_identity)
+    if not re.fullmatch(r"[0-9]{1,9}", ordinal) or int(ordinal) >= len(manifest.assets):
         _gone()
-    image = images[int(ordinal)]
+    image = manifest.assets[int(ordinal)]
+    if image.image_url is not None:
+        fetched = fetch_validated_image(image.image_url)
+        return fetched.data, fetched.content_type
+    assert (
+        image.storage_path is not None
+        and image.size_bytes is not None
+        and image.content_type is not None
+    )
     try:
         data = get_storage_client().read_object(image.storage_path, expected_size=image.size_bytes)
     except StorageError:
@@ -583,9 +802,69 @@ def read_asset(db: Session, token: str, ordinal: str) -> tuple[bytes, str]:
     return data, image.content_type
 
 
-def pdf_source(db: Session, token: str) -> tuple[str, int]:
+def _read_apparatus(
+    db: Session, token: str, ordinal: str, expected_identity: str | None
+) -> PublicApparatusOut:
+    document, manifest = _captured_manifest(db, token, expected_identity)
+    if not re.fullmatch(r"[0-9]{1,9}", ordinal) or int(ordinal) >= len(manifest.notes):
+        _gone()
+    note = manifest.notes[int(ordinal)]
+    content: list[PublicApparatusContentOut] = []
+    for body in note.content:
+        try:
+            html = sanitize_public_html(
+                body.html,
+                units={unit.id: str(unit.idx) for unit in document.units},
+                assets={image.key: str(index) for index, image in enumerate(manifest.assets)},
+                apparatus=manifest.note_ordinals,
+                anchors=manifest.anchors,
+                expected_identity=document.identity,
+            )
+        except ValueError:
+            _gone()
+        content.append(
+            PublicApparatusContentOut(
+                label=body.label, html_sanitized=html, canonical_text=body.canonical_text
+            )
+        )
+    return PublicApparatusOut(
+        ordinal=int(ordinal), identity=document.identity, label=note.label, content=content
+    )
+
+
+def _pdf_source(db: Session, token: str) -> tuple[str, int]:
     """The shared PDF's storage path and size; the caller streams it."""
     share = _open(db, token)
     if share.pdf is None:
         _gone()
     return share.pdf
+
+
+def read_share(db: Session, token: str) -> PublicShareOut:
+    return retry_read_committed(db, "public_share", lambda: _read_share(db, token))
+
+
+def read_document(
+    db: Session, token: str
+) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
+    return retry_read_committed(db, "public_document", lambda: _read_document(db, token))
+
+
+def read_asset(
+    db: Session, token: str, ordinal: str, expected_identity: str | None
+) -> tuple[bytes, str]:
+    return retry_read_committed(
+        db, "public_asset", lambda: _read_asset(db, token, ordinal, expected_identity)
+    )
+
+
+def read_apparatus(
+    db: Session, token: str, ordinal: str, expected_identity: str | None
+) -> PublicApparatusOut:
+    return retry_read_committed(
+        db, "public_apparatus", lambda: _read_apparatus(db, token, ordinal, expected_identity)
+    )
+
+
+def pdf_source(db: Session, token: str) -> tuple[str, int]:
+    return retry_read_committed(db, "public_file", lambda: _pdf_source(db, token))

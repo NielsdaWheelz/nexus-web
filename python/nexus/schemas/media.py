@@ -11,7 +11,12 @@ from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.media_summary import ConsumptionOut, MediaDurationOut, MediaProcessingStatus
+from nexus.schemas.media_summary import (
+    ConsumptionOut,
+    MediaDurationOut,
+    MediaPartSourceOut,
+    MediaProcessingStatus,
+)
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.x_source import XArticleContent
@@ -75,6 +80,8 @@ class MediaOut(BaseModel):
     id: UUID
     kind: MediaKind
     title: str
+    part_source: MediaPartSourceOut | None
+    part_version: int | None
     canonical_source_url: str | None
     provider: str | None
     provider_id: str | None

@@ -6,6 +6,13 @@ same words in the current publication.
 and oracle passage anchors and proves it the same way, so routing gives such a passage an
 href exactly when capture would freeze a passage target for it now (I17). Reads only: a
 moved or missing source answers ``None``, never an error. The caller proves visibility.
+
+reading ownership is separate from canonical storage. ``passage_owner_sql`` admits
+only the caller-supplied reading audience; an explicit reading owner never widens
+to another readable identity. current refs and frozen evidence revalidate complete
+extents and permitted note dependencies, bounding incidental context in that owner.
+saved highlights retain their stored quote for an authorized source even when the
+locator is unavailable; a piece audience still requires every canonical anchor.
 """
 
 from __future__ import annotations
@@ -18,6 +25,11 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import (
+    can_read_media,
+    highlight_visibility_sql,
+    visible_media_ids_cte_sql,
+)
 from nexus.schemas.resource_evidence import CapturedPassageTarget, CapturedQuote
 from nexus.schemas.retrieval import (
     EpubFragmentOffsetsLocator,
@@ -28,6 +40,11 @@ from nexus.schemas.retrieval import (
     WebTextOffsetsLocator,
 )
 from nexus.services import locator_resolver, text_quote
+from nexus.services.media_text_scope import (
+    highlight_in_reading_scope_sql,
+    read_media_text_scope,
+    text_scope_rows_sql,
+)
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 if TYPE_CHECKING:
@@ -51,6 +68,466 @@ class CurrentPassage:
     owner: ResourceRef
     quote: CapturedQuote
     locator: dict[str, Any] | None
+
+
+def reading_owner_sql(candidates_sql: str) -> str:
+    """Choose within the supplied audience: root, then smallest canonical extent, then id."""
+    intervals = text_scope_rows_sql("SELECT nexus_owner_candidate.reading_media_id AS media_id")
+    return f"""
+        SELECT nexus_owner_candidate.reading_media_id FROM ({candidates_sql}) nexus_owner_candidate
+        LEFT JOIN media_parts nexus_owner_part ON nexus_owner_part.media_id=nexus_owner_candidate.reading_media_id
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN nexus_owner_part.media_id IS NULL THEN 0 ELSE (
+                SELECT COALESCE(sum(nexus_owner_bound.end_offset-nexus_owner_bound.start_offset),0) FROM ({intervals}) nexus_owner_bound
+            ) END AS codepoints
+        ) nexus_owner_extent
+        ORDER BY (nexus_owner_part.media_id IS NULL) DESC,nexus_owner_extent.codepoints,nexus_owner_candidate.reading_media_id LIMIT 1
+    """
+
+
+def passage_owner_sql(
+    admitted_sql: str, *, source: str, fragment: str, start: str, end: str
+) -> str:
+    """Setwise main-body admission inside the requested identities.
+
+    Full reading evidence, including permitted notes, uses ``scoped_media_passage``.
+    """
+    scopes = text_scope_rows_sql(admitted_sql)
+    candidates = f"""
+        SELECT DISTINCT nexus_owner_bound.reading_media_id FROM ({scopes}) nexus_owner_bound
+        WHERE nexus_owner_bound.source_media_id={source} AND nexus_owner_bound.fragment_id={fragment}
+          AND {start} < {end} AND nexus_owner_bound.start_offset<={start} AND nexus_owner_bound.end_offset>={end}
+        UNION
+        SELECT nexus_owner_admitted.media_id FROM ({admitted_sql}) nexus_owner_admitted JOIN media nexus_owner_source_kind ON nexus_owner_source_kind.id=nexus_owner_admitted.media_id
+        WHERE nexus_owner_admitted.media_id={source} AND {fragment} IS NULL
+          AND nexus_owner_source_kind.kind NOT IN ('epub','web_article','text_part')
+    """
+    return reading_owner_sql(candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedMediaPassage:
+    owner: ResourceRef
+    quote: CapturedQuote
+    locator: dict[str, Any] | None
+
+
+def _reading_candidates(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source_media_id: UUID,
+    reading_media_id: UUID | None,
+    admitted_reading_media_ids: Sequence[UUID] | None,
+) -> list[UUID]:
+    admitted = visible_media_ids_cte_sql()
+    if admitted_reading_media_ids is not None:
+        admitted = f"SELECT media_id FROM ({admitted}) audience WHERE media_id=ANY(CAST(:admitted_ids AS uuid[]))"
+    if reading_media_id is not None:
+        admitted = f"SELECT media_id FROM ({admitted}) audience WHERE media_id=:reading_id"
+    return list(
+        db.scalars(
+            text(f"""
+                SELECT audience.media_id FROM ({admitted}) audience
+                JOIN media reading ON reading.id=audience.media_id
+                LEFT JOIN media_parts part ON part.media_id=reading.id
+                WHERE COALESCE(part.source_media_id,reading.id)=:source
+            """),
+            {
+                "viewer_id": viewer_id,
+                "reading_id": reading_media_id,
+                "admitted_ids": None
+                if admitted_reading_media_ids is None
+                else list(admitted_reading_media_ids),
+                "source": source_media_id,
+            },
+        )
+    )
+
+
+def scoped_media_passage(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source_media_id: UUID,
+    quote: CapturedQuote,
+    locator: dict[str, Any] | None,
+    reading_media_id: UUID | None = None,
+    apparatus_item_id: UUID | None = None,
+    admitted_reading_media_ids: Sequence[UUID] | None = None,
+) -> ScopedMediaPassage | None:
+    """Choose an authorized reading owner and bound incidental context there.
+
+    An explicit owner is authoritative. Shared passage ranges admit the body and
+    exact permitted notes without changing the body interval or source owner.
+    A supplied audience intersects visibility; an empty audience admits nothing.
+    """
+    if admitted_reading_media_ids is not None and not admitted_reading_media_ids:
+        return None
+    kind = db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": source_media_id})
+    if kind == "text_part":
+        retained = read_media_text_scope(db, source_media_id)
+        if reading_media_id is None and admitted_reading_media_ids is None:
+            reading_media_id = source_media_id
+        source_media_id, kind = retained.source_media_id, retained.source_format
+    if kind not in ("epub", "web_article"):
+        if (
+            reading_media_id not in (None, source_media_id)
+            or admitted_reading_media_ids is not None
+            and source_media_id not in admitted_reading_media_ids
+            or not can_read_media(db, viewer_id, source_media_id)
+        ):
+            return None
+        return ScopedMediaPassage(ResourceRef("media", source_media_id), quote, locator)
+    candidates = _reading_candidates(
+        db,
+        viewer_id=viewer_id,
+        source_media_id=source_media_id,
+        reading_media_id=reading_media_id,
+        admitted_reading_media_ids=admitted_reading_media_ids,
+    )
+    owner_id = None
+    sources: locator_resolver.PassageSourceReads | None = None
+    words: str | None = None
+    if apparatus_item_id is not None:
+        permitted = (
+            [source_media_id]
+            if source_media_id in candidates
+            else [
+                id
+                for id in candidates
+                if apparatus_item_id in read_media_text_scope(db, id).permitted_apparatus
+            ]
+        )
+        if permitted:
+            owner_id = db.scalar(
+                text(reading_owner_sql("SELECT unnest(CAST(:ids AS uuid[])) AS reading_media_id")),
+                {"ids": permitted},
+            )
+    elif locator is not None and locator.get("type") in (
+        "web_text_offsets",
+        "epub_fragment_offsets",
+    ):
+        fragment_id = UUID(str(locator["fragment_id"]))
+        start, end = locator["start_offset"], locator["end_offset"]
+        words = db.scalar(
+            text("SELECT canonical_text FROM fragments WHERE id=:fragment AND media_id=:source"),
+            {"fragment": fragment_id, "source": source_media_id},
+        )
+        if words is None or not 0 <= start < end <= len(words):
+            return None
+        if source_media_id in candidates:
+            owner_id = source_media_id
+        else:
+            sources = locator_resolver.read_passage_sources(
+                db, [("media", id) for id in candidates]
+            )
+            permitted = [
+                id
+                for id in candidates
+                if sources.canonical_media.get(id) == source_media_id
+                and locator_resolver.admits_passage(sources, id, fragment_id, start, end)
+            ]
+            if permitted:
+                owner_id = db.scalar(
+                    text(
+                        reading_owner_sql("SELECT unnest(CAST(:ids AS uuid[])) AS reading_media_id")
+                    ),
+                    {"ids": permitted},
+                )
+    elif source_media_id in candidates:
+        owner_id = source_media_id
+    if owner_id is None:
+        return None
+    if locator is not None and locator.get("type") in ("web_text_offsets", "epub_fragment_offsets"):
+        fragment_id = UUID(str(locator["fragment_id"]))
+        start, end = locator["start_offset"], locator["end_offset"]
+        if words is None:
+            words = db.scalar(
+                text(
+                    "SELECT canonical_text FROM fragments WHERE id=:fragment AND media_id=:source"
+                ),
+                {"fragment": fragment_id, "source": source_media_id},
+            )
+        bounds = (0, len(words)) if owner_id == source_media_id and words is not None else None
+        if owner_id != source_media_id:
+            if sources is None:
+                sources = locator_resolver.read_passage_sources(db, [("media", owner_id)])
+            bounds = max(
+                (
+                    (left, right)
+                    for id, left, right in sources.ranges.get(owner_id, [])
+                    if id == fragment_id and left <= start and end <= right
+                ),
+                key=lambda interval: interval[1] - interval[0],
+                default=None,
+            )
+        if words is not None and bounds is not None:
+            quote = quote.model_copy(
+                update={
+                    "prefix": words[max(bounds[0], start - 64) : start],
+                    "suffix": words[end : min(bounds[1], end + 64)],
+                }
+            )
+        else:
+            quote = quote.model_copy(update={"prefix": None, "suffix": None})
+        locator = {
+            **locator,
+            "media_id": str(source_media_id),
+            "media_kind": kind,
+            "text_quote_selector": {
+                "exact": quote.exact,
+                "prefix": quote.prefix or "",
+                "suffix": quote.suffix or "",
+            },
+        }
+    return ScopedMediaPassage(ResourceRef("media", owner_id), quote, locator)
+
+
+def media_passages(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+    reading_media_id: UUID | None = None,
+    admitted_reading_media_ids: Sequence[UUID] | None = None,
+) -> dict[str, ScopedMediaPassage]:
+    """Current canonical media refs, with one authorized bounded reading owner each.
+
+    A supplied audience limits owner choice before quote resolution; ``None``
+    keeps ordinary visibility, while an empty sequence admits no media passage.
+    """
+    out: dict[str, ScopedMediaPassage] = {}
+    if admitted_reading_media_ids is not None and not admitted_reading_media_ids:
+        return out
+    ids = {
+        scheme: [ref.id for ref in refs if ref.scheme == scheme]
+        for scheme in ("highlight", "fragment", "reader_apparatus_item", "passage_anchor")
+    }
+    highlights = (
+        {
+            row.id: row.reading_media_ids
+            for row in db.execute(
+                text(f"""SELECT h.id,array_agg(reading.media_id) AS reading_media_ids
+                    FROM highlights h JOIN ({visible_media_ids_cte_sql()}) reading
+                      ON reading.media_id=h.anchor_media_id
+                        OR (h.anchor_kind='fragment_offsets'
+                            AND {highlight_in_reading_scope_sql("h.id", "reading.media_id")})
+                    WHERE h.id=ANY(:ids) AND {highlight_visibility_sql("h")}
+                      AND (CAST(:reading_media_id AS uuid) IS NULL
+                        OR reading.media_id=CAST(:reading_media_id AS uuid))
+                      AND (CAST(:audience AS uuid[]) IS NULL
+                        OR reading.media_id=ANY(CAST(:audience AS uuid[])))
+                    GROUP BY h.id"""),
+                {
+                    "ids": ids["highlight"],
+                    "viewer_id": viewer_id,
+                    "reading_media_id": reading_media_id,
+                    "audience": list(admitted_reading_media_ids)
+                    if admitted_reading_media_ids is not None
+                    else None,
+                },
+            )
+        }
+        if ids["highlight"]
+        else {}
+    )
+    for id, row in locator_resolver.read_highlight_reader_sources(
+        db, highlight_ids=list(highlights)
+    ).items():
+        quote = CapturedQuote(
+            exact=row.exact, prefix=row.prefix, suffix=row.suffix, color=row.color
+        )
+        raw = row.target.model_dump(mode="json") if row.target is not None else None
+        locator = None
+        if raw is not None:
+            if raw["kind"] == "PdfPageGeometry":
+                locator = {
+                    "type": "pdf_page_geometry",
+                    "media_id": str(row.media_id),
+                    "page_number": raw["page_number"],
+                    "quads": raw["quads"],
+                    "exact": quote.exact,
+                    "prefix": quote.prefix or "",
+                    "suffix": quote.suffix or "",
+                }
+            elif raw["kind"] == "TranscriptTextOffsets" and raw["time_range"] is not None:
+                locator = {
+                    "type": "transcript_time_range",
+                    "media_id": str(row.media_id),
+                    "t_start_ms": raw["time_range"]["start_ms"],
+                    "t_end_ms": raw["time_range"]["end_ms"],
+                }
+            else:
+                locator = {
+                    "type": "epub_fragment_offsets"
+                    if row.media_kind == "epub"
+                    else "web_text_offsets",
+                    "media_id": str(row.media_id),
+                    "media_kind": row.media_kind,
+                    "fragment_id": raw["fragment_id"],
+                    "start_offset": raw["start_offset"],
+                    "end_offset": raw["end_offset"],
+                }
+        scoped = scoped_media_passage(
+            db,
+            viewer_id=viewer_id,
+            source_media_id=row.media_id,
+            quote=quote,
+            locator=locator,
+            reading_media_id=reading_media_id,
+            admitted_reading_media_ids=highlights[id],
+        )
+        if scoped is not None:
+            if scoped.owner.id == row.media_id:
+                locator = scoped.locator
+                if locator is not None:
+                    locator = {
+                        **locator,
+                        "text_quote_selector": {
+                            "exact": quote.exact,
+                            "prefix": quote.prefix or "",
+                            "suffix": quote.suffix or "",
+                        },
+                    }
+                scoped = ScopedMediaPassage(scoped.owner, quote, locator)
+            out[f"highlight:{id}"] = scoped
+    for row in db.execute(
+        text(
+            "SELECT f.id,f.media_id,f.canonical_text,f.t_start_ms,f.t_end_ms,m.kind FROM fragments f JOIN media m ON m.id=f.media_id WHERE f.id=ANY(:ids)"
+        ),
+        {"ids": ids["fragment"]},
+    ):
+        quote = CapturedQuote(exact=row.canonical_text, prefix=None, suffix=None, color=None)
+        locator = None
+        if (
+            row.kind in ("video", "podcast_episode")
+            and row.t_start_ms is not None
+            and row.t_end_ms is not None
+        ):
+            locator = {
+                "type": "transcript_time_range",
+                "media_id": str(row.media_id),
+                "t_start_ms": row.t_start_ms,
+                "t_end_ms": row.t_end_ms,
+            }
+        elif row.canonical_text:
+            locator = {
+                "type": "epub_fragment_offsets" if row.kind == "epub" else "web_text_offsets",
+                "media_id": str(row.media_id),
+                "media_kind": row.kind,
+                "fragment_id": str(row.id),
+                "start_offset": 0,
+                "end_offset": len(row.canonical_text),
+            }
+        scoped = scoped_media_passage(
+            db,
+            viewer_id=viewer_id,
+            source_media_id=row.media_id,
+            quote=quote,
+            locator=locator,
+            reading_media_id=reading_media_id,
+            admitted_reading_media_ids=admitted_reading_media_ids,
+        )
+        if scoped is not None:
+            out[f"fragment:{row.id}"] = scoped
+    for row in db.execute(
+        text(
+            "SELECT item.id,item.media_id,item.body_text,item.label,item.locator FROM reader_apparatus_items item JOIN reader_apparatus_states state ON state.id=item.state_id WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')"
+        ),
+        {"ids": ids["reader_apparatus_item"]},
+    ):
+        scoped = scoped_media_passage(
+            db,
+            viewer_id=viewer_id,
+            source_media_id=row.media_id,
+            quote=CapturedQuote(
+                exact=row.body_text or row.label or "", prefix=None, suffix=None, color=None
+            ),
+            locator=row.locator,
+            reading_media_id=reading_media_id,
+            apparatus_item_id=row.id,
+            admitted_reading_media_ids=admitted_reading_media_ids,
+        )
+        if scoped is not None:
+            out[f"reader_apparatus_item:{row.id}"] = scoped
+    for row in db.execute(
+        text(
+            "SELECT id,owner_scheme,owner_id,selector FROM passage_anchors WHERE id=ANY(:ids) AND user_id=:viewer_id AND owner_scheme='media'"
+        ),
+        {"ids": ids["passage_anchor"], "viewer_id": viewer_id},
+    ):
+        words = row.selector["quote"]
+        quote = CapturedQuote(
+            exact=words["exact"], prefix=words.get("prefix"), suffix=words.get("suffix"), color=None
+        )
+        owners = [ResourceRef("media", reading_media_id or row.owner_id)]
+        if admitted_reading_media_ids is not None:
+            source_id = (
+                db.scalar(
+                    text("SELECT source_media_id FROM media_parts WHERE media_id=:id"),
+                    {"id": row.owner_id},
+                )
+                or row.owner_id
+            )
+            owners = [
+                ResourceRef("media", id)
+                for id in _reading_candidates(
+                    db,
+                    viewer_id=viewer_id,
+                    source_media_id=source_id,
+                    reading_media_id=reading_media_id,
+                    admitted_reading_media_ids=admitted_reading_media_ids,
+                )
+            ]
+        sources = locator_resolver.read_passage_sources(
+            db, [(owner.scheme, owner.id) for owner in owners]
+        )
+        proved: dict[UUID, ScopedMediaPassage] = {}
+        for owner in owners:
+            locator = resolve_quote(db, owner, quote, row.selector.get("locator_hint"), sources)
+            if (
+                admitted_reading_media_ids is not None
+                and locator is None
+                and sources.canonical_media.get(owner.id, owner.id) != owner.id
+            ):
+                continue
+            scoped = scoped_media_passage(
+                db,
+                viewer_id=viewer_id,
+                source_media_id=row.owner_id,
+                quote=quote,
+                locator=locator,
+                reading_media_id=owner.id
+                if admitted_reading_media_ids is not None
+                else reading_media_id,
+                admitted_reading_media_ids=admitted_reading_media_ids,
+            )
+            if scoped is not None:
+                proved[scoped.owner.id] = scoped
+        if proved:
+            chosen = (
+                next(iter(proved))
+                if len(proved) == 1
+                else db.scalar(
+                    text(
+                        reading_owner_sql("SELECT unnest(CAST(:ids AS uuid[])) AS reading_media_id")
+                    ),
+                    {"ids": list(proved)},
+                )
+            )
+            if chosen is not None:
+                out[f"passage_anchor:{row.id}"] = proved[chosen]
+    for uri, passage in current_passages(
+        db,
+        viewer_id=viewer_id,
+        refs=refs,
+        reading_media_id=reading_media_id,
+        admitted_reading_media_ids=admitted_reading_media_ids,
+    ).items():
+        if passage.owner.scheme == "media":
+            out[uri] = ScopedMediaPassage(passage.owner, passage.quote, passage.locator)
+    return out
 
 
 def source_identities(db: Session, media_ids: Sequence[UUID]) -> dict[UUID, str]:
@@ -91,6 +568,7 @@ class LocationReads:
     pages: list[Any]
     notes: dict[UUID, NoteSource]
     messages: dict[UUID, Any]
+    passages: locator_resolver.PassageSourceReads
 
 
 def location_reads(
@@ -102,6 +580,16 @@ def location_reads(
     locators = [target.locator for target in targets]
     media_ids = list({ref.id for ref in owners if ref.scheme == "media"})
     before = source_identities(db, media_ids)
+    passages = locator_resolver.read_passage_sources(
+        db,
+        [
+            ("media", id)
+            for id in db.scalars(
+                text("SELECT id FROM media WHERE id=ANY(:ids) AND kind='text_part'"),
+                {"ids": media_ids},
+            )
+        ],
+    )
     # An X post's anchors stay source-local while its text is recomposed: it requotes.
     x_posts = (
         set(
@@ -200,6 +688,7 @@ def location_reads(
         pages=pages,
         notes=notes,
         messages=messages,
+        passages=passages,
     )
 
 
@@ -266,7 +755,8 @@ def current_locator(
             (
                 f
                 for f in reads.fragments
-                if str(f["id"]) == raw["fragment_id"] and f["media_id"] == owner.id
+                if str(f["id"]) == raw["fragment_id"]
+                and f["media_id"] == reads.passages.canonical_media.get(owner.id, owner.id)
             ),
             None,
         )
@@ -274,6 +764,27 @@ def current_locator(
             return None
         start, end = raw["start_offset"], raw["end_offset"]
         words = fragment["canonical_text"][start:end]
+        if owner.id in reads.passages.canonical_media:
+            if not locator_resolver.admits_passage(
+                reads.passages, owner.id, fragment["id"], start, end
+            ):
+                return None
+            bounds = next(
+                (
+                    (left, right)
+                    for id, left, right in reads.passages.ranges[owner.id]
+                    if id == fragment["id"] and left <= start and end <= right
+                ),
+                None,
+            )
+            if bounds is None:
+                return None
+            selector = {
+                **selector,
+                "prefix": fragment["canonical_text"][max(bounds[0], start - 64) : start],
+                "suffix": fragment["canonical_text"][end : min(bounds[1], end + 64)],
+            }
+            raw = {**raw, "text_quote_selector": selector}
         if not 0 <= start < end <= len(fragment["canonical_text"]) or _normal(words) != _normal(
             exact
         ):
@@ -423,7 +934,7 @@ def resolve_quote(
         kind = reads.media_kinds.get(owner.id)
         return {
             "type": "epub_fragment_offsets" if kind == "epub" else "web_text_offsets",
-            "media_id": str(owner.id),
+            "media_id": str(reads.canonical_media.get(owner.id, owner.id)),
             "media_kind": kind,
             "fragment_id": found["fragment_id"],
             "start_offset": found["start_offset"],
@@ -449,7 +960,12 @@ def resolve_quote(
 
 
 def current_passages(
-    db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+    reading_media_id: UUID | None = None,
+    admitted_reading_media_ids: Sequence[UUID] | None = None,
 ) -> dict[str, CurrentPassage]:
     """The spans, chunks and oracle anchors among ``refs`` that exist, keyed by uri. A span
     lands where its selector resolves and its words still match; a chunk where its primary
@@ -581,4 +1097,20 @@ def current_passages(
         lands = current is not None and current.locator is not None
         locator = resolve_quote(db, owner, quote, None, sources) if lands else None
         out[f"oracle_passage_anchor:{anchor.id}"] = CurrentPassage(owner, quote, locator)
+    for uri, passage in list(out.items()):
+        if passage.owner.scheme != "media":
+            continue
+        scoped = scoped_media_passage(
+            db,
+            viewer_id=viewer_id,
+            source_media_id=passage.owner.id,
+            quote=passage.quote,
+            locator=passage.locator,
+            reading_media_id=reading_media_id,
+            admitted_reading_media_ids=admitted_reading_media_ids,
+        )
+        if scoped is None:
+            del out[uri]
+        else:
+            out[uri] = CurrentPassage(scoped.owner, scoped.quote, scoped.locator)
     return out

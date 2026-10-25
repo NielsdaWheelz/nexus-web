@@ -41,7 +41,7 @@ from nexus.services.html_apparatus import (
     prepare_apparatus_bodies,
 )
 from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
-from nexus.services.reader_structure import DocumentPoint, NavigationNoteIndex
+from nexus.services.reader_structure import DocumentPoint, DomCut, NavigationNoteIndex
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
@@ -68,6 +68,8 @@ class WebArticleIndexBlockSpec:
     heading_label: str | None = None
     heading_id: str | None = None
     toc_parent_id: str | None = None
+    start_cut: DomCut | None = None
+    container_end_cut: DomCut | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,8 @@ class _Heading:
     container_end_offset: int | None
     owns_container: bool
     parent_section_id: str | None
+    start_cut: DomCut | None
+    container_end_cut: DomCut | None
 
 
 def prepare_web_article_fragment(
@@ -443,6 +447,8 @@ def build_web_article_index_blocks(
                 heading_label=heading.label,
                 heading_id=heading.section_id,
                 toc_parent_id=heading.parent_section_id,
+                start_cut=heading.start_cut,
+                container_end_cut=heading.container_end_cut,
             )
         )
     return blocks
@@ -467,6 +473,11 @@ def _headings(
         if not label:
             continue
         ordinal = len(headings)
+        container = (
+            source.elements[element.parent_container]
+            if element.parent_container is not None
+            else None
+        )
         headings.append(
             (
                 element.start_offset,
@@ -476,13 +487,17 @@ def _headings(
                     section_id=f"web-heading:{fragment_idx}:{ordinal}:{_slug(label)}",
                     anchor_id=anchors_by_element.get(index),
                     ordinal=ordinal,
-                    container_end_offset=(
-                        source.elements[element.parent_container].end_offset
-                        if element.parent_container is not None
-                        else None
-                    ),
+                    container_end_offset=(container.end_offset if container is not None else None),
                     owns_container=False,
                     parent_section_id=None,
+                    start_cut=DomCut(element.dom_path, "before")
+                    if element.dom_path is not None
+                    else None,
+                    container_end_cut=(
+                        DomCut(container.dom_path, "after")
+                        if container is not None and container.dom_path is not None
+                        else None
+                    ),
                 ),
             )
         )
@@ -522,11 +537,15 @@ def _headings(
             stack.pop()
         parent: str | None = None
         owns_container = False
+        start_cut = heading.start_cut
         container = source.elements[source_index].parent_container
         while container is not None:
             owner = container_owners.get(container)
             if owner == heading.section_id:
                 owns_container = True
+                element = source.elements[container]
+                if element.start_offset == start and element.dom_path is not None:
+                    start_cut = DomCut(element.dom_path, "before")
             elif owner is not None:
                 parent = (
                     stack[-1].section_id
@@ -538,7 +557,7 @@ def _headings(
         if parent is None and stack:
             parent = stack[-1].section_id
         heading = dataclass_replace(
-            heading, owns_container=owns_container, parent_section_id=parent
+            heading, owns_container=owns_container, parent_section_id=parent, start_cut=start_cut
         )
         resolved.append((start, heading))
         resolved_by_id[heading.section_id] = heading

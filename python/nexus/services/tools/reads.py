@@ -6,6 +6,7 @@ an evidence receipt, and stages the citations the chat numbers for the model. Re
 and inspect assemble one read-only snapshot; search metadata and relations are also
 read-only. Each owner releases its reads before durable retrieval publication; the
 captured evidence receipt remains the immutable fact of what the model received.
+A piece passage is followed through its reading identity, never its source pointer.
 """
 
 from __future__ import annotations
@@ -27,11 +28,13 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
 from nexus.schemas.reader_document import ReaderTextBodyOut
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
+from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
 from nexus.services import libraries
 from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
     citation_from_search_result,
+    reopen_search_result,
     web_citation,
 )
 from nexus.services.media_read_map import (
@@ -61,7 +64,7 @@ from nexus.services.search.query import (
     scope_from_uri,
 )
 from nexus.services.search.scope import reading_media_ids_sql
-from nexus.services.search.service import get_search_result, search_scopes_async
+from nexus.services.search.service import search_scopes_async
 from nexus.services.tools import assistant_writes
 from nexus.services.tools.contract import (
     SEARCH_LIMIT,
@@ -259,9 +262,12 @@ def _cite(
     if result_type is None:
         return None
     try:
-        result = get_search_result(call.db, call.principal, result_type, source_id)
+        result = reopen_search_result(
+            call.db, viewer_id=call.principal, result_type=result_type, source_id=source_id
+        )
     except ApiError as exc:
-        if exc.code is not ApiErrorCode.E_NOT_FOUND:
+        # A passage whose body moved during the read has no provable citation.
+        if exc.code not in (ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_READER_CONTENT_CHANGED):
             raise
         return None
     citation = citation_from_search_result(result)
@@ -271,6 +277,19 @@ def _cite(
 
 def _title(item: SearchResultOut) -> str:
     return item.media_summary.title if isinstance(item, SearchResultMediaOut) else item.title
+
+
+def _follow_up(item: SearchResultOut) -> str:
+    """The uri the model reads a hit through: its reading piece when one answers for its
+    canonical source passage, else the hit itself."""
+    target = item.context_ref.passage_target
+    if (
+        target is not None
+        and isinstance(target.locator, WebTextOffsetsLocator | EpubFragmentOffsetsLocator)
+        and target.owner_ref != f"media:{target.locator.media_id}"
+    ):
+        return target.owner_ref
+    return item.resource_ref
 
 
 def _collapse(exc: ApiError, *codes: ApiErrorCode) -> Never:
@@ -334,12 +353,12 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         call.selected = call.retrieved[:count]
         matches = [
             NexusSearchMatch(
-                evidence=_evidence(call, item.resource_ref, item.model_dump(mode="json"), citation),
+                evidence=_evidence(call, _follow_up(item), item.model_dump(mode="json"), citation),
                 excerpt=item.snippet[:300],
                 kind=next(k for k, types in KIND_TO_RESULT_TYPES.items() if item.type in types),
                 score=min(1.0, max(0.0, float(item.score))),
                 title=_title(item)[:150],
-                uri=item.resource_ref,
+                uri=_follow_up(item),
             )
             for item, citation in zip(response.results, call.retrieved, strict=True)
         ]
@@ -378,13 +397,13 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         call.selected = call.retrieved
         matches = [
             DocumentSearchMatch(
-                evidence=_evidence(call, item.resource_ref, item.model_dump(mode="json"), citation),
+                evidence=_evidence(call, _follow_up(item), item.model_dump(mode="json"), citation),
                 ordinal=ordinal,
                 score=min(1.0, max(0.0, float(item.score))),
                 # Search snippets are plain text; literal markup belongs to the source.
                 text=item.snippet[:2000],
                 title=_title(item)[:500],
-                uri=item.resource_ref,
+                uri=_follow_up(item),
             )
             for ordinal, (item, citation) in enumerate(
                 zip(response.results, call.retrieved, strict=True)

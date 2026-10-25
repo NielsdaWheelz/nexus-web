@@ -321,6 +321,10 @@ def enqueue_metadata_enrichment(
     """In the caller's transaction, under the media lock, strictly after the latest job; an
     X post/thread without its captured source cannot take a title job; native articles
     never take generated metadata."""
+    from nexus.services import library_entries
+    from nexus.services.media_parts import part_definition_version
+
+    library_entries.lock_media_rows_in_order(db, [media_id])
     media = db.execute(
         text(
             "SELECT kind::text AS kind, provider, provider_id FROM media WHERE id = :m FOR UPDATE"
@@ -351,6 +355,7 @@ def enqueue_metadata_enrichment(
         )
     else:
         payload = BibliographyMetadataJobPayload(
+            part_definition_version=part_definition_version(db, media_id=media_id),
             purpose="bibliography",
             media_id=media_id,
             requester_user_id=requester_user_id,
@@ -384,6 +389,9 @@ def admit_metadata_enrichment(
     """
 
     def admit() -> MetadataEnrichmentAccepted:
+        from nexus.services.library_entries import lock_media_rows_in_order
+
+        lock_media_rows_in_order(db, [media_id])
         media = db.execute(
             text("""
                 SELECT kind::text AS kind, provider, provider_id, processing_status::text AS status,

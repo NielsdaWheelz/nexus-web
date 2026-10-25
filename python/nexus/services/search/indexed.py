@@ -119,6 +119,7 @@ def _compiler(terms: str) -> tuple[str, dict[str, Any]]:
 
 
 def statement(
+    db: Session,
     r: Retrieval,
     families: Sequence[str],
     *,
@@ -126,15 +127,18 @@ def statement(
 ) -> tuple[str, dict[str, Any]]:
     """One lexical scoring stream, with grouping before any truncation."""
     assert r.terms
-    eligible, params = discovery_eligible(r, families)
+    eligible, params = discovery_eligible(db, r, families)
     compiler, query_params = _compiler(r.terms)
     params = dict(params) | query_params | {"k": r.k}
     generated = ",".join("'" + family + "'" for family in sorted(GENERATED_FAMILIES))
     # primary candidates use family literals; canonical admission still joins every
     # hit before ranking or limits. generated occurrences retain owner-key filtering.
-    native_filter = """paradedb.term_set(ARRAY(
-                    SELECT paradedb.term('admission_key',admission_key) FROM eligible))"""
-    if families and not GENERATED_FAMILIES.intersection(families):
+    native_filter = """paradedb.boolean(should=>ARRAY[
+        paradedb.term_set(ARRAY(SELECT paradedb.term('admission_key',admission_key)
+            FROM eligible WHERE native_search_id IS NULL)),
+        paradedb.term_set(ARRAY(SELECT paradedb.term('doc_key',doc_key)
+            FROM eligible WHERE native_search_id IS NOT NULL))],minimum_should_match=>1)"""
+    if families and not (GENERATED_FAMILIES | {"highlight"}).intersection(families):
         native_filter = (
             "paradedb.term_set(ARRAY["
             + ",".join(f"paradedb.term('family','{family}')" for family in sorted(set(families)))
@@ -161,8 +165,9 @@ def statement(
         facts AS MATERIALIZED (
             SELECT h.search_id,e.doc_key,e.ref,e.owner_ref,e.family,
                 COALESCE(e.name_tier,0) AS name_tier,
-                h.score,''::text AS sort_label
-            FROM hits h JOIN eligible e USING(admission_key))"""
+                h.score,''::text AS sort_label,e.reading_media_id
+            FROM hits h JOIN eligible e ON h.admission_key=e.admission_key
+                AND (e.native_search_id IS NULL OR e.native_search_id=h.search_id))"""
     )
     if group_owners:
         sql += f""",
@@ -175,10 +180,10 @@ def statement(
             representatives AS (SELECT family,owner_ref,score,min(canonical_ref COLLATE "C") AS ref
                 FROM tie_refs GROUP BY family,owner_ref,score),
             selected AS (
-                SELECT doc_key,ref,owner_ref,family,name_tier,score,sort_label
+                SELECT doc_key,ref,owner_ref,family,name_tier,score,sort_label,reading_media_id
                     FROM facts WHERE family NOT IN ({generated})
                 UNION ALL SELECT COALESCE(h.doc_key,h.canonical_ref),h.canonical_ref,
-                    h.owner_ref,h.family,h.name_tier,h.score,h.sort_label
+                    h.owner_ref,h.family,h.name_tier,h.score,h.sort_label,h.reading_media_id
                 FROM tie_refs h JOIN representatives w ON h.family=w.family
                     AND h.owner_ref=w.owner_ref AND h.score=w.score AND h.canonical_ref=w.ref)"""
     else:
@@ -191,10 +196,10 @@ def statement(
             SELECT h.*,COALESCE(h.ref,(SELECT p.doc_key FROM {TABLE} p
                 WHERE p.search_id=h.search_id)) AS canonical_ref FROM prefix h),
         selected AS (SELECT COALESCE(doc_key,canonical_ref) AS doc_key,canonical_ref AS ref,
-            owner_ref,family,name_tier,score,sort_label FROM prefix_refs
+            owner_ref,family,name_tier,score,sort_label,reading_media_id FROM prefix_refs
             ORDER BY name_tier DESC,score DESC,sort_label COLLATE "C",canonical_ref COLLATE "C"
             LIMIT :k)"""
-    output = """SELECT 'selected'::text AS row_kind,doc_key,ref,owner_ref,family,name_tier,score,sort_label
+    output = """SELECT 'selected'::text AS row_kind,doc_key,ref,owner_ref,family,name_tier,score,sort_label,reading_media_id
         FROM selected"""
     return (
         sql
@@ -211,7 +216,7 @@ def select(
     db: Session, r: Retrieval, families: Sequence[str], *, group_owners: bool
 ) -> tuple[list[DiscoveryHit], dict[str, str]]:
     """Consume complete owner facts or the individual occurrence prefix once."""
-    sql, params = statement(r, families, group_owners=group_owners)
+    sql, params = statement(db, r, families, group_owners=group_owners)
     rows = db.execute(text(sql), params).mappings().all()
     hits = [
         DiscoveryHit(
@@ -224,6 +229,7 @@ def select(
             lexical=True,
             relevance=float(row["score"]),
             sort_label=row["sort_label"],
+            reading_media_id=row["reading_media_id"],
         )
         for row in rows
     ]
@@ -356,7 +362,17 @@ def present(
     terms: str,
 ) -> dict[str, tuple[ResourceItemOut, SearchMatchOut | None]]:
     """annotate only selected keys in the caller's admitted snapshot."""
-    items = resource_items_out(db, viewer_id=viewer_id, refs=list(dict.fromkeys(refs)))
+    owners = {hit.ref: hit.reading_media_id for hit in hits}
+    items = []
+    for owner in dict.fromkeys(owners.get(ref) for ref in refs):
+        items.extend(
+            resource_items_out(
+                db,
+                viewer_id=viewer_id,
+                refs=list(dict.fromkeys(ref for ref in refs if owners.get(ref) == owner)),
+                reading_media_id=owner,
+            )
+        )
     keys = list(
         dict.fromkeys(facts.doc_keys[hit.ref.uri] for hit in hits if hit.ref.uri in facts.doc_keys)
     )

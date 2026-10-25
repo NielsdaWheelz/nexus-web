@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.resource_evidence import (
     CapturedEvidence,
@@ -44,7 +45,6 @@ from nexus.schemas.resource_items import (
     WholeSourceLocationOut,
 )
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
-from nexus.services import locator_resolver
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_items.items import (
     passage_body,
@@ -58,7 +58,9 @@ from nexus.services.resource_items.locations import (
     current_locator,
     current_passages,
     location_reads,
+    media_passages,
     resolve_quote,
+    scoped_media_passage,
     source_identities,
 )
 
@@ -82,18 +84,25 @@ _UNAVAILABLE_SOURCE = SourceTargetOut(
 )
 
 
-def capture_evidence(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> CapturedEvidence:
+def capture_evidence(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
+) -> CapturedEvidence:
     """A current readable target's complete words and location, captured together. 404
     when the viewer cannot see it; 409 ``E_READER_CONTENT_CHANGED`` when its publication
     changes under the capture (I7)."""
-    item = resource_item_out(db, viewer_id=viewer_id, ref=ref)
+    item = resource_item_out(db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id)
     if item.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
-    return _capture(db, viewer_id, ref, item)
+    return _capture(db, viewer_id, ref, item, reading_media_id=reading_media_id)
 
 
 def _capture(
-    db: Session, viewer_id: UUID, ref: ResourceRef, item: ResourceItemOut
+    db: Session,
+    viewer_id: UUID,
+    ref: ResourceRef,
+    item: ResourceItemOut,
+    *,
+    reading_media_id: UUID | None = None,
 ) -> CapturedEvidence:
     source_ref = item.preview.source.ref if item.preview.source else ref.uri
     media = (
@@ -107,52 +116,20 @@ def _capture(
     quote: CapturedQuote | None = None
     locator: dict[str, Any] | None = None
     owner = ref
-    if ref.scheme == "highlight":
-        row = locator_resolver.read_highlight_reader_source(db, highlight_id=ref.id)
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found")
-        owner = ResourceRef("media", row.media_id)
-        quote = CapturedQuote(
-            exact=row.exact, prefix=row.prefix, suffix=row.suffix, color=row.color
-        )
-        locator = _highlight_locator(row, quote) if row.target is not None else None
-    elif ref.scheme == "fragment":
-        row = db.execute(
-            text(
-                "SELECT f.media_id, f.canonical_text, f.t_start_ms, f.t_end_ms, m.kind"
-                " FROM fragments f JOIN media m ON m.id = f.media_id WHERE f.id = :id"
-            ),
-            {"id": ref.id},
-        ).one()
-        owner = ResourceRef("media", row.media_id)
-        quote = CapturedQuote(exact=row.canonical_text, prefix=None, suffix=None, color=None)
-        words = {"text_quote_selector": {"exact": row.canonical_text}}
-        if (
-            row.kind in ("podcast_episode", "video")
-            and row.t_start_ms is not None
-            and row.t_end_ms is not None
-            and row.t_end_ms > row.t_start_ms
-        ):
-            locator = {
-                "type": "transcript_time_range",
-                "media_id": str(owner.id),
-                "t_start_ms": row.t_start_ms,
-                "t_end_ms": row.t_end_ms,
-                **words,
-            }
-        elif row.canonical_text:
-            locator = {
-                "type": "epub_fragment_offsets" if row.kind == "epub" else "web_text_offsets",
-                "media_id": str(owner.id),
-                "media_kind": row.kind,
-                "fragment_id": str(ref.id),
-                "start_offset": 0,
-                "end_offset": len(row.canonical_text),
-                **words,
-            }
+    scoped = media_passages(
+        db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+    ).get(ref.uri)
+    if scoped is not None:
+        owner, quote, locator = scoped.owner, scoped.quote, scoped.locator
     elif ref.scheme in ("evidence_span", "content_chunk", "oracle_passage_anchor"):
-        passage = current_passages(db, viewer_id=viewer_id, refs=[ref])[ref.uri]
+        passage = current_passages(
+            db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+        ).get(ref.uri)
+        if passage is None or passage.owner.scheme == "media":
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
         owner, quote, locator = passage.owner, passage.quote, passage.locator
+    elif ref.scheme in ("highlight", "fragment", "reader_apparatus_item"):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
     elif ref.scheme == "passage_anchor":
         row = db.execute(
             text("SELECT owner_scheme, owner_id, selector FROM passage_anchors WHERE id = :id"),
@@ -164,14 +141,6 @@ def _capture(
             exact=words["exact"], prefix=words.get("prefix"), suffix=words.get("suffix"), color=None
         )
         locator = resolve_quote(db, owner, quote, row.selector.get("locator_hint"))
-    elif ref.scheme == "reader_apparatus_item":
-        row = db.execute(
-            text("SELECT media_id, body_text, locator FROM reader_apparatus_items WHERE id = :id"),
-            {"id": ref.id},
-        ).one()
-        owner = ResourceRef("media", row.media_id)
-        quote = CapturedQuote(exact=row.body_text or "", prefix=None, suffix=None, color=None)
-        locator = row.locator
     elif ref.scheme == "note_block":
         note = read_note(db, viewer_id=viewer_id, note_id=ref.id)
         quote = CapturedQuote(exact=note.body_text, prefix=None, suffix=None, color=None)
@@ -241,46 +210,73 @@ def _capture(
     return CapturedEvidence(quote=quote, source=captured_source, target=target)
 
 
-def _highlight_locator(row: Any, quote: CapturedQuote) -> dict[str, Any]:
-    raw = row.target.model_dump(mode="json")
-    media_id = str(row.media_id)
-    locator: dict[str, Any]
-    if raw["kind"] == "PdfPageGeometry":
-        locator = {
-            "type": "pdf_page_geometry",
-            "media_id": media_id,
-            "page_number": raw["page_number"],
-            "quads": raw["quads"],
-            "exact": row.exact,
-            "prefix": row.prefix,
-            "suffix": row.suffix,
-        }
-    elif raw["kind"] == "TranscriptTextOffsets" and raw["time_range"] is not None:
-        locator = {
-            "type": "transcript_time_range",
-            "media_id": media_id,
-            "t_start_ms": raw["time_range"]["start_ms"],
-            "t_end_ms": raw["time_range"]["end_ms"],
-        }
-    else:
-        locator = {
-            "type": "epub_fragment_offsets" if row.media_kind == "epub" else "web_text_offsets",
-            "media_id": media_id,
-            "media_kind": row.media_kind,
-            "fragment_id": raw["fragment_id"],
-            "start_offset": raw["start_offset"],
-            "end_offset": raw["end_offset"],
-        }
-    selector = {"exact": quote.exact, "prefix": quote.prefix or "", "suffix": quote.suffix or ""}
-    return {**locator, "text_quote_selector": selector}
-
-
 def _precision(locator: dict[str, Any]) -> LocationPrecision:
     if locator["type"] in TIMED_KINDS:
         return "time"
     if locator["type"] == "pdf_page":
         return "page"
     return "approximate" if locator.get("projection") == "proportional_text_offsets" else "exact"
+
+
+def _admitted_evidence(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    evidence: CapturedEvidence,
+    reading_media_id: UUID | None = None,
+) -> CapturedEvidence | None:
+    """Historical words remain frozen, but current scope governs their disclosure."""
+    target = evidence.target
+    owner_ref = target.owner_ref or evidence.source.ref
+    if not isinstance(target, CapturedPassageTarget):
+        if evidence.quote is not None and owner_ref and owner_ref.startswith("media:"):
+            owner_id = assert_resource_ref(owner_ref).id
+            kind = db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": owner_id})
+            if (
+                reading_media_id not in (None, owner_id)
+                or kind == "text_part"
+                or not can_read_media(db, viewer_id, owner_id)
+            ):
+                return None
+        return evidence
+    if not target.owner_ref.startswith("media:"):
+        return evidence
+    owner = assert_resource_ref(target.owner_ref)
+    quote = evidence.quote
+    if quote is None:
+        return None
+    reads = location_reads(db, viewer_id, [target])
+    current = current_locator(target, quote, reads)
+    if owner.id in reads.passages.canonical_media and reading_media_id in (None, owner.id):
+        if current is None or not can_read_media(db, viewer_id, owner.id):
+            return None
+        chosen_owner = owner
+        chosen_locator = current
+    else:
+        scoped = scoped_media_passage(
+            db,
+            viewer_id=viewer_id,
+            source_media_id=owner.id,
+            quote=quote,
+            locator=current or target.locator.model_dump(mode="json"),
+            reading_media_id=reading_media_id,
+        )
+        if scoped is None:
+            return None
+        chosen_owner, chosen_locator = scoped.owner, scoped.locator
+    selector = (chosen_locator or {}).get("text_quote_selector") or {}
+    if current is not None and selector:
+        prefix_limit = len(selector.get("prefix") or "")
+        suffix_limit = len(selector.get("suffix") or "")
+        quote = quote.model_copy(
+            update={
+                "prefix": quote.prefix[-prefix_limit:] if quote.prefix and prefix_limit else None,
+                "suffix": quote.suffix[:suffix_limit] if quote.suffix and suffix_limit else None,
+            }
+        )
+    return evidence.model_copy(
+        update={"quote": quote, "target": target.model_copy(update={"owner_ref": chosen_owner.uri})}
+    )
 
 
 def evidence_items(
@@ -297,10 +293,14 @@ def evidence_items(
             db, viewer_id=viewer_id, refs=[ref for ref, _, _ in occurrences]
         )
     }
+    admitted = [
+        _admitted_evidence(db, viewer_id=viewer_id, evidence=evidence)
+        for _, evidence, _ in occurrences
+    ]
     owners = {
         owner
-        for _, evidence, _ in occurrences
-        if (owner := evidence.target.owner_ref or evidence.source.ref) is not None
+        for value in admitted
+        if value is not None and (owner := value.target.owner_ref or value.source.ref) is not None
     }
     sources = source_attributions(
         db, viewer_id=viewer_id, refs=[assert_resource_ref(owner) for owner in owners]
@@ -308,16 +308,48 @@ def evidence_items(
     reads = location_reads(
         db,
         viewer_id,
-        [e.target for _, e, _ in occurrences if isinstance(e.target, CapturedPassageTarget)],
+        [
+            value.target
+            for value in admitted
+            if value is not None and isinstance(value.target, CapturedPassageTarget)
+        ],
     )
     out = []
-    for ref, evidence, key in occurrences:
+    for (ref, evidence, key), value in zip(occurrences, admitted, strict=True):
+        if value is None:
+            out.append(
+                current[ref.uri].model_copy(
+                    update={
+                        "label": "source unavailable",
+                        "missing": True,
+                        "preview": ResourcePreviewOut(
+                            body=NamedResourceBodyOut(
+                                title="source unavailable",
+                                image_url=None,
+                                media_kind=None,
+                                contributors=None,
+                            ),
+                            source=None,
+                            annotation=None,
+                        ),
+                        "activation": ResourceActivationOut(
+                            resource_ref=ref.uri,
+                            kind="none",
+                            href=None,
+                            unavailable_reason="source_unavailable",
+                        ),
+                    }
+                )
+            )
+            continue
+        evidence = value
         frozen = evidence.source
         known = sources.get(frozen.ref) if frozen.ref else None
-        attribution = SourceAttributionOut(
-            **frozen.model_dump(), activation=known.activation if known else None
-        )
         owner = sources.get(evidence.target.owner_ref) if evidence.target.owner_ref else None
+        attribution = SourceAttributionOut(
+            **frozen.model_dump(),
+            activation=owner.activation if owner else known.activation if known else None,
+        )
         activation = _occurrence_activation(
             ref.uri, key, evidence, owner.activation if owner else None
         )
@@ -385,7 +417,7 @@ def _occurrence_activation(
 
 
 def resolve_source_target(
-    db: Session, *, viewer_id: UUID, target: SourceTargetKey
+    db: Session, *, viewer_id: UUID, target: SourceTargetKey, reading_media_id: UUID | None = None
 ) -> SourceTargetOut:
     """Where a key opens now (J9, I18). A whole resource answers its activation; a passage
     its proven current extent, else ``unavailable``. A resource key the viewer cannot see,
@@ -395,7 +427,15 @@ def resolve_source_target(
     match target:
         case ResourceSourceTargetKey():
             ref = require_ref(target.resource_ref)
-            item = resource_item_out(db, viewer_id=viewer_id, ref=ref)
+            if (
+                reading_media_id is not None
+                and ref.scheme == "media"
+                and ref.id != reading_media_id
+            ):
+                return _UNAVAILABLE_SOURCE
+            item = resource_item_out(
+                db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id
+            )
             if item.missing:
                 return _UNAVAILABLE_SOURCE
             if ref.scheme in _WHOLE:
@@ -403,7 +443,7 @@ def resolve_source_target(
                     source_activation=item.activation, location=WholeSourceLocationOut()
                 )
             try:
-                evidence = _capture(db, viewer_id, ref, item)
+                evidence = _capture(db, viewer_id, ref, item, reading_media_id=reading_media_id)
             except ConflictError:
                 source = item.preview.source
                 return SourceTargetOut(
@@ -455,6 +495,12 @@ def resolve_source_target(
             snapshot = CitationSnapshot.model_validate(row.snapshot)
             assert snapshot.evidence is not None
             evidence = snapshot.evidence
+    admitted = _admitted_evidence(
+        db, viewer_id=viewer_id, evidence=evidence, reading_media_id=reading_media_id
+    )
+    if admitted is None:
+        return _UNAVAILABLE_SOURCE
+    evidence = admitted
     captured = evidence.target
     owner = assert_resource_ref(captured.owner_ref) if captured.owner_ref else None
     source = (
@@ -481,11 +527,20 @@ def resolve_source_target(
     locator = current_locator(captured, evidence.quote, reads)
     if locator is None:
         return unavailable
+    resolved_locator = _LOCATOR.validate_python(locator)
+    apparatus_reference_id = None
+    if owner.scheme == "media":
+        from nexus.services.reader_apparatus import note_reference_for_locator
+
+        apparatus_reference_id = note_reference_for_locator(
+            db, viewer_id=viewer_id, media_id=owner.id, locator=resolved_locator
+        )
     return SourceTargetOut(
         source_activation=source.activation,
         location=LocatedSourceLocationOut(
-            locator=_LOCATOR.validate_python(locator),
+            locator=resolved_locator,
             precision="page" if locator["type"] == "pdf_page" else captured.precision,
             source_identity=reads.identities.get(owner.id),
+            apparatus_reference_id=apparatus_reference_id,
         ),
     )

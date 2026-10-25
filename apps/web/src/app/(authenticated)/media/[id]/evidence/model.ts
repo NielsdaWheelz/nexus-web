@@ -98,7 +98,7 @@ export function rootExtent(resolution: EvidenceRoot["resolution"], doc: ReaderDo
   start: ReaderPoint; end: ReaderPoint; anchor: MarkAnchor;
 } | null {
   if (!resolution) return null;
-  const target = targetOfResolution(resolution);
+  const target = targetOfResolution(resolution,doc);
   if (!target) return null;
   if (target.kind === "range") return {
     start: { kind: "text", unit: target.unit, offset: target.start },

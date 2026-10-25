@@ -6,7 +6,8 @@ correlated to the unaliased ``highlights`` table.
 
 Media: library membership, exact grants (on the media or one of its highlights) and the viewer's
 retained x-post evidence are the roots; actual x containment (thread posts, resolved x embeds)
-closes over them. The viewer's tombstones and every teardown intent exclude each step, roots
+and source→piece containment close over them. piece→source storage dependency
+never grants access. The viewer's tombstones and every teardown intent exclude each step, roots
 included. ``library_entries.library_media_ids_cte_sql`` layers "My Library" on top.
 Highlights: a consistent typed anchor on readable media whose author is the viewer, shares a
 non-system library holding the media with the viewer, or granted it exactly. A system library
@@ -21,6 +22,7 @@ from sqlalchemy import TextClause, text
 from sqlalchemy.orm import Session
 
 from nexus.services import resource_grants
+from nexus.services.media_text_scope import highlight_in_reading_scope_sql
 
 
 def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewer_id") -> str:
@@ -37,7 +39,7 @@ def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewe
 
 
 def media_containment_edges_sql() -> str:
-    """Actual x containment, never links: an unplaced x reference neither admits nor retains."""
+    """actual x/source-piece containment, never links or reverse source dependencies."""
     return """
         SELECT thread_media_id AS parent_media_id, post_media_id AS child_media_id
         FROM x_thread_posts
@@ -47,6 +49,8 @@ def media_containment_edges_sql() -> str:
         JOIN x_post_sources xp ON xp.media_id = de.target_media_id
         WHERE de.provider = 'x' AND de.resolution_status = 'resolved'
           AND de.canonical_end_offset IS NOT NULL
+        UNION
+        SELECT source_media_id, media_id FROM media_parts
     """
 
 
@@ -84,7 +88,7 @@ def retained_x_post_roots_sql() -> str:
 def contained_media_ids_cte_sql(
     roots_sql: str, *, viewer_param: str | None = None, include_tearing_down: bool = False
 ) -> str:
-    """The roots and their contained posts; a viewer binding applies its tombstones at each step."""
+    """roots and their contained posts/pieces, with viewer tombstones at every step."""
     eligible = "SELECT m.id FROM media m WHERE TRUE"
     if viewer_param is not None:
         eligible += f""" AND NOT EXISTS (
@@ -139,9 +143,11 @@ def can_read_media(
 def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
     """Membership reach alone (system libraries included), ignoring the viewer's tombstone and
     teardown: a strict superset of ``can_read_media``, so re-filing deleted media is allowed."""
-    sql = """SELECT EXISTS (
+    sql = f"""SELECT EXISTS (
         SELECT 1 FROM library_entries le JOIN memberships m ON m.library_id = le.library_id
-        WHERE le.media_id = :media_id AND m.user_id = :viewer_id)"""
+        WHERE le.media_id = :media_id AND m.user_id = :viewer_id)
+        OR EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=:media_id
+                   AND p.source_media_id IN ({visible_media_ids_cte_sql()}))"""
     return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "media_id": media_id}))
 
 
@@ -247,7 +253,12 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
             JOIN libraries shared_l ON shared_l.id = le.library_id AND shared_l.system_key IS NULL
             JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
             JOIN memberships author_m ON author_m.library_id = le.library_id
-            WHERE le.media_id = {highlight_alias}.anchor_media_id
+            WHERE (le.media_id = {highlight_alias}.anchor_media_id OR EXISTS (
+                SELECT 1 FROM media_parts library_part
+                WHERE library_part.media_id=le.media_id
+                  AND library_part.source_media_id={highlight_alias}.anchor_media_id
+                  AND {highlight_in_reading_scope_sql(f"{highlight_alias}.id", "library_part.media_id")}
+            ))
               AND viewer_m.user_id = :viewer_id
               AND author_m.user_id = {highlight_alias}.user_id
         )
@@ -256,36 +267,25 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
 
 
 def highlight_readability_sql(highlight_alias: str = "h") -> str:
-    """The whole highlight rule: consistent anchor, readable media, a visibility path."""
+    """canonical identity remains source-local; a readable piece admits complete anchors."""
+    readable = visible_media_ids_cte_sql()
     return f"""(
-        {highlight_alias}.anchor_media_id IN ({visible_media_ids_cte_sql()})
-        AND (
-            (
-                {highlight_alias}.anchor_kind = 'fragment_offsets'
-                AND EXISTS (
-                    SELECT 1
-                    FROM highlight_fragment_anchors hfa
-                    WHERE hfa.highlight_id = {highlight_alias}.id
-                )
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM highlight_fragment_anchors hfa
-                    JOIN fragments f ON f.id = hfa.fragment_id
-                    WHERE hfa.highlight_id = {highlight_alias}.id
-                      AND f.media_id != {highlight_alias}.anchor_media_id
-                )
-            )
-            OR (
-                {highlight_alias}.anchor_kind = 'pdf_page_geometry'
-                AND EXISTS (
-                    SELECT 1
-                    FROM highlight_pdf_anchors hpa
-                    WHERE hpa.highlight_id = {highlight_alias}.id
-                      AND hpa.media_id = {highlight_alias}.anchor_media_id
-                )
-            )
-        )
-        AND {highlight_visibility_sql(highlight_alias)}
+        (
+            ({highlight_alias}.anchor_kind='fragment_offsets' AND EXISTS (
+                SELECT 1 FROM ({readable}) reading
+                WHERE {highlight_in_reading_scope_sql(f"{highlight_alias}.id", "reading.media_id")}
+                  AND EXISTS (SELECT 1 FROM fragments anchor_fragment
+                      JOIN highlight_fragment_anchors anchor_range
+                        ON anchor_range.fragment_id=anchor_fragment.id
+                      WHERE anchor_range.highlight_id={highlight_alias}.id
+                        AND anchor_fragment.media_id={highlight_alias}.anchor_media_id)
+            ))
+            OR ({highlight_alias}.anchor_kind='pdf_page_geometry'
+                AND {highlight_alias}.anchor_media_id IN ({readable})
+                AND EXISTS (SELECT 1 FROM highlight_pdf_anchors hpa
+                    WHERE hpa.highlight_id={highlight_alias}.id
+                      AND hpa.media_id={highlight_alias}.anchor_media_id))
+        ) AND {highlight_visibility_sql(highlight_alias)}
     )"""
 
 

@@ -91,7 +91,7 @@ def create(
                     f"Invalid resource_uri: {uri!r}. Expected '<scheme>:<uuid>'.",
                 )
             endpoint = (
-                LinkPassageEndpoint(candidate_ref=ref.uri)
+                LinkPassageEndpoint(candidate_ref=ref.uri, passage_target=None)
                 if capability(ref.scheme).link_mode == "materialize_passage"
                 else LinkResourceEndpoint(ref=ref.uri)
             )

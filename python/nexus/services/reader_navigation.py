@@ -19,12 +19,20 @@ from nexus.schemas.reader import (
     ReaderNavigationTocNodeOut,
 )
 from nexus.services.capabilities import is_document_status_ready
-from nexus.services.epub_read import read_epub_navigation
+from nexus.services.epub_read import read_epub_navigation_proof
 from nexus.services.reader_publication import (
     read_publication_generation,
     read_publication_source_issues,
 )
-from nexus.services.reader_structure import DocumentPoint, SectionRangeInput, resolve_section_ends
+from nexus.services.reader_structure import (
+    DocumentPoint,
+    DomCut,
+    NavigationProof,
+    SectionProof,
+    SectionRangeInput,
+    resolve_section_extents,
+)
+from nexus.services.reader_text_slice import navigation_proof
 
 
 def get_media_navigation_for_viewer(
@@ -53,16 +61,16 @@ def get_media_navigation_for_viewer(
     return read_media_navigation(db, media_id=media_id, kind=row.kind, generation=generation)
 
 
-def read_media_navigation(
+def read_media_navigation_proof(
     db: Session,
     *,
     media_id: UUID,
     kind: Literal["epub", "web_article"],
     generation: int,
-) -> MediaNavigationOut:
+) -> NavigationProof:
     """Navigation for an authorized, captured source publication."""
     if kind == "epub":
-        return read_epub_navigation(db, media_id=media_id, generation=generation)
+        return read_epub_navigation_proof(db, media_id=media_id, generation=generation)
     from nexus.services.reader_apparatus import read_note_regions
     from nexus.services.web_article_structure import build_web_article_index_blocks
 
@@ -124,16 +132,23 @@ def read_media_navigation(
                     if container_end is not None
                     else None,
                     owns_container=heading.owns_container,
+                    start_cut=heading.start_cut,
+                    container_end_cut=heading.container_end_cut,
                 )
             )
             labels[heading.section_id] = heading.heading_label or ""
             anchors[heading.section_id] = heading.anchor_id
     sections: list[ReaderNavigationSectionOut] = []
+    proofs: list[SectionProof] = []
     nodes: dict[str, ReaderNavigationTocNodeOut] = {}
     roots: list[ReaderNavigationTocNodeOut] = []
     if inputs:
         last = fragments[-1]
-        ends = resolve_section_ends(inputs, DocumentPoint(last.fragment_idx, last.char_count))
+        ends = resolve_section_extents(
+            inputs,
+            DocumentPoint(last.fragment_idx, last.char_count),
+            document_end_cut=DomCut((), "after"),
+        )
         for section in inputs:
             target = NavigationTextPointOut(
                 fragment_id=fragment_ids[section.target.fragment_idx],
@@ -151,12 +166,23 @@ def read_media_navigation(
                     extent=NavigationTextRangeOut(
                         start=target,
                         end=NavigationTextPointOut(
-                            fragment_id=fragment_ids[end.fragment_idx],
-                            offset=end.offset,
+                            fragment_id=fragment_ids[end.point.fragment_idx],
+                            offset=end.point.offset,
                         ),
                     )
                     if end is not None
                     else None,
+                )
+            )
+            proofs.append(
+                SectionProof(
+                    section_id=section.section_id,
+                    label=labels[section.section_id],
+                    parent_section_id=section.parent_section_id,
+                    start=section.target,
+                    end=end.point if end is not None else None,
+                    start_cut=section.start_cut,
+                    end_cut=end.cut if end is not None else None,
                 )
             )
     section_targets = {section.section_id: section.target for section in sections}
@@ -175,7 +201,7 @@ def read_media_navigation(
             nodes[parent_id].children.append(nodes[heading_id])
         else:
             roots.append(nodes[heading_id])
-    return MediaNavigationOut(
+    navigation = MediaNavigationOut(
         media_id=media_id,
         kind="web_article",
         generation=generation,
@@ -186,3 +212,14 @@ def read_media_navigation(
         landmarks=[],
         page_list=[],
     )
+
+    return navigation_proof(navigation, proofs)
+
+
+def read_media_navigation(
+    db: Session, *, media_id: UUID, kind: Literal["epub", "web_article"], generation: int
+) -> MediaNavigationOut:
+    """Ordinary navigation and section proof share one detector projection."""
+    return read_media_navigation_proof(
+        db, media_id=media_id, kind=kind, generation=generation
+    ).navigation

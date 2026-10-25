@@ -20,7 +20,7 @@ async function saveFacts() {
   await rename(pending, resultPath);
 }
 await saveFacts();
-const python = String.raw`import asyncio, json, os, sys
+const python = String.raw`import asyncio, json, os, sys, time
 from pathlib import Path
 from uuid import UUID, uuid4
 context = json.loads(Path(os.environ["NEXUS_LAB_CONTEXT"]).read_text())
@@ -29,7 +29,7 @@ from sqlalchemy import text
 from nexus.db.session import get_session_factory, get_repeatable_read_db
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_chunking import Chunk, IndexableBlock
-from nexus.services.content_indexing import IndexOwner, index_phase, publish_text_index
+from nexus.services.content_indexing import IndexOwner, _read_sections, index_phase, prepare_media_parts, publish_text_index
 from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from nexus.services.contributor_writes import MediaTarget, create_contributor
 from nexus.services.contributors import replace_observed_role_slices_batch
@@ -37,7 +37,12 @@ from nexus.services.search import discovery, projection
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.reader_document import read_reader_document
+from nexus.services.reader_navigation import read_media_navigation_proof
+from nexus.services.media import get_media_for_viewer, read_processing_snapshot
 from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.web_article_structure import prepare_web_article_fragment
+from nexus.services.media_parts import create_part
+from nexus.schemas.media_parts import PartCreate, PartPrepare, SectionSelection
 from nexus.services.search.query import build_discovery_query, scope_from_uri
 factory = get_session_factory()
 fixture_file = Path(context["artifacts_dir"]) / "search-fixture.json"
@@ -68,15 +73,33 @@ def terminal(owner, passages):
         return publish(db, owner, passages)
     return index_phase("lab_search_text_publication", attempt)
 
-async def read(viewer, scope="all", q="labneedle", view="resources"):
-    query = build_discovery_query(text=q, raw_kinds=["documents"],
+async def read(viewer, scope="all", q="labneedle", view="resources", kinds=("documents",)):
+    query = build_discovery_query(text=q, raw_kinds=list(kinds),
         raw_formats=None, raw_authors=None, raw_roles=None, scope=scope_from_uri(scope))
     return (await discovery.search(viewer, query, phase="lexical", view=view, cursor=None,
         limit=50, deadline=asyncio.get_running_loop().time()+10)).model_dump(mode="json")
 
+def await_current_text(owner, *, witness):
+    until = time.monotonic() + 45
+    while time.monotonic() < until:
+        with factory() as db:
+            sections = _read_sections(db, owner)
+            state = db.execute(text("SELECT revision, lexical_revision, section_witness_key, section_bounds_key FROM content_index_states WHERE owner_kind='media' AND owner_id=:id"), {"id":owner}).one_or_none()
+            if sections is not None and state is not None and state.lexical_revision == state.revision and state.section_bounds_key == sections.bounds_key and (not witness or state.section_witness_key == sections.witness_key):
+                return
+        time.sleep(.25)
+    raise AssertionError("source lexical revision, witness or partition did not publish")
+
 if mode == "seed":
     viewer = UUID(context["seed"]["user_id"])
     other, a, b, hidden, left, right = [uuid4() for _ in range(6)]
+    source, part, stale = uuid4(), uuid4(), uuid4()
+    inside, neighbour = "ochrepartneedle", "cobaltneighbourneedle"
+    stale_term = "vermilionmargin"
+    stale_quote = stale_term + " remembers an absent passage"
+    source_html = "<section><h2>chosen passage</h2><p>" + inside + " belongs to this small section.</p></section><section><h2>neighbour passage</h2><p>" + neighbour + " stays outside the piece.</p></section>"
+    prepared = prepare_web_article_fragment(html=source_html, base_url="https://example.invalid/lab-piece", document_url="https://example.invalid/lab-piece", fragment_idx=0)
+    source_body = prepared.canonical_text
     bodies = ["labneedle " + " ".join(["filler"] * 200),
               "labneedle labneedle strongest literal evidence", "labneedle labneedle strongest literal evidence"]
     with factory() as db:
@@ -98,14 +121,41 @@ if mode == "seed":
             if media==a:
                 fragment_id=str(document.units[0].id)
             publish(db,media,bodies if media==a else [body])
+        db.execute(text("INSERT INTO media(id,kind,title,processing_status,created_by_user_id,plain_text) VALUES (:id,'web_article','fixture source','ready_for_reading',:owner,:body)"), {"id":source,"owner":viewer,"body":source_body})
+        db.execute(text("INSERT INTO fragments(media_id,idx,canonical_text,html_sanitized) VALUES (:id,0,:body,:html)"), {"id":source,"body":source_body,"html":prepared.html_sanitized})
+        db.execute(text("INSERT INTO library_entries(library_id,media_id) VALUES (:library,:id)"), {"library":left,"id":source})
+        replace_media_apparatus(db,media_id=source,note_groups=[])
+        advance_reader_publications(db,media_ids=[source])
+        assert read_reader_document(db,viewer,source).units[0].canonical_text==source_body
+        # A persisted quote can outlive its locator. Public creation correctly cannot make this state.
+        db.execute(text("INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix) VALUES (:id,:viewer,'fragment_offsets',:source,'yellow',:quote,'','')"), {"id":stale,"viewer":viewer,"source":source,"quote":stale_quote})
         person = create_contributor(db, display_name="fixture writer")
         for media in (a,b):
             db.execute(text("INSERT INTO contributor_credits(contributor_id,media_id,credited_name,role,ordinal,source) VALUES (:person,:media,'fixture writer','author',0,'user')"), {"person":person.contributor_id,"media":media})
         # Only fixture initialization refreshes manually. Changed writers below must own it.
-        projection.refresh(db,"media",[a,b,hidden])
-        projection.refresh(db,"fragment",db.scalars(text("SELECT id FROM fragments WHERE media_id=ANY(:ids)"), {"ids":[a,b,hidden]}).all())
+        projection.refresh(db,"media",[a,b,hidden,source])
+        projection.refresh(db,"fragment",db.scalars(text("SELECT id FROM fragments WHERE media_id=ANY(:ids)"), {"ids":[a,b,hidden,source]}).all())
+        projection.refresh(db,"highlight",[stale])
         db.commit()
-    fixture={"viewer":str(viewer),"other":str(other),"a":str(a),"b":str(b),"hidden":str(hidden),"left":str(left),"right":str(right),"person":str(person.contributor_id),"handle":person.handle,"bodies":bodies,"fragment_id":fragment_id}
+    with factory() as db:
+        generation=db.scalar(text("SELECT generation FROM reader_publications WHERE media_id=:id"), {"id":source})
+        proof=read_media_navigation_proof(db,media_id=source,kind="web_article",generation=generation)
+        choice=next(section for section in proof.sections if section.label=="chosen passage")
+        assert choice.end is not None and choice.start_cut is not None and choice.end_cut is not None
+        assert choice.start.fragment_idx==choice.end.fragment_idx==0
+        chosen=source_body[choice.start.offset:choice.end.offset]
+        assert inside in chosen and neighbour not in chosen, "fixture section boundary is not isolated"
+        section_id, navigation_key = choice.section_id, proof.key
+        start, end = choice.start.offset, choice.end.offset
+    with factory() as db:
+        preparation=prepare_media_parts(db,viewer_id=viewer,source_media_id=source,request=PartPrepare(id=uuid4(),expected_source_generation=generation))
+        assert preparation.media_id==source
+    await_current_text(source,witness=True)
+    with factory() as db:
+        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title="fixture piece",form=None))
+        assert receipt.media_id==part
+    await_current_text(source,witness=True)
+    fixture={"viewer":str(viewer),"other":str(other),"a":str(a),"b":str(b),"hidden":str(hidden),"left":str(left),"right":str(right),"person":str(person.contributor_id),"handle":person.handle,"bodies":bodies,"fragment_id":fragment_id,"source":str(source),"part":str(part),"inside":inside,"neighbour":neighbour,"chosen":chosen,"part_start":start,"part_end":end,"stale":str(stale),"stale_quote":stale_quote,"stale_term":stale_term}
     fixture_file.write_text(json.dumps(fixture)); fixture_file.chmod(0o600)
 else:
     f=json.loads(fixture_file.read_text()); a,b=UUID(f["a"]),UUID(f["b"])
@@ -124,6 +174,16 @@ else:
                 pass
             else:
                 raise AssertionError("hidden scope was admitted")
+            piece=await read(UUID(f["viewer"]),"media:"+f["part"],f["inside"])
+            assert [r["item"]["ref"] for r in piece["results"]]==["media:"+f["part"]], "piece scope admitted the source"
+            assert f["neighbour"] not in json.dumps(piece), "piece result leaked neighbouring text"
+            assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["neighbour"]))["results"]==[], "piece scope admitted neighbouring text"
+            try:
+                await read(UUID(f["other"]),"media:"+f["part"],f["inside"])
+            except NotFoundError:
+                pass
+            else:
+                raise AssertionError("other viewer's piece scope was admitted")
         asyncio.run(scope_check())
     elif mode == "atomic":
         with factory() as old:
@@ -186,7 +246,33 @@ else:
             assert passage["match"]["ranges"] and passage["item"]["activation"]["kind"]=="route"
             anchor="chunk" if scheme=="content_chunk" else "fragment"
             assert passage["item"]["activation"]["href"]=="/media/"+str(a)+"#"+anchor+"-"+identity, "canonical occurrence activation differs"
-            return {"passage":passage,"start":locator["start_offset"],"end":locator["end_offset"]}
+            piece=(await read(UUID(f["viewer"]),"media:"+f["part"],f["inside"]))["results"]
+            assert len(piece)==1 and piece[0]["item"]["ref"]=="media:"+f["part"]
+            bounded=piece[0]["matching_passage"]
+            assert bounded is not None and bounded["item"]["ref"].startswith("content_chunk:"), "piece evidence lost canonical source chunk"
+            assert bounded["match"] is not None and bounded["match"]["ranges"], "piece evidence has no literal match"
+            exact=bounded["match"]["excerpt"]["text"]
+            assert f["inside"] in exact and exact in f["chosen"] and f["neighbour"] not in exact, "piece evidence escaped its proved section"
+            chunk=bounded["item"]["ref"].split(":",1)[1]
+            activation=bounded["item"]["activation"]
+            assert activation["resource_ref"]=="media:"+f["part"] and activation["href"]=="/media/"+f["part"]+"#chunk-"+chunk, "piece activation targets the source or an unproved location"
+            with factory() as db:
+                source_chunks=ids(db,UUID(f["source"]))
+                assert UUID(chunk) in source_chunks, "piece occurrence is not a current source chunk"
+                sections=_read_sections(db,UUID(f["source"]))
+                state=db.execute(text("SELECT revision,lexical_revision,section_bounds_key,status FROM content_index_states WHERE owner_kind='media' AND owner_id=:id"), {"id":UUID(f["source"])}).one()
+                assert sections is not None and state.lexical_revision==state.revision and state.section_bounds_key==sections.bounds_key, "piece result used an obsolete partition"
+                detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
+                processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
+                assert state.status!="ready" and detail.text_search_ready and processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
+            stale=(await read(UUID(f["viewer"]),"media:"+f["source"],f["stale_term"],kinds=("highlights",)))["results"]
+            assert len(stale)==1 and stale[0]["item"]["ref"]=="highlight:"+f["stale"], "stored unlocated quote is not searchable from its source"
+            item=stale[0]["item"]
+            assert not item["missing"] and item["preview"]["body"]["kind"]=="passage" and item["preview"]["body"]["exact"]["text"]==f["stale_quote"]
+            assert item["activation"]["kind"]=="none" and item["activation"]["href"] is None and item["activation"]["unavailable_reason"]=="location_unavailable", "unlocated quote invented a destination"
+            assert item["preview"]["source"]["ref"]=="media:"+f["source"], "stored quote lost its readable source"
+            assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["stale_term"],kinds=("highlights",)))["results"]==[], "piece admitted a source-only unlocated quote"
+            return {"passage":passage,"start":locator["start_offset"],"end":locator["end_offset"],"piece_passage":bounded,"stale_item":item}
         proof=asyncio.run(evidence_check())
         descriptor=os.open(evidence_file,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
         with os.fdopen(descriptor,"w") as handle:
@@ -199,7 +285,7 @@ async function run(mode: string): Promise<void> {
   await saveFacts();
   try {
     await execute(join(context.worktree, "python/.venv/bin/python"), ["-c", python, mode], {
-      cwd: context.worktree, env: process.env, timeout: 60_000, maxBuffer: 1024 * 1024,
+      cwd: context.worktree, env: process.env, timeout: mode === "seed" ? 120_000 : 60_000, maxBuffer: 1024 * 1024,
     });
     facts[mode] = { python_complete: true };
     await saveFacts();
@@ -213,7 +299,7 @@ async function run(mode: string): Promise<void> {
 }
 // justify-type-assertion: the owned fixture emits exactly these public ids.
 await run("seed");
-const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string };
+const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale_term: string; stale_quote: string };
 const browser = await chromium.launch({
   args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
 });
@@ -223,9 +309,9 @@ try {
   const session = await browser.newContext({ storageState: context.browser_state_file });
   const page = await session.newPage();
   await page.goto(context.web_origin, { waitUntil: "domcontentloaded" });
-  async function search(scope = "all") {
-    const query = new URLSearchParams({ q: "labneedle", phase: "lexical", view: "resources", scope,
-      kinds: "documents", limit: "50" });
+  async function search(scope = "all", text = "labneedle", kinds = "documents") {
+    const query = new URLSearchParams({ q: text, phase: "lexical", view: "resources", scope,
+      kinds, limit: "50" });
     const response = await browserRequest(page, {
       web_origin: context.web_origin,
       path: `/api/search?${query}`,
@@ -256,6 +342,10 @@ try {
   assert.deepEqual(new Set(all.results.map(row => row.item.ref)), new Set([`media:${fixture.a}`, `media:${fixture.b}`]));
   assert.deepEqual(left.results.map(row => row.item.ref), [`media:${fixture.a}`]);
   assert.deepEqual(right.results.map(row => row.item.ref), [`media:${fixture.b}`]);
+  const piece = await search(`media:${fixture.part}`, fixture.inside);
+  const neighbour = await search(`media:${fixture.part}`, fixture.neighbour);
+  assert.deepEqual(piece.results.map(row => row.item.ref), [`media:${fixture.part}`]);
+  assert.deepEqual(neighbour.results, [], "browser piece scope admitted neighbouring text");
   facts.scope = { python_complete: true, passed: true };
   await saveFacts();
   console.log("scope isolation passed");
@@ -265,6 +355,8 @@ try {
   await run("evidence");
   const proof = JSON.parse(await readFile(evidencePath, "utf8")) as {
     passage: components["schemas"]["SearchOccurrenceOut"]; start: number; end: number;
+    piece_passage: components["schemas"]["SearchOccurrenceOut"];
+    stale_item: components["schemas"]["ResourceItemOut"];
   };
   const evidence = proof.passage;
   const row = (await search(`media:${fixture.a}`)).results[0];
@@ -306,7 +398,41 @@ try {
       return actualStart === start && actualStart + Array.from(literal).length === end;
     });
   }, { fragment: fixture.fragment_id, literal: evidence.match.excerpt.text, start: proof.start, end: proof.end }, { timeout: 15_000 });
-  facts.evidence = { ...(facts.evidence as Record<string, unknown>), reader_highlight_complete: true, passed: true };
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), reader_highlight_complete: true };
+  await saveFacts();
+  const pieceRow = (await search(`media:${fixture.part}`, fixture.inside)).results[0];
+  assert.deepEqual(pieceRow.matching_passage, proof.piece_passage, "browser piece evidence differs from bounded server evidence");
+  const pieceDetail = await browserRequest(page, { web_origin: context.web_origin,
+    path: `/api/media/${fixture.part}`, method: "GET", headers: {}, body: null });
+  assert.equal(pieceDetail.status, 200, "piece detail is not readable");
+  assert.equal((JSON.parse(pieceDetail.body) as { data: { text_search_ready: boolean } }).data.text_search_ready,
+    true, "piece detail lost current lexical capability");
+  const staleRows = (await search(`media:${fixture.source}`, fixture.stale_term, "highlights")).results;
+  assert.deepEqual(staleRows.map(row => row.item.ref), [proof.stale_item.ref]);
+  assert.deepEqual(staleRows[0].item, proof.stale_item, "browser lost the stored unavailable quote");
+  assert.deepEqual((await search(`media:${fixture.part}`, fixture.stale_term, "highlights")).results, [], "browser piece admitted a source-only unlocated quote");
+  await page.goto(`${context.web_origin}/search?${new URLSearchParams({ q: fixture.stale_term, kinds: "highlights", scope: `media:${fixture.source}` })}`, { waitUntil: "domcontentloaded" });
+  await page.getByText(fixture.stale_quote, { exact: true }).first().waitFor({ state: "visible", timeout: 15_000 });
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), unlocated_quote_visible: true };
+  await saveFacts();
+  const piecePassage = proof.piece_passage;
+  assert.ok(piecePassage.match, "piece passage has no literal match");
+  const pieceTarget = piecePassage.item.activation.href;
+  assert.ok(pieceTarget, "piece passage has no canonical route");
+  await page.goto(`${context.web_origin}/search?${new URLSearchParams({ q: fixture.inside, kinds: "documents", scope: `media:${fixture.part}` })}`, { waitUntil: "domcontentloaded" });
+  await page.getByText(piecePassage.match.excerpt.text, { exact: true }).first().waitFor({ state: "visible", timeout: 15_000 });
+  const pieceLink = page.locator(`a[href="${pieceTarget}"]`).first();
+  await pieceLink.waitFor({ state: "visible", timeout: 15_000 });
+  await pieceLink.click();
+  await page.waitForURL(url => url.pathname + url.hash === pieceTarget, { timeout: 15_000 });
+  await page.locator("[data-reader-text]").filter({ hasText: fixture.inside }).first().waitFor({ state: "visible", timeout: 15_000 });
+  await page.waitForFunction(({ inside, neighbour }) => {
+    const texts = [...document.querySelectorAll("[data-reader-text]")].map(node => node.textContent ?? "");
+    if (!texts.some(text => text.includes(inside)) || texts.some(text => text.includes(neighbour))) return false;
+    const highlight = CSS.highlights.get("source-inspection");
+    return highlight !== undefined && [...highlight].some(span => span.toString().includes(inside));
+  }, { inside: fixture.inside, neighbour: fixture.neighbour }, { timeout: 15_000 });
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), piece_reader_highlight_complete: true, passed: true };
   await saveFacts();
   console.log("owner evidence passed");
 } catch (error) {

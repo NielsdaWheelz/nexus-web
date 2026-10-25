@@ -808,6 +808,7 @@ def _owned_media(db: Session, viewer_id: UUID, media_id: UUID) -> Media:
     """The viewer's own media, key-share locked: invisible is 404, another's is 403."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    library_entries.lock_media_rows_in_order(db, [media_id])
     media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -843,6 +844,11 @@ def _admit_successor(
 ) -> MediaSourceAttempt:
     """The one recovery step: the latest attempt's source becomes its successor (I10),
     a transcript job is reset, the media extracts again and the successor is enqueued."""
+    from nexus.services.media_parts import require_unpinned_source
+
+    require_unpinned_source(db, media_id=media.id)
+    if media.kind == MediaKind.text_part.value:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "pieces have no source attempt")
     _require_unpublished_document(db, media)
     payload = dict(latest.source_payload or {})
     payload.pop("parent_source_attempt_id", None)  # a successor runs on its own

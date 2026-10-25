@@ -33,4 +33,20 @@ class PublicShareOut(BaseModel):
     title: str
     bylines: list[str]
     source_url: str | None
+    source_label: str | None
     highlight: PublicHighlightOut | None
+
+
+class PublicApparatusContentOut(BaseModel):
+    label: str | None
+    html_sanitized: str
+    canonical_text: str
+
+
+class PublicApparatusOut(BaseModel):
+    """One admitted reference and its ordered note bodies; no private identities."""
+
+    ordinal: int
+    identity: str
+    label: str | None
+    content: list[PublicApparatusContentOut]

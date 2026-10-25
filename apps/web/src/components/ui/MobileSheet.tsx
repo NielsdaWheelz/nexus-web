@@ -22,7 +22,8 @@ type Header =
  * A mobile sheet with an independently scrolling body. Every exit asks the
  * frame's dismissal guard. A handle replaces the title and x with a native
  * tap/drag button; specialized headers provide their own visible exit through
- * requestDismiss. Other header controls never drag. Moved or cancelled gestures
+ * requestDismiss. Only DOM-contained header gestures can drag; portals keep
+ * their own gestures. Other header controls never drag. Moved or cancelled gestures
  * cannot click; reduced motion removes travel, not dismissal.
  */
 export default function MobileSheet({
@@ -85,6 +86,7 @@ export default function MobileSheet({
             className={handleLabel === undefined ? styles.header : `${styles.header} ${styles.handleHeader}`}
             onPointerDown={(event) => {
               if (!event.isPrimary || event.button !== 0 || dragStart.current) return;
+              if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
               suppressClick.current = false;
               let control = event.target instanceof Element ? event.target.closest(HEADER_CONTROLS) : null;
               if (control && !event.currentTarget.contains(control)) control = null;

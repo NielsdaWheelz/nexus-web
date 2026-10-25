@@ -31,6 +31,7 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.metadata_enrichment import (
     METADATA_FIELDS,
+    BibliographyMetadataJobPayload,
     MetadataBibliographyCompletedOutcome,
     MetadataFailedOutcome,
     MetadataFailureCode,
@@ -130,6 +131,11 @@ def _refusal(
 ) -> MetadataFailureCode | None:
     if media is None or not can_read_media(db, payload.requester_user_id, media.id):
         return "access_revoked"
+    if isinstance(payload, BibliographyMetadataJobPayload):
+        from nexus.services.media_parts import part_definition_version
+
+        if payload.part_definition_version != part_definition_version(db, media_id=media.id):
+            return "stale_input"
     if not is_metadata_enrichment_eligible(
         kind=media.kind,
         provider=media.provider,
@@ -256,7 +262,15 @@ def _publish(
     research: MetadataResearchInput | XTitleInput,
     terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle],
 ) -> _Settled:
-    # The media row before the claim: admission and enqueue lock in that order.
+    # The complete source family precedes publication/definition/set and claim.
+    from nexus.db.models import MediaPart
+    from nexus.services.library_entries import lock_media_rows_in_order
+    from nexus.services.media_parts import advance_part_definition, lock_source_parts
+
+    lock_media_rows_in_order(db, [job.media_id])
+    part = db.get(MediaPart, job.media_id)
+    if part is not None:
+        lock_source_parts(db, part.source_media_id)
     media = db.scalar(
         select(Media)
         .options(defer(Media.plain_text))
@@ -330,6 +344,8 @@ def _publish(
     changed = merge_findings(db, media, findings)
     if apply_prepared_role_slices_in_current_transaction(db, prepared=credits):
         changed.append("contributors")
+    if changed:
+        advance_part_definition(db, media_id=media.id)
     return finish(
         MetadataBibliographyCompletedOutcome(
             purpose="bibliography",

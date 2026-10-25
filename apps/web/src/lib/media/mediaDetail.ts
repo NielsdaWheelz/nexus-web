@@ -43,6 +43,7 @@ export function mediaSummaryFromDetail(media: MediaDetail): MediaSummary {
     media_id: media.id,
     media_kind: media.kind,
     title: media.title,
+    part_source: media.part_source,
     contributors: media.contributors,
     original_published_date: media.original_published_date,
     processing_status: media.processing_status,

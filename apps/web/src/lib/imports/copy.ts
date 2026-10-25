@@ -51,6 +51,11 @@ export interface FailureCopy {
 }
 
 export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
+  E_PART_SOURCE_PINNED: {
+    reason: "saved text is pinned",
+    title: "pieces refer to this saved text, so it can’t be replaced",
+    explanation: "view pieces in the saved source.",
+  },
   E_ARCHIVE_UNSAFE: {
     reason: "Unsafe EPUB archive",
     title: "This EPUB cannot be opened safely.",
@@ -389,6 +394,7 @@ const stageFailed = (stage: ImportStage) =>
 export const KIND_LABEL: Readonly<Record<MediaKind, string>> = {
   web_article: "Web article",
   epub: "EPUB",
+  text_part: "piece",
   pdf: "PDF",
   podcast_episode: "Podcast episode",
   video: "Video",

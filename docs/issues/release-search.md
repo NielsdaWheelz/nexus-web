@@ -1,22 +1,38 @@
 # coordinated search release
 
-integration target: main `9ca8d44e8`, schema0315, preserving current authored
+release baseline: main `2b85ecb3d`, schema0316, frozen once by the owner. import no
+later unrelated main changes. preserve current authored
 identities, retention, online-first writing, account-scoped reads, tls/http2 and
-removed dossier/link-note/author-editing contracts. the measured candidate is
+removed dossier/link-note/author-editing contracts and source-backed pieces.
+the measured older candidate is
 preserved at `2cacaa3c2`; its observations are not relabeled as integrated proof.
 
 read-only deployment inspection on2026-10-24 observed source `dc12792e` and
 schema0312. its existing verified nightly backup is retained privately; recheck
-actual ancestry and stopped-writer state at rollout. keep main's0306–0315 chain
-unchanged and apply one0316 search conversion after it. earlier search0306/0307
+actual ancestry and stopped-writer state at rollout. keep main's0306–0316 chain
+unchanged and apply one0317 search conversion after it. earlier search0306/0307
 identities and the0292 qualification clone cannot be stamped into this history.
 
 0313/0314 remove author-editing/dossier state under their existing owner steps;
-0315 adds consumption observation. qualify those intended changes separately
-from0316 preservation. compare surviving canonical identities, text, vectors,
-revisions/readiness and suggestion-clock state at0315 against0316. require exact
+0315 adds consumption observation;0316 adds piece/schema and stored-payload fields.
+qualify those intentional changes separately from0317 preservation. compare
+surviving canonical identities, text, vectors, revisions/readiness and
+suggestion-clock state at0316 against0317. require exact
 logical/native projection agreement across the fifteen surviving families.
 no repair, reindex or provider call is hidden in conversion; invalid input refuses.
+
+main's0316 refuses live old media-reindex jobs. finish legitimate work through its
+existing queue/publication owners before migration; never cancel or rewrite jobs
+to satisfy this precondition. offline extraction of the verified0312 backup finds
+zero live media-reindex jobs (150 succeeded, three dead). this is a rehearsal input
+fact, not a rollout-time queue guarantee. recheck with writers stopped.
+
+piece access must not grant source/neighboring text or whole-source activation.
+passages/vectors remain source-owned; results carry the authorized reading
+identity and bounded literal evidence. lexical publication proves the current
+source partition independently of embeddings. highlight context uses clipped
+reading-qualified index variants with canonical highlight ids; extra derived rows
+and atomic refresh work preserve contextual matching without scoring outside text.
 
 before migration, stop every writer and use the verified-backup deployment owner.
 the infra-owned `POSTGRES_IMAGE` must point to the immutable pg15 image providing
@@ -46,6 +62,8 @@ first-page order and representatives; it is no new latency or recall campaign.
 the integrated combined operation fails: publication needs a serialization retry
 and active related search expires. see [publication coupling](search-publication-retries-during-unrelated-edits.md)
 and [related cutoff](search-related-timeout-during-publication.md).
+these proofs remain scoped to the earlier main baseline. complete the frozen
+[piece integration](release-search-contained-works-integration.md) before release.
 
 the owner accepts occasional restored-pane related failure during publication
 with verified honest failure, preserved useful results and retry. the integrated

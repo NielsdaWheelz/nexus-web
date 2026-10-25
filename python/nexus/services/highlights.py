@@ -29,6 +29,7 @@ from nexus.auth.permissions import (
     can_read_highlight,
     can_read_media,
     highlight_readability_filter,
+    highlight_readability_sql,
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
 )
@@ -61,6 +62,12 @@ from nexus.schemas.writing import IdentityKind, WritingAck, WritingHighlight
 from nexus.services import authored_identities, note_bodies, text_quote, writing
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.library_entries import lock_media_for_reference
+from nexus.services.media_text_scope import (
+    highlight_in_reading_scope_sql,
+    read_media_text_scope,
+    read_scope_fragment,
+    text_scope_rows_sql,
+)
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.cleanup import (
@@ -199,7 +206,7 @@ def get_highlight_for_author_write_or_404(
     if highlight is None or highlight.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     require_typed_highlight_or_404(highlight)
-    if not can_read_media(db, viewer_id, _parent_media_id(highlight)):
+    if not can_read_highlight(db, viewer_id, highlight.id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight
 
@@ -334,13 +341,9 @@ def count_retained_highlights(
         db.scalar(
             text(
                 f"""
-                WITH visible_media AS (
-                    {visible_media_ids_cte_sql()}
-                )
                 SELECT count(*)
                 FROM highlights h
-                JOIN visible_media vm ON vm.media_id = h.anchor_media_id
-                WHERE h.user_id = :viewer_id
+                WHERE h.user_id = :viewer_id AND {highlight_readability_sql("h")}
                   AND (
                     CAST(:start AS timestamptz) IS NULL
                     OR h.created_at >= CAST(:start AS timestamptz)
@@ -361,28 +364,28 @@ def recent_highlight_anchor_facts(
     if limit < 1:
         return ()
     rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS (
-                {visible_media_ids_cte_sql()}
-            ),
+        text(f"""
+            WITH readable AS ({visible_media_ids_cte_sql()}),
             newest_per_media AS (
-                SELECT DISTINCT ON (h.anchor_media_id)
-                    h.anchor_media_id AS media_id,
-                    h.updated_at AS activity_at
+                SELECT DISTINCT ON (owner.media_id) owner.media_id,h.updated_at AS activity_at
                 FROM highlights h
-                JOIN visible_media vm ON vm.media_id = h.anchor_media_id
-                WHERE h.user_id = :viewer_id
-                  AND h.anchor_media_id IS NOT NULL
-                  AND h.anchor_kind IN ('fragment_offsets', 'pdf_page_geometry')
-                ORDER BY h.anchor_media_id ASC, h.updated_at DESC, h.id ASC
+                CROSS JOIN LATERAL (
+                    SELECT reading.media_id FROM readable reading
+                    WHERE reading.media_id=h.anchor_media_id
+                       OR {highlight_in_reading_scope_sql("h.id", "reading.media_id")}
+                    ORDER BY (reading.media_id=h.anchor_media_id) DESC,
+                        (SELECT COALESCE(sum(scope.end_offset-scope.start_offset),0)
+                         FROM ({text_scope_rows_sql("SELECT reading.media_id")}) scope),
+                        reading.media_id
+                    LIMIT 1
+                ) owner
+                WHERE h.user_id=:viewer_id
+                  AND h.anchor_kind IN ('fragment_offsets','pdf_page_geometry')
+                ORDER BY owner.media_id,h.updated_at DESC,h.id ASC
             )
-            SELECT media_id, activity_at
-            FROM newest_per_media
-            ORDER BY activity_at DESC, media_id ASC
-            LIMIT :limit
-            """
-        ),
+            SELECT media_id,activity_at FROM newest_per_media
+            ORDER BY activity_at DESC,media_id ASC LIMIT :limit
+        """),
         {"viewer_id": viewer_id, "limit": limit},
     ).mappings()
     return tuple(
@@ -431,14 +434,15 @@ def highlight_version(highlight: Highlight) -> str:
 
 
 def compact_highlight(highlight: Highlight) -> WritingHighlight:
+    """Compact writes return the passage; scoped reads own incidental quote context."""
     return WritingHighlight(
         id=highlight.id,
         version=highlight_version(highlight),
         anchor=_anchor_out(highlight),
         color=cast(HIGHLIGHT_COLORS, highlight.color),
         exact=highlight.exact,
-        prefix=highlight.prefix,
-        suffix=highlight.suffix,
+        prefix="",
+        suffix="",
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
         author_user_id=highlight.user_id,
@@ -456,6 +460,17 @@ def annotations_changed(db: Session, highlight: Highlight) -> None:
     media_id = highlight.anchor_media_id
     if media_id is None:
         return
+    family = {media_id}
+    family.update(
+        db.scalars(
+            text(f"""
+        SELECT DISTINCT scope.reading_media_id FROM ({text_scope_rows_sql("SELECT id AS media_id FROM media")}) scope
+        WHERE scope.source_media_id=:source
+          AND {highlight_in_reading_scope_sql(":highlight", "scope.reading_media_id")}
+    """),
+            {"source": media_id, "highlight": highlight.id},
+        )
+    )
     candidates = {highlight.user_id}
     candidates.update(
         db.scalars(
@@ -464,9 +479,9 @@ def annotations_changed(db: Session, highlight: Highlight) -> None:
         JOIN libraries l ON l.id=e.library_id AND l.system_key IS NULL
         JOIN memberships author ON author.library_id=e.library_id AND author.user_id=:author
         JOIN memberships peer ON peer.library_id=e.library_id
-        WHERE e.media_id=:media
+        WHERE e.media_id=ANY(:family)
     """),
-            {"author": highlight.user_id, "media": media_id},
+            {"author": highlight.user_id, "family": list(family)},
         )
     )
     for creator, grantee in db.execute(
@@ -481,12 +496,14 @@ def annotations_changed(db: Session, highlight: Highlight) -> None:
             candidates.add(grantee)
     for viewer in sorted(candidates):
         if can_read_highlight(db, viewer, highlight.id):
-            versions.bump_version(
-                db,
-                viewer_id=viewer,
-                ref=ResourceRef("media", media_id),
-                lane="annotations",
-            )
+            for reading_id in sorted(family):
+                if can_read_media(db, viewer, reading_id):
+                    versions.bump_version(
+                        db,
+                        viewer_id=viewer,
+                        ref=ResourceRef("media", reading_id),
+                        lane="annotations",
+                    )
 
 
 def require_highlight_version(highlight: Highlight, expected_version: str) -> None:
@@ -574,7 +591,24 @@ def _project_anchored(
         ]
         for highlight_id, blocks in attached.items()
     }
-    return [
+    contexts = {
+        row.highlight_id: row
+        for row in db.execute(
+            text(f"""
+            SELECT hfa.highlight_id,min(scope.start_offset) AS start_offset,
+                   max(scope.end_offset) AS end_offset,f.canonical_text
+            FROM highlight_fragment_anchors hfa
+            JOIN ({text_scope_rows_sql(visible_media_ids_cte_sql())}) scope
+              ON scope.fragment_id=hfa.fragment_id
+             AND scope.start_offset<=hfa.start_offset AND scope.end_offset>=hfa.end_offset
+            JOIN fragments f ON f.id=hfa.fragment_id
+            WHERE hfa.highlight_id=ANY(:ids)
+            GROUP BY hfa.highlight_id,f.canonical_text
+        """),
+            {"ids": ids, "viewer_id": viewer_id},
+        )
+    }
+    projected = [
         _highlight_out(
             highlight,
             viewer_id,
@@ -585,6 +619,33 @@ def _project_anchored(
         )
         for highlight, anchor in anchored
     ]
+
+    for item in projected:
+        anchor = item.anchor
+        if (
+            not isinstance(anchor, FragmentAnchorOut)
+            or anchor.start_offset is None
+            or anchor.end_offset is None
+        ):
+            continue
+        context = contexts.get(item.id)
+        item.prefix = (
+            context.canonical_text[
+                max(
+                    context.start_offset, anchor.start_offset - AFFIX_CODEPOINTS
+                ) : anchor.start_offset
+            ]
+            if context is not None
+            else ""
+        )
+        item.suffix = (
+            context.canonical_text[
+                anchor.end_offset : min(context.end_offset, anchor.end_offset + AFFIX_CODEPOINTS)
+            ]
+            if context is not None
+            else ""
+        )
+    return projected
 
 
 def project_highlight(db: Session, highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
@@ -608,15 +669,29 @@ def _build_fragment_highlight(
     highlight_id: UUID,
     reuse_exact: bool = False,
     expected_reader_generation: int | None = None,
+    reading_media_id: UUID,
 ) -> HighlightCreation:
     """Flush-only create behind both the route and the caller-owned transaction."""
     fragment = db.get(Fragment, fragment_id)
-    if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
+    if fragment is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    lock_media_for_reference(db, fragment.media_id)
-    if not can_read_media(db, viewer_id, fragment.media_id):
+    if not can_read_media(db, viewer_id, reading_media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    _require_text_generation(db, fragment.media_id, expected_reader_generation)
+    lock_media_for_reference(db, reading_media_id)
+    if not can_read_media(db, viewer_id, reading_media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    _require_text_generation(db, reading_media_id, expected_reader_generation)
+    bounds: tuple[int, int] | None = None
+    if db.scalar(select(Media.kind).where(Media.id == reading_media_id)) == "text_part":
+        scope = read_media_text_scope(db, reading_media_id)
+        if not scope.contains(fragment_id, start_offset, end_offset):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+        interval = next(
+            item for item in scope.fragment_intervals if item.fragment_id == fragment_id
+        )
+        bounds = interval.start_offset, interval.end_offset
+    elif fragment.media_id != reading_media_id:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     fragment = db.scalar(
         select(Fragment).where(Fragment.id == fragment_id).execution_options(populate_existing=True)
     )
@@ -643,6 +718,11 @@ def _build_fragment_highlight(
     exact, prefix, suffix = derive_exact_prefix_suffix(
         fragment.canonical_text, start_offset, end_offset
     )
+    if bounds is not None:
+        prefix = fragment.canonical_text[
+            max(bounds[0], start_offset - AFFIX_CODEPOINTS) : start_offset
+        ]
+        suffix = fragment.canonical_text[end_offset : min(bounds[1], end_offset + AFFIX_CODEPOINTS)]
     result = insert_highlight(
         db,
         viewer_id=viewer_id,
@@ -691,8 +771,11 @@ def _require_text_generation(db: Session, media_id: UUID, expected: int | None) 
         text("SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)"),
         {"id": media_id},
     )
-    if is_x and expected is None:
-        raise InvalidRequestError(message="X text selections require their source generation")
+    is_part = db.scalar(select(Media.kind).where(Media.id == media_id)) == "text_part"
+    if (is_x or is_part) and expected is None:
+        raise InvalidRequestError(
+            message="Source-backed text selections require their reading generation"
+        )
     if expected is not None and lock_publication_generation(db, media_id=media_id) != expected:
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
 
@@ -757,11 +840,6 @@ def ensure_highlight(
                         message="Document passages require their reader generation"
                     )
                 _require_text_generation(db, media_id, request.expected_reader_generation)
-                if (
-                    db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id))
-                    != media_id
-                ):
-                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
                 result = _build_fragment_highlight(
                     db,
                     viewer_id=viewer_id,
@@ -772,6 +850,7 @@ def ensure_highlight(
                     highlight_id=request.id,
                     reuse_exact=True,
                     expected_reader_generation=request.expected_reader_generation,
+                    reading_media_id=media_id,
                 )
             else:
                 lock_media_for_reference(db, media_id)
@@ -838,6 +917,7 @@ def create_fragment_highlight_in_txn(
     viewer_id: UUID,
     highlight_id: UUID,
     fragment_id: UUID,
+    reading_media_id: UUID,
     start_offset: int,
     end_offset: int,
     color: str,
@@ -851,6 +931,7 @@ def create_fragment_highlight_in_txn(
         db,
         viewer_id=viewer_id,
         fragment_id=fragment_id,
+        reading_media_id=reading_media_id,
         start_offset=start_offset,
         end_offset=end_offset,
         color=color,
@@ -863,8 +944,9 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
     """Flush-only locator repair before the caller starts its read-only snapshot."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if db.scalar(select(Media.id).where(Media.id == media_id).with_for_update()) is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    if db.scalar(select(Media.kind).where(Media.id == media_id)) == "text_part":
+        return
+    lock_media_for_reference(db, media_id)
     db.expire_all()
     stale = db.scalars(
         select(Highlight)
@@ -956,12 +1038,20 @@ def list_highlights_for_media(
         ).all()
         return project_highlights_with_links(db, viewer_id, list(pdf_rows))
 
+    source_media_id = media_id
+    scope = None
+    if media.kind == "text_part":
+        scope = read_media_text_scope(db, media_id)
+        source_media_id = scope.source_media_id
     rows = db.execute(
         select(Highlight, Fragment.id)
         .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
         .outerjoin(Fragment, Fragment.id == HighlightFragmentAnchor.fragment_id)
         .where(
-            Highlight.anchor_media_id == media_id,
+            Highlight.anchor_media_id == source_media_id,
+            text(highlight_in_reading_scope_sql("highlights.id", f"'{media_id}'::uuid"))
+            if scope is not None
+            else text("TRUE"),
             Highlight.anchor_kind == "fragment_offsets",
             visible,
         )
@@ -975,11 +1065,38 @@ def list_highlights_for_media(
     unresolved = FragmentAnchorOut(
         media_id=media_id, fragment_id=None, start_offset=None, end_offset=None
     )
-    return _project_anchored(
+    projected = _project_anchored(
         db,
         viewer_id,
         [(item, unresolved if live is None else _anchor_out(item)) for item, live in rows],
     )
+    if scope is not None:
+        for item in projected:
+            anchor = item.anchor
+            if (
+                not isinstance(anchor, FragmentAnchorOut)
+                or anchor.fragment_id is None
+                or anchor.start_offset is None
+                or anchor.end_offset is None
+            ):
+                continue
+            interval = next(
+                value
+                for value in scope.fragment_intervals
+                if value.fragment_id == anchor.fragment_id
+            )
+            source = db.execute(
+                select(Fragment.canonical_text).where(Fragment.id == anchor.fragment_id)
+            ).scalar_one()
+            item.prefix = source[
+                max(
+                    interval.start_offset, anchor.start_offset - AFFIX_CODEPOINTS
+                ) : anchor.start_offset
+            ]
+            item.suffix = source[
+                anchor.end_offset : min(interval.end_offset, anchor.end_offset + AFFIX_CODEPOINTS)
+            ]
+    return projected
 
 
 def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHighlightOut:
@@ -1001,9 +1118,14 @@ def _update_highlight(
     writing.effects(db).addressed.add(ResourceRef("highlight", highlight_id))
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
     media_id = _parent_media_id(highlight)
-    locked_media = db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
-    if locked_media is None:
+    reading_media_id = (
+        req.anchor.reading_media_id
+        if req.anchor is not None and req.anchor.type == "fragment_offsets"
+        else media_id
+    )
+    if not can_read_media(db, viewer_id, reading_media_id) and req.anchor is not None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    lock_media_for_reference(db, reading_media_id)
     if highlight.anchor_kind == "pdf_page_geometry":
         from nexus.services.pdf_highlights import lock_pdf_highlight_write_or_404
 
@@ -1026,8 +1148,17 @@ def _update_highlight(
             ApiErrorCode.E_INVALID_REQUEST,
             f"{anchor_update.type} anchor updates are not valid for this highlight",
         )
+    scope = None
     if anchor_update is not None and anchor_update.type == "fragment_offsets":
-        _require_text_generation(db, media_id, req.expected_reader_generation)
+        _require_text_generation(db, reading_media_id, req.expected_reader_generation)
+        if db.scalar(select(Media.kind).where(Media.id == reading_media_id)) == "text_part":
+            scope = read_media_text_scope(db, reading_media_id)
+            if not scope.contains(
+                anchor_update.unit_id, anchor_update.start_offset, anchor_update.end_offset
+            ):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+        elif reading_media_id != media_id:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
     if highlight.anchor_kind == "pdf_page_geometry":
         if anchor_update is not None and anchor_update.type == "pdf_page_geometry":
@@ -1071,12 +1202,26 @@ def _update_highlight(
             select(Media.kind).where(Media.id == media_id)
         ) not in ("podcast_episode", "video"):
             raise InvalidRequestError(message="Relocation requires the current reader generation")
-        sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
+        if scope is not None:
+            sources = []
+            for interval in scope.fragment_intervals:
+                sliced = read_scope_fragment(db, scope, interval)
+                sources.append(
+                    text_quote.NormalizedOwnerSource(
+                        interval.fragment_id,
+                        None,
+                        None,
+                        text_quote.normalize_for_match(sliced.canonical_text),
+                        base=sliced.source_start_offset,
+                    )
+                )
+        else:
+            sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
         match = text_quote.match_quote_in_sources(
             sources,
             exact=normalize_quote_text(highlight.exact),
-            prefix=normalize_quote_text(highlight.prefix),
-            suffix=normalize_quote_text(highlight.suffix),
+            prefix=normalize_quote_text(highlight.prefix) if scope is None else "",
+            suffix=normalize_quote_text(highlight.suffix) if scope is None else "",
         )
         if (
             db.get(Fragment, fragment_anchor.fragment_id) is not None
@@ -1097,6 +1242,8 @@ def _update_highlight(
         response = writing.ack(db, viewer_id)
         return response
     require_highlight_version(highlight, req.expected_version)
+    if moved:
+        annotations_changed(db, highlight)
 
     values: dict[str, object] = {"updated_at": func.now(), "color": color}
     if moved:
@@ -1108,6 +1255,14 @@ def _update_highlight(
         lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
         validate_offsets_or_400(fragment.canonical_text, start, end)
         exact, prefix, suffix = derive_exact_prefix_suffix(fragment.canonical_text, start, end)
+        if scope is not None:
+            interval = next(
+                item for item in scope.fragment_intervals if item.fragment_id == fragment.id
+            )
+            prefix = fragment.canonical_text[
+                max(interval.start_offset, start - AFFIX_CODEPOINTS) : start
+            ]
+            suffix = fragment.canonical_text[end : min(interval.end_offset, end + AFFIX_CODEPOINTS)]
         if relocating and normalize_quote_text(exact) != normalize_quote_text(highlight.exact):
             raise ApiError(
                 ApiErrorCode.E_HIGHLIGHT_CONFLICT,

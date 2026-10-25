@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.logging import get_logger
+from nexus.services.content_indexing import reading_chunks_sql
 from nexus.services.embeddings import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_PROVIDER,
@@ -73,7 +74,9 @@ def has_media_vectors(db: Session, model: str, owners: Sequence[UUID]) -> bool:
     logger.info("search.vector_readiness.begin", mono_ns=time.monotonic_ns())
     try:
         eligible = _eligible(
-            "cc.owner_kind = 'media' AND cc.owner_id = ANY(CAST(:owners AS uuid[]))"
+            "cc.owner_kind = 'media' AND cc.id IN (SELECT chunk_id FROM ("
+            + reading_chunks_sql("SELECT unnest(CAST(:owners AS uuid[])) AS media_id")
+            + ") reading)"
         )
         return bool(
             db.scalar(
@@ -86,7 +89,13 @@ def has_media_vectors(db: Session, model: str, owners: Sequence[UUID]) -> bool:
 
 
 def nearest_chunks(
-    db: Session, embedding: Embedding, *, owner: str, params: Mapping[str, Any], limit: int
+    db: Session,
+    embedding: Embedding,
+    *,
+    owner: str,
+    params: Mapping[str, Any],
+    limit: int,
+    ctes: str,
 ) -> list[tuple[UUID, float]]:
     """``(chunk_id, cosine)`` nearest first, ties by chunk id, among the embedded chunks of
     current lexical publications with ready indexes on the query's model.
@@ -110,7 +119,7 @@ def nearest_chunks(
             "limit": limit,
         }
         count = db.execute(
-            text(f"""SELECT count(*) FROM (
+            text(f"""{ctes} SELECT count(*) FROM (
             SELECT 1 FROM content_chunks cc {_READY}
             WHERE ({owner}) LIMIT :count_limit) bounded"""),
             bindings | {"count_limit": _EXACT_MAX + 1},
@@ -121,7 +130,7 @@ def nearest_chunks(
         if count <= _EXACT_MAX:
             eligible_ids = list(
                 db.scalars(
-                    text(f"SELECT ce.chunk_id {eligible} LIMIT :count_limit"),
+                    text(f"{ctes} SELECT ce.chunk_id {eligible} LIMIT :count_limit"),
                     bindings | {"count_limit": _EXACT_MAX + 1},
                 )
             )
@@ -137,7 +146,7 @@ def nearest_chunks(
             db.execute(text("SET LOCAL ivfflat.probes = 40"))
             rows = db.execute(
                 text(
-                    f"SELECT ce.chunk_id, 1 - ({distance}) {eligible} ORDER BY {distance} LIMIT :limit"
+                    f"{ctes} SELECT ce.chunk_id, 1 - ({distance}) {eligible} ORDER BY {distance} LIMIT :limit"
                 ),
                 bindings,
             )

@@ -147,6 +147,9 @@ def replace_document_embed_artifact(
 
     Returns the (media_id, attempt_id) pairs the caller must enqueue.
     """
+    from nexus.services.media_parts import require_unpinned_source
+
+    require_unpinned_source(db, media_id=media_id)
     edge_viewer_ids = {*_edge_viewer_ids(db, media_id=media_id), owner_user_id}
     delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
     library_ids = library_entries.admin_non_default_library_ids_for_media(
@@ -305,6 +308,10 @@ def resolve_x_document_embed_aliases(
             continue
         if desired[0] is not None:
             library_entries.lock_media_for_reference(db, desired[0])
+        from nexus.services.media_parts import require_unpinned_source
+
+        if row.embed_kind == "post" and row.canonical_end_offset is not None:
+            require_unpinned_source(db, media_id=row.media_id)
         row.target_media_id, row.resolution_status, row.error_code, row.error_message = desired
         if row.canonical_end_offset is not None:
             changed.add(row.media_id)
@@ -339,6 +346,14 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
 
     media_ids = {row.media_id for row in rows}
     for row in rows:
+        if (
+            row.resolution_status != status
+            and row.embed_kind == "post"
+            and row.canonical_end_offset is not None
+        ):
+            from nexus.services.media_parts import require_unpinned_source
+
+            require_unpinned_source(db, media_id=row.media_id)
         row.resolution_status = status
         row.error_code = error_code
         row.error_message = error_message

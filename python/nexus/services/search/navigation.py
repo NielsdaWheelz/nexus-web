@@ -100,7 +100,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
             )
             for item in items
         ]
-    prefix, params = discovery_eligible(r, families)
+    prefix, params = discovery_eligible(db, r, families)
     rows = db.execute(
         text(
             prefix

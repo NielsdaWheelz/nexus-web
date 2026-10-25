@@ -37,8 +37,10 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceRootOut,
     ReaderEvidenceSourceReferenceOut,
     ReaderEvidenceUnavailableOut,
+    ReaderPdfPageLocatorOut,
     ReaderSiblingContinuationOut,
 )
+from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import LinkEndpoint, LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.schemas.resource_items import (
     LocatedSourceLocationOut,
@@ -46,6 +48,7 @@ from nexus.schemas.resource_items import (
     ResourceSourceTargetKey,
     UnavailableSourceLocationOut,
 )
+from nexus.schemas.retrieval import PdfPageLocator
 from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnections
 from nexus.services.reader_evidence_markers import build_markers
@@ -78,6 +81,8 @@ def build_reader_evidence(
     *,
     viewer_id: UUID,
     media_id: UUID,
+    canonical_media_id: UUID,
+    reading_identity: str,
     media_kind: str,
     embeds: list[DocumentEmbedOut],
     highlights: list[TypedHighlightOut],
@@ -96,7 +101,10 @@ def build_reader_evidence(
     items = {
         item.ref: item
         for item in resource_items_out(
-            db, viewer_id=viewer_id, refs=[assert_resource_ref(ref) for ref in sorted(refs)]
+            db,
+            viewer_id=viewer_id,
+            refs=[assert_resource_ref(ref) for ref in sorted(refs)],
+            reading_media_id=media_id,
         )
     }
     roots: dict[str, ReaderEvidenceRootOut] = {}
@@ -116,7 +124,10 @@ def build_reader_evidence(
             ReaderEvidenceUnavailableOut(reason="Stale")
             if unresolved
             or not locator_is_current_for_media(
-                locator, media_id=media_id, fragment_indexes=fragment_indexes, page_count=page_count
+                locator,
+                media_id=canonical_media_id,
+                fragment_indexes=fragment_indexes,
+                page_count=page_count,
             )
             else _resolved(
                 locator=locator,
@@ -142,7 +153,12 @@ def build_reader_evidence(
                 is_owner=highlight.is_owner,
             ),
             resolution=resolution,
-            continuation=_child_continuation(assert_resource_ref(ref)),
+            continuation=_child_continuation(
+                assert_resource_ref(ref),
+                media_id=media_id,
+                identity=reading_identity,
+                resolution=resolution,
+            ),
             authored_placement=None,
         )
 
@@ -154,8 +170,15 @@ def build_reader_evidence(
             db,
             viewer_id=viewer_id,
             refs=[ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items],
+            reading_media_id=media_id,
         )
         for item in apparatus.items:
+            resolution = apparatus_resolution(
+                item,
+                media_id=canonical_media_id,
+                fragment_indexes=fragment_indexes,
+                page_count=page_count,
+            )
             marker_anchor_id = item.source_ref.get("marker_id")
             selection = excerpt((item.body_text or "")[:601])
             roots[item.resource_ref] = ReaderEvidenceRootOut(
@@ -175,17 +198,17 @@ def build_reader_evidence(
                     else None,
                 ),
                 continuation=(
-                    _child_continuation(ResourceRef("reader_apparatus_item", item.id))
+                    _child_continuation(
+                        ResourceRef("reader_apparatus_item", item.id),
+                        media_id=media_id,
+                        identity=reading_identity,
+                        resolution=resolution,
+                    )
                     if (item.body_text if item.body_text is not None else item.label or "").strip()
                     else None
                 ),
                 authored_placement=None,
-                resolution=apparatus_resolution(
-                    item,
-                    media_id=media_id,
-                    fragment_indexes=fragment_indexes,
-                    page_count=page_count,
-                ),
+                resolution=resolution,
             )
 
     first_facts: dict[str, int] = {}
@@ -206,6 +229,7 @@ def build_reader_evidence(
                     db,
                     viewer_id=viewer_id,
                     media_id=media_id,
+                    canonical_media_id=canonical_media_id,
                     item=item,
                     fragment_indexes=fragment_indexes,
                     page_count=page_count,
@@ -223,7 +247,12 @@ def build_reader_evidence(
                         ),
                     )
                     if root.resolution is None
-                    else _child_continuation(assert_resource_ref(ref))
+                    else _child_continuation(
+                        assert_resource_ref(ref),
+                        media_id=media_id,
+                        identity=reading_identity,
+                        resolution=root.resolution,
+                    )
                 )
             roots[ref] = root
         if (
@@ -296,6 +325,7 @@ def _resource_resolution(
     *,
     viewer_id: UUID,
     media_id: UUID,
+    canonical_media_id: UUID,
     item: ResourceItemOut,
     fragment_indexes: dict[str, int],
     page_count: int | None,
@@ -304,7 +334,10 @@ def _resource_resolution(
 ) -> ReaderEvidenceResolutionOut | None:
     try:
         target = resolve_source_target(
-            db, viewer_id=viewer_id, target=ResourceSourceTargetKey(resource_ref=item.ref)
+            db,
+            viewer_id=viewer_id,
+            target=ResourceSourceTargetKey(resource_ref=item.ref),
+            reading_media_id=media_id,
         )
     except NotFoundError:
         # justify-ignore-error: absence does not prove local ownership; retain membership.
@@ -320,7 +353,10 @@ def _resource_resolution(
         return None
     locator = target.location.locator.model_dump(mode="json")
     if not locator_is_current_for_media(
-        locator, media_id=media_id, fragment_indexes=fragment_indexes, page_count=page_count
+        locator,
+        media_id=canonical_media_id,
+        fragment_indexes=fragment_indexes,
+        page_count=page_count,
     ):
         return ReaderEvidenceUnavailableOut(reason="Stale")
     if (
@@ -365,13 +401,39 @@ def _resolved(
     )
 
 
-def _child_continuation(ref: ResourceRef) -> ReaderChildContinuationOut | None:
+def _child_continuation(
+    ref: ResourceRef,
+    *,
+    media_id: UUID,
+    identity: str,
+    resolution: ReaderEvidenceResolutionOut | None,
+) -> ReaderChildContinuationOut | None:
     source: LinkEndpoint
     match capability(ref.scheme).link_mode:
         case "direct":
             source = LinkResourceEndpoint(ref=ref.uri)
         case "materialize_passage":
-            source = LinkPassageEndpoint(candidate_ref=ref.uri)
+            if not isinstance(resolution, ReaderEvidenceResolvedOut):
+                return None
+            locator = resolution.anchor.locator
+            if isinstance(locator, ReaderPdfPageLocatorOut):
+                locator = PdfPageLocator(media_id=locator.media_id, page_number=locator.page_number)
+            precision = (
+                "time"
+                if locator.type in ("transcript_time_range", "audio_time_range", "video_time_range")
+                else "page"
+                if locator.type == "pdf_page"
+                else "exact"
+            )
+            source = LinkPassageEndpoint(
+                candidate_ref=ref.uri,
+                passage_target=CapturedPassageTarget(
+                    owner_ref=f"media:{media_id}",
+                    locator=locator,
+                    precision=precision,
+                    source_identity=identity,
+                ),
+            )
         case "none":
             return None
     return ReaderChildContinuationOut(source=source, position=None)

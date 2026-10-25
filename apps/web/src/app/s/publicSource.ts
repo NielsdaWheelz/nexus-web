@@ -2,6 +2,7 @@
 // fragment, so the page request never carries it; it travels only in this
 // header, on requests that send no credentials, skip every cache and refuse
 // redirects. The pdf's bytes ride it too: pdf.js's own fetches send cookies.
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { ApiError, readResponse } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { readerDocument } from "@/lib/documentReader/model";
@@ -19,7 +20,7 @@ export async function publicFetch(
 ): Promise<Response> {
   try {
     return await fetch(`${SHARE_API}${path}`, {
-      headers: { ...headers, "X-Nexus-Share-Token": token },
+      headers: { ...headers, "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Share-Token": token },
       credentials: "omit",
       cache: "no-store",
       redirect: "error",
@@ -31,7 +32,7 @@ export async function publicFetch(
   }
 }
 
-export function publicSource(token: string): ReaderSource {
+export function publicSource(token: string, onContentChanged: () => void): ReaderSource {
   const pdf = {
     ranges: (range: string, signal: AbortSignal) =>
       publicFetch("/file", token, signal, { range }),
@@ -47,24 +48,22 @@ export function publicSource(token: string): ReaderSource {
     refreshPdf: async () => pdf,
     // Epub images load by ordinal, with the token, as blob urls revoked with the unit.
     hydrate(unit, signal) {
-      for (const image of unit.querySelectorAll<HTMLImageElement>(
-        "img[data-nexus-public-asset]",
-      )) {
+      for (const image of unit.querySelectorAll<HTMLElement>("[data-nexus-public-asset]")) {
+        const ordinal = image.dataset.nexusPublicAsset!;
+        const expectedIdentity = image.dataset.nexusPublicIdentity!;
         void publicFetch(
-          `/assets/${image.dataset.nexusPublicAsset}`,
+          `/assets/${ordinal}?expected_identity=${encodeURIComponent(expectedIdentity)}`,
           token,
           signal,
-        )
-          .then((response) => (response.ok ? response.blob() : null))
-          .then((blob) => {
-            if (!blob || signal.aborted) return;
-            const url = URL.createObjectURL(blob);
-            signal.addEventListener("abort", () => URL.revokeObjectURL(url), {
-              once: true,
-            });
-            image.src = url;
-          })
-          .catch(() => undefined);
+        ).then(async response => {
+          if (response.status === 409) { if (!signal.aborted) onContentChanged(); return; }
+          if (!response.ok || signal.aborted) return;
+          const blob = await response.blob();
+          if (signal.aborted) return;
+          const url = URL.createObjectURL(blob);
+          signal.addEventListener("abort", () => URL.revokeObjectURL(url), { once: true });
+          image.setAttribute(image.tagName.toLowerCase() === "image" ? "href" : "src", url);
+        }).catch(error => { if (!isAbortError(error)) console.error("shared image unavailable", error); });
       }
     },
   };

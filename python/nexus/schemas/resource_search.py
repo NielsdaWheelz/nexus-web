@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_items import ResourceItemOut
 
 
@@ -28,6 +29,7 @@ class ResourceTargetResourceOut(BaseModel):
 class ResourceTargetPassageOut(BaseModel):
     kind: Literal["passage"] = "passage"
     candidate_ref: str
+    target: CapturedPassageTarget
     item: ResourceItemOut
     existing_link_id: UUID | None
 

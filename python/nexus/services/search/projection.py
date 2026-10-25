@@ -20,6 +20,10 @@ from nexus.services.contributor_credits import (
     contributor_credits_rollup_cte_sql,
     contributor_fts_text_sql,
 )
+from nexus.services.media_text_scope import (
+    highlight_in_reading_scope_sql,
+    text_scope_rows_sql,
+)
 
 TABLE = "keyword_occurrences"
 _BATCH = 256
@@ -84,6 +88,7 @@ def _source(
     discovery_name: str = "NULL::text",
     revision: str = "NULL::bigint",
     admission: str | None = None,
+    key: str | None = None,
     where: str = "TRUE",
 ) -> str:
     """The shared twelve-column shape hides only repetitive nullable SQL slots."""
@@ -91,7 +96,7 @@ def _source(
     _SOURCE_IDS[family] = identity
     scheme = {"web_result": "external_snapshot"}.get(family, family)
     ref = f"'{scheme}:' || ({identity})::text"
-    key = (
+    key = key or (
         f"'contributor:' || CAST(:projection_viewer_id AS text) || ':' || ({identity})::text"
         if family == "contributor"
         else ref
@@ -108,6 +113,44 @@ def _source(
         *(f"{fields.get(field, 'NULL::text')} AS {field}" for field in TEXT_FIELDS),
     ]
     return "SELECT " + ", ".join(columns) + f" FROM {relation} WHERE {where} /*identity_filter*/"
+
+
+_HIGHLIGHT_SCOPE = text_scope_rows_sql("SELECT reading.media_id AS media_id")
+_HIGHLIGHT_READING = (
+    """
+    highlights h
+    CROSS JOIN LATERAL (
+        SELECT h.anchor_media_id AS media_id
+        UNION ALL
+        SELECT part.media_id FROM media_parts part
+        WHERE part.source_media_id=h.anchor_media_id
+    ) reading
+    JOIN media reading_media ON reading_media.id=reading.media_id
+    LEFT JOIN LATERAL (
+        SELECT a.fragment_id,a.start_offset,f.idx FROM highlight_fragment_anchors a
+        JOIN fragments f ON f.id=a.fragment_id AND f.media_id=h.anchor_media_id
+        WHERE a.highlight_id=h.id ORDER BY f.idx,a.start_offset LIMIT 1
+    ) first_anchor ON true
+    LEFT JOIN LATERAL (
+        SELECT a.fragment_id,a.end_offset,f.idx FROM highlight_fragment_anchors a
+        JOIN fragments f ON f.id=a.fragment_id AND f.media_id=h.anchor_media_id
+        WHERE a.highlight_id=h.id ORDER BY f.idx DESC,a.end_offset DESC LIMIT 1
+    ) last_anchor ON true
+    LEFT JOIN LATERAL (
+        SELECT bounded.start_offset AS lo FROM ("""
+    + _HIGHLIGHT_SCOPE
+    + """) bounded
+        WHERE bounded.fragment_id=first_anchor.fragment_id LIMIT 1
+    ) first_bound ON true
+    LEFT JOIN LATERAL (
+        SELECT bounded.end_offset AS hi FROM ("""
+    + _HIGHLIGHT_SCOPE
+    + """) bounded
+        WHERE bounded.fragment_id=last_anchor.fragment_id LIMIT 1
+    ) last_bound ON true
+"""
+)
+_HIGHLIGHT_KEY = "'highlight:' || reading.media_id::text || ':' || h.id::text"
 
 
 _SOURCES = {
@@ -159,9 +202,21 @@ _SOURCES = {
     ),
     "highlight": _source(
         "highlight",
-        "highlights h",
+        _HIGHLIGHT_READING,
         identity="h.id",
-        fields={"body": "h.exact", "prefix": "h.prefix", "suffix": "h.suffix"},
+        key=_HIGHLIGHT_KEY,
+        admission=_HIGHLIGHT_KEY,
+        fields={
+            "body": "h.exact",
+            "prefix": "CASE WHEN reading.media_id=h.anchor_media_id OR first_anchor.fragment_id IS NULL THEN COALESCE(h.prefix,'')"
+            " ELSE right(COALESCE(h.prefix,''),GREATEST(first_anchor.start_offset-first_bound.lo,0)) END",
+            "suffix": "CASE WHEN reading.media_id=h.anchor_media_id OR last_anchor.fragment_id IS NULL THEN COALESCE(h.suffix,'')"
+            " ELSE left(COALESCE(h.suffix,''),GREATEST(last_bound.hi-last_anchor.end_offset,0)) END",
+        },
+        where="(reading.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'"
+        " AND reading.media_id<>h.anchor_media_id AND "
+        + highlight_in_reading_scope_sql("h.id", "reading.media_id")
+        + "))",
     ),
     "conversation": _source(
         "conversation",
@@ -246,12 +301,36 @@ def _withdraw_batch(
 ) -> None:
     scheme = {"web_result": "external_snapshot"}.get(family, family)
     refs = [f"{scheme}:{identity}" for identity in identities]
+    if family == "highlight":
+        while True:
+            deleted = db.execute(
+                text(f"""WITH page AS MATERIALIZED (
+                    SELECT doc_key FROM {TABLE}
+                    WHERE family='highlight' AND ref=ANY(:refs)
+                    ORDER BY doc_key LIMIT {_BATCH}
+                )
+                DELETE FROM {TABLE} old USING page
+                WHERE old.doc_key=page.doc_key RETURNING old.doc_key"""),
+                {"refs": refs},
+            ).first()
+            if deleted is None:
+                break
+        return
     keys = (
         [f"contributor:{viewer_id}:{identity}" for identity in identities]
         if family == "contributor"
         else refs
     )
     db.execute(text(f"DELETE FROM {TABLE} WHERE doc_key=ANY(:keys)"), {"keys": keys})
+
+
+def refresh_source_highlights(db: Session, source_media_id: UUID) -> None:
+    """Replace one source's variants after its piece boundaries change."""
+    highlight_ids = db.scalars(
+        text("SELECT id FROM highlights WHERE anchor_media_id=:id ORDER BY id"),
+        {"id": source_media_id},
+    ).all()
+    refresh(db, "highlight", highlight_ids)
 
 
 def withdraw(
@@ -290,7 +369,31 @@ def refresh(
         source = _SOURCES[family].replace(
             "/*identity_filter*/", f"AND {_SOURCE_IDS[family]}=ANY(CAST(:ids AS uuid[]))"
         )
-        db.execute(text(f"INSERT INTO {TABLE} ({','.join(_COLUMNS)}) {source}"), params)
+        if family == "highlight":
+            # One highlight can belong to many reading identities. Keep the
+            # physical insert bounded even when the canonical id batch fans out.
+            previous = ""
+            while True:
+                last, expected, inserted = db.execute(
+                    text(f"""WITH canonical AS MATERIALIZED (
+                        SELECT {",".join(_COLUMNS)} FROM ({source}) variant
+                        WHERE variant.doc_key > :previous
+                        ORDER BY variant.doc_key LIMIT {_BATCH}
+                    ), inserted AS (
+                        INSERT INTO {TABLE} ({",".join(_COLUMNS)})
+                        SELECT {",".join(_COLUMNS)} FROM canonical RETURNING doc_key
+                    )
+                    SELECT (SELECT max(doc_key) FROM canonical),
+                           (SELECT count(*) FROM canonical),
+                           (SELECT count(*) FROM inserted)"""),
+                    params | {"previous": previous},
+                ).one()
+                assert expected == inserted, "highlight variants were not fully inserted"
+                if last is None:
+                    break
+                previous = last
+        else:
+            db.execute(text(f"INSERT INTO {TABLE} ({','.join(_COLUMNS)}) {source}"), params)
 
 
 def refresh_contributor_dependents(db: Session, contributor_ids: Sequence[UUID]) -> None:

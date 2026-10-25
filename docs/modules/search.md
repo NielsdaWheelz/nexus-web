@@ -75,6 +75,22 @@ facts; it performs no second ranking query. semantic-only facts use the approved
 neighbour windows and cannot displace lexical occurrences. each response owns its
 facts; phases do not share scores, snapshots, caches or cancellation ownership.
 
+source-backed pieces are reading identities, not copied passage/vector owners.
+authorization chooses one permitted reading owner before ranking; source-owned
+occurrence refs remain canonical. piece evidence must fit its bounded scope and
+activation opens that reading identity. a piece never authorizes neighbouring
+text or the whole source. among admitted readings, the source wins owner choice;
+otherwise the smallest eligible piece and its id break ties.
+
+highlight context has one derived native variant per admissible reading identity.
+piece variants clip prefix/suffix before matching and scoring; their canonical
+highlight ref remains singular. the extra rows change corpus statistics and add
+refresh work on definition changes. physical inserts/deletes remain bounded to256
+rows per statement; a partial highlight-ref index supports exact withdrawal.
+source-authorized stored quotes remain searchable with unavailable locations;
+piece-only access still requires complete-anchor containment and strict citations
+still require valid locations.
+
 chunk ranking reads scalar candidate facts and requires a nonnull primary-span id;
 its validated foreign key proves span existence. selected hydration and reopening
 still join the complete span and retain source/quote/locator checks. browser
@@ -192,7 +208,7 @@ top-k. lexical evidence and semantic-only evidence have separate provenance.
 
 `nearest_chunks` counts at most25,001 current ready chunks in the caller's
 snapshot. publication owns exactly one nonnull vector per current chunk on the
-active provider/model; migration0316 rejects serving rows that violate
+active provider/model; migration0317 rejects serving rows that violate
 that contract. the capped scalar count therefore chooses exact retrieval through
 25,000 vectors, otherwise ivfflat with40 probes over the original full predicate.
 an empty count returns no neighbours. the exact branch fetches actual eligible
@@ -201,7 +217,7 @@ authorization, publication and model predicates remain unchanged. broad routing
 avoids per-vector existence lookups; small scopes pay one extra bounded query.
 the count never truncates the searchable domain or caller's window. this cutoff
 extrapolates slightly beyond the measured 20,137-vector exact control; it is not
-a proved crossover. migration0316 owns the current-publication expression
+a proved crossover. migration0317 owns the current-publication expression
 statistic used by that predicate. strict search and oracle reads share this
 primitive and retain their own limits and cosine policies.
 
@@ -333,6 +349,12 @@ embedding work; semantic publication installs vectors on those exact ids.
 both commits are source-revision/exact-claim fenced. retries resume existing text;
 completed ready/no-text/ocr-required outcomes are no-ops, including effects and
 timestamps. note edits increment revisions and coalesce unclaimed work.
+
+pieces use their source's current lexical publication and published partition.
+definition changes reconcile that partition in the same transaction. structural
+witness/text publication precedes embeddings, so missing embedding credentials
+cannot prevent manual piece creation. piece detail and processing readiness read
+that same source state; source repair offers never target the piece id.
 
 media detail, processing snapshot and import item expose derived
 `text_search_ready`. completed publication governs capability even if queue

@@ -17,8 +17,11 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
+from nexus.services.resource_graph.refs import require_ref
+from nexus.services.resource_items.locations import source_identities
 from nexus.services.search.admission import (
     remaining_milliseconds,
     search_session,
@@ -155,6 +158,7 @@ def get_search_result(
     result_type: str,
     result_id: str,
     evidence_span_ids: list[UUID] | None = None,
+    passage_target: CapturedPassageTarget | None = None,
 ) -> SearchResultOut:
     """Reopen one visible row by durable identity, in the caller's transaction.
 
@@ -171,8 +175,29 @@ def get_search_result(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid search result id"
         ) from None
-    hit = Hit(result_type, identity, "", 1.0)
+    owner = require_ref(passage_target.owner_ref) if passage_target is not None else None
+    if (
+        owner is not None
+        and owner.scheme == "media"
+        and passage_target is not None
+        and passage_target.source_identity != source_identities(db, [owner.id]).get(owner.id)
+    ):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search passage body changed")
+    hit = Hit(
+        result_type,
+        identity,
+        "",
+        1.0,
+        owner.id if owner is not None and owner.scheme == "media" else None,
+    )
     found = project(db, viewer_id, [hit], "", evidence_span_ids=evidence_span_ids)
     if not found:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-    return found[0]
+    result = found[0]
+    if passage_target is not None:
+        current = result.captured_evidence.target
+        if not isinstance(current, CapturedPassageTarget) or current.model_dump(
+            mode="json"
+        ) != passage_target.model_dump(mode="json"):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search passage changed")
+    return result

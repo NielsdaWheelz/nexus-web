@@ -29,6 +29,7 @@ from nexus.schemas.suggestions import (
 from nexus.services import highlights, libraries, library_entries, notes, reading_time
 from nexus.services import media as media_service
 from nexus.services.consumption import lectern, projection
+from nexus.services.content_indexing import reading_chunks_sql
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
 from nexus.services.podcasts.episodes import episode_publication_rows_sql
 from nexus.services.podcasts.subscriptions_query import (
@@ -68,15 +69,35 @@ def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
     included: in progress first (most recently read), then newest added."""
     media_ids = db.scalars(
         text(f"""
-            SELECT d.media_id
-            FROM ({reading_time.reading_time_rows_sql()}) d
-            JOIN ({visible_media_ids_cte_sql()}) v ON v.media_id = d.media_id
-            JOIN media m ON m.id = d.media_id
-            LEFT JOIN ({projection.engagement_fact_rows_sql()}) e ON e.media_id = d.media_id
-            WHERE d.remaining_seconds > 0 AND d.remaining_seconds < 600
-              AND COALESCE(e.read_state, 'Unread') <> 'Finished'
-            ORDER BY e.read_state = 'InProgress' DESC NULLS LAST,
-                     e.last_engaged_at DESC NULLS LAST, m.created_at DESC, d.media_id
+            WITH eligible AS (
+                SELECT d.media_id, COALESCE(part.source_media_id,m.id) AS family_id,
+                       e.read_state,e.last_engaged_at,
+                       COALESCE(source.created_at,m.created_at) AS source_recency,
+                       m.kind='text_part' AS is_piece,
+                       (e.last_engaged_at IS NOT NULL OR EXISTS (
+                           SELECT 1 FROM consumption_queue_items q
+                           WHERE q.media_id=m.id AND q.user_id=:viewer_id
+                       ) OR EXISTS (
+                           SELECT 1 FROM library_entries entry JOIN libraries library ON library.id=entry.library_id
+                           JOIN memberships member ON member.library_id=library.id AND member.user_id=:viewer_id
+                           WHERE entry.media_id=m.id AND library.system_key IS NULL
+                       )) AS deliberate
+                FROM ({reading_time.reading_time_rows_sql()}) d
+                JOIN ({visible_media_ids_cte_sql()}) v ON v.media_id=d.media_id
+                JOIN media m ON m.id=d.media_id
+                LEFT JOIN media_parts part ON part.media_id=m.id
+                LEFT JOIN media source ON source.id=part.source_media_id
+                LEFT JOIN ({projection.engagement_fact_rows_sql()}) e ON e.media_id=d.media_id
+                WHERE d.remaining_seconds>0 AND d.remaining_seconds<600
+                  AND COALESCE(e.read_state,'Unread')<>'Finished'
+            ), ranked AS (
+                SELECT *,ROW_NUMBER() OVER (
+                    PARTITION BY family_id,deliberate ORDER BY is_piece,media_id
+                ) AS family_rank FROM eligible
+            )
+            SELECT media_id FROM ranked WHERE deliberate OR family_rank=1
+            ORDER BY read_state='InProgress' DESC NULLS LAST,
+                     last_engaged_at DESC NULLS LAST,source_recency DESC,media_id
             LIMIT 5
         """),
         {"viewer_id": viewer_id},
@@ -474,19 +495,22 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             SELECT * FROM jsonb_to_recordset(CAST(:media_anchors AS jsonb))
                 AS a(id uuid, rank integer)
         ),
+        anchor_chunks AS ({reading_chunks_sql("SELECT id AS media_id FROM anchors")}),
+        peer_chunks AS ({reading_chunks_sql("SELECT media_id FROM eligible_media_partitions")}),
         anchor_vectors AS (
             SELECT a.id AS anchor_media_id, a.rank AS anchor_rank, av.vector
             FROM anchors a
             CROSS JOIN LATERAL (
                 SELECT ce.embedding_vector AS vector
                 FROM content_chunks cc
+                JOIN anchor_chunks admitted ON admitted.chunk_id=cc.id AND admitted.reading_media_id=a.id
                 JOIN content_embeddings ce ON ce.chunk_id = cc.id
                 JOIN content_index_states cis
-                  ON cis.owner_kind = 'media' AND cis.owner_id = a.id
+                  ON cis.owner_kind = 'media' AND cis.owner_id = cc.owner_id
                  AND cis.status = 'ready' AND cis.lexical_revision = cis.revision
                  AND cis.active_embedding_provider = :embedding_provider
                  AND cis.active_embedding_model = :embedding_model
-                WHERE cc.owner_kind = 'media' AND cc.owner_id = a.id
+                WHERE cc.owner_kind = 'media'
                   AND ce.embedding_provider = :embedding_provider
                   AND ce.embedding_model = :embedding_model
                   AND ce.embedding_dimensions = :embedding_dimensions
@@ -496,22 +520,23 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             ) av
         ),
         ranked_chunks AS (
-            SELECT av.anchor_rank, eligible.candidate_partition, cc.owner_id AS peer_media_id,
+            SELECT av.anchor_rank, eligible.candidate_partition, admitted.reading_media_id AS peer_media_id,
                    ce.embedding_vector <=> av.vector AS distance,
                    ROW_NUMBER() OVER (
                        PARTITION BY av.anchor_rank, eligible.candidate_partition
-                       ORDER BY ce.embedding_vector <=> av.vector, cc.owner_id, cc.id
+                       ORDER BY ce.embedding_vector <=> av.vector, admitted.reading_media_id, cc.id
                    ) AS candidate_rank
             FROM content_embeddings ce
             JOIN content_chunks cc ON cc.id = ce.chunk_id
-            JOIN eligible_media_partitions eligible ON eligible.media_id = cc.owner_id
+            JOIN peer_chunks admitted ON admitted.chunk_id=cc.id
+            JOIN eligible_media_partitions eligible ON eligible.media_id=admitted.reading_media_id
             JOIN content_index_states peer_state
               ON peer_state.owner_kind = 'media' AND peer_state.owner_id = cc.owner_id
              AND peer_state.status = 'ready' AND peer_state.lexical_revision = peer_state.revision
              AND peer_state.active_embedding_provider = :embedding_provider
              AND peer_state.active_embedding_model = :embedding_model
             CROSS JOIN anchor_vectors av
-            WHERE cc.owner_kind = 'media' AND cc.owner_id <> av.anchor_media_id
+            WHERE cc.owner_kind = 'media' AND admitted.reading_media_id <> av.anchor_media_id
               AND ce.embedding_provider = :embedding_provider
               AND ce.embedding_model = :embedding_model
               AND ce.embedding_dimensions = :embedding_dimensions

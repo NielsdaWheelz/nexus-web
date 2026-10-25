@@ -286,6 +286,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
         viewer_id=viewer,
         highlight_id=uuid5(call.id, "nexus.highlight.create:highlight"),
         fragment_id=match.fragment_id,
+        reading_media_id=media.id,
         start_offset=match.raw_start,
         end_offset=match.raw_end,
         color=value.color or "yellow",

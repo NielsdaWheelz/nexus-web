@@ -56,7 +56,7 @@ def quotable_document_rows_sql() -> str:
         JOIN ({ready_publication_rows_sql()}) publication ON publication.media_id = m.id
         LEFT JOIN ({pdf_quote_text_readiness_rows_sql()}) pdf ON pdf.media_id = m.id
         WHERE (
-            m.kind IN ('web_article', 'epub')
+            m.kind IN ('web_article', 'epub', 'text_part')
             OR (m.kind = 'pdf' AND {media_file_exists_sql("m.id")} AND pdf.quote_text_ready)
         )
     """

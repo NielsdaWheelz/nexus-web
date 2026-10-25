@@ -17,7 +17,7 @@ from starlette.types import Receive, Scope, Send
 from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import Data, error_response
-from nexus.schemas.public_resource_sharing import PublicShareOut
+from nexus.schemas.public_resource_sharing import PublicApparatusOut, PublicShareOut
 from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.services import public_resource_sharing
 from nexus.services.media_file_access import parse_single_byte_range
@@ -77,10 +77,26 @@ def get_public_resource_share_document(
 
 @router.get("/assets/{ordinal}")
 def get_public_resource_share_asset(
-    ordinal: str, db: DbSession, share_token: ShareToken = ""
+    ordinal: str, db: DbSession, share_token: ShareToken = "", expected_identity: str | None = None
 ) -> Response:
-    data, content_type = public_resource_sharing.read_asset(db, share_token, ordinal)
-    return Response(data, media_type=content_type)
+    data, content_type = public_resource_sharing.read_asset(
+        db, share_token, ordinal, expected_identity
+    )
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if content_type == "image/svg+xml":
+        headers["Content-Security-Policy"] = (
+            "default-src 'none'; img-src 'self' data:; script-src 'none'; object-src 'none'; base-uri 'none'"
+        )
+    return Response(data, media_type=content_type, headers=headers)
+
+
+@router.get("/apparatus/{ordinal}")
+def get_public_resource_share_apparatus(
+    ordinal: str, db: DbSession, share_token: ShareToken = "", expected_identity: str | None = None
+) -> Data[PublicApparatusOut]:
+    return Data(
+        data=public_resource_sharing.read_apparatus(db, share_token, ordinal, expected_identity)
+    )
 
 
 @router.get("/file")

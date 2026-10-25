@@ -24,7 +24,7 @@ from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import locator_resolver
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_items.locations import current_passages
+from nexus.services.resource_items.locations import current_passages, media_passages
 
 _STATIC_PREFIXES = {
     "page": "/pages",
@@ -71,6 +71,7 @@ def resource_activations_for_refs(
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
     missing_ref_uris: set[str] | frozenset[str] = frozenset(),
+    reading_media_id: UUID | None = None,
 ) -> dict[str, ResourceActivationOut]:
     """One activation per distinct ref; a ref in ``missing_ref_uris`` gets ``none``."""
     unique = {ref.uri: ref for ref in refs}
@@ -84,11 +85,55 @@ def resource_activations_for_refs(
         if ref.scheme in _STATIC_PREFIXES
     }
     routes.update(_dynamic_routes(db, viewer_id=viewer_id, by_scheme=by_scheme))
+    scoped = media_passages(
+        db, viewer_id=viewer_id, refs=visible, reading_media_id=reading_media_id
+    )
+    canonical_schemes = {
+        "highlight",
+        "fragment",
+        "reader_apparatus_item",
+        "content_chunk",
+        "evidence_span",
+        "oracle_passage_anchor",
+    }
+    apparatus_ids = [
+        ref.id for ref in visible if ref.scheme == "reader_apparatus_item" and ref.uri in scoped
+    ]
+    apparatus = {
+        row.id: row
+        for row in db.execute(
+            text("SELECT id,stable_key FROM reader_apparatus_items WHERE id=ANY(:ids)"),
+            {"ids": apparatus_ids},
+        )
+    }
+    for ref in visible:
+        if ref.scheme not in canonical_schemes and ref.scheme != "passage_anchor":
+            continue
+        passage = scoped.get(ref.uri)
+        if passage is None:
+            if ref.scheme in canonical_schemes or routes.get(ref.uri, "").startswith("/media/"):
+                routes.pop(ref.uri, None)
+            continue
+        if ref.scheme == "reader_apparatus_item":
+            row = apparatus[ref.id]
+            routes[ref.uri] = (
+                f"/media/{passage.owner.id}?{urlencode({'apparatus': row.stable_key, 'apparatus_id': str(ref.id)})}"
+            )
+        elif passage.locator is not None:
+            fragment = {
+                "highlight": "highlight",
+                "fragment": "fragment",
+                "passage_anchor": "passage",
+            }.get(ref.scheme, _PASSAGE_ANCHORS.get(ref.scheme))
+            routes[ref.uri] = f"/media/{passage.owner.id}#{fragment}-{ref.id}"
+        else:
+            routes.pop(ref.uri, None)
     external = _external_urls(db, viewer_id=viewer_id, refs=by_scheme["external_snapshot"])
     activations: dict[str, ResourceActivationOut] = {}
     for uri in unique:
         if (href := routes.get(uri)) is not None:
-            activations[uri] = ResourceActivationOut(resource_ref=uri, kind="route", href=href)
+            owner = scoped[uri].owner.uri if uri in scoped else uri
+            activations[uri] = ResourceActivationOut(resource_ref=owner, kind="route", href=href)
         elif (url := external.get(uri)) is not None:
             activations[uri] = ResourceActivationOut(resource_ref=uri, kind="external", href=url)
         else:

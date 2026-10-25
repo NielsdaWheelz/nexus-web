@@ -14,9 +14,9 @@ export default function HostedPolicy({ children }: { children: ReactNode }) {
     recover: () => router.refresh(),
     project(href) {
       projected.current = href;
-      window.history.replaceState(window.history.state, "", href);
+      window.history.replaceState(null, "", href);
       requestAnimationFrame(() => {
-        if (projected.current === href && Object.hasOwn(window.history, "replaceState")) window.history.replaceState(window.history.state, "", href);
+        if (projected.current === href && Object.hasOwn(window.history, "replaceState")) window.history.replaceState(null, "", href);
       });
     },
   }), [router]);

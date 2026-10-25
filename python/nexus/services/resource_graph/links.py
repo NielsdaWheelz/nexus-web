@@ -5,6 +5,13 @@ one owned user/discovery/assistant edge; an absent uuid succeeds without resolvi
 replacement. Accepted authored identities retain their canonical binding across
 retries and retirement. Every unlink preserves endpoint resources, note content
 and creation history. The caller commits or rolls back its complete batch.
+
+A passage candidate with a captured ``passage_target`` materializes only where it was
+captured: the candidate is recaptured through that reading owner and must name the
+same owner, body identity and canonical extent, else it is stale (409); a candidate
+the viewer cannot capture, gone or invisible, is a masked 404. Its anchor belongs to
+that owner (a piece keeps its piece). A null target is the context-free canonical
+action: the viewer's current reading owner of the candidate.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyPageBinding, ResourceEdge
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import (
     InsertionSource,
     LinkEndpoint,
@@ -36,6 +44,7 @@ from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import capture_evidence
 from nexus.services.resource_items.items import visible_refs
 
 
@@ -65,7 +74,7 @@ def insertion_source_for_ref(
             return (
                 LinkResourceEndpoint(ref=anchor.uri)
                 if anchor is not None
-                else LinkPassageEndpoint(candidate_ref=ref.uri)
+                else LinkPassageEndpoint(candidate_ref=ref.uri, passage_target=None)
             )
 
 
@@ -95,6 +104,7 @@ def materialize_source(
             end_offset=source.end_offset,
             color=source.color,
             expected_reader_generation=source.expected_reader_generation,
+            reading_media_id=source.reading_media_id,
         )
     else:
         assert_ref_visible(db, viewer_id=viewer_id, ref=ResourceRef("media", source.media_id))
@@ -150,20 +160,46 @@ def materialize_link_endpoint(
         if capability(ref.scheme).link_mode != "direct":
             raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be linked")
         return ref
-    from nexus.services.search.pickers import candidate_owner_and_quote
-
     candidate = require_ref(endpoint.candidate_ref)
     if capability(candidate.scheme).link_mode != "materialize_passage":
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource is not a passage candidate")
-    found = candidate_owner_and_quote(db, ref=candidate)
-    if found is None:
-        raise ConflictError(ApiErrorCode.E_LINK_TARGET_STALE, "Passage candidate no longer exists")
-    owner, exact = found
+    expected = endpoint.passage_target
+    reading = None if expected is None else assert_resource_ref(expected.owner_ref)
+    try:
+        evidence = capture_evidence(
+            db,
+            viewer_id=viewer_id,
+            ref=candidate,
+            reading_media_id=None if reading is None or reading.scheme != "media" else reading.id,
+        )
+    except ConflictError as exc:
+        raise ConflictError(ApiErrorCode.E_LINK_TARGET_STALE, "Passage candidate changed") from exc
+    captured = evidence.target
+    if (
+        not isinstance(captured, CapturedPassageTarget)
+        or evidence.quote is None
+        or (expected is not None and _place(captured) != _place(expected))
+    ):
+        raise ConflictError(ApiErrorCode.E_LINK_TARGET_STALE, "Passage candidate changed")
+    owner = assert_resource_ref(captured.owner_ref)
     assert_ref_visible(db, viewer_id=viewer_id, ref=owner)
     anchor = passage_anchors.materialize_or_reuse(
-        db, user_id=viewer_id, owner_scheme=owner.scheme, owner_id=owner.id, exact=exact
+        db,
+        user_id=viewer_id,
+        owner_scheme=owner.scheme,
+        owner_id=owner.id,
+        exact=evidence.quote.exact,
     )
     return ResourceRef("passage_anchor", anchor.id)
+
+
+def _place(target: CapturedPassageTarget) -> tuple[object, ...]:
+    """Owner, body identity and canonical extent; quote context is presentation."""
+    return (
+        target.owner_ref,
+        target.source_identity,
+        target.locator.model_dump(mode="json", exclude={"text_quote_selector"}),
+    )
 
 
 def count_retained_neutral_links(

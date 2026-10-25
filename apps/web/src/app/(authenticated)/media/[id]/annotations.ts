@@ -25,7 +25,7 @@ import type {
   NoteRef,
   TextRange,
 } from "@/lib/documentReader/DocumentReader";
-import { structureOf, type HighlightColor, type ReaderDocument } from "@/lib/documentReader/model";
+import { structureOf, localPoint, sourcePoint, type HighlightColor, type ReaderDocument } from "@/lib/documentReader/model";
 import { targetOfResolution, type Resolution } from "./hostedReader";
 import { markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
 
@@ -356,7 +356,7 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
     acknowledge,
     recolor: (id, color, expectedVersion) => update(id, { color, expected_version: expectedVersion }),
     rebound: (id, anchor, expectedVersion, generation) => update(id, { expected_version: expectedVersion, expected_reader_generation: generation,
-      anchor: { type: "fragment_offsets", unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
+      anchor: { type: "fragment_offsets", reading_media_id: mediaId, unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
     async remove(id) {
       const admitted = admitWriting({ kind: "highlight_delete", highlight_id: id }, []);
         acknowledge(await admitted.settled);
@@ -378,6 +378,7 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
     const parent = held.get(mediaId)?.store.getState();
     if (!parent) return;
     if (!doc) { state = parent; for (const listener of listeners) listener(); return; }
+    const projectedDocument = doc;
     const structure = structureOf(doc, null);
     const marks: Mark[] = [];
     const noteRefs: NoteRef[] = [];
@@ -397,7 +398,11 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
       if (current.map.status === "loading" || current.decorations.identity !== identity) { loading = true; continue; }
       const anchors = (anchor: MarkAnchor): MarkAnchor[] => anchor.kind !== "text" ? (id === mediaId ? [anchor] : [])
         : occurrences.length ? occurrences.filter((unit) => unit.xPost!.owner!.fragment_id === anchor.unit).map((unit) => ({ ...anchor, unit: unit.id }))
-        : id === mediaId ? [anchor] : [];
+        : id === mediaId ? (() => {
+          const start=localPoint(projectedDocument,{unit:anchor.unit,offset:anchor.start});
+          const end=localPoint(projectedDocument,{unit:anchor.unit,offset:anchor.end});
+          return start && end ? [{...anchor,unit:start.unit,start:start.offset,end:end.offset}] : [];
+        })() : [];
       for (const mark of current.decorations.marks) for (const anchor of anchors(mark.anchor)) marks.push({ ...mark, anchor });
       for (const note of current.decorations.noteRefs) for (const anchor of anchors({ ...note, kind: "text" }))
         if (anchor.kind === "text") noteRefs.push({ key: note.key, unit: anchor.unit, start: anchor.start, end: anchor.end });
@@ -413,7 +418,7 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
             const unit = doc.kind === "text" ? doc.units.find((unit) =>
               (id === mediaId && unit.id === locator.fragment_id) ||
               (unit.xPost?.owner?.media_id === id && unit.xPost.owner.fragment_id === locator.fragment_id)) : null;
-            resolution = unit && "end_offset" in locator && locator.end_offset <= unit.length
+            resolution = unit && "end_offset" in locator && localPoint(doc,{unit:unit.id,offset:locator.end_offset}) !== null
               ? { ...resolution, anchor: { ...resolution.anchor, locator: { ...locator, fragment_id: unit.id } } }
               : { kind: "Unavailable", reason: "Unanchorable" };
           } else if (id !== mediaId) resolution = { kind: "Unavailable", reason: "Unanchorable" };
@@ -483,6 +488,12 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
     const unit = anchor.kind === "text" && doc?.kind === "text" ? doc.units.find((unit) => unit.id === anchor.unit) : null;
     const owner = unit?.xPost?.owner;
     if (unit?.xPost && !owner) throw new Error("public source has no annotation owner");
+    if (!owner && anchor.kind === "text" && doc) {
+      const start=sourcePoint(doc,{unit:anchor.unit,offset:anchor.start});
+      const end=sourcePoint(doc,{unit:anchor.unit,offset:anchor.end});
+      if (!start || !end) throw new Error("selection is outside its reading scope");
+      return {mediaId,anchor:{...anchor,unit:start.unit,start:start.offset,end:end.offset},generation:doc.identity.startsWith("g")?Number(doc.identity.slice(1)):null};
+    }
     return owner && anchor.kind === "text" ? { mediaId: owner.media_id, anchor: { ...anchor, unit: owner.fragment_id }, generation: owner.generation }
       : { mediaId, anchor, generation: doc?.identity.startsWith("g") ? Number(doc.identity.slice(1)) : null };
   }
@@ -514,9 +525,10 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
     acknowledge(ack) {
       const owners = new Set(ack.highlights.map(highlight => highlight.anchor.media_id));
       for (const id of owners) storeFor(id).acknowledge(ack);
+      held.get(mediaId)?.store.acknowledge(ack);
     },
     recolor(id, color, version) { const store = highlightStore(id); if (!store) throw new Error("highlight owner is not mounted"); return store.recolor(id, color, version); },
-    rebound(id, anchor, version) { const bound = source(anchor); return storeFor(bound.mediaId).rebound(id, { ...anchor, unit: bound.anchor.kind === "text" ? bound.anchor.unit : anchor.unit }, version, bound.generation); },
+    rebound(id, anchor, version) { const bound = source(anchor); return storeFor(bound.mediaId).rebound(id, bound.anchor, version, bound.generation); },
     remove(id) { const store = highlightStore(id); if (!store) throw new Error("highlight owner is not mounted"); return store.remove(id); },
     highlight: (id) => highlightStore(id)?.highlight(id) ?? null,
   };

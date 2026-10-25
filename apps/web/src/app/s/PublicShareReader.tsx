@@ -4,7 +4,7 @@
 // quote over the whole shared document, read-only, opened at the shared
 // highlight. Another `#share=` hash opens in place; any other hash change (an
 // in-document link) leaves the reading alone.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FeedbackNotice,
   FeedbackState,
@@ -16,6 +16,9 @@ import {
   isApiError,
   readResponse,
 } from "@/lib/api/client";
+import HtmlRenderer from "@/components/HtmlRenderer";
+import Dialog from "@/components/ui/Dialog";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { Contents } from "@/lib/documentReader/chrome/Contents";
 import DocumentReaderView, {
@@ -51,6 +54,16 @@ export default function PublicShareReader() {
   const [state, setState] = useState<State>("Resolving");
   const [attempt, setAttempt] = useState(0);
   const shell = useRef<HTMLDivElement>(null);
+  const reloadedToken = useRef<string | null>(null);
+  const contentChanged = useCallback((token: string) => {
+    if (reloadedToken.current === token) {
+      setState({ token, retrying: false, failure: { tone: "Warning", title: "this piece changed. reload to continue." } });
+      return;
+    }
+    reloadedToken.current = token;
+    setState("Resolving");
+    setAttempt(value => value + 1);
+  }, []);
 
   useEffect(() => {
     let controller = new AbortController();
@@ -110,9 +123,10 @@ export default function PublicShareReader() {
       <title>{`${title} · Nexus`}</title>
       {ready ? (
         <SharedDocument
-          key={ready.token}
+          key={`${ready.token}:${attempt}`}
           token={ready.token}
           share={ready.share}
+          onContentChanged={contentChanged}
         />
       ) : (
         <main
@@ -170,11 +184,18 @@ function sharedMark(share: Share): Mark | null {
 function SharedDocument({
   token,
   share,
+  onContentChanged,
 }: {
   readonly token: string;
   readonly share: Share;
+  readonly onContentChanged: (token: string) => void;
 }) {
   const highlight = share.highlight;
+  const changed = useCallback(() => onContentChanged(token), [onContentChanged, token]);
+  const [note, setNote] = useState<Schema<"PublicApparatusOut"> | null>(null);
+  const [noteFailure, setNoteFailure] = useState<string | null>(null);
+  const noteRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => noteRequest.current?.abort(), []);
   const mark = useMemo(() => sharedMark(share), [share]);
   const options = useMemo(() => {
     const target: ReaderTarget | null =
@@ -189,11 +210,11 @@ function SharedDocument({
             }
           : { kind: "quads", page: mark.anchor.page, quads: mark.anchor.quads };
     return {
-      source: publicSource(token),
+      source: publicSource(token, changed),
       progress: null,
       entry: { fresh: Promise.resolve(target), cold: null },
     };
-  }, [mark, token]);
+  }, [changed, mark, token]);
   const reader = useDocumentReader(token, options);
   const identity = useReaderState(reader, (state) =>
     state.document.status === "ready" ? state.document.doc.identity : null,
@@ -219,12 +240,31 @@ function SharedDocument({
     [identity, mark],
   );
 
+  const openNote = useCallback(async (ordinal: string) => {
+    if (identity === null) return;
+    noteRequest.current?.abort();
+    const controller = new AbortController();
+    noteRequest.current = controller;
+    setNote(null);
+    setNoteFailure(null);
+    try {
+      const response = await publicFetch(`/apparatus/${ordinal}?expected_identity=${encodeURIComponent(identity)}`,
+        token, controller.signal, { "X-Nexus-Wire": String(WIRE_REVISION) });
+      if (response.status === 409) { onContentChanged(token); return; }
+      const body = await readResponse<ApiJson<"/public/resource-share/apparatus/{ordinal}", "get">>(response);
+      if (!controller.signal.aborted) setNote(body.data);
+    } catch (error) {
+      if (!controller.signal.aborted && !isAbortError(error)) setNoteFailure("this note couldn’t be opened");
+    }
+  }, [identity, onContentChanged, token]);
+
   return (
     <>
       <header className={styles.header}>
         <div className={styles.brand}>Nexus</div>
         <h1>{share.title}</h1>
         {share.bylines.length > 0 ? <p>{share.bylines.join(", ")}</p> : null}
+        {share.source_label !== null ? <p>from {share.source_label}</p> : null}
         {share.source_url !== null ? (
           <a
             href={share.source_url}
@@ -256,11 +296,44 @@ function SharedDocument({
           isMobile={false}
           showCaptureTitle={false}
           decorations={decorations}
+          onApparatus={(key, _rect, event) => { if (event === "activate") void openNote(key); }}
         />
       </main>
+      <Dialog open={note !== null || noteFailure !== null} title={note?.label ?? "note"}
+        onClose={() => { noteRequest.current?.abort(); setNote(null); setNoteFailure(null); }}>
+        {noteFailure ? <p role="alert">{noteFailure}</p> : note ?
+          <PublicNote token={token} note={note} onContentChanged={changed} onReturn={(unit,anchor) => {
+            setNote(null);
+            void reader.inspect({ target: anchor === null ? { kind: "point", point: { kind: "text", unit, offset: 0 } } : { kind: "anchor", unit, id: anchor } });
+          }} /> : null}
+      </Dialog>
       <footer className={styles.footer}>
         Read-only shared view. No Nexus account is required.
       </footer>
     </>
   );
+}
+
+
+function PublicNote({ token, note, onContentChanged, onReturn }: {
+  readonly token: string; readonly note: Schema<"PublicApparatusOut">; readonly onContentChanged: () => void;
+  readonly onReturn: (unit: string, anchor: string | null) => void;
+}) {
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    if (body.current) publicSource(token, onContentChanged).hydrate!(body.current, controller.signal);
+    return () => controller.abort();
+  }, [note, onContentChanged, token]);
+  return <div ref={body} onClickCapture={event => {
+    const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
+    if (link?.dataset.nexusFragmentId) {
+      event.preventDefault();
+      onReturn(link.dataset.nexusFragmentId, link.dataset.nexusAnchorId ?? null);
+    } else if (link?.getAttribute("href")?.startsWith("#")) {
+      event.preventDefault();
+      const anchor = link.getAttribute("href")!.slice(1);
+      body.current?.querySelector(`#${CSS.escape(anchor)}`)?.scrollIntoView();
+    }
+  }}>{note.content.map((content,index) => <HtmlRenderer key={index} htmlSanitized={content.html_sanitized} headingLevelOffset={2} />)}</div>;
 }
