@@ -14,6 +14,8 @@
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
  * (another device may have moved or reset it) and an unload writes nothing.
+ * A revision-bound queue toggle instead resumes its exact loaded subject in place;
+ * it checks local progress fences but neither rereads a descriptor nor reloads audio.
  * Natural end reports its real terminal sample to the queue command owner. The engine never
  * chooses a successor; durable queue advancement precedes the next load.
  * Each installation/reload owns a fresh playback subject. A seek validates that occurrence
@@ -542,6 +544,22 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         }
         if (best !== null) current.overrideRevision = best.consumption_override_revision;
       }
+      void audio.play().catch(() => sync());
+    },
+    async resumeLoaded(expectedSubject) {
+      const current = episode;
+      if (current === null || state.source?.kind !== "Episode" || state.playbackSubject !== expectedSubject ||
+          state.phase === "Ended" || state.playbackFailed)
+        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+      if (current.fenced) {
+        await engine.reconcileProgressFence(current.descriptor.media_id);
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", current.fenced
+          ? "listening progress is unavailable. retry to synchronize it."
+          : "listening progress synchronized. press play to resume.");
+      }
+      if (state.error !== null) throw new ApiError(409, "E_PLAYBACK_REFUSED", "retry playback in the player before resuming this episode.");
+      asked += 1;
+      advanceAllowed = true;
       void audio.play().catch(() => sync());
     },
     async pause() {

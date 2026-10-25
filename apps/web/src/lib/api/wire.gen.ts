@@ -6817,20 +6817,6 @@ export interface components {
             items: components["schemas"]["LecternItemOut"][];
             order_revision: components["schemas"]["OrderRevision"];
         };
-        /** LecternQueueSource */
-        LecternQueueSource: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Lectern";
-            /** Label */
-            label: string;
-            /** Query */
-            query: string;
-            /** Sort */
-            sort: ("added_asc" | "added_desc" | "title_asc" | "title_desc") | null;
-        };
         /** LecternWriteOut */
         LecternWriteOut: {
             order_revision: components["schemas"]["OrderRevision"];
@@ -7098,31 +7084,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Library";
-            /**
-             * Library Id
-             * Format: uuid
-             */
-            library_id: string;
-            /** Projection */
-            projection: ("unfiled" | "in_progress") | null;
-            /** Query */
-            query: string;
-            /** Sort */
-            sort: ("title_asc" | "title_desc" | "creator_asc" | "creator_desc" | "published_asc" | "published_desc" | "remaining_asc" | "remaining_desc" | "added_asc" | "added_desc") | null;
-        };
-        /** LibraryQueueSource */
-        LibraryQueueSource: {
-            /** Completion */
-            completion: "unfinished" | null;
-            /** Entry Type */
-            entry_type: ("web_article" | "epub" | "pdf" | "video" | "podcast_episode") | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Library";
-            /** Label */
-            label: string;
             /**
              * Library Id
              * Format: uuid
@@ -9166,8 +9127,6 @@ export interface components {
         PlaybackSnapshotOut: {
             /** Media Ids */
             media_ids: string[];
-            /** Source */
-            source: components["schemas"]["LibraryQueueSource"] | components["schemas"]["PodcastQueueSource"];
         };
         /** PlaybackSnapshotRequest */
         PlaybackSnapshotRequest: {
@@ -9815,33 +9774,6 @@ export interface components {
              */
             state: "all" | "unplayed" | "in_progress" | "played";
         };
-        /** PodcastQueueSource */
-        PodcastQueueSource: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Podcast";
-            /** Label */
-            label: string;
-            /**
-             * Podcast Id
-             * Format: uuid
-             */
-            podcast_id: string;
-            /** Query */
-            query: string;
-            /**
-             * Sort
-             * @enum {string}
-             */
-            sort: "newest" | "oldest" | "duration_asc" | "duration_desc";
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "all" | "unplayed" | "in_progress" | "played";
-        };
         /** PodcastRecurringOut */
         PodcastRecurringOut: {
             /** Error Code */
@@ -10295,8 +10227,6 @@ export interface components {
              * Format: uuid
              */
             queue_id: string;
-            /** Source */
-            source: (components["schemas"]["LecternQueueSource"] | components["schemas"]["LibraryQueueSource"] | components["schemas"]["PodcastQueueSource"]) | null;
         };
         /** QuickReadsOut */
         QuickReadsOut: {

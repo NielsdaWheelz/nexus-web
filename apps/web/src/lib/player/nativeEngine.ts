@@ -30,7 +30,7 @@ import {
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
 import { announceListeningRevision, listeningSourceReconnected, setObservationTransport } from "@/lib/consumption/listening";
-import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest, type QueueSource } from "@/lib/player/queue";
+import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest } from "@/lib/player/queue";
 import {
   expectArray, expectBoolean, expectCanonicalRfcUuid, expectExactRecord, expectFiniteNumber, expectNonnegativeInteger,
   expectNullableString, expectOneOf, expectRecord, expectString,
@@ -71,7 +71,7 @@ type Frame =
   | { readonly id: number; readonly ok: false; readonly error: string };
 
 // ---- strict frame decoding at the native boundary ----
-// Descriptors, chapters and queue sources are the same-deploy server's types that native
+// Descriptors and chapters are the same-deploy server's types that native
 // carries verbatim; only their object shape and identity fields are checked here.
 
 const REVISION = /^(0|[1-9][0-9]{0,18})$/;
@@ -88,18 +88,22 @@ function decodeEntry(raw: unknown, name: string): QueueEntry {
 }
 
 function decodeHeader(raw: unknown): QueueHeader {
-  const value = expectExactRecord(raw, ["queue_id", "revision", "current_entry_id", "current_entry", "current_index", "count", "source", "can_restore"], "queue");
-  return {
+  const value = expectExactRecord(raw, ["queue_id", "revision", "current_entry_id", "current_entry", "current_index", "count", "can_restore"], "queue");
+  const header: QueueHeader = {
     queue_id: expectCanonicalRfcUuid(value.queue_id, "queue.queue_id"),
     revision: expectRevision(value.revision, "queue.revision"),
     current_entry_id: nullable(value.current_entry_id, raw => expectCanonicalRfcUuid(raw, "queue.current_entry_id")),
     current_entry: nullable(value.current_entry, raw => decodeEntry(raw, "queue.current_entry")),
     current_index: nullable(value.current_index, raw => expectNonnegativeInteger(raw, "queue.current_index")),
     count: expectNonnegativeInteger(value.count, "queue.count"),
-    // justify-type-assertion: the queue source is the server's capture provenance, stored verbatim.
-    source: nullable(value.source, raw => expectRecord(raw, "queue.source") as QueueSource),
     can_restore: expectBoolean(value.can_restore, "queue.can_restore"),
   };
+  // justify-defect: these fields describe one accepted native queue, never a partial header.
+  if (header.count > 10_000 || (header.current_entry_id === null
+    ? header.current_entry !== null || header.current_index !== null
+    : header.current_entry?.id !== header.current_entry_id || header.current_index === null || header.current_index >= header.count))
+    throw new TypeError("inconsistent native queue header");
+  return header;
 }
 
 function decodeSource(raw: unknown): NativeSnapshot["source"] {
@@ -222,6 +226,13 @@ export function createNativeEngine(
 
   const publish = (snapshot: NativeSnapshot) => {
     if (snapshot.snapshot_id <= snapshotId) return;
+    const before = state.queue;
+    const next = snapshot.queue;
+    // justify-defect: one accepted revision fixes the sequence and cursor; undo eligibility is memory-owned.
+    if (before !== null && next !== null && before.queue_id === next.queue_id && before.revision === next.revision &&
+        (before.count !== next.count || before.current_entry_id !== next.current_entry_id || before.current_index !== next.current_index ||
+          before.current_entry?.id !== next.current_entry?.id || before.current_entry?.media_id !== next.current_entry?.media_id))
+      throw new TypeError("native queue changed without a revision");
     snapshotId = snapshot.snapshot_id;
     announceListeningRevision(snapshot.listening_revision);
     if (snapshot.consumption_revision !== state.consumptionRevision)
@@ -417,12 +428,16 @@ export function createNativeEngine(
     uncertain: () => uncertain,
     async read() { try { return await readQueue(); } catch (error) { throw queueError(error); } },
     async page(input) {
-      try { return (await call("queue_page", input)).entries ?? []; }
-      catch (error) { throw queueError(error); }
+      try {
+        const reply = await call("queue_page", input);
+        // justify-defect: every successful queue page supplies its entries, including an empty page.
+        if (reply.entries === undefined) throw new TypeError("native queue page omitted entries");
+        return reply.entries;
+      } catch (error) { throw queueError(error); }
     },
     async replace({ state: next, expected_revision, is_current }) {
       const begin = { queue_id: next.queue_id, expected_revision, count: next.entries.length,
-        current_entry_id: next.current_entry_id, source: next.source };
+        current_entry_id: next.current_entry_id };
       if (!bound) throw queueError(new Error("NotConnected"));
       if (!is_current()) throw queueError(new Error("Stale"));
       if (uncertain) throw new QueueCommandError("couldn’t confirm queue change");
@@ -483,6 +498,12 @@ export function createNativeEngine(
       const loaded = key();
       if (loaded === null) throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
       await command("play", { key: loaded, expected_load_id: state.playbackSubject });
+    },
+    async resumeLoaded(expectedSubject) {
+      const loaded = key();
+      if (loaded === null || state.playbackSubject !== expectedSubject || state.phase === "Ended" || state.playbackFailed || state.error !== null)
+        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+      await command("play", { key: loaded, expected_load_id: expectedSubject });
     },
     async pause() {
       await command("cancelPlayback");

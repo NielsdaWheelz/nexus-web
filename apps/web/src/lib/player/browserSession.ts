@@ -10,7 +10,7 @@ import { isAbortError } from "@/lib/errors";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { readSharedValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { QueueCommandError, type QueueState } from "@/lib/player/queue";
+import { QueueCommandError, type QueueRequest, type QueueState } from "@/lib/player/queue";
 
 type Session = Schema<"BrowserSessionOut">;
 type Put = Schema<"PutPlaybackSessionRequest">;
@@ -33,9 +33,9 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       const response = await requestWithDeadline({ signal: new AbortController().signal, timeoutMs: 5_000,
         request: signal => readSharedValue({ accountId, key: "playback-session", signal, revalidate: true,
           load: requestSignal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal: requestSignal, cache: "no-store" }) }) });
+      if (saved?.state.queue_id !== response.data?.state.queue_id || saved?.revision !== response.data?.revision) previous = null;
       saved = response.data;
       known = true;
-      previous = null;
       error = null;
       phase = "Ready";
       publish();
@@ -100,8 +100,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
     async save(state: QueueState, terminal: QueueTerminal | null = null, replacement = false) {
       if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
       const before = saved?.state ?? null;
-      previous = null;
-      pendingPrevious = replacement ? before : null;
+      pendingPrevious = replacement && before !== null && before.entries.length > 0 ? before : null;
       pending = { id: saved?.id ?? crypto.randomUUID(), expected_revision: saved?.revision ?? null, state, terminal };
       frozenBody = JSON.stringify(pending);
       const result = await send();
@@ -109,10 +108,11 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       return result;
     },
     check: () => pending === null ? read() : send(),
-    async restore() {
-      if (previous === null) return saved;
+    async restore(request: QueueRequest) {
+      if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
+      if (saved?.state.queue_id !== request.queue_id || saved.revision !== request.expected_revision || previous === null)
+        throw new QueueCommandError("queue changed; try again");
       const state = { ...previous, queue_id: crypto.randomUUID() };
-      previous = null;
       pendingPrevious = null;
       pending = { id: saved?.id ?? crypto.randomUUID(), expected_revision: saved?.revision ?? null, state, terminal: null };
       frozenBody = JSON.stringify(pending);

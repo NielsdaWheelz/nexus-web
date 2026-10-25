@@ -39,7 +39,7 @@ type RowContent =
  * native title navigation, passive artwork and independent controls keep owners.
  */
 export default function ResourceRow({
-  primary, title, content, leadingVisual, controls, selected, as: Root = "li", rootProps,
+  primary, title, content, leadingVisual, controls, selected, density, as: Root = "li", rootProps,
 }: {
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
@@ -47,6 +47,7 @@ export default function ResourceRow({
   readonly leadingVisual?: ReactNode;
   readonly controls?: ReactNode;
   readonly selected?: boolean;
+  readonly density?: "compact";
   readonly as?: "li" | "div";
   readonly rootProps?: HTMLAttributes<HTMLElement> & Partial<Record<`data-${string}`, string | boolean>>;
 }) {
@@ -83,7 +84,7 @@ export default function ResourceRow({
     </>; break;
     default: assertNever(content);
   }
-  return <Root {...rootProps} className={cx(styles.row, selected && styles.selected, rootProps?.className)}>
+  return <Root {...rootProps} className={cx(styles.row, density === "compact" && styles.compact, selected && styles.selected, rootProps?.className)}>
     <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details)}>
       {leadingVisual ? <div className={styles.leadingVisual}>{leadingVisual}</div> : null}
       <div className={styles.content}>

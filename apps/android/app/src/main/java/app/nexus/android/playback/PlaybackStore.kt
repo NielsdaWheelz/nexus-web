@@ -15,7 +15,8 @@ import java.util.UUID
 /**
  * One account's atomic playback envelope. Queue/cursor, recorder writes, retained
  * descriptors and the occurrence checkpoint commit together. Activity and audio
- * files retain their existing owners. Nothing in this file grants autoplay.
+ * files retain their existing owners. A checkpoint is attached to its occurrence;
+ * only a matching current occurrence may use it. Nothing in this file grants autoplay.
  * Mutations are serialized with the fixed-route reader; no lock crosses networking.
  */
 internal class PlaybackStore private constructor(context: Context, val accountId: UUID) {
@@ -23,51 +24,98 @@ internal class PlaybackStore private constructor(context: Context, val accountId
     @Volatile var value: JSONObject = try {
         JSONObject(String(file.readFully(), Charsets.UTF_8)).also {
             require(it.getString("account_id") == accountId.toString())
-            validateQueue(it.getJSONObject("queue"))
         }
     } catch (error: FileNotFoundException) {
         if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists()) throw error
         // justify-ignore-error: a first account binding starts with an empty queue.
-        JSONObject().put("account_id", accountId.toString())
+        JSONObject().put("format_version", 2).put("account_id", accountId.toString())
             .put("queue", JSONObject().put("queue_id", UUID.randomUUID().toString())
                 .put("revision", 1L).put("entries", JSONArray())
-                .put("current_entry_id", JSONObject.NULL).put("source", JSONObject.NULL))
+                .put("current_entry_id", JSONObject.NULL))
             .put("lane", JSONArray()).put("descriptors", JSONObject())
-            .put("checkpoint", JSONObject.NULL)
+            .put("checkpoint", JSONObject.NULL).put("fact_sequence", 0L).put("listening", JSONObject())
     }
         private set
     var onListeningChanged: (() -> Unit)? = null
 
     init {
         ListeningPublication.nextRevision()
-        // One explicit conversion preserves old authored samples, without inventing observations.
-        if (!value.has("format_version")) update { envelope ->
-            envelope.put("format_version", 1).put("fact_sequence", 0L).put("listening", JSONObject())
-            val lane = envelope.getJSONArray("lane")
-            for (index in 0 until lane.length()) {
-                val fact = lane.getJSONObject(index)
-                val sequence = envelope.getLong("fact_sequence") + 1
-                envelope.put("fact_sequence", sequence)
-                fact.put("sequence", sequence).put("barrier", fact.getBoolean("settle") || threshold(sample(fact)))
-                projectFact(envelope, fact)
-            }
-            val descriptors = envelope.getJSONObject("descriptors")
-            for (id in descriptors.keys()) {
-                val descriptor = descriptors.getJSONObject(id)
-                val listening = descriptor.optJSONObject("local_listening") ?: continue
-                val record = record(envelope, id)
-                if (record.optJSONObject("local") != null) continue
-                val sequence = envelope.getLong("fact_sequence") + 1
-                envelope.put("fact_sequence", sequence)
-                projectFact(envelope, JSONObject().put("sequence", sequence).put("media_id", id)
-                    .put("body", listening).put("settle", false))
-                record.getJSONObject("local").put("completed", descriptor.optBoolean("locally_completed") || threshold(listening))
-                record.put("ack_sequence", sequence)
+        // Only known v1 is converted; older formats need explicit preflight repair.
+        require(value.get("format_version") is Int && value.getInt("format_version") in 1..2)
+        val queue = JSONObject(value.getJSONObject("queue").toString())
+        if (value.getInt("format_version") == 1) {
+            require(queue.keys().asSequence().toSet() == setOf("queue_id", "revision", "entries", "current_entry_id", "source"))
+            require(queue.isNull("source") || queue.get("source") is JSONObject)
+            queue.remove("source")
+        }
+        validateQueue(queue)
+        val factSequence = value.getLong("fact_sequence")
+        require(factSequence >= 0)
+        var lastSequence = 0L
+        for (fact in facts(value)) {
+            require(fact.keys().asSequence().toSet() == setOf("sequence", "media_id", "body", "settle", "barrier"))
+            UUID.fromString(fact.getString("media_id"))
+            val sequence = fact.getLong("sequence")
+            require(sequence > lastSequence && sequence <= factSequence)
+            lastSequence = sequence
+            require(fact.get("settle") is Boolean && fact.get("barrier") is Boolean)
+            validateListening(sample(fact))
+            if (fact.getBoolean("settle")) {
+                val body = fact.getJSONObject("body")
+                require(body.keys().asSequence().toSet() == setOf("terminal_listening", "expected_override_revision"))
+                require(body.nullableLong("expected_override_revision")?.let { it >= 0 } != false)
             }
         }
-        require(value.getInt("format_version") == 1)
-        require(value.getLong("fact_sequence") >= 0)
-        value.getJSONObject("listening")
+        val listening = value.getJSONObject("listening")
+        for (id in listening.keys()) {
+            UUID.fromString(id)
+            val record = listening.getJSONObject(id)
+            require(record.has("observed") && record.has("local") && record.has("ack_revision"))
+            if (!record.isNull("observed")) {
+                val observed = record.getJSONObject("observed")
+                validateObservation(observed)
+                require(observed.getString("media_id") == id)
+            }
+            require(record.getLong("ack_sequence") in 0..factSequence)
+            require(record.get("source_unavailable") is Boolean)
+            require(record.nullableString("ack_revision")?.matches(Regex("[1-9][0-9]*")) != false)
+            if (!record.isNull("local")) {
+                val local = record.getJSONObject("local")
+                require(local.getString("sequence").toLong() in 1..factSequence)
+                require(local.getLong("reset_epoch") >= 0 && local.getLong("position_ms") >= 0)
+                require(local.has("duration_ms") && local.nullableLong("duration_ms")?.let { it >= 0 } != false)
+                require(local.get("completed") is Boolean && local.has("terminal"))
+                require(local.getString("disposition") in setOf("Pending", "SourceUnavailable"))
+                if (!local.isNull("terminal")) require(local.getJSONObject("terminal")
+                    .nullableLong("expected_override_revision")?.let { it >= 0 } != false)
+            }
+        }
+        val descriptors = value.getJSONObject("descriptors")
+        for (id in descriptors.keys()) {
+            UUID.fromString(id)
+            val descriptor = descriptors.getJSONObject(id)
+            require(descriptor.getString("media_id") == id)
+            descriptor.getString("title")
+            descriptor.getString("stream_url")
+            require(descriptor.getLong("position_ms") >= 0 && descriptor.getLong("reset_epoch") >= 0)
+            require(descriptor.has("duration_ms") && descriptor.nullableLong("duration_ms")?.let { it >= 0 } != false)
+            require(descriptor.has("consumption_override_revision") && descriptor.nullableLong("consumption_override_revision")?.let { it >= 0 } != false)
+            require(descriptor.getDouble("playback_rate") in 0.5..3.0)
+            require(descriptor.has("pause_shortening_mode") && descriptor.nullableString("pause_shortening_mode") in setOf(null, "Natural", "Off"))
+            descriptor.getJSONArray("chapters")
+        }
+        require(value.has("checkpoint"))
+        if (!value.isNull("checkpoint")) {
+            val checkpoint = value.getJSONObject("checkpoint")
+            require(checkpoint.keys().asSequence().toSet() == setOf("entry_id", "listening", "consumption_override_revision", "shorten_pauses"))
+            UUID.fromString(checkpoint.getString("entry_id"))
+            validateListening(checkpoint.getJSONObject("listening"))
+            require(checkpoint.nullableLong("consumption_override_revision")?.let { it >= 0 } != false)
+            require(checkpoint.get("shorten_pauses") is Boolean)
+        }
+        if (value.getInt("format_version") == 1) update { envelope ->
+            envelope.put("queue", queue).put("format_version", 2)
+        }
     }
 
     val queue: JSONObject get() = value.getJSONObject("queue")
@@ -166,7 +214,7 @@ internal class PlaybackStore private constructor(context: Context, val accountId
             .put("current_entry_id", current ?: JSONObject.NULL)
             .put("current_entry", index?.let(entries::getJSONObject) ?: JSONObject.NULL)
             .put("current_index", index ?: JSONObject.NULL).put("count", entries.length())
-            .put("source", queue.get("source")).put("can_restore", false)
+            .put("can_restore", false)
     }
 
     fun descriptor(mediaId: UUID): JSONObject? = value.getJSONObject("descriptors")
@@ -209,6 +257,13 @@ internal class PlaybackStore private constructor(context: Context, val accountId
                 .put("disposition", if (record.getBoolean("source_unavailable")) "SourceUnavailable" else "Pending"))
             if (!listening.isNull("episode_playback_rate")) record.put("playback_rate", listening.getDouble("episode_playback_rate"))
         }
+        private fun validateListening(sample: JSONObject) {
+            require(sample.keys().asSequence().toSet() == setOf("position_ms", "duration_ms", "episode_playback_rate", "expected_reset_epoch"))
+            require(sample.getLong("position_ms") >= 0 && sample.getLong("expected_reset_epoch") >= 0)
+            require(sample.nullableLong("duration_ms")?.let { it >= 0 } != false)
+            require(sample.isNull("episode_playback_rate") || sample.getDouble("episode_playback_rate") in 0.5..3.0)
+        }
+
         fun validateObservation(observation: JSONObject) {
             require(observation.keys().asSequence().toSet() == setOf("media_id", "consumption_revision", "state"))
             UUID.fromString(observation.getString("media_id"))
@@ -274,31 +329,9 @@ internal class PlaybackStore private constructor(context: Context, val accountId
             UUID.fromString(entry.getString("media_id"))
         }
 
-        fun validateSource(source: JSONObject?) {
-            if (source == null) return
-            require(source.toString().toByteArray(Charsets.UTF_8).size <= 8 * 1024)
-            val kind = source.getString("kind")
-            require(kind in setOf("Lectern", "Library", "Podcast"))
-            source.getString("label")
-            source.getString("query")
-            when (kind) {
-                "Lectern" -> require(source.nullableString("sort") in setOf(null, "added_asc", "added_desc", "title_asc", "title_desc"))
-                "Library" -> {
-                    UUID.fromString(source.getString("library_id"))
-                    require(source.nullableString("sort") in setOf(null, "title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"))
-                    require(source.nullableString("projection") in setOf(null, "unfiled", "in_progress"))
-                    require(source.nullableString("completion") in setOf(null, "unfinished"))
-                    require(source.nullableString("entry_type") in setOf(null, "web_article", "epub", "pdf", "video", "podcast_episode"))
-                }
-                "Podcast" -> {
-                    UUID.fromString(source.getString("podcast_id"))
-                    require(source.getString("state") in setOf("all", "unplayed", "in_progress", "played"))
-                    require(source.getString("sort") in setOf("newest", "oldest", "duration_asc", "duration_desc"))
-                }
-            }
-        }
-
         fun validateQueue(queue: JSONObject) {
+            require(queue.keys().asSequence().toSet() == setOf("queue_id", "revision", "entries", "current_entry_id"))
+            require((queue.get("revision") is Int || queue.get("revision") is Long) && queue.getLong("revision") > 0)
             UUID.fromString(queue.getString("queue_id"))
             val entries = queue.getJSONArray("entries")
             require(entries.length() <= MAX_ENTRIES)
@@ -310,7 +343,6 @@ internal class PlaybackStore private constructor(context: Context, val accountId
             }
             val current = queue.nullableString("current_entry_id")
             require(current == null || current in ids)
-            validateSource(queue.optJSONObject("source"))
         }
     }
 }

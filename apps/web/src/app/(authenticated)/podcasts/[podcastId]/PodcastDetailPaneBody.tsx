@@ -8,7 +8,6 @@
 import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource } from "@/lib/actions/playbackSource";
-import { paneFilterText } from "@/lib/panes/paneFilterText";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { presentMedia } from "@/lib/collections/presenters/media";
@@ -519,8 +518,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               const sourceSort = (["newest", "oldest", "duration_asc", "duration_desc"] as const).find(value => value === sort);
               if (sourceSort === undefined) throw new Error("invalid podcast queue sort");
               if (episodes.source.kind === "catalog")
-                return captureSavedView(visible.map(episode => episode.media_summary), selected_media_id,
-                  { kind: "Podcast", label: ready.data.podcast.title, podcast_id: podcastId, query: paneFilterText(text), state: known, sort: sourceSort });
+                return captureSavedView(visible.map(episode => episode.media_summary), selected_media_id);
               if (!live || !remoteReady()) throw new ApiError(503, "E_REMOTE_UNAVAILABLE", "requires a connection and current episode facts");
               return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
             }}>

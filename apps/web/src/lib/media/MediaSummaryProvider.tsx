@@ -3,7 +3,8 @@
 // The tab's stored-media summaries, keyed by media id (J6). A list retains the summaries
 // it shows; pane headers and live outline occurrences retain their supplied seeds too.
 // Seeded content renders before the existing batch revalidation; captured evidence
-// never retains a current summary. A list is seeded from its own read; a mount reads its rows again, and retained ids are
+// never retains a current summary. A list seeds its own read; added ids resolve,
+// unchanged membership stays retained, and retained ids are
 // resolved again when consumption or bibliography changes and when the page returns to
 // the screen (at most once a minute); ids whose resolve failed, also when the network
 // returns. Resolves batch every retain of one commit, up to
@@ -185,13 +186,13 @@ function createStore() {
         entry.retained += 1;
       }
       invalidate(ids);
-      return () => {
-        for (const id of ids) {
-          const entry = entries.get(id)!;
-          entry.retained -= 1;
-          if (entry.retained === 0) entries.delete(id);
-        }
-      };
+    },
+    release(ids: Iterable<string>) {
+      for (const id of ids) {
+        const entry = entries.get(id)!;
+        entry.retained -= 1;
+        if (entry.retained === 0) entries.delete(id);
+      }
     },
     get: (id: string) => entries.get(id)?.summary ?? null,
     pending: (id: string) => {
@@ -260,6 +261,25 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={store}>{children}</Context.Provider>;
 }
 
+/** Each hook owns its membership delta; overlap keeps its retain and freshness. */
+function useRetention(store: Store, key: string, seeds: readonly MediaSummary[]) {
+  const retained = useRef(new Set<string>());
+  const supplied = useRef(seeds);
+  supplied.current = seeds;
+  useEffect(() => () => {
+    store.release(retained.current);
+    retained.current.clear();
+  }, [store]);
+  useEffect(() => {
+    const next = new Set(key === "" ? [] : key.split(","));
+    const added = [...next].filter(id => !retained.current.has(id));
+    const removed = [...retained.current].filter(id => !next.has(id));
+    if (added.length > 0) store.retain({ ids: added, seeds: supplied.current });
+    store.release(removed);
+    retained.current = next;
+  }, [store, key]);
+}
+
 export function useMediaSummaries(seeds: readonly MediaSummary[], source: ReadSource = LIVE_SOURCE) {
   const captured = source.kind === "catalog";
   const store = useStore();
@@ -269,11 +289,7 @@ export function useMediaSummaries(seeds: readonly MediaSummary[], source: ReadSo
     key && !captured ? store.revision : () => 0,
     () => 0,
   );
-  const seedsRef = useRef(seeds);
-  seedsRef.current = seeds;
-  useEffect(() => {
-    if (key && !captured) return store.retain({ ids: key.split(","), seeds: seedsRef.current });
-  }, [store, key, captured]);
+  useRetention(store, captured ? "" : key, seeds);
   const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");
@@ -293,9 +309,7 @@ export function useMediaSummaryIds(mediaIds: readonly string[]) {
   const store = useStore();
   const key = [...new Set(mediaIds)].sort().join(",");
   useSyncExternalStore(key ? store.subscribe : () => () => {}, key ? store.revision : () => 0, () => 0);
-  useEffect(() => {
-    if (key) return store.retain({ ids: key.split(","), seeds: [] });
-  }, [store, key]);
+  useRetention(store, key, []);
   const ids = key === "" ? [] : key.split(",");
   return { resolve: store.get, pending: store.pending, error: store.error(ids),
     retry: () => store.retry(ids), retrying: store.retrying(ids) };

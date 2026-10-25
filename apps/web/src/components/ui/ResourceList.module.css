@@ -6,8 +6,3 @@
   padding: 0;
   list-style: none;
 }
-
-.list > li {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 52px;
-}
