@@ -54,3 +54,27 @@ provider sign-in now uses an explicit button: browser activation awaits the same
 account admission, handoff activation retains its existing destination without
 mutating browser binding. current-tab navigation replaces link modifier/context
 menu navigation; no link activation can bypass the local precondition.
+
+remaining confirmed multi-tab deletion defect: source `aa29a9ecb`, lab24
+`20261025-151708-996255e10b99`, blocked-purge case. failure screenshots show
+one tab's “sign out not completed” retry surface while the initiator remains
+“signing out on this device…” after ten seconds. `deleteDatabase.onblocked`
+rejects the first completion and releases the transition lock, but it does not
+cancel that indexeddb deletion. the next tab queues another deletion behind it;
+that queued request receives no blocked event and its completion waits forever
+while the refusal stays open. an independent actual chromium/indexeddb control
+reproduced first-blocked, no second-blocked, then both success only after the
+blocking connection closed. keep one deletion request's settlement ownership
+through blocking, and report its blocked state to waiting owners without issuing
+another queued deletion. preserve the complete cookie-clearing transition fence.
+resolve with the existing two-tab blocked-purge/retry case plus the held-signout
+new-login case, both green.
+
+pending repair now retains that one deletion promise and the full transition lock
+until actual success/error. `onblocked` publishes waiting, not failure; another
+tab detects the occupied lock and waits without issuing deletion. both show that
+removal continues automatically after other tabs release their connections.
+actual settled errors retain retry. the revised real blocked-purge case asserts
+the blocker received versionchange, both tabs report pending without retry, then
+both automatically finish, the corpus is absent and the online session is 401.
+source review is complete; that revised mounted case remains unrun.

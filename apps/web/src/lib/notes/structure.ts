@@ -18,7 +18,7 @@ export interface EditorHistory {
   boundary(): void;
   record(): void;
 }
-interface Group { refs: string[]; bytes: number; undo(): Promise<void>; redo(): Promise<void>; release(): void }
+interface Group { focus_ref?:string|null; refs: string[]; bytes: number; undo(): Promise<void>; redo(): Promise<void>; release(): void }
 interface TextHistory { document: WritingDocument; manager: Y.UndoManager; origin: symbol; latest: object | null; active: number; groups: number }
 export class OutlineHistory {
   private readonly past: Group[] = [];
@@ -26,7 +26,7 @@ export class OutlineHistory {
   private readonly texts = new Map<string, TextHistory>();
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
-  constructor(readonly runtime: WritingRuntime, private readonly failure: (error: unknown) => void) {}
+  constructor(readonly runtime: WritingRuntime, private readonly failure: (error: unknown) => void,private readonly beforeReplay?:(ref:string|null)=>void) {}
   editor(document: WritingDocument): EditorHistory {
     let entry = this.texts.get(document.ref);
     if (!entry || entry.document !== document) {
@@ -83,6 +83,7 @@ export class OutlineHistory {
   undo = (): void => this.enqueue(async () => {
     const group = this.past.at(-1);
     if (!group) return;
+    if(group.focus_ref!==undefined)this.beforeReplay?.(group.focus_ref);
     const completion=group.undo();
     this.past.pop();this.future.push(group);
     await completion;
@@ -90,6 +91,7 @@ export class OutlineHistory {
   redo = (): void => this.enqueue(async () => {
     const group = this.future.at(-1);
     if (!group) return;
+    if(group.focus_ref!==undefined)this.beforeReplay?.(group.focus_ref);
     const completion=group.redo();
     this.future.pop();this.past.push(group);
     await completion;
@@ -103,7 +105,7 @@ export class OutlineHistory {
     const creation = saved.change.resources.find(resource => resource.ref === ref)!.touch_vv;
     const addition = saved.change.links.find(link => link.link_id === placement.link_id)!.add_vv;
     let restored: LocalCommit | null = null;
-    this.push({ refs: [ref], bytes: new TextEncoder().encode(JSON.stringify({creation,addition})).byteLength,
+    this.push({ focus_ref:parent_ref,refs: [ref], bytes: new TextEncoder().encode(JSON.stringify({creation,addition})).byteLength,
       undo: async () => { await this.commit({kind:"batch",intents:[{kind:"delete_resource",ref,observed_touch:mergeDots(creation,restored?.change.resources.find(r=>r.ref===ref)?.touch_vv??{})},{kind:"unlink",link_id:placement.link_id,observed_add:mergeDots(addition,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]}); },
       redo: async () => { restored=await this.commit({kind:"batch",intents:[{kind:"restore_resource",ref},{kind:"restore_link",link_id:placement.link_id}]}); }, release:()=>{},
     });
@@ -155,7 +157,7 @@ export class OutlineHistory {
       const position=desired?.endpoint_a===endpoint?desired.position_a:desired?.position_b;
       return register&&position?[{kind:"restore_position" as const,link_id:link.link_id,endpoint_ref:endpoint,expected:register.stamp,position:position.value}]:[];
     });
-    this.push({refs,bytes:2*new TextEncoder().encode(JSON.stringify({resources,links,moved:[...moved.values()]})).byteLength,
+    this.push({focus_ref:parent_ref,refs,bytes:2*new TextEncoder().encode(JSON.stringify({resources,links,moved:[...moved.values()]})).byteLength,
       undo:async()=>{current=(await this.commit({kind:"batch",intents:[...resources.map(resource=>({kind:"delete_resource" as const,ref:resource.ref,observed_touch:mergeDots(resource.touch_vv,restored?.change.resources.find(item=>item.ref===resource.ref)?.touch_vv??{})})),...additions.map(link_id=>({kind:"unlink" as const,link_id,observed_add:mergeDots(links.find(link=>link.link_id===link_id)!.add_vv,restored?.change.links.find(link=>link.link_id===link_id)?.add_vv??{})})),...reorder(false)]})).change.links;},
       redo:async()=>{restored=await this.commit({kind:"batch",intents:[...resources.map(resource=>({kind:"restore_resource" as const,ref:resource.ref})),...additions.map(link_id=>({kind:"restore_link" as const,link_id})),...reorder(true)]});current=restored.change.links;},release:()=>{},
     });
@@ -188,7 +190,7 @@ export class OutlineHistory {
       return { kind: "edit_body", ref: source_ref, body_update: encodeBytes(Y.encodeStateAsUpdate(clone, vector)) };
     };
     let restored: LocalCommit | null = null;
-    this.push({ refs: [source_ref, new_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength+Y.encodeStateAsUpdate(source.doc).byteLength+new TextEncoder().encode(JSON.stringify({creation,addition})).byteLength,
+    this.push({ focus_ref:source_ref,refs: [source_ref, new_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength+Y.encodeStateAsUpdate(source.doc).byteLength+new TextEncoder().encode(JSON.stringify({creation,addition})).byteLength,
       undo: async () => { await this.commit({ kind: "batch", intents: [await textInverse(false), { kind: "delete_resource", ref: new_ref, observed_touch: mergeDots(creation, restored?.change.resources.find(r => r.ref === new_ref)?.touch_vv ?? {}) }, { kind: "unlink", link_id: placement.link_id, observed_add: mergeDots(addition, restored?.change.links.find(l => l.link_id === placement.link_id)?.add_vv ?? {}) }] }); },
       redo: async () => { restored = await this.commit({ kind: "batch", intents: [await textInverse(true), { kind: "restore_resource", ref: new_ref }, { kind: "restore_link", link_id: placement.link_id }] }); },
       release: () => { release(); manager.clear(); manager.destroy(); clone.destroy(); },
@@ -220,7 +222,7 @@ export class OutlineHistory {
       return { kind: "edit_body", ref: destination_ref, body_update: encodeBytes(Y.encodeStateAsUpdate(clone, vector)) };
     };
     let restored: LocalCommit | null = null;
-    this.push({ refs: [destination_ref, source_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength+Y.encodeStateAsUpdate(destination.doc).byteLength+new TextEncoder().encode(JSON.stringify(sourceTouch)).byteLength,
+    this.push({ focus_ref:destination_ref,refs: [destination_ref, source_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength+Y.encodeStateAsUpdate(destination.doc).byteLength+new TextEncoder().encode(JSON.stringify(sourceTouch)).byteLength,
       undo: async () => { restored = await this.commit({ kind: "batch", intents: [await inverse(false), { kind: "restore_resource", ref: source_ref }] }); },
       redo: async () => { await this.commit({ kind: "batch", intents: [await inverse(true), { kind: "delete_resource", ref: source_ref, observed_touch: mergeDots(sourceTouch, restored?.change.resources.find(r => r.ref === source_ref)?.touch_vv ?? {}) }] }); },
       release: () => { release(); manager.clear(); manager.destroy(); clone.destroy(); },
@@ -236,7 +238,7 @@ export class OutlineHistory {
     this.stopTyping();
     await this.commit({kind:"batch",intents:links.map(link=>({kind:"unlink",link_id:link.link_id,observed_add:link.add_vv}))});
     let restored:LocalCommit|null=null;
-    this.push({refs:links.flatMap(link=>[link.endpoint_a,link.endpoint_b]),bytes:2*new TextEncoder().encode(JSON.stringify(links)).byteLength,
+    this.push({focus_ref:null,refs:links.flatMap(link=>[link.endpoint_a,link.endpoint_b]),bytes:2*new TextEncoder().encode(JSON.stringify(links)).byteLength,
       undo:async()=>{restored=await this.commit({kind:"batch",intents:links.map(link=>({kind:"restore_link",link_id:link.link_id}))});},
       redo:async()=>{await this.commit({kind:"batch",intents:links.map(link=>({kind:"unlink",link_id:link.link_id,observed_add:mergeDots(link.add_vv,restored?.change.links.find(item=>item.link_id===link.link_id)?.add_vv??{})}))});},release:()=>{},
     });

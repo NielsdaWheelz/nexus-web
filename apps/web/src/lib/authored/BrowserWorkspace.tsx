@@ -13,12 +13,13 @@ import { normalizeWorkspaceHref, resolveTodayHref, MAX_WORKSPACE_HREF_LENGTH } f
 import { enterWorkspace } from "@/lib/workspace/model";
 import { beginBrowserSignIn, browserSignedOut, readBrowserRetiring, readBrowserBinding, writeBrowserBinding, type BrowserBinding } from "./binding";
 import { admitAuthoredAccount } from "./client";
-import { finishBrowserRetirement } from "./signOut";
+import { finishBrowserRetirement, type BrowserRetirementPending } from "./signOut";
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<BrowserBinding | null>(null);
   const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
   const [retiring, setRetiring] = useState(false);
+  const [retirementPending, setRetirementPending] = useState<BrowserRetirementPending | null>(null);
   const [failure, setFailure] = useState<Error | null>(null);
   const [attempt, retry] = useState(0);
   const retiredReceipt = useRef(false);
@@ -27,8 +28,8 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
     let handlingRetirement = false;
     const finishRetirement = async () => {
       handlingRetirement = true;
-      if (live) { setBinding(null); setRetiring(true); setFailure(null); }
-      await finishBrowserRetirement(retiredReceipt.current);
+      if (live) { setBinding(null); setRetiring(true); setRetirementPending(null); setFailure(null); }
+      await finishBrowserRetirement(retiredReceipt.current, phase => { if (live) setRetirementPending(phase); });
       if (live) { setRetiring(false); setSignedOut(true); }
     };
     void (async () => {
@@ -69,7 +70,19 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
     return () => { live = false; window.removeEventListener("nexus:authored-retired", retired); };
   }, [attempt]);
   const signIn = () => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); };
-  if (retiring) return <FeedbackState content={{ tone: failure === null ? "Neutral" : "Danger", title: failure === null ? "signing out on this device…" : "sign out not completed", message: failure?.message }} announcement="Polite" actions={failure === null ? undefined : [{ label: "retry sign out", onClick: () => retry(value => value + 1) }]} />;
+  if (retiring) return <FeedbackState
+    content={{
+      tone: failure === null ? "Neutral" : "Danger",
+      title: failure !== null ? "sign out not completed" : retirementPending === null ? "signing out on this device…" : "waiting to finish sign out",
+      message: failure?.message ?? (retirementPending === "blocked_database"
+        ? "close other nexus tabs to finish removing local notes. this page will continue automatically."
+        : retirementPending === "another_tab"
+          ? "another nexus tab is finishing removal. close other nexus tabs if removal is blocked; this page will continue automatically."
+          : undefined),
+    }}
+    announcement="Polite"
+    actions={failure === null ? undefined : [{ label: "retry sign out", onClick: () => retry(value => value + 1) }]}
+  />;
   if (signedOut) return <FeedbackState content={{ tone: "Neutral", title: "signed out on this device", message: failure?.message }} announcement="None" actions={[{ label: "sign in", onClick: signIn }]} />;
   if (failure) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your workspace", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: "sign in", onClick: signIn }]} />;
   if (!binding) return <FeedbackState content={{ tone: "Neutral", title: "opening your workspace…" }} announcement="None" />;

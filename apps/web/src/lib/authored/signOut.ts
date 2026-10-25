@@ -19,7 +19,8 @@ async function control(accountId: string, op: "pause_commands" | "retire", pause
     worker.port.start(); worker.port.postMessage(op === "retire" ? { id: 2, op, account_id: accountId, format_revision: FORMAT_REVISION } : { id: 1, op: "hello", account_id: accountId, format_revision: FORMAT_REVISION });
   });
 }
-async function purgeBrowser(accountId: string, alreadyRetired: boolean): Promise<void> {
+export type BrowserRetirementPending = "another_tab" | "blocked_database";
+async function purgeBrowser(accountId: string, alreadyRetired: boolean, onBlocked: () => void): Promise<void> {
   // A live retired receipt follows database close. Reopening that dying worker
   // cannot add a fence; only interrupted startup needs a fresh retirement.
   if (!alreadyRetired) await control(accountId, "retire");
@@ -27,20 +28,28 @@ async function purgeBrowser(accountId: string, alreadyRetired: boolean): Promise
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase(`nexus-authored-${accountId}`);
     request.onsuccess = () => resolve(); request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error("close other nexus tabs and retry sign out to finish removing local notes."));
+    // onblocked does not cancel deletion. Keep this request and the account
+    // transition lock until success/error; releasing either queues a second delete.
+    request.onblocked = onBlocked;
   });
   await clearBrowserRetiring();
 }
-export async function finishBrowserRetirement(alreadyRetired = false): Promise<boolean> {
-  return navigator.locks.request("nexus-authored-account-transition", async () => {
+export async function finishBrowserRetirement(alreadyRetired: boolean, onPending: (phase: BrowserRetirementPending | null) => void): Promise<boolean> {
+  const finish = async () => {
+    onPending(null);
     // Recheck after admission: another tab may already have finished removal.
     const account = await readBrowserRetiring();
     if (account === null) return false;
-    await purgeBrowser(account, alreadyRetired);
+    await purgeBrowser(account, alreadyRetired, () => onPending("blocked_database"));
     // The shell retirement owner outlives the account menu that requested exit.
     try { await fetch("/auth/signout", { method: "POST", credentials: "same-origin", redirect: "manual" }); }
     catch { /* Offline removal is enforced by the durable signed-out marker. */ }
     return true;
+  };
+  return navigator.locks.request("nexus-authored-account-transition", { ifAvailable: true }, lock => {
+    if (lock !== null) return finish();
+    onPending("another_tab");
+    return navigator.locks.request("nexus-authored-account-transition", finish);
   });
 }
 export async function prepareAuthoredSignOut(accountId: string): Promise<boolean> {

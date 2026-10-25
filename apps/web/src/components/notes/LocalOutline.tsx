@@ -2,6 +2,7 @@
 /** Ordered local user relationships. One exact occurrence owns structural keys;
  * repeated appearances share content, while unlink and join name their own ids. */
 import { createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {isEditableTarget} from "@/lib/ui/eventTarget";
 import Button from "@/components/ui/Button";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
@@ -16,6 +17,7 @@ import { LocalCommitError, writingStoreStopped, selectStates } from "@/lib/notes
 import {isVisible} from "@nexus/authored/merge";
 import {parseBody} from "@nexus/authored/body";
 import type { Intent } from "@nexus/authored/commands";
+import {localResourceLabel} from "@/lib/resources/localResource";
 import {prepareTarget} from "@/lib/resourceGraph/links";
 import { sortedEndpoints } from "@nexus/authored/identity";
 import type { LinkState,ResourceProjection,QueryResult } from "@nexus/authored/types";
@@ -39,7 +41,24 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
   const inherited = session ?? context;
   const [retryReference,setRetryReference]=useState<(()=>Promise<unknown>)|null>(null);
   const [error, setError] = useState<unknown | null>(null);
-  const own = useMemo(() => runtime && !inherited ? new OutlineHistory(runtime, setError) : null, [runtime,inherited]);
+  const surface = useRef<HTMLDivElement>(null);
+  const focusVisible = useCallback((ref: string): boolean => {
+    const row = [...surface.current?.querySelectorAll<HTMLElement>("[data-outline-occurrence][data-resource-ref]") ?? []].find(row => row.dataset.resourceRef === ref && row.closest("[data-local-outline]")===surface.current);
+    const editor=ref.startsWith("note_block:")?row?.querySelector<HTMLElement>('[role="textbox"]'):row;
+    editor?.focus();
+    return editor!==null && editor!==undefined;
+  }, []);
+  const beforeReplay=useCallback((ref:string|null)=>{
+    const active=document.activeElement;
+    if(!(active instanceof HTMLElement)||!surface.current?.contains(active))return;
+    const owner=active.closest<HTMLElement>('[data-local-outline]');
+    if(!owner)return;
+    if(ref!==null&&active.closest('[data-resource-ref]')?.getAttribute('data-resource-ref')===ref)return;
+    const row=ref===null?null:[...owner.querySelectorAll<HTMLElement>('[data-resource-ref]')].find(row=>row.dataset.resourceRef===ref&&row.closest('[data-local-outline]')===owner);
+    const target=ref?.startsWith('note_block:')?row?.querySelector<HTMLElement>('[role="textbox"]'):row;
+    (target??owner).focus();
+  },[]);
+  const own = useMemo(() => runtime && !inherited ? new OutlineHistory(runtime, setError,beforeReplay) : null, [runtime,inherited,beforeReplay]);
   const history = inherited ?? own;
   useEffect(() => () => { if (!inherited) own?.close(); }, [inherited, own]);
   const [windowState, setWindow] = useState<{root:string;anchor:string|null;cursor:string|null}>({root:rootRef,anchor:null,cursor:null});
@@ -47,6 +66,9 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
   const read = useAuthoredQuery(current.anchor===null
     ? {kind:"adjacency",ref:rootRef,cursor:current.cursor,limit:48}
     : {kind:"adjacency_window",ref:rootRef,link_id:current.anchor,cursor:current.cursor,limit:48});
+  const root=useAuthoredQuery({kind:"resource",ref:rootRef});
+  const rootResource=root.data?.rows[0]?.resource;
+  const rootLabel=rootResource?localResourceLabel(rootResource):rootRef;
   const rows = read.data?.rows ?? EMPTY_ROWS;
   const links = rows.flatMap(row => row.link ? [row.link] : []);
   const [active,setActive]=useState(false);
@@ -54,7 +76,6 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
   const [selectionState,setSelection]=useState<{anchor:string|null;keys:readonly string[]}>({anchor:null,keys:[]});
   const registry=useRef(new Map<string,SelectedRow>());
   const [selected, setSelected] = useState<string | null>(null);
-  const surface = useRef<HTMLDivElement>(null);
   const ownSelection=useMemo(()=>({state:selectionState,set:setSelection,root:surface,registry:registry.current}),[selectionState]);
   const selection=inheritedSelection??ownSelection;
   const visible=useCallback(()=>[...selection.root.current?.querySelectorAll<HTMLElement>("[data-outline-occurrence]")??[]].filter(element=>element.getClientRects().length>0&&selection.registry.has(element.dataset.outlineOccurrence!)),[selection.root,selection.registry]);
@@ -85,12 +106,6 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
   const pendingFocus=useRef<{ref:string;finish(value:boolean):void;fail(error:unknown):void}|null>(null);
   const [focusRevision,setFocusRevision]=useState(0);
   const focusRequest=useRef(0);
-  const focusVisible = useCallback((ref: string): boolean => {
-    const row = [...surface.current?.querySelectorAll<HTMLElement>("[data-outline-occurrence][data-resource-ref]") ?? []].find(row => row.dataset.resourceRef === ref && row.closest("[data-local-outline]")===surface.current);
-    const editor=ref.startsWith("note_block:")?row?.querySelector<HTMLElement>('[role="textbox"]'):row;
-    editor?.focus();
-    return editor!==null && editor!==undefined;
-  }, []);
   const focusResource = useCallback(async(ref:string,signal?:AbortSignal):Promise<boolean> => {
     const requestId=++focusRequest.current;
     pendingFocus.current?.fail(new DOMException("focus superseded","AbortError"));
@@ -190,7 +205,8 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
   },[active,history,filter,rows,selected,ancestors,rootRef,occurrencePrefix,prelude,act,focus,outdent,selection.state.keys,adjacentNote,current.cursor,read.data]);
   usePaneOutlineCommands(publication);
   if (!runtime || !history) return null;
-  return <BlockSelectionContext value={selection}><HistoryContext value={history}><div ref={surface} data-local-outline="true"
+  return <BlockSelectionContext value={selection}><HistoryContext value={history}><div ref={surface} data-local-outline="true" tabIndex={-1}
+    onKeyDown={event=>{if(event.target===event.currentTarget&&(event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="z"){event.preventDefault();if(event.shiftKey)history.redo();else history.undo();}}}
     onFocusCapture={event=>setActive(event.target.closest('[data-local-outline]')===event.currentTarget)}
     onBlurCapture={event=>{if(!event.currentTarget.contains(event.relatedTarget))setActive(false);}}>
     {read.error ? <div role="alert"><p>couldn’t open these links on this device.</p><Button onClick={read.retry}>retry</Button></div> : null}
@@ -205,7 +221,7 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
         const join = (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => act((async()=>{const [neighbor,shown]=await Promise.all([adjacentNote(link,direction==="backward"?"before":"after"),displayed]);if(neighbor&&neighbor!==ref){const destination=direction==="backward"?neighbor:ref;await history.join(destination,direction==="backward"?ref:neighbor,direction==="backward"?{source:shown}:{destination:shown});await focus(destination);}})());
         if(filter.trim() && ![row.resource.title,row.resource.body_text,row.resource.selection?.quote_exact].some(value=>value?.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())))return null;
         return <ResourceOutlineRow key={link.link_id} resourceRef={ref} occurrenceKey={`${occurrencePrefix}/${link.link_id}`}
-          incoming={{ kind: "link", linkId:link.link_id,parentLabel:rootRef,unlink:()=>act(history.unlink(link)) }} editable={!filter.trim()}
+          incoming={{ kind: "link", linkId:link.link_id,parentLabel:rootLabel,unlink:()=>act(history.unlink(link)) }} editable={!filter.trim()}
           body={row.resource.kind === "note" ? <BoundNoteEditor noteRef={ref} session={history} editable={!filter.trim()} onSplit={position => act(history.split(ref, position, rootRef, link.link_id).then(focus))} onJoin={join}
             reference={{source_ref:rootRef,label:rootRef,onSelected:(target,item)=>{
               const accept=async()=>{const endpoint=await prepareTarget(runtime,target);await history.paste(rootRef,link.link_id,[{kind:"resource",ref:endpoint.ref,label:item.label,parent:null}],endpoint.intents);};
@@ -233,9 +249,9 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
               event.preventDefault();
               try{const items=readOutlineClipboard(event.clipboardData);act(history.paste(rootRef,link.link_id,items,prelude).then(refs=>{if(refs[0])focus(refs[0]);}));}catch(error){setError(error);}
             },
-            onFocus: event => {if(event.target instanceof Element && event.target.closest("[data-local-outline]")===surface.current){setSelected(link.link_id);if(event.target.closest('[role="textbox"]'))selection.set({anchor:null,keys:[]});}},
+            onFocus: event => {if(event.target instanceof Element && event.target.closest("[data-local-outline]")===surface.current){setSelected(link.link_id);if(isEditableTarget(event.target))selection.set({anchor:null,keys:[]});}},
             draggable: true,
-            onDragStart: event => { if (!(event.target instanceof Element) || event.target.closest('[data-outline-occurrence]')!==event.currentTarget || event.target.closest('[role="textbox"]')) return;event.stopPropagation(); event.dataTransfer.setData(CLIPBOARD, JSON.stringify({ link_id: link.link_id, parent_ref: rootRef })); },
+            onDragStart: event => { if (!(event.target instanceof Element) || event.target.closest('[data-outline-occurrence]')!==event.currentTarget || isEditableTarget(event.target)) return;event.stopPropagation(); event.dataTransfer.setData(CLIPBOARD, JSON.stringify({ link_id: link.link_id, parent_ref: rootRef })); },
             onDragOver: event => { if (event.dataTransfer.types.includes(CLIPBOARD)) event.preventDefault(); },
             onDrop: event => {
               if (!event.dataTransfer.types.includes(CLIPBOARD)) return;
@@ -253,7 +269,7 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
               })());
             },
             onKeyDown: event => {
-              if (filter.trim() || event.defaultPrevented || event.nativeEvent.isComposing) return;
+              if (filter.trim() || event.defaultPrevented || event.nativeEvent.isComposing || isEditableTarget(event.target)) return;
               if(event.target===event.currentTarget&&event.key===" "&&!selection.state.keys.includes(key)){event.preventDefault();selectBlocks(key,false);return;}
               if(event.target===event.currentTarget&&event.key==="Escape"){
                 event.preventDefault();selection.set({anchor:null,keys:[]});event.currentTarget.querySelector<HTMLElement>("[data-outline-bullet]")?.focus();return;
@@ -261,7 +277,6 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
               if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) history.redo(); else history.undo(); return; }
               if (event.altKey && event.shiftKey && event.key === "ArrowUp") { event.preventDefault(); move(-1); return; }
               if (event.altKey && event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); move(1); return; }
-              if (event.target instanceof Element && event.target.closest('[role="textbox"]')) return;
               if(event.key==="ArrowUp"||event.key==="ArrowDown"){
                 event.preventDefault();event.stopPropagation();
                 const order=visible(),at=order.findIndex(element=>element.dataset.outlineOccurrence===key),next=order[at+(event.key==="ArrowUp"?-1:1)];
