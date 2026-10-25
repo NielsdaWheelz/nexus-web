@@ -11,6 +11,7 @@
  * Queue absence is actionable only after authority confirms it. Creation never
  * replaces a queue discovered while acquiring ownership; retries retain the
  * captured occurrence and use the existing absolute-state revision contract.
+ * Restore proves that revision and retained undo before retiring playback intent.
  * Only public explicit-play admission notifies presentation, before any awaits.
  */
 
@@ -210,7 +211,6 @@ export interface PlayerCommands {
   queuePage(): Promise<void>;
   stop(): void;
   clearQueue(): void;
-  restoreQueue(): void;
   checkQueue(): void;
   cancelQueuePreparation(): void;
   playPreviewAudio(input: { target: string; resolveDescriptor: () => Promise<PreviewAudioDescriptor> }): Promise<"Installed" | "Superseded">;
@@ -755,26 +755,30 @@ export function GlobalPlayerProvider({
     const target = engineRef.current;
     try {
       if (!queueViewRef.current.known) throw new QueueCommandError("loading queue…");
-      if (queueCommandChangesPlayback(request.command)) retainedCursor.current = null;
+      if (request.command.kind !== "restore" && queueCommandChangesPlayback(request.command)) retainedCursor.current = null;
       if (target === null) return;
       if (target.queue !== null) {
-        const work = async () => {
+        const work = async (mine: number) => {
+          if (request.command.kind === "restore" && mine !== latest.current) throw new QueueCommandError("queue changed; try again");
           const header = await target.queue!.command(request);
-          if (target === engineRef.current) await nativeRefresh(target, header);
+          if (target === engineRef.current) {
+            if (request.command.kind === "restore") retainedCursor.current = null;
+            await nativeRefresh(target, header);
+          }
         };
         const selection = request.command;
         if (selection.kind === "select" && selection.play) {
           const entry = queueViewRef.current.entries.find(item => item.id === selection.entry_id);
           if (entry === undefined) throw new QueueCommandError("episode is no longer queued");
           retirePending();
-          await enqueue(async () => {
+          await enqueue(async mine => {
             publishQueue({ ...queueViewRef.current, phase: "Saving", error: null, failure: null });
-            await work();
+            await work(mine);
           }, { kind: "Episode", mediaId: entry.media_id });
         } else {
           publishQueue({ ...queueViewRef.current, phase: "Saving", error: null, failure: null });
-          if (selection.kind === "stop" || selection.kind === "clear" || selection.kind === "restore") await target.pause();
-          await enqueueQueueEdit(work, queueCommandChangesPlayback(selection));
+          if (selection.kind === "stop" || selection.kind === "clear") await target.pause();
+          await enqueueQueueEdit(work, selection.kind !== "restore" && queueCommandChangesPlayback(selection));
         }
         return;
       }
@@ -902,11 +906,11 @@ export function GlobalPlayerProvider({
     if (command.kind === "rate") { requestPreferences({ rate: command.rate }); return; }
     if (command.kind === "silence") { requestPreferences({ skipSilence: command.on }); return; }
     const changesPlayback = command.kind === "queue" ? queueCommandChangesPlayback(command.request.command) : command.kind !== "check";
-    if (command.kind === "stop" || command.kind === "clear" || command.kind === "restore") await target.pause();
+    if (command.kind === "stop" || command.kind === "clear") await target.pause();
     const work = async (mine: number) => {
       const session = browser.current;
       const before = session?.snapshot().saved;
-      if ((command.kind === "clear" || command.kind === "restore") && !session?.snapshot().known)
+      if (command.kind === "clear" && !session?.snapshot().known)
         throw new QueueCommandError("loading queue…");
       switch (command.kind) {
         case "check": {
@@ -926,10 +930,6 @@ export function GlobalPlayerProvider({
           }
           return;
         }
-        case "restore":
-          await target.dismiss();
-          if (target === engineRef.current && ownership.current?.owner()) await session?.restore();
-          return;
         case "stop": await target.dismiss(); return;
         case "clear":
           await target.dismiss();
@@ -958,6 +958,11 @@ export function GlobalPlayerProvider({
           if (request.expected_revision !== before.revision) throw new QueueCommandError("queue changed; try again");
           if (operation.kind === "stop") { await target.dismiss(); return; }
           if (operation.kind === "clear" || operation.kind === "restore") {
+            if (operation.kind === "restore") {
+              if (mine !== latest.current || !session?.snapshot().canRestore) throw new QueueCommandError("queue changed; try again");
+              retainedCursor.current = null;
+              retirePending();
+            }
             await target.dismiss();
             if (target !== engineRef.current || !ownership.current?.owner()) return;
             if (operation.kind === "clear") await session?.save(emptyQueue(), null, true);
@@ -1004,7 +1009,7 @@ export function GlobalPlayerProvider({
         : saved == null && source?.kind === "Episode" ? { kind: "Episode", mediaId: source.descriptor.media_id } : null;
       retirePending();
       await enqueue(work, playback);
-    } else await enqueueQueueEdit(work, changesPlayback);
+    } else await enqueueQueueEdit(work, selection?.kind !== "restore" && changesPlayback);
   }, [activate, enqueue, enqueueQueueEdit, requestPreferences, retainCurrent, retirePending]);
   executeRef.current = execute;
   const route = useCallback(async (command: BrowserPlayerCommand) => {
@@ -1034,8 +1039,8 @@ export function GlobalPlayerProvider({
           return;
         }
         if (command.kind === "stop" && header === null) { await target.dismiss(); return; }
-        if ((command.kind === "clear" || command.kind === "restore") && !queueViewRef.current.known) throw new QueueCommandError("loading queue…");
-        if ((command.kind === "stop" || command.kind === "clear" || command.kind === "restore") && header !== null) { await queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: command.kind } }); return; }
+        if (command.kind === "clear" && !queueViewRef.current.known) throw new QueueCommandError("loading queue…");
+        if ((command.kind === "stop" || command.kind === "clear") && header !== null) { await queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command: { kind: command.kind } }); return; }
         if (command.kind === "check") { await readNativeQueue(target); return; }
       }
       await ownership.current?.command(command);
@@ -1074,7 +1079,6 @@ export function GlobalPlayerProvider({
       },
       stop: () => { void route({ kind: "stop" }); },
       clearQueue: () => { void route({ kind: "clear" }); },
-      restoreQueue: () => { void route({ kind: "restore" }); },
       checkQueue: () => {
         const retry = preparationRetry.current;
         if (queueViewRef.current.known && retry !== null) void retry().catch(report);

@@ -110,7 +110,7 @@ export function createBrowserSession(accountId: string, changed: () => void) {
     },
     check: () => pending === null ? read() : send(),
     async restore() {
-      if (previous === null) return saved;
+      if (previous === null) throw new QueueCommandError("queue changed; try again");
       const state = { ...previous, queue_id: crypto.randomUUID() };
       previous = null;
       pendingPrevious = null;

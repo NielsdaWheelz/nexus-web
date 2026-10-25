@@ -409,7 +409,15 @@ finish, undo, unread, reset and settle publish `Consumption`.
   lives inside playback; chapter context lives in chapters.
   preview exposes rate only, with no queue advancement, chapters or default save.
   numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
-  work uses control markers; failures expose details and recovery. application
+  work uses control markers; failures expose details and recovery. queue preparing
+  and saving mark up next busy; other pending episode/preview activation marks
+  transport busy, independently of loaded buffering. routine work adds no footer
+  row. preparing/cancel and saving text belong inside up next. queue replacement
+  emits no notice; one plain restore action lives below the up-next heading.
+  restore captures the rendered queue identity/revision and requires the owner's
+  undo snapshot before cancelling pending work or pausing playback. restoration
+  stays paused with up next open. focused restore/cancel transfers focus to its
+  heading before dispatch; replies never reclaim focus. application
   gain is unity; volume belongs exclusively to the os/device.
   pointer scrubbing previews locally and commits once on captured release,
   including outside the range. cancellation, capture loss, source retirement or

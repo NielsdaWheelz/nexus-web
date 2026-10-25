@@ -46,16 +46,13 @@ function sourceHref(source: QueueSource): string {
   }
 }
 
-export function QueueStatus() {
-  const { queue, state } = usePlayerSession();
+export function QueueFailures() {
+  const { queue } = usePlayerSession();
   const commands = usePlayerCommands();
   return <>
-    {queue.phase === "Preparing" ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "preparing queue…" }} actions={[{ label: "cancel", onClick: commands.cancelQueuePreparation }]} /> : null}
-    {queue.phase === "Saving" ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "saving queue…" }} /> : null}
     {queue.phase === "Uncertain" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t confirm queue change" }} actions={[{ label: "check", onClick: commands.checkQueue }]} /> : null}
     {queue.phase === "Unavailable" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "player unavailable", message: "open nexus in a browser with web locks and broadcast channels to play audio" }} /> : null}
     {queue.error !== null && queue.failure?.kind !== "Episode" && queue.phase !== "Uncertain" && queue.phase !== "Unavailable" ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: queue.error }} actions={[{ label: "retry", onClick: commands.checkQueue }]} /> : null}
-    {queue.known && queue.phase === "Ready" && state.kind !== "Unavailable" && queue.canRestore ? <FeedbackNotice announcement="None" content={{ tone: "Neutral", title: "queue replaced" }} actions={[{ label: "restore previous queue", onClick: commands.restoreQueue }]} /> : null}
   </>;
 }
 
@@ -74,7 +71,6 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
   const [prefix, setPrefix] = useState(100);
   const [paging, setPaging] = useState(false);
   const [pageError, setPageError] = useState(false);
-  const [commandFailed, setCommandFailed] = useState(false);
   const firstUpcoming = header?.current_index === null || header === null ? header?.count ?? 0 : header.current_index + 1;
   const upcoming = queue.entries.filter((_, index) => index + queue.offset >= firstUpcoming).slice(0, prefix);
   const current = header?.current_entry ?? null;
@@ -112,12 +108,10 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
 
   const send = async (command: QueueCommand) => {
     if (!ready || header === null) return false;
-    setCommandFailed(false);
     try {
       await commands.queueCommand({ queue_id: header.queue_id, expected_revision: header.revision, command });
       return true;
     } catch {
-      setCommandFailed(true);
       return false;
     }
   };
@@ -203,8 +197,19 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened }: 
   const remaining = Math.max(0, (header?.count ?? 0) - firstUpcoming);
   return <section ref={root} className={styles.queuePanel} aria-label="up next" onClickCapture={activateAnchor} onKeyDownCapture={activateAnchor}>
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
-    <QueueStatus />
-    {commandFailed ? <FeedbackNotice announcement="None" content={{ tone: "Warning", title: "couldn’t change queue", message: "try the queue action again" }} /> : null}
+    {ready && header !== null && queue.canRestore ? <Button onClick={event => {
+      if (document.activeElement === event.currentTarget) heading.current?.focus({ preventScroll: true });
+      void send({ kind: "restore" });
+    }}>restore previous queue</Button> : null}
+    {queue.phase === "Preparing" ? <div className={styles.queueActions}>
+      <p>preparing queue…</p>
+      <Button onClick={event => {
+        if (document.activeElement === event.currentTarget) heading.current?.focus({ preventScroll: true });
+        commands.cancelQueuePreparation();
+      }}>cancel</Button>
+    </div> : null}
+    {queue.phase === "Saving" ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "saving queue…" }} /> : null}
+    <QueueFailures />
     {!queue.known ? <p>{queue.error === null ? "loading queue…" : "couldn’t load queue"}</p> : header?.source ? <div>
       <ButtonLink href={sourceHref(header.source)}>{header.source.kind === "Lectern" ? "started from lectern" : `started from “${header.source.label}”`}</ButtonLink>
       <p className={styles.eyebrow}>{[header.source.sort === null ? header.source.kind === "Lectern" ? "custom order" : "default order" : SORT_LABELS[header.source.sort], header.source.query ? `filter: ${header.source.query}` : null,
