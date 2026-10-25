@@ -24,7 +24,7 @@ export default function Toggle({
   const inputId = id ?? generatedId;
   return (
     <label
-      className={cx(styles.root, styles[size], disabled && styles.disabled)}
+      className={cx(styles.root, styles[size])}
       htmlFor={inputId}
     >
       <input

@@ -1,12 +1,12 @@
 "use client";
 
-import { useRemoteAdmission } from "@/lib/native/admissionHooks";
-import { useId } from "react";
-import { FeedbackStatus } from "@/components/feedback/Feedback";
+import { Moon, Sun } from "lucide-react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import Select from "@/components/ui/Select";
+import RadioGroup from "@/components/ui/RadioGroup";
 import Toggle from "@/components/ui/Toggle";
+import { READER_FONT_STACKS } from "@/lib/documentReader/DocumentReader";
 import {
   useReaderContext,
   type ReaderProfile,
@@ -27,44 +27,36 @@ const FOCUS_MODES: readonly {
 /** The reader profile's seven fields; ReaderProvider owns and saves them. */
 export default function SettingsReaderPaneBody() {
   const reader = useReaderContext();
-  const ready = useRemoteAdmission() === "Ready";
   const p = reader.profile;
-  // one radio group per pane: two reader settings panes may be open
-  const group = useId();
   usePaneReturnReady(true);
 
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
-        <fieldset className={styles.form} aria-label="reader settings" disabled={!ready}>
-          <div className={styles.pair}>
-            <label className={styles.field}>
-              <span className={styles.label}>Theme</span>
-              <Select
-                value={p.theme}
-                onChange={(e) =>
-                  reader.setTheme(e.target.value as ReaderProfile["theme"])
-                }
-              >
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </Select>
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Font</span>
-              <Select
-                value={p.font_family}
-                onChange={(e) =>
-                  reader.setFontFamily(
-                    e.target.value as ReaderProfile["font_family"],
-                  )
-                }
-              >
-                <option value="serif">Serif</option>
-                <option value="sans">Sans-serif</option>
-              </Select>
-            </label>
-          </div>
+        {!reader.editable ? (
+          <FeedbackNotice content={{ tone: "Neutral", title: "changing reader settings requires a connection" }} announcement="Polite" />
+        ) : null}
+        <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable}>
+          <RadioGroup
+            label="Theme"
+            presentation="Segmented"
+            value={p.theme}
+            choices={[
+              { value: "light", label: "Light", icon: <Sun size={16} aria-hidden="true" /> },
+              { value: "dark", label: "Dark", icon: <Moon size={16} aria-hidden="true" /> },
+            ]}
+            onChange={reader.setTheme}
+          />
+          <RadioGroup
+            label="Font"
+            presentation="Segmented"
+            value={p.font_family}
+            choices={[
+              { value: "serif", label: <span style={{ fontFamily: READER_FONT_STACKS.serif }}>Serif</span> },
+              { value: "sans", label: <span style={{ fontFamily: READER_FONT_STACKS.sans }}>Sans-serif</span> },
+            ]}
+            onChange={reader.setFontFamily}
+          />
           <label className={styles.field}>
             <span className={styles.label}>Font size ({p.font_size_px}px)</span>
             <input
@@ -101,21 +93,13 @@ export default function SettingsReaderPaneBody() {
               onChange={(e) => reader.setColumnWidth(Number(e.target.value))}
             />
           </label>
-          <fieldset className={styles.segments} role="radiogroup">
-            <legend className={styles.label}>Focus mode</legend>
-            {FOCUS_MODES.map((mode) => (
-              <label key={mode.value}>
-                <input
-                  type="radio"
-                  name={group}
-                  value={mode.value}
-                  checked={p.focus_mode === mode.value}
-                  onChange={() => reader.setFocusMode(mode.value)}
-                />
-                {mode.label}
-              </label>
-            ))}
-          </fieldset>
+          <RadioGroup
+            label="Focus mode"
+            presentation="Segmented"
+            value={p.focus_mode}
+            choices={FOCUS_MODES}
+            onChange={reader.setFocusMode}
+          />
           <Toggle
             checked={p.hyphenation === "auto"}
             onCheckedChange={(on) => reader.setHyphenation(on ? "auto" : "off")}

@@ -22,8 +22,8 @@ import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
   prepareActionSelect,
   projectActionControlState,
-  type ActionDescriptor,
   type MenuContent,
+  type MenuOption,
   type MenuSource,
 } from "@/lib/ui/actionDescriptor";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
@@ -44,14 +44,16 @@ import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import MobileSheet from "./MobileSheet";
 import OverflowMenuButton from "./OverflowMenuButton";
+import RadioGroup from "./RadioGroup";
 import styles from "./ActionMenu.module.css";
+import choiceField from "./ChoiceField.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
 // Moving focus into a sheet can dismiss the IME. Admit after its geometry quiets;
 // there is no portable keyboard-transition completion event.
 const MOBILE_ADMISSION_QUIET_MS = 150;
-const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
+const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 const FAILED: FeedbackContent = { tone: "Warning", title: "actions couldn’t load" };
 
 type TriggerAttributes = Pick<ButtonHTMLAttributes<HTMLButtonElement>, "tabIndex"> &
@@ -111,10 +113,15 @@ type Invocation = {
   readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
 };
 
-/** Displayed meaning excludes closures and availability; execution reads current descriptors. */
+/** Displayed meaning excludes closures, availability and a choice's live value;
+ *  execution reads current descriptors. */
 function meaning(title: string, content: MenuContent): string {
   return JSON.stringify([title, content.sections.map((section) => [
     section.id, section.label, section.options.map((option) => {
+      if (option.kind === "choice") return [
+        option.id, option.kind, option.label, option.choices.map((entry) => [entry.value, entry.label]),
+        option.disabledReason, option.separatorBefore,
+      ];
       const state = option.kind === "command" ? option.state : undefined;
       return [
         option.id, option.kind, option.label, option.href, option.tone,
@@ -234,7 +241,7 @@ export default function ActionMenu({
   const content = invocation && (source.kind === "Immediate" ? source.content :
     prepared?.kind === "Ready" ? prepared.content : null);
   const feedback = invocation?.feedback ?? null;
-  const hasChoices = content?.sections.some((section) => section.options.length > 0) ?? false;
+  const hasOptions = content?.sections.some((section) => section.options.length > 0) ?? false;
   const requested = invocation !== null;
   const candidate = invocation !== null && (content !== null || feedback !== null);
   const sheet = candidate && invocation?.mobile === true;
@@ -392,7 +399,7 @@ export default function ActionMenu({
         meaning: content ? meaning(source.title, content) : null,
         geometry: content ? geometry(trigger.current, node, active.mobile) : null,
       });
-      if (content && !hasChoices) announce("no actions available");
+      if (content && !hasOptions) announce("no actions available");
       else if (content) announce("");
     }
   };
@@ -564,9 +571,16 @@ export default function ActionMenu({
       return;
     }
     if (isEditableTarget(event.target)) return;
+    const active = document.activeElement;
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && active?.matches('[role="menuitemradio"]')) {
+      const radios = [...(active.closest("[data-menu-row]")?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])];
+      const index = radios.findIndex((radio) => radio === active) + (event.key === "ArrowRight" ? 1 : -1);
+      event.preventDefault();
+      radios[(index + radios.length) % radios.length]?.focus();
+      return;
+    }
     const items = [...event.currentTarget.querySelectorAll<HTMLElement>(ITEMS)];
     if (!items.length) return;
-    const active = document.activeElement;
     const at = items.findIndex((item) => item === active);
     const go = (index: number) => {
       event.preventDefault();
@@ -583,7 +597,59 @@ export default function ActionMenu({
     }
   };
 
-  const item = (option: ActionDescriptor, index: number) => {
+  const latestOption = (id: string) => {
+    const value = latest.current;
+    const ready = value.kind === "Immediate" ? value.content : value.state?.kind === "Ready" ? value.state.content : null;
+    return ready?.sections.flatMap((section) => section.options).find((entry) => entry.id === id);
+  };
+  const item = (option: MenuOption, index: number) => {
+    if (option.kind === "choice") {
+      if (sheet) return <li key={option.id}>
+        <div data-menu-row={option.id} className={styles.choiceRow}>
+          <RadioGroup label={option.label} value={option.value} choices={option.choices} onChange={option.onChange}
+            presentation="Segmented" legend="Hidden" description={option.disabled ? option.disabledReason : undefined}
+            disabled={option.disabled} />
+        </div>
+      </li>;
+      const reason = option.disabled && option.disabledReason ? `${menuId}-reason-${index}` : undefined;
+      const choose = (value: string, closing: boolean) => {
+        const choice = latestOption(option.id);
+        if (choice?.kind !== "choice" || !checks.current.stable()) {
+          invalidate();
+          return false;
+        }
+        if (choice.disabled) return false;
+        // Enter closes first, so focus is home before the value changes.
+        if (closing) flushSync(() => close(true));
+        if (choice.value !== value) choice.onChange(value);
+        return true;
+      };
+      return <li role="none" key={option.id}>
+        <div role="group" aria-label={option.label} data-menu-row={option.id}
+          data-action-availability={option.disabled ? "Blocked" : "Available"} className={styles.choiceRow}>
+          <div className={choiceField.segments}>
+            {option.choices.map((entry) => <button key={entry.value} type="button" role="menuitemradio"
+              aria-checked={entry.value === option.value} tabIndex={-1} data-action-id={`${option.id}.${entry.value}`}
+              className={choiceField.segment} aria-disabled={option.disabled || undefined} aria-describedby={reason}
+              // Click and Space's native click choose and keep the menu open.
+              onClick={(event) => {
+                event.stopPropagation();
+                if (choose(entry.value, false)) event.currentTarget.focus();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                choose(entry.value, true);
+              }}>
+              {entry.icon}
+              <span>{entry.label}</span>
+            </button>)}
+          </div>
+          {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
+        </div>
+      </li>;
+    }
     const attributes = {
       "data-action-id": option.id,
       "data-menu-row": option.id,
@@ -601,10 +667,8 @@ export default function ActionMenu({
     const reason = option.disabled && option.disabledReason ? `${menuId}-reason-${index}` : undefined;
     const activate = (event: MouseEvent | KeyboardEvent) => {
       if (!("key" in event)) event.stopPropagation();
-      const latestContent = latest.current.kind === "Immediate" ? latest.current.content :
-        latest.current.state?.kind === "Ready" ? latest.current.state.content : null;
-      const action = latestContent?.sections.flatMap((section) => section.options).find((entry) => entry.id === option.id);
-      if (!action || action.kind === "custom" || !checks.current.stable()) {
+      const action = latestOption(option.id);
+      if (!action || action.kind === "custom" || action.kind === "choice" || !checks.current.stable()) {
         event.preventDefault();
         invalidate();
         return;
@@ -650,7 +714,7 @@ export default function ActionMenu({
     </li>;
   };
   let itemIndex = 0;
-  const body = content ? hasChoices ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
+  const body = content ? hasOptions ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
     {content.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
       {sectionIndex > 0 ? <div role="separator" className={styles.separator} /> : null}
       {section.label ? <div className={styles.sectionLabel}>{section.label}</div> : null}
@@ -703,7 +767,7 @@ export default function ActionMenu({
     };
   }, []);
   useEffect(() => { cancelHold(); heldClick.current = false; }, [source.subjectKey, pathname]);
-  const popup = mobile || (candidate && !hasChoices) ? "dialog" : "menu";
+  const popup = mobile || (candidate && !hasOptions) ? "dialog" : "menu";
   const triggerProps: ActionMenuTriggerProps = {
     ...triggerAttributes,
     ref: setTrigger,
@@ -780,7 +844,7 @@ export default function ActionMenu({
     {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
     <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</span>
     {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
-      className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
+      className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasOptions ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
       tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>, container) : null}
     <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} heightLimit="available" onDismiss={() => close(true)}
@@ -794,10 +858,12 @@ export default function ActionMenu({
           return panel;
         }
         if (current.current?.touch) return panel;
-        if (!hasChoices) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
+        if (!hasOptions) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...panel.querySelectorAll<HTMLElement>("[data-menu-row]")];
         const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
-        return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
+        // A choice edge focuses its checked radio, the group's one native tab stop.
+        return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>('input[type="radio"]:checked:not(:disabled)')
+          ?? edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
       }}>
       <div ref={sheetBody} data-collection-viewport="" className={`${collection.contentViewport} ${styles.sheetBody}`} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
     </MobileSheet>

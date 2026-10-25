@@ -4,7 +4,7 @@
 // find, the inspector (Contents and Connections), the view menu, the document map rail, the pane width
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
-import { Activity } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -17,21 +17,19 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import type { FindController } from "@/lib/find/useFind";
 import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import {
-  PANE_COMMAND_RESOLVING_REASON,
-  usePaneChrome,
-  usePaneLayout,
-} from "@/lib/panes/paneChrome";
+import { usePaneChrome, usePaneLayout } from "@/lib/panes/paneChrome";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { openConversationAbout } from "@/lib/chat/conversationIndex";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { MenuOption } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import styles from "./media.module.css";
 
+const ReaderSettingsIcon = getPaneRouteIcon("/settings/reader");
 const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", paragraph: "sentence", sentence: "off" } as const;
 
 export function useReaderChrome(input: {
@@ -53,8 +51,8 @@ export function useReaderChrome(input: {
   const { media, reader, find, readable, isMobile, paneActive } = input;
   const { ctx } = useActionRuntime();
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
-  const { activateTarget, requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
-  const { profile, setTheme, setFocusMode } = useReaderContext();
+  const { requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
+  const { profile, editable, setTheme, setFocusMode } = useReaderContext();
   const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
   const kind = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc.kind : null));
   const sectioned = useReaderState(reader, (s) => s.document.status === "ready" && s.document.doc.kind === "text" && s.document.doc.sections.length > 0);
@@ -79,44 +77,33 @@ export function useReaderChrome(input: {
     },
     [input.annotationNotice, kind, readable, reader, sectioned],
   );
-  const menuActions = useMemo<ActionDescriptor[]>(() => {
-    const resolving = media === null;
-    const theme = (value: "light" | "dark", label: string): ActionDescriptor => ({
-      kind: "command",
-      id: `ViewAction.Reader.Theme.${label}`,
-      label: profile.theme === value ? `${label} theme (current)` : `${label} theme`,
-      disabled: resolving || profile.theme === value,
-      disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
-      onSelect: () => setTheme(value),
-    });
+  const menuActions = useMemo<MenuOption[]>(() => {
+    const theme: MenuOption[] = readable
+      ? [{
+          kind: "choice",
+          id: "ViewAction.Reader.Theme",
+          label: "Reader theme",
+          value: profile.theme,
+          choices: [
+            { value: "light", label: "Light", icon: <Sun size={16} aria-hidden="true" /> },
+            { value: "dark", label: "Dark", icon: <Moon size={16} aria-hidden="true" /> },
+          ],
+          onChange: (value) => setTheme(value === "dark" ? "dark" : "light"),
+          disabled: !editable,
+          disabledReason: editable ? undefined : "requires a connection",
+        }]
+      : [];
     return [
+      ...theme,
       {
         kind: "link",
-        id: "consumption-activity",
-        label: "Activity",
-        icon: <Activity size={16} aria-hidden="true" />,
-        href: "/stats",
-      },
-      {
-        kind: "command",
         id: "ViewAction.Reader.Settings",
         label: "Reader settings",
-        restoreFocusOnClose: false,
-        onSelect: ({ openIntent }) =>
-          activateTarget({ target: { href: "/settings/reader", labelHint: "Reader settings" }, disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }),
+        icon: <ReaderSettingsIcon size={16} aria-hidden="true" />,
+        href: "/settings/reader",
       },
-      ...(pdf
-        ? [
-            {
-              kind: "custom" as const,
-              id: "ViewAction.Reader.PdfSourceColors",
-              label: "PDF pages keep their source colors",
-              render: () => <div className={styles.menuStatus}>PDF pages keep their source colors</div>,
-            },
-          ]
-        : [theme("light", "Light"), theme("dark", "Dark")]),
     ];
-  }, [activateTarget, media, pdf, profile.theme, setTheme]);
+  }, [editable, profile.theme, readable, setTheme]);
   const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
   const summaries = useMediaSummaries(seed === null ? [] : [seed]);
   const summary = seed === null ? null : summaries.resolve(seed);

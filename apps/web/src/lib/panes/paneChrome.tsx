@@ -26,7 +26,7 @@ import type {
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
 
 /** Why a pane command holds its place while the fact deciding it loads. */
 export const PANE_COMMAND_RESOLVING_REASON =
@@ -99,7 +99,7 @@ export interface PaneChrome {
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
   readonly resourceRef?: CanonicalResourceRef;
-  readonly menuActions?: readonly ActionDescriptor[];
+  readonly menuActions?: readonly MenuOption[];
   readonly refresh?: PaneRefresh;
 }
 

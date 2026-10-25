@@ -196,6 +196,14 @@ the workspace bootstrap reads it as a required read; `ReaderProvider`
 change and offers retry). `READER_PROFILE_DEFAULTS` in
 `services/reader_profile.py` is the one default.
 
+the provider alone decides whether a change is accepted. it publishes `editable`
+(remote admission is `Ready`); controls disable from it and never read admission
+themselves. a change without admission, such as a focus-mode chord, is refused:
+never applied, queued or written later. each refusal withdraws the previous
+notice and offers a fresh Neutral attention notice, "changing reader settings
+requires a connection", so every refusal raises its own; regaining admission
+withdraws it. no profile control is a silent no-op.
+
 ## flows
 
 **open and restore.** the runtime awaits the source and cursor, mounts the surface,
@@ -625,10 +633,17 @@ filter identity uses the document-map count keys: `highlights`, `citations`,
 `links`, `machine_links`, in that order. `evidence/model.ts` owns the typed labels
 `highlights`, `citations`, `links`, `librarian links`; controls read each count
 directly by its key. hidden filters, exact-fact reveals and marker classification
-share those keys; presentation labels never determine membership.
+share those keys; presentation labels never determine membership. each filter is
+a shared pressed `Button` named by its label alone: a decorative check holds a
+reserved slot whether or not it shows, and its exact count, zero included, shows
+as an aria-hidden numeral and is described separately (`1 item`, `{n} items`).
+zero never disables a filter. while inline reference linking holds a reference,
+both the view and the filters disable natively and one visible reason, "finish
+linking or return to prose first", describes each of them.
 
-connections view is remembered in the pane-visit memento. native radios expose
-following and all items on desktop; mobile derives a normal-flow list without
+connections view is remembered in the pane-visit memento. on desktop a segmented
+`RadioGroup` with a hidden legend shows `follow` and `all`, named natively
+`follow reading position` and `all items`, with no routine help; mobile derives a normal-flow list without
 changing that preference on scroll or layout changes. exact item navigation
 selects all items once on either layout. local sidebar scrolling preserves its
 offset through unchanged source placement, refresh and resize. entering effective
@@ -653,7 +668,7 @@ unavailable content; zero aligned placements alone is not an empty inventory.
 | `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
-| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
+| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
@@ -677,6 +692,9 @@ composite maps merge exact refs/facts, keep canonical source media/identity and
 apparatus attribution internally, and project only mapped own extents. an unmapped
 canonical location is unanchorable. one shared chat/marker is retained across
 constituent publications; embeds keep their separate projection.
+pdf roots stay page-space quads, never reader points: the surface measures
+their alignment; canonical document-map markers, normalized by page height,
+give their rail position and order.
 
 ## around the reader
 
@@ -704,7 +722,13 @@ constituent publications; embeds keep their separate projection.
   `DocumentReaderView` with a device progress port. see [offline](offline.md).
 - **theme.** two reader themes, warm-neutral, never pure black on white; literal
   tokens on `.frame[data-theme]` in `documentReader.module.css`. pdf pages keep
-  their source colours.
+  their source colours; the theme paints the frame around them.
+- **view menu.** for every readable item, pdfs included, the view section opens
+  with the `Reader theme` [menu choice](overlays.md#surfaces), "Light" (`Sun`) or
+  "Dark" (`Moon`), which sets the profile theme absolutely; without `editable` it
+  is disabled with "requires a connection". an unreadable item has no theme row.
+  the "Reader settings" link to `/settings/reader` follows, carrying that route's
+  icon (`ALargeSmall`), the destination's one glyph.
 
 ## verification
 
