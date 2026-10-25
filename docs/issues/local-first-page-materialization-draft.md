@@ -40,3 +40,5 @@ rail destination no pane shows (from this device's saved workspace session), ass
 new visit, no prompt), goes back, then asserts the same latent page ref and exact draft, then title promotion to
 `/pages/<id>` with the canonical title, then save: exactly one linked note. if every rail destination is already open it
 fails with that reason instead of passing.
+
+lab32 (`20261025-161822-0781a9f0d762`, source `72b0`) confirms the same-pane history defect: the composer destination changed from `c4fd…` to `08bc…` after returning to `/pages/new`. the page owner now retains its account-scoped minted id through the existing visit-data owner. the same mounted case must pass before this record is resolved.

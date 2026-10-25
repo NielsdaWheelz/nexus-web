@@ -18,3 +18,15 @@ name the actual packaged android host and the document’s locale/timezone/insta
 viewport kind remains the existing live media-query owner. no workspace provider
 or native capability was added. the same handset cold-copy/annotation journey
 remains the resolution gate.
+
+native16 at `72b0` qualified the render-environment and feedback-layout fixes:
+the saved pdf opened offline, real source selection and note composition worked.
+saving then mounted `ReaderAnnotation.AttachedNoteRow` → `ActionMenu` →
+`useMobileChromeHold`, which threw `mobile chrome hooks require MobileChromeProvider`.
+`ActionMenu` reads that controller even while its menu is closed.
+
+the shelf root now also mounts the existing `MobileChromeProvider` inside its
+actual viewport owner. this controller owns presentation holds only; it adds no
+workspace, account or native capability. the shared saved-editor chain's other
+required providers are present. actual attached-note save/edit/menu/reopen/sync
+and denied source access still require the rebuilt handset qualification.

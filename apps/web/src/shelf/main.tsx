@@ -4,6 +4,7 @@ import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 
+import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { NavigationIdentity } from "@/lib/host/policy";
 import { StrictMode, useEffect, useState, type ReactNode } from "react";
 import { readNativeAuthoredAccount } from "@/lib/authored/native";
@@ -11,6 +12,7 @@ import { ShelfAccount, type ShelfAccountState } from "./ShelfReader";
 import { createRoot } from "react-dom/client";
 import { connectLocalContent } from "@/lib/offline/localContent";
 import Shelf from "./Shelf";
+import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { NAV_COLLAPSED_COOKIE, type RenderEnvironment } from "@/lib/renderEnvironment/types";
@@ -47,14 +49,14 @@ function ShelfAccountScope({ children }: { readonly children: ReactNode }) {
       () => { if (live) setState({ kind: "Unavailable", retry }); });
     return () => { live = false; };
   }, [attempt]);
-  return <ShelfAccount value={state}>{children}</ShelfAccount>;
+  return <ShelfAccount value={state}><AuthenticatedWorkspaceErrorBoundary accountId={state.kind === "Ready" ? state.id : undefined}>{children}</AuthenticatedWorkspaceErrorBoundary></ShelfAccount>;
 }
 
 connectLocalContent({ accountId: null, indexPath: "/shelf/downloads.json" });
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RenderEnvironmentProvider value={environment}>
-      <MobileViewportProvider><ShelfFrame /></MobileViewportProvider>
+      <MobileViewportProvider><MobileChromeProvider><ShelfFrame /></MobileChromeProvider></MobileViewportProvider>
     </RenderEnvironmentProvider>
   </StrictMode>,
 );

@@ -1,31 +1,20 @@
-# fatal workspace failure retires the loss guard before unsaved input
+# retained writing after a render failure
 
-an editor failure reaches `AuthenticatedWorkspaceErrorBoundary`, which replaces
-its authenticated subtree (`apps/web/src/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary.tsx`).
-that unmounts the editors and, for the outer boundaries in
-`lib/authored/BrowserWorkspace.tsx` and `lib/native/DeviceWorkspace.tsx`, `WorkProvider`;
-its cleanup removes exit listeners and clears owners (`apps/web/src/lib/unsavedWork.tsx:143`).
-`WritingRuntime.close()` correctly refuses to discard an uncommitted failure
-(`apps/web/src/lib/notes/runtime.ts:199`), so words remain in memory.
+a render failure unmounts editor/work guards; the account writing runtime
+retains failed input and refuses to close it. the existing authenticated error
+boundary independently guards browser reload and native exit, and exposes that
+runtime's retry/copy. browser and native workspace roots pass their actual
+account id; the authored provider also registers its uncommitted runtime with
+the ordinary work guard. committed pending synchronization is never loss risk.
 
-change made (not yet proven live): the boundary's stopped surface now guards
-`beforeunload` and `nexus:request-exit` with `hasUncommittedWriting()`, routes the
-stale-build reload through the same loss confirmation, and, inside an account,
-shows `couldn’t save on this device` / `keep this page open. retry saving.` with
-the runtime's own `retry()` and a copy of exactly the uncommitted words
-(`WritingRuntime.uncommittedText()`: open documents the failed command touched and
-the current command's created body/title; read-only, no store or history). when the
-clipboard is unavailable the words appear read-only for manual selection. no durable
-recovery was added.
+native run `20261025-161649-c51c195bcaf9` exposed an unguarded shelf root: an
+attached-note menu threw for a missing mobile chrome provider and React removed
+the tree. the capture itself was already durable in native sqlite; this is not
+evidence of lost writing. the shelf now mounts that provider and the same error
+boundary under its account scope, continuously from loading through ready,
+passing the real account id when known. no second recovery owner is introduced.
 
-remaining gaps:
-- the outer boundaries render outside the account provider. the boundary accepts an
-  optional `accountId` for them; `lib/authored/BrowserWorkspace.tsx` and
-  `lib/native/DeviceWorkspace.tsx` (not this owner's files) must pass
-  `binding.account.account_id` before retry is offered there. exit and reload are
-  guarded either way.
-- `WorkProvider`'s own exit risk still ignores `hasUncommittedWriting()`, so closing an
-  editor pane after a failed local save relies on that editor's own registration.
-
-resolved when a real failed local save followed by a render failure still guards
-browser reload and native exit and permits retry (or copy) of the retained input.
+remaining proof: fail a real local save, then encounter a render failure; retained
+input must remain copyable/retryable and decline browser reload/native exit.
+lab30 proves the ordinary worker-failure copy and reload guard, not this combined
+render-failure path. remove this record after that narrow proof.

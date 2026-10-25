@@ -355,7 +355,24 @@ else:
                 assert sections is not None and state.lexical_revision==state.revision and state.section_bounds_key==sections.bounds_key, "piece result used an obsolete partition"
                 detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
                 processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
-                assert state.status!="ready" and detail.text_search_ready and processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
+                assert detail.text_search_ready and processing.text_search_ready, "piece lost current lexical capability"
+                # A real provider can finish vectors before this later evidence read.
+                # Observe the actual lexical-only publication phase under its owner locks;
+                # roll it back so the independently scored occurrence ids stay unchanged.
+                source_id=UUID(f["source"])
+                db.execute(text("SELECT id FROM media WHERE id=:id FOR UPDATE"), {"id":source_id})
+                db.execute(text("SELECT owner_id FROM content_index_states WHERE owner_kind='media' AND owner_id=:id FOR UPDATE"), {"id":source_id})
+                existing=db.execute(text("SELECT chunk_text,summary_locator,heading_path FROM content_chunks WHERE owner_kind='media' AND owner_id=:id ORDER BY chunk_idx"), {"id":source_id}).mappings().all()
+                assert existing, "lexical-only fixture has no canonical chunks"
+                with db.begin_nested() as publication:
+                    blocks=[IndexableBlock(row["chunk_text"],int(row["summary_locator"].get("start_offset",0)),row["summary_locator"],tuple(row["heading_path"])) for row in existing]
+                    chunks=[Chunk(index,row["chunk_text"],row["summary_locator"]) for index,row in enumerate(existing)]
+                    published=publish_text_index(db,owner=IndexOwner("media",source_id),source_kind="web_article",blocks=blocks,chunks=chunks,reason="oracle_corpus_seed")
+                    assert published.status=="indexing", "publisher did not expose the lexical-only phase"
+                    lexical_detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
+                    lexical_processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
+                    assert lexical_detail.text_search_ready and lexical_processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
+                    publication.rollback()
             root_context=(await read(UUID(f["viewer"]),"media:"+f["source"],f["neighbour"],kinds=("highlights",)))["results"]
             assert [r["item"]["ref"] for r in root_context]==["highlight:"+f["crossing_highlight"]], "source highlight lost its stored neighbouring context"
             piece_context=(await read(UUID(f["viewer"]),"media:"+f["part"],f["inside"],kinds=("highlights",)))["results"]
