@@ -245,10 +245,6 @@ export function observeConsumption(observations: readonly EpisodeConsumptionObse
   }
 }
 
-/** A list page's consumption revision, carried as its metadata. */
-export interface ConsumptionStamp {
-  readonly consumption_revision: string;
-}
 /** A targeted live read and the consumption revision of its one read snapshot. */
 export interface StampedRead<T> {
   readonly data: T;
@@ -264,10 +260,6 @@ export function stampedRead<T>(body: StampedRead<T> & { readonly episode_consump
 export function unstamped<T>(value: ServerValue<StampedRead<T>>): ServerValue<T> {
   return value.status === "ready" ? { ...value, data: value.data.data } : value;
 }
-/** A list traversal covers only its oldest page's revision. */
-export const oldestRevision = (earlier: ConsumptionStamp, later: ConsumptionStamp) =>
-  BigInt(later.consumption_revision) < BigInt(earlier.consumption_revision) ? later : earlier;
-
 export function currentListening(): ListeningState {
   return state;
 }
