@@ -100,12 +100,12 @@ export class OutlineHistory {
     const ref = `note_block:${crypto.randomUUID()}`;
     const placement = await prepareLink(this.runtime, { source_ref: parent_ref, target_ref: ref, source_label: null, target_label: null, after });
     const saved = await this.commit({ kind: "batch", intents: [...prelude, { kind: "create_note", ref, body }, ...placement.intents] });
-    const creation = saved.change.resources.find(resource => resource.ref === ref)!;
-    const addition = saved.change.links.find(link => link.link_id === placement.link_id)!;
+    const creation = saved.change.resources.find(resource => resource.ref === ref)!.touch_vv;
+    const addition = saved.change.links.find(link => link.link_id === placement.link_id)!.add_vv;
     let restored: LocalCommit | null = null;
-    this.push({ refs: [ref], bytes: 0,
-      undo: async () => { await this.commit({kind:"batch",intents:[{kind:"delete_resource",ref,observed_touch:mergeDots(creation.touch_vv,restored?.change.resources.find(r=>r.ref===ref)?.touch_vv??{})},{kind:"unlink",link_id:placement.link_id,observed_add:mergeDots(addition.add_vv,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]}); },
-      redo: async () => { restored=await this.commit({kind:"batch",intents:[{kind:"restore_resource",ref},...addition?[{kind:"restore_link" as const,link_id:placement.link_id}]:[]]}); }, release:()=>{},
+    this.push({ refs: [ref], bytes: new TextEncoder().encode(JSON.stringify({creation,addition})).byteLength,
+      undo: async () => { await this.commit({kind:"batch",intents:[{kind:"delete_resource",ref,observed_touch:mergeDots(creation,restored?.change.resources.find(r=>r.ref===ref)?.touch_vv??{})},{kind:"unlink",link_id:placement.link_id,observed_add:mergeDots(addition,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]}); },
+      redo: async () => { restored=await this.commit({kind:"batch",intents:[{kind:"restore_resource",ref},{kind:"restore_link",link_id:placement.link_id}]}); }, release:()=>{},
     });
     return ref;
   }
@@ -145,17 +145,19 @@ export class OutlineHistory {
     }
     if(!items.length)return [];
     const saved=await this.commit({kind:"batch",intents});
-    let current=saved,restored:LocalCommit|null=null;
+    const resources=saved.change.resources.map(({ref,touch_vv})=>({ref,touch_vv}));
+    const links=saved.change.links;
+    let current=links,restored:LocalCommit|null=null;
     const reorder=(redo:boolean):Intent[]=>[...moved.values()].flatMap(({link,endpoint})=>{
-      const expected=current.change.links.find(item=>item.link_id===link.link_id);
+      const expected=current.find(item=>item.link_id===link.link_id);
       const register=expected?.endpoint_a===endpoint?expected.position_a:expected?.position_b;
-      const desired=redo?saved.change.links.find(item=>item.link_id===link.link_id):link;
+      const desired=redo?links.find(item=>item.link_id===link.link_id):link;
       const position=desired?.endpoint_a===endpoint?desired.position_a:desired?.position_b;
       return register&&position?[{kind:"restore_position" as const,link_id:link.link_id,endpoint_ref:endpoint,expected:register.stamp,position:position.value}]:[];
     });
-    this.push({refs,bytes:items.reduce((n,item)=>n+(item.kind==="note"?JSON.stringify(item.body).length:0),0),
-      undo:async()=>{current=await this.commit({kind:"batch",intents:[...saved.change.resources.map(resource=>({kind:"delete_resource" as const,ref:resource.ref,observed_touch:mergeDots(resource.touch_vv,restored?.change.resources.find(item=>item.ref===resource.ref)?.touch_vv??{})})),...additions.map(link_id=>({kind:"unlink" as const,link_id,observed_add:mergeDots(saved.change.links.find(link=>link.link_id===link_id)!.add_vv,restored?.change.links.find(link=>link.link_id===link_id)?.add_vv??{})})),...reorder(false)]});},
-      redo:async()=>{restored=current=await this.commit({kind:"batch",intents:[...saved.change.resources.map(resource=>({kind:"restore_resource" as const,ref:resource.ref})),...additions.map(link_id=>({kind:"restore_link" as const,link_id})),...reorder(true)]});},release:()=>{},
+    this.push({refs,bytes:2*new TextEncoder().encode(JSON.stringify({resources,links,moved:[...moved.values()]})).byteLength,
+      undo:async()=>{current=(await this.commit({kind:"batch",intents:[...resources.map(resource=>({kind:"delete_resource" as const,ref:resource.ref,observed_touch:mergeDots(resource.touch_vv,restored?.change.resources.find(item=>item.ref===resource.ref)?.touch_vv??{})})),...additions.map(link_id=>({kind:"unlink" as const,link_id,observed_add:mergeDots(links.find(link=>link.link_id===link_id)!.add_vv,restored?.change.links.find(link=>link.link_id===link_id)?.add_vv??{})})),...reorder(false)]})).change.links;},
+      redo:async()=>{restored=await this.commit({kind:"batch",intents:[...resources.map(resource=>({kind:"restore_resource" as const,ref:resource.ref})),...additions.map(link_id=>({kind:"restore_link" as const,link_id})),...reorder(true)]});current=restored.change.links;},release:()=>{},
     });
     return refs;
   }
@@ -176,8 +178,8 @@ export class OutlineHistory {
     const new_ref = `note_block:${crypto.randomUUID()}`;
     const placement = await prepareLink(this.runtime, { source_ref: parent_ref, target_ref: new_ref, source_label: null, target_label: null, after: occurrence_link });
     const saved = await this.commit({ kind: "batch", intents: [{ kind: "edit_body", ref: source_ref, body_update: update }, { kind: "create_note", ref: new_ref, body: suffix }, ...placement.intents] });
-    const creation = saved.change.resources.find(resource => resource.ref === new_ref)!;
-    const addition = saved.change.links.find(link => link.link_id === placement.link_id)!;
+    const creation = saved.change.resources.find(resource => resource.ref === new_ref)!.touch_vv;
+    const addition = saved.change.links.find(link => link.link_id === placement.link_id)!.add_vv;
     const release = source.retain();
     const textInverse = async (redo: boolean): Promise<Intent> => {
       Y.applyUpdate(clone, Y.encodeStateAsUpdate(source.doc));
@@ -186,8 +188,8 @@ export class OutlineHistory {
       return { kind: "edit_body", ref: source_ref, body_update: encodeBytes(Y.encodeStateAsUpdate(clone, vector)) };
     };
     let restored: LocalCommit | null = null;
-    this.push({ refs: [source_ref, new_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength,
-      undo: async () => { await this.commit({ kind: "batch", intents: [await textInverse(false), { kind: "delete_resource", ref: new_ref, observed_touch: mergeDots(creation.touch_vv, restored?.change.resources.find(r => r.ref === new_ref)?.touch_vv ?? {}) }, { kind: "unlink", link_id: placement.link_id, observed_add: mergeDots(addition.add_vv, restored?.change.links.find(l => l.link_id === placement.link_id)?.add_vv ?? {}) }] }); },
+    this.push({ refs: [source_ref, new_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength+Y.encodeStateAsUpdate(source.doc).byteLength+new TextEncoder().encode(JSON.stringify({creation,addition})).byteLength,
+      undo: async () => { await this.commit({ kind: "batch", intents: [await textInverse(false), { kind: "delete_resource", ref: new_ref, observed_touch: mergeDots(creation, restored?.change.resources.find(r => r.ref === new_ref)?.touch_vv ?? {}) }, { kind: "unlink", link_id: placement.link_id, observed_add: mergeDots(addition, restored?.change.links.find(l => l.link_id === placement.link_id)?.add_vv ?? {}) }] }); },
       redo: async () => { restored = await this.commit({ kind: "batch", intents: [await textInverse(true), { kind: "restore_resource", ref: new_ref }, { kind: "restore_link", link_id: placement.link_id }] }); },
       release: () => { release(); manager.clear(); manager.destroy(); clone.destroy(); },
     });
@@ -201,6 +203,7 @@ export class OutlineHistory {
     const destination = await this.runtime.openDocument(destination_ref), source = await this.runtime.openDocument(source_ref);
     const [shownDestination, shownSource] = await Promise.all([displayed.destination??destination.capture(), displayed.source??source.capture()]);
     const clone = hydrateNote(shownDestination.body_state), sourceClone = hydrateNote(shownSource.body_state);
+    const sourceTouch=shownSource.observed_touch;
     const origin = Symbol("join destination");
     const manager = new Y.UndoManager(bodyInline(clone), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
     let retained=false;
@@ -217,9 +220,9 @@ export class OutlineHistory {
       return { kind: "edit_body", ref: destination_ref, body_update: encodeBytes(Y.encodeStateAsUpdate(clone, vector)) };
     };
     let restored: LocalCommit | null = null;
-    this.push({ refs: [destination_ref, source_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength,
+    this.push({ refs: [destination_ref, source_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength+Y.encodeStateAsUpdate(destination.doc).byteLength+new TextEncoder().encode(JSON.stringify(sourceTouch)).byteLength,
       undo: async () => { restored = await this.commit({ kind: "batch", intents: [await inverse(false), { kind: "restore_resource", ref: source_ref }] }); },
-      redo: async () => { await this.commit({ kind: "batch", intents: [await inverse(true), { kind: "delete_resource", ref: source_ref, observed_touch: mergeDots(shownSource.observed_touch, restored?.change.resources.find(r => r.ref === source_ref)?.touch_vv ?? {}) }] }); },
+      redo: async () => { await this.commit({ kind: "batch", intents: [await inverse(true), { kind: "delete_resource", ref: source_ref, observed_touch: mergeDots(sourceTouch, restored?.change.resources.find(r => r.ref === source_ref)?.touch_vv ?? {}) }] }); },
       release: () => { release(); manager.clear(); manager.destroy(); clone.destroy(); },
     });
     retained=true;
@@ -233,7 +236,7 @@ export class OutlineHistory {
     this.stopTyping();
     await this.commit({kind:"batch",intents:links.map(link=>({kind:"unlink",link_id:link.link_id,observed_add:link.add_vv}))});
     let restored:LocalCommit|null=null;
-    this.push({refs:links.flatMap(link=>[link.endpoint_a,link.endpoint_b]),bytes:0,
+    this.push({refs:links.flatMap(link=>[link.endpoint_a,link.endpoint_b]),bytes:2*new TextEncoder().encode(JSON.stringify(links)).byteLength,
       undo:async()=>{restored=await this.commit({kind:"batch",intents:links.map(link=>({kind:"restore_link",link_id:link.link_id}))});},
       redo:async()=>{await this.commit({kind:"batch",intents:links.map(link=>({kind:"unlink",link_id:link.link_id,observed_add:mergeDots(link.add_vv,restored?.change.links.find(item=>item.link_id===link.link_id)?.add_vv??{})}))});},release:()=>{},
     });
@@ -263,7 +266,7 @@ export class OutlineHistory {
       }
       current=await this.commit({kind:"batch",intents:inverse});
     };
-    this.push({refs:[endpoint_ref],bytes:0,undo:()=>undoMove(false),redo:()=>undoMove(true),release:()=>{}});
+    this.push({refs:[endpoint_ref],bytes:2*new TextEncoder().encode(JSON.stringify({links:saved.change.links,previous:[...previous]})).byteLength,undo:()=>undoMove(false),redo:()=>undoMove(true),release:()=>{}});
   }
 
   async relink(link: LinkState, from_ref: string, destination_ref: string): Promise<void> {
@@ -272,7 +275,7 @@ export class OutlineHistory {
     const saved=await this.commit({ kind: "batch", intents: [{ kind: "unlink", link_id: link.link_id, observed_add: link.add_vv }, ...placement.intents] });
     const addition=saved.change.links.find(l=>l.link_id===placement.link_id);
     let restored:LocalCommit|null=null;
-    this.push({refs:[from_ref,destination_ref,target_ref],bytes:0,
+    this.push({refs:[from_ref,destination_ref,target_ref],bytes:2*new TextEncoder().encode(JSON.stringify({link,addition})).byteLength,
       undo:async()=>{restored=await this.commit({kind:"batch",intents:[{kind:"restore_link",link_id:link.link_id},...addition?[{kind:"unlink" as const,link_id:placement.link_id,observed_add:mergeDots(addition.add_vv,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]:[]]});},
       redo:async()=>{restored=await this.commit({kind:"batch",intents:[{kind:"unlink",link_id:link.link_id,observed_add:mergeDots(link.add_vv,restored?.change.links.find(l=>l.link_id===link.link_id)?.add_vv??{})},...addition?[{kind:"restore_link" as const,link_id:placement.link_id}]:[]]});},release:()=>{},
     });
