@@ -1,7 +1,7 @@
 # a fresh highlight note shows its attachment as a link
 
 both outline owners hide a highlight note's attachment edge only by the
-document map's annotation seed: `ResourceOutlineRow.tsx:386` suppresses
+document map's annotation seed: `ResourceOutlineRow.tsx:421` suppresses
 `item.preview.annotation.attachment_edge_id`, and `AnnotationNoteHost.tsx:272`
 suppresses `fullSeed.attachment_edge_id`. a note attached since the last map
 read has no seed yet, so until the refresh lands the attachment renders as an

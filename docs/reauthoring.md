@@ -8,7 +8,7 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-reader view menu against `51d458ebc`: +253 authored runtime lines (484 added,
+reader view menu against `1b1e6ef71`: +253 authored runtime lines (484 added,
 231 deleted), all web source. shared absolute menu choices and segmented native
 radios replace theme commands, settings selects and local connections controls;
 the Activity shortcut, routine evidence help and duplicate interaction paint go.

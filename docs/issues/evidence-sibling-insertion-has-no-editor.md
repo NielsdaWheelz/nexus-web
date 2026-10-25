@@ -7,8 +7,9 @@ evidence: unmodified `a09557224`, real browser lab
 `20261025-134906-55006e56fd6f`, following journey. the discovery row selected,
 its enabled outline command ran, then no `insert item` textbox appeared.
 `evidence/model.ts:25` publishes sibling destinations with prefix `evidence`;
-`ResourceOutlineRow.tsx:379-381` hosts only prefixes equal to the full occurrence
-key. `EvidencePane.tsx` supplies no root composer host to `ResourceOutlineList`.
+`ResourceOutlineRow.tsx:414-416` hosts only prefixes equal to the full occurrence
+key. `EvidencePane.tsx:337-347` supplies no root composer host to
+`ResourceOutlineList.tsx:254-257`.
 paths are under `apps/web/src/app/(authenticated)/media/[id]/` for evidence and
 `apps/web/src/components/resources/` for the shared row/list.
 
