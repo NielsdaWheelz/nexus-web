@@ -186,12 +186,25 @@ def _requested_owner(exact: str, owner: Callable[[str], str]) -> str:
     return f"COALESCE(({owner(_ADMITTED)}),({owner(_exact_candidates(exact))}))"
 
 
+_CHUNK_EXACT = """(ref.scheme='content_chunk' AND ref.id=cc.id)
+    OR (ref.scheme='evidence_span' AND ref.id=cc.primary_evidence_span_id)"""
 _CHUNK_OWNER = _requested_owner(
-    "(ref.scheme='content_chunk' AND ref.id=cc.id) OR (ref.scheme='evidence_span' AND ref.id=cc.primary_evidence_span_id)",
+    _CHUNK_EXACT,
     lambda candidates: reading_owner_sql(
         f"SELECT reading_media_id FROM ({reading_chunks_sql(candidates)}) admitted WHERE admitted.chunk_id=cc.id"
     ),
 )
+# Semantic eligibility needs an admitted reading, not its preferred presentation
+# owner. The same published chunk bounds admit both the count and vector reads;
+# the selected window resolves its reading through _CHUNK_OWNER afterward.
+_CHUNK_CANDIDATES = (
+    "SELECT media_id FROM admitted_media UNION ALL SELECT media_id FROM ("
+    + _exact_candidates(_CHUNK_EXACT)
+    + ") exact"
+)
+_CHUNK_MEMBER = f"""EXISTS (SELECT 1 FROM ({reading_chunks_sql(_CHUNK_CANDIDATES)}) member
+    JOIN media m ON m.id=member.reading_media_id
+    WHERE member.chunk_id=cc.id {{where}})"""
 _HIGHLIGHT_OWNER = _requested_owner(
     "ref.scheme='highlight' AND ref.id=h.id",
     lambda candidates: reading_owner_sql(f"""SELECT candidate.media_id AS reading_media_id
@@ -411,8 +424,7 @@ CREDITED = {"media": "m.id", "podcast": "p.id", "contributor": "vc", "content_ch
 SEMANTIC = {
     "note_block": """cc.owner_kind = 'note_block' AND EXISTS (SELECT 1 FROM note_blocks nb
         WHERE nb.id = cc.owner_id AND nb.user_id = :viewer_id {where})""",
-    "content_chunk": f"""cc.owner_kind='media' AND EXISTS (SELECT 1 FROM media m
-        WHERE m.id=({_CHUNK_OWNER}) {{where}})""",
+    "content_chunk": f"cc.owner_kind='media' AND {_CHUNK_MEMBER}",
 }
 _HIGHLIGHT_NOTE = f""" AND EXISTS (SELECT 1 FROM resource_edges edge
     JOIN highlights h ON h.id = edge.source_id AND edge.source_scheme = 'highlight'
