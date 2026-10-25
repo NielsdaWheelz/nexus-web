@@ -1,5 +1,27 @@
 # integrated related search expires during publication
 
+on `d7350208`, the controlled operation again publishes once and proves durable
+unrelated edits plus restoration. keyword completes200 in1076.68ms at the api;
+active related returns504 after3023.24ms, now during extra semantic retrieval.
+the restored-background waiver does not cover this active request.
+
+a separately completed post-restoration diagnostic takes5466.88ms: provider
+1330.79ms, initial neighbours78.37ms, indexed selection531.70ms, extra semantic
+retrieval1919.95ms and presentation1573.56ms. within extra retrieval, the actual
+vector statement takes1167.56ms and selected reading-owner resolution609.87ms.
+these are elapsed observations, not cpu attribution or publication-time latency.
+private evidence: `search-release-integration/highlight-final-diagnostics/remote/`.
+
+the old browser recorder mixes node wall time with chromium's time origin, so
+this operation proves neither after-input ordering nor painted-result latency.
+its request-id-joined api results and independent transaction observations stand.
+the replacement recorder passes one ordinary local lab using a single browser
+monotonic clock for input, existing request-id dispatch and paint; shifted wall
+timestamps leave its verdict unchanged. use that recorder for the next operation.
+no deadline, engine, ranking or resource change is implied.
+
+historical failed receipts below retain their original meanings.
+
 the affected operation on `a3e6b8ee2` receives api504/E_SEARCH_TIMEOUT after3044ms.
 the correlated api timer fires at3001ms; the bff forwards that response rather
 than reaching its3750ms cap. provider work takes about1510ms, admission45ms,

@@ -6,7 +6,9 @@ admits; I2). SQL bounds previews except prefix context, whose tail needs full gr
 carry full canonical bodies and their body-lane version from one statement. Live media
 uses one canonical summary batch; narrow source attribution keeps its own projection.
 One query per scheme, plus summary, source-credit and annotation batches, avoids
-recursive reads. A media that disappears during summary hydration becomes unavailable
+recursive reads. Hydration returns its authorized passage facts with the rows; activation
+reuses them within the same viewer, reading context and read snapshot.
+A media that disappears during summary hydration becomes unavailable
 before routing, so neither its old title nor a live activation escapes.
 """
 
@@ -46,8 +48,11 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.media import media_summaries
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.locations import media_passages
-from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.resource_items.locations import ScopedMediaPassage, media_passages
+from nexus.services.resource_items.routing import (
+    _activations_from_resolved_passages,
+    resource_activations_for_refs,
+)
 
 _VISIBLE = f"({visible_media_ids_cte_sql()})"
 
@@ -164,7 +169,7 @@ def resource_items_out(
 
     A reading chooses presentation, never visibility or an additional audience.
     """
-    rows = _rows(db, viewer_id, refs, reading_media_ids=reading_media_ids)
+    rows, passages = _rows(db, viewer_id, refs, reading_media_ids=reading_media_ids)
     summaries = media_summaries(
         db,
         viewer_id=viewer_id,
@@ -174,26 +179,29 @@ def resource_items_out(
         if ref.scheme == "media" and ref.id not in summaries:
             rows.pop(ref.uri, None)
     missing = {ref.uri for ref in refs if ref.uri not in rows}
-    activations = resource_activations_for_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        missing_ref_uris=missing,
-        reading_media_ids=reading_media_ids,
+    activations = _activations_from_resolved_passages(
+        db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing, scoped=passages
     )
     owner_refs = [
         assert_resource_ref(uri)
         for uri in dict.fromkeys(row["owner_ref"] for row in rows.values() if row.get("owner_ref"))
     ]
     source_rows = {ref.uri: rows[ref.uri] for ref in owner_refs if ref.uri in rows}
-    source_rows.update(_rows(db, viewer_id, [ref for ref in owner_refs if ref.uri not in rows]))
+    additional_rows, source_passages = _rows(
+        db, viewer_id, [ref for ref in owner_refs if ref.uri not in rows]
+    )
+    source_rows.update(additional_rows)
+    source_passages.update(
+        {ref.uri: passages[ref.uri] for ref in owner_refs if ref.uri in passages}
+    )
     named_refs = [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
     credits = _credits(db, [*named_refs, *(ref for ref in owner_refs if ref.uri in source_rows)])
-    source_activations = resource_activations_for_refs(
+    source_activations = _activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=owner_refs,
         missing_ref_uris={ref.uri for ref in owner_refs if ref.uri not in source_rows},
+        scoped=source_passages,
     )
     sources = _source_attributions(owner_refs, source_rows, credits, source_activations)
     annotations = _annotations(
@@ -284,20 +292,22 @@ def resource_item_out(
 
 def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> set[str]:
     """The uris of ``refs`` the viewer may see now."""
-    return set(_rows(db, viewer_id, refs))
+    rows, _ = _rows(db, viewer_id, refs)
+    return set(rows)
 
 
 def source_attributions(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> dict[str, SourceAttributionOut]:
     """Known current source metadata, only after the same viewer gate as resource rows."""
-    rows = _rows(db, viewer_id, refs)
+    rows, passages = _rows(db, viewer_id, refs)
     credits = _credits(db, [r for r in refs if r.uri in rows])
-    activations = resource_activations_for_refs(
+    activations = _activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=refs,
         missing_ref_uris={r.uri for r in refs if r.uri not in rows},
+        scoped=passages,
     )
     return _source_attributions(refs, rows, credits, activations)
 
@@ -446,7 +456,7 @@ def _rows(
     refs: Sequence[ResourceRef],
     *,
     reading_media_ids: Mapping[str, UUID] | None = None,
-) -> dict[str, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, ScopedMediaPassage]]:
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
         ids = list({ref.id for ref in refs if ref.scheme == scheme})
@@ -487,7 +497,7 @@ def _rows(
                 "owner_ref": passage.owner.uri,
                 "location_label": row.get("location_label") if row is not None else None,
             }
-    return out
+    return out, passages
 
 
 _NOTE_PARTS_SQL = """

@@ -191,7 +191,7 @@ _CHUNK_EXACT = """(ref.scheme='content_chunk' AND ref.id=cc.id)
 _CHUNK_OWNER = _requested_owner(
     _CHUNK_EXACT,
     lambda candidates: reading_owner_sql(
-        f"SELECT reading_media_id FROM ({reading_chunks_sql(candidates)}) admitted WHERE admitted.chunk_id=cc.id"
+        f"SELECT reading_media_id FROM ({reading_chunks_sql(f'SELECT cc.owner_id AS media_id WHERE cc.owner_id IN ({candidates}) UNION ALL SELECT candidate_part.media_id FROM media_parts candidate_part WHERE candidate_part.source_media_id=cc.owner_id AND candidate_part.media_id IN ({candidates})')}) admitted WHERE admitted.chunk_id=cc.id"
     ),
 )
 # Semantic eligibility needs an admitted reading, not its preferred presentation

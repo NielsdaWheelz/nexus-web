@@ -41,5 +41,8 @@ the current source adds only the piece-source candidate predicate before the
 existing canonical highlight bounds resolver. direct anchor admission, fragment
 kind checks, exact-ref correlation and reading filters are unchanged. the actual
 source builder reproduces the measured candidate sql byte-for-byte. retained
-scope/piece/quote/activation checks and one actual corrected-v4 bff operation are
-still required; the earlier publication, edit and restoration wins remain valid.
+scope/piece/quote/activation checks pass on `d7350208`, followed by an actual
+keyword200 in1076.68ms at the api during publication. active related reaches the
+later extra-semantic phase before timing out. the corrected browser recorder is
+locally verified; complete affected browser acceptance remains pending. the
+publication, durable-edit and restoration wins remain valid.
