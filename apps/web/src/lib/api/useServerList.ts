@@ -2,7 +2,8 @@
 
 // One server-ordered list (docs/architecture.md §8.12).
 // - `key` names the view. Only its matching, account-owned snapshot is
-//   exposed; a new key loads with no previous-key rows or metadata.
+//   exposed unless `retainPreviousKey` explicitly holds the last committed
+//   account-owned prefix while its replacement loads.
 // - Rows are deduped by `id`; the first occurrence wins.
 // - `refetch()` rereads the loaded prefix (at least one page; a complete list
 //   to its end, so it stays complete) and commits it at once. It runs after the
@@ -31,6 +32,7 @@ import { isApiError, ApiError } from "@/lib/api/client";
 import {
   modeledApiError,
   requestWithRetry,
+  type ReadPolicy,
   useServerSeed,
   useReadOwner,
   useThrowLater,
@@ -64,6 +66,8 @@ export interface ServerList<T, M = null> {
   readonly requestedKey: string | null;
   readonly status: "loading" | "failed" | "ready";
   readonly items: readonly T[];
+  readonly shownKey: string | null;
+  readonly shownStale: string | null;
   readonly source: ReadSource;
   /** The requested key has a committed snapshot. */
   readonly current: boolean;
@@ -82,6 +86,7 @@ export interface ServerList<T, M = null> {
   /** Repeats what failed; a rejected cursor rereads instead. */
   readonly retry: () => void;
   readonly refetch: () => Promise<void>;
+  readonly more: () => void;
 }
 
 interface Waiter {
@@ -104,13 +109,17 @@ function unique<T>(items: readonly T[], id: (item: T) => string): T[] {
   });
 }
 
-interface ListInput<T, M> {
+interface ListInput<T, M> extends ReadPolicy {
   readonly key: string | null;
   readonly stale: string;
   readonly pageSize: number;
   readonly readPolicy?: string;
   readonly catalog?: CatalogRead<ListPage<T, M>>;
   readonly active: boolean;
+  /** Omit for ordinary sequential traversal; false leaves continuation to `more()`. */
+  readonly drain?: boolean;
+  /** Search replacement keeps the last committed prefix visible while a new key loads. */
+  readonly retainPreviousKey?: boolean;
   readonly id: (item: T) => string;
   /** Combines one traversal's page metadata, earliest first; absent, the latest page's wins. */
   readonly foldMetadata?: (earlier: M, later: M) => M;
@@ -171,7 +180,7 @@ function useList<T, M>(
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
 
-  const owner = useReadOwner(key, `list:retry3:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
+  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
     if (latest.current.key === null) return;
     waiters.current.push({ resolve() {}, reject() {} });
     run("Refetch");
@@ -239,7 +248,7 @@ function useList<T, M>(
           return await walk();
         } catch (error) {
           // Restart from the source, never from a cached first page.
-          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted) throw error;
+          if (!isApiError(error) || error.code !== "E_INVALID_CURSOR" || restarted || latest.current.retry === "manual") throw error;
           restarted = true;
           return walk();
         }
@@ -279,7 +288,7 @@ function useList<T, M>(
         }
         const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", wantPages,
           op === "More" ? base?.cursor : null, toEnd, base?.orderRevision]);
-        return owner.read(requestKey, signal => requestWithRetry(read, signal), controller.signal);
+        return owner.read(requestKey, signal => requestWithRetry(read, signal, latest.current), controller.signal);
       })()
         .then(
           result => {
@@ -383,28 +392,32 @@ function useList<T, M>(
   }, []);
 
   const ofKey = shown !== null && shown.key === key ? shown : null;
+  const display = input.retainPreviousKey ? shown : ofKey;
   const active = input.active && visible;
   useEffect(() => {
     if (!active || ofKey === null || running !== null || failure !== null) return;
-    if (ofKey.cursor !== null) run("More");
+    if (ofKey.cursor !== null && input.drain !== false) run("More");
     else if (pendingObservation.current) run("Refetch");
-  }, [active, ofKey, running, failure, observation, run]);
+  }, [active, ofKey, running, failure, observation, input.drain, run]);
 
   return {
     requestedKey: key,
     status: ofKey !== null ? "ready" : failure !== null ? "failed" : "loading",
-    items: ofKey?.items ?? NONE,
-    source: ofKey?.source ?? LIVE_SOURCE,
+    items: display?.items ?? NONE,
+    shownKey: display?.key ?? null,
+    shownStale: display?.stale ?? null,
+    source: display?.source ?? LIVE_SOURCE,
     current: ofKey !== null,
     fresh: ofKey !== null && ofKey.source.kind === "live" && ofKey.stale === stale,
     complete: ofKey !== null && ofKey.cursor === null,
-    orderRevision: ofKey?.orderRevision ?? null,
-    metadata: ofKey?.metadata ?? null,
+    orderRevision: display?.orderRevision ?? null,
+    metadata: display?.metadata ?? null,
     running,
     failure,
     active,
     revalidate,
     retry: () => {
+      if (input.retry === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
       if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
         run("More");
       } else if (failure !== null) {
@@ -412,6 +425,7 @@ function useList<T, M>(
       }
     },
     refetch,
+    more: () => run("More"),
   };
 }
 

@@ -1,11 +1,11 @@
 "use client";
 
 // One mobile task: a keyboard-down workspace index, or explicitly entered search.
-import { useLayoutEffect, useRef, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
-import { isAccountDestinationId, NAV_IMPORTS } from "@/components/appnav/navModel";
-import { NEXUS_SOURCE_FAILURES, NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "@/components/nexus/NexusRow";
+import { isAccountDestinationId } from "@/components/appnav/navModel";
+import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -27,7 +27,23 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const bodyRef = useRef<HTMLDivElement>(null);
   useCollectionLayout(bodyRef, controller.open && controller.page.kind === "Root");
   const composing = useRef(false);
+  const markSearchInteraction = controller.interact;
+  const refreshRevision = useRef(controller.searchRefreshRevision);
+  useLayoutEffect(() => {
+    if (refreshRevision.current === controller.searchRefreshRevision) return;
+    refreshRevision.current = controller.searchRefreshRevision;
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [controller.searchRefreshRevision]);
   const taskPointerId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!controller.open || controller.page.kind !== "Root") return;
+    const selected = () => {
+      const selection = window.getSelection();
+      if (selection !== null && !selection.isCollapsed && (listRef.current?.contains(selection.anchorNode) || listRef.current?.contains(selection.focusNode))) markSearchInteraction();
+    };
+    document.addEventListener("selectionchange", selected);
+    return () => document.removeEventListener("selectionchange", selected);
+  }, [controller.open, controller.page.kind, markSearchInteraction]);
   const previousQuery = useRef(controller.query);
   const searching = controller.rootMode === "Search";
   useLayoutEffect(() => { taskPointerId.current = null; }, [controller.open]);
@@ -64,9 +80,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     event.preventDefault();
     event.stopPropagation();
   };
-  const failures = [...controller.failures].map((source) => NEXUS_SOURCE_FAILURES[source]);
-  if (controller.searchUnavailable) failures.push("search is unavailable for this input. shorten the search or ask nexus with the full text.");
-  if (controller.semanticUnavailable) failures.push("related matches are unavailable; showing text matches");
   const textLabels = ["ask nexus", "add to today", "browse…", "create…"];
 
   const root = (
@@ -77,11 +90,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         <div className={styles.headerActions}>
           <AccountMenu
             activeId={accountId}
-            importsActive={section === NAV_IMPORTS.id}
             placement="below"
             align="end"
-            renderTrigger={(trigger) => (
-              <Button {...trigger} className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account</Button>
+            renderTrigger={(trigger, attention) => (
+              <Button {...trigger} className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account {attention}</Button>
             )}
             onNavigate={(event, destination) => {
               const activation = workspaceTargetActivationIntent(event);
@@ -110,8 +122,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             data-nexus-control="Search"
             onFocus={controller.enterSearch}
             onChange={(event) => controller.setQuery(event.currentTarget.value)}
-            onCompositionStart={() => { composing.current = true; }}
-            onCompositionEnd={() => { composing.current = false; }}
+            onCompositionStart={() => { composing.current = true; controller.setComposing(true); }}
+            onCompositionEnd={() => { composing.current = false; controller.setComposing(false); }}
             onKeyDown={(event) => {
               if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229 || event.key === "Process") {
                 event.stopPropagation();
@@ -131,10 +143,9 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
           />
           {controller.query ? <Button iconOnly icon={<X />} className={styles.iconButton} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : null}
         </div>
-        {searching ? <div className={styles.searchStatus}>{controller.busy ? "searching…" : "\u00a0"}</div> : null}
+        {searching ? <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} /> : null}
       </div>
-      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
-        {searching ? <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} searchUnavailable={controller.searchUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
+      <div ref={listRef} className={`${collection.fillViewport} ${styles.searchScroll}`} data-collection-viewport="" aria-busy={controller.busy || undefined} data-mode={controller.rootMode} onPointerDownCapture={controller.interact} onFocusCapture={controller.interact} onWheelCapture={controller.interact} onTouchMoveCapture={controller.interact} onKeyDownCapture={controller.interact}>
         <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
@@ -188,11 +199,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
           />
         ) : null}
-        {searching && typed && results === 0 && !controller.pending && !controller.searchUnavailable && controller.failures.size === 0 ? <p className={styles.empty}>no results.</p> : null}
         {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your tabs, library and commands.</p> : null}
       </div>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.titlesFailed ? "couldn’t refresh tab titles." : null, ...(searching ? failures : []), searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+        {[controller.announcement, controller.titlesFailed ? "couldn’t refresh tab titles." : null, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
       </div>
     </div>
   );

@@ -234,6 +234,10 @@ def replace_edges_for_origin(
         for media_id in retained_media:
             claim_document_teardown_if_unreferenced_locked(db, media_id)
     retention.touch_owners(db, activity)
+    if retained_media and changed:
+        from nexus.services.search import projection
+
+        projection.refresh_viewer_contributors(db, [viewer_id])
     return [edge_out(row) for row in rows]
 
 
@@ -401,6 +405,9 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
 
         for media_id in retained_media:
             claim_document_teardown_if_unreferenced_locked(db, media_id)
+        from nexus.services.search import projection
+
+        projection.refresh_viewer_contributors(db, [viewer_id])
 
 
 def existing_link_pair(

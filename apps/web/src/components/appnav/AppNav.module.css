@@ -141,10 +141,18 @@
   flex-shrink: 0;
 }
 
-.playerIcon {
+.playerIcon,
+.accountIcon {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
+}
+
+.accountMarker {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: calc(-1 * var(--space-1));
+  display: flex;
 }
 
 .playerMarker {
@@ -223,32 +231,6 @@
   margin-top: auto;
   padding: var(--space-3) var(--space-2);
   border-top: 1px solid var(--edge-subtle);
-}
-
-.imports {
-  position: relative;
-}
-
-.importsLabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-/* Collapsed, the count is a chip in the link's top-right corner, above the
-   icon and inside the link: the link always carries the band (one clearance,
-   the chip's height, one clearance), so a first count never moves the rail. */
-.collapsed .imports {
-  padding-top: calc(var(--space-1) * 2 + var(--text-2xs) * var(--leading-tight) + 4px);
-}
-
-.importsChip {
-  position: absolute;
-  top: var(--space-1);
-  right: 0;
-  display: flex;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
 }
 
 .account {

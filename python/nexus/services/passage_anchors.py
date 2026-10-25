@@ -32,6 +32,7 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundEr
 from nexus.services import library_entries, locator_resolver, text_quote
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.text_quote import QuoteStatus
 
 PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block")
@@ -134,7 +135,8 @@ def materialize_or_reuse(
     typed refusal, and locator geometry never disambiguates identity. Reuse
     refreshes only the replaceable ``locator_hint``. Flush-only: composes
     inside the caller-owned (retryable) transaction, whose retry allowlist
-    covers the ``uq_passage_anchors_identity`` first-insert race.
+    covers the ``uq_passage_anchors_identity`` first-insert race. The caller
+    starts its serializable attempt before source reads.
     """
     if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
         raise AssertionError(  # justify-defect: callers pass the closed media|note_block set
@@ -203,6 +205,11 @@ def materialize_or_reuse(
     )
     db.add(anchor)
     db.flush()
+    projection.refresh(db, "passage_anchor", [anchor.id])
+    if owner_scheme == "media" and db.scalar(
+        select(XPostSource.id).where(XPostSource.media_id == owner_id)
+    ):
+        projection.refresh_viewer_contributors(db, [user_id])
     return anchor
 
 
@@ -246,6 +253,11 @@ def delete_for_owner(
             ref=ResourceRef(scheme="passage_anchor", id=anchor.id),
         )
     db.execute(delete(PassageAnchor).where(PassageAnchor.id.in_([anchor.id for anchor in anchors])))
+    projection.refresh(db, "passage_anchor", [anchor.id for anchor in anchors])
+    if owner_scheme == "media" and db.scalar(
+        select(XPostSource.id).where(XPostSource.media_id == owner_id)
+    ):
+        projection.refresh_viewer_contributors(db, list({anchor.user_id for anchor in anchors}))
 
 
 _REFUSAL_MESSAGES = {

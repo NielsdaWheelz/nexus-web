@@ -257,12 +257,11 @@ resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
 inside a reserved action column that never shifts content.
 
-media index rows use their named `mediaRow` content width: at up to 479px,
-episode playback and one more trigger remain beside identity; other media keep
-only more. expanded rows retain their shortcuts. hosts hide whole
-`data-media-action-id` wrappers within `data-media-actions`; the action component
-does not infer placement from density. standalone preview controls retain their
-own layout. content and feedback may wrap; compact controls create no extra row.
+index rows use the shared `ResourceRow` shell. its `indexRow` container owns
+author and shortcut demotion, metadata spacing and tight-row adaptation; see the
+[resource presentation contract](resource-references.md#presentation-contract).
+hosts hide whole `data-action-control-key` wrappers; action components do not
+infer placement from density. standalone preview controls retain their own layout.
 external media rows expose the same more trigger at every width.
 
 `ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
@@ -282,10 +281,8 @@ reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 preserves the complete publisher image and can letterbox it. existing compact
 title clamping, metadata ellipsis and status placement remain in force.
 
-ordinary rows below `18rem` give the title full width, retain metadata below it,
-and move controls to their own trailing line. the font-relative threshold preserves
-legible names under text enlargement; normal-width rows keep inline controls.
-row defaults yield to each control's owned minimum target size.
+row defaults yield to each control's owned minimum target size. responsive
+placement follows the resource presentation contract above.
 
 mobile chrome/switchboard retain 48px and desktop nexus retains its wider
 shortcut-bearing control through the same geometry contract.

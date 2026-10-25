@@ -184,7 +184,7 @@ export default function LibraryChooser({
         </div> : null}
       </div>
       {loading && rows.length === 0 ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "loading libraries…" }} announcement="None" /></div>
-        : matching.length === 0 && !canCreate ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: invalid
+        : error === null && matching.length === 0 && !canCreate ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: invalid
           ?? (q === "" ? empty : "no libraries match") }} announcement="None" /></div> : null}
     </div>
   );

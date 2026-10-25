@@ -6,7 +6,7 @@
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
-    preflight -> inputs -> images -> stop -> backup -> migrate -> up -> limits -> caddy
+    preflight -> inputs -> images -> stop -> backup -> postgres -> migrate -> up -> limits -> caddy
               -> health -> isolation -> current pointer -> prune
 
 The whole pass holds the host backup lock, so the nightly backup never meets
@@ -738,6 +738,10 @@ def release(source_sha: str, workspace: Path) -> None:
     pull_image(candidate, candidate.images.api)
     pull_image(candidate, candidate.images.worker)
     host(f"docker pull {config_value('CLOUDFLARED_IMAGE')}", timeout=900)
+    postgres_image = config_value("POSTGRES_IMAGE")
+    if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", postgres_image) is None:
+        raise Failure("POSTGRES_IMAGE must be an immutable image reference by sha256 digest")
+    host(f"docker pull {shlex.quote(postgres_image)}", timeout=900)
     free = int(host("df --output=avail -B1 /").splitlines()[1])
     if free < MIN_ROOT_FREE:
         raise Failure(f"host root filesystem has only {free} bytes free after image pulls")
@@ -788,6 +792,45 @@ def release(source_sha: str, workspace: Path) -> None:
         )
     else:
         note("the database is empty; there is nothing to back up")
+
+    # A backup receipt can describe an earlier revision on a rerun. Compare the
+    # live database across recreation, before any migration changes it.
+    identity = database_identity(psql)
+    revision = database_revision(psql)
+    note("converging postgres before migration, with writers stopped")
+    compose(
+        candidate,
+        "up --detach --no-deps --wait --wait-timeout 120 postgres",
+        timeout=900,
+    )
+    postgres = inspect(container("postgres"))
+    expected_image = json.loads(host(f"docker image inspect {shlex.quote(postgres_image)}"))[0][
+        "Id"
+    ]
+    if postgres["Config"]["Image"] != postgres_image or postgres["Image"] != expected_image:
+        raise Failure("postgres does not run the configured immutable image")
+    limits = postgres["HostConfig"]
+    if (
+        limits["Memory"] != 512 * 1024**2
+        or limits["MemorySwap"] != 512 * 1024**2
+        or limits["ShmSize"] != 128 * 1024**2
+        or psql("SHOW shared_buffers") != "64MB"
+    ):
+        raise Failure("postgres requires 512 MiB/no swap, 128 MiB shm and 64 MiB shared buffers")
+    if database_identity(psql) != identity or database_revision(psql) != revision:
+        raise Failure("postgres recreation changed the database identity or revision")
+    version = int(psql("SHOW server_version_num"))
+    preloaded = psql("SHOW shared_preload_libraries")
+    available = psql(
+        "SELECT EXISTS (SELECT 1 FROM pg_available_extension_versions"
+        " WHERE name = 'pg_search' AND version = '0.26.2')"
+    )
+    if (
+        not 150000 <= version < 160000
+        or "pg_search" not in {name.strip() for name in preloaded.split(",")}
+        or available != "t"
+    ):
+        raise Failure("postgres requires pg15 with preloaded pg_search 0.26.2 available")
     migrate(candidate)
 
     start(candidate)

@@ -33,17 +33,29 @@ the incoming command once. restored data never dispatches commands.
   contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
 
-On desktop, Imports, Add, Account and Nexus remain rail actions. Imports is a
-footer utility link beside Add and Account (`NAV_IMPORTS` in `navModel.ts`); it
-navigates the `/imports` workspace pane and
-carries a real `Pill` badge counting only imports that need attention (zero
-hides it, an unloaded summary is not zero, the visible count caps at `99+`, and
-the accessible name keeps the exact count). The shared Account menu is exactly
-Stats, Imports, Downloads when available, Settings, a separator, and danger-last
-Sign Out; its `Imports` item navigates the same destination and carries the same
-badge, and the Account trigger itself carries no count. The mobile Nexus Account
-projection renders that same component and order, so mobile enters the pane one
-tap deeper. Quick Note and Today exist
+on desktop, imports belongs under account; it has no standalone rail action.
+the shared account menu is exactly stats, imports, downloads when available,
+settings, a separator, and danger-last sign out. imports retains its canonical
+`/imports` link, query/deep links, inspector and contextual acquisition entrances.
+the mobile nexus account projection renders that same component and order;
+mobile attention remains inside nexus, without a closed-launcher badge.
+
+`AccountMenu` reads the existing `ImportsProvider` summary once. a known positive
+`needs_attention_count` paints a passive warning dot inside account and a warning
+`Pill` inside its imports item. the pill caps at `99+`; the imports link's complete
+accessible name and account's persistent description retain the exact count.
+account keeps its stable name and collapsed tooltip, `account`; description ids
+compose with existing menu and tooltip ids. dot and pill geometry stay reserved
+at unknown, zero and every displayed count, so updates preserve menu and focus.
+opening either menu or page does not acknowledge attention.
+
+loading or failure without data is unknown, not zero. refresh retains the last
+observation; failed refresh retains its dot/count and qualifies positive status
+as `couldn’t refresh imports; last update: {attentionPhrase(count)}`. retained
+error outranks a retry's refreshing state until success. zero hides the marker
+and count without claiming freshness; unavailable summaries add no global
+warning, spinner or live announcement. the imports workspace owns errors and
+recovery; navigation adds no observation or polling policy. quick note and today exist
 only in Nexus. Both Nexus projections expose the same commands, results,
 targets, workflows, history, and dispatch; the shared composer owns section
 membership, order, and caps, while each renderer owns platform geometry.
@@ -210,10 +222,10 @@ actions remain accessible through nexus and ordinary controls.
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
-| Rail membership and order, accent, Imports, Account pair           | `NAV_RAIL`, `NAV_ACCENT`, `NAV_IMPORTS`, `NAV_STATS`/`NAV_SETTINGS` in `apps/web/src/components/appnav/navModel.ts` |
+| Rail membership/order and account destination classification       | `apps/web/src/components/appnav/navModel.ts` |
 | Rail collapse cookie name and its server read                     | `apps/web/src/lib/renderEnvironment/{types,server}.ts`                                                            |
-| Shared account membership and rendering                           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
-| Imports badge count and its accessible name                       | `apps/web/src/components/imports/ImportsBadge.tsx` and `lib/imports/copy.ts`                                 |
+| Shared account membership, summary projection, attention and description | `apps/web/src/components/appnav/AccountMenu.tsx` |
+| Passive imports menu label/count and complete status copy          | `apps/web/src/components/imports/ImportsBadge.tsx` and `lib/imports/copy.ts` |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/query.ts`                                                                                  |
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
 | Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
@@ -250,9 +262,10 @@ declare `sectionDestinationId` because their header has no section identity:
 - `/podcasts/{id}` keeps **Podcasts** active;
 - chat detail and new-chat panes keep **Chats** active;
 - pages and note blocks keep **Notes** active;
-- Atlas, Oracle, and Lectern map to their own destinations; Stats and Settings
-  mark Account current without creating a selected rail destination;
-- `/imports` marks the rail's Imports utility link current, not Account.
+- Atlas, Oracle, and Lectern map to their own destinations;
+- Stats, Imports (including query variants), and Settings mark account current
+  without creating a selected rail destination. `activeId` also marks the shared
+  account menu's corresponding item current.
 
 Routes that are intentionally absent from fixed navigation, such as Search and
 Authors, do not fabricate a selected rail item. Section pane titles resolve
@@ -311,13 +324,8 @@ reorder; its minimized title restores through ordinary activation. see
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the
 brand mark, because that makes an apparent Home activation trigger rail chrome.
-For the same reason the Imports count is painted clear of its icon rather than
-over it: at 48px the rail has no room for a chip on the glyph, so the badge is
-anchored in the link's own top-right corner, above the icon, on the rail's own
-opaque ground. The link carries the band the chip needs, unconditionally, so
-the whole chip is inside the control it counts for — a click on the count is a
-click on Imports — and the clearance above the icon survives the rail's hover
-lift.
+account's warning dot stays inside its existing control, with no separate
+target. the exact imports count belongs inside the account menu.
 
 ## Home and workspace restore
 
@@ -345,7 +353,8 @@ explicit `/lectern` request.
 When adding or changing a destination:
 
 1. Change identity once in the registry in `lib/navigation/destinations.ts`.
-2. Change rail, utility, or Account membership/order only in `navModel.ts`.
+2. Change rail membership/order and account classification in `navModel.ts`;
+   change account membership/order in `AccountMenu.tsx`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
 4. Add a destination to mobile Places only through the closed projection in

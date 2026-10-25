@@ -23,6 +23,7 @@ from nexus.schemas.conversation import (
     ChatRunToolCallStartEventPayload,
     ChatRunToolResultEventPayload,
 )
+from nexus.services.search import projection
 
 TERMINAL = frozenset({"complete", "error", "cancelled"})
 CHANNEL = "chat_run_events"
@@ -117,6 +118,8 @@ def finalize(
     """The sole terminal writer, on a locked run: the answer, open tool calls, ``done``.
 
     A no-op on a terminal run, so ``done`` is written exactly once. Never commits.
+    Complete answers require the caller's serializable attempt before run/claim reads;
+    pending-to-error/cancelled transitions have no lexical occurrence.
     """
 
     if run.status in TERMINAL:
@@ -146,6 +149,8 @@ def finalize(
     run.support_id = support_id
     run.publication_warning_code = warning
     append(db, run, ChatRunDoneEventPayload(status=status))
+    if status == "complete":
+        projection.refresh(db, "message", [run.assistant_message_id])
 
 
 def finalize_dead(db: Session, run: ChatRun) -> None:

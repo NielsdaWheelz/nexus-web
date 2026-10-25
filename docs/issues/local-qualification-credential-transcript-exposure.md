@@ -57,3 +57,25 @@ and compose project of the same name were removed, including auth/app/storage
 volumes and networks; private session/key/status/log files were deleted. those
 local credentials no longer authorize a running service. prior operator-key
 incidents above remain open.
+
+## 2026-10-21 search architecture review
+
+a review subagent's artifact preview printed `openai_api_key` from ignored
+`.nexus-local/search-qualification/live.json` into its tool transcript despite
+instructions to redact secrets. the value was not copied into parent messages,
+new files or network requests. credential-bearing artifact inspection stopped;
+the remaining review uses source, issue records and sanitized plans.
+
+the credential owner determines whether transcript retention crosses the intended
+trust boundary and rotates the affected key if it does. confirm replacement
+access and invalidate the exposed key where rotation is required. do not print
+the private config or key when checking resolution.
+
+## 2026-10-23 search attribution metadata
+
+a draft-helper preview exposed one private fixture identifier; a parent receipt
+projection also included a request identifier. no corpus text, query, vector or
+credential was involved. neither value is repeated here. subsequent inspection
+uses closed field allowlists and source fragments that exclude baked fixture
+values. this metadata incident adds no credential-rotation requirement; earlier
+credential incidents retain their existing owner actions.

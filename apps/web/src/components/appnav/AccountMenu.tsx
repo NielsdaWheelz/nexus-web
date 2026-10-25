@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -11,6 +11,8 @@ import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
 import { readDeviceStartup, sessionSignOut } from "@/lib/native/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { importAttentionDescription } from "@/lib/imports/copy";
+import { useImports } from "@/lib/imports/ImportsProvider";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import { pauseWriting, readWriting, resumeWriting, stopWritingRuntime } from "@/lib/notes/writes";
@@ -21,9 +23,10 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { cx } from "@/lib/ui/cx";
 import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
-import dialogStyles from "./AccountMenu.module.css";
+import accountStyles from "./AccountMenu.module.css";
 
 const SignOutContext = createContext<{ request: () => void; busy: boolean } | null>(null);
 
@@ -106,7 +109,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     <SignOutContext value={{ request: () => void request(), busy }}>
       {children}
       {failure === null ? null : <Dialog open title="sign out not completed" onClose={() => setFailure(null)}>
-        <div className={dialogStyles.choices}>
+        <div className={accountStyles.choices}>
           <p>{failure.message}</p>
           <Button emphasis="strong" onClick={() => { if (failure.ended) refreshDevice(); else void request(); }}>{failure.ended ? "retry account cleanup" : "retry sign out"}</Button>
           <Button onClick={() => setFailure(null)}>close</Button>
@@ -117,17 +120,25 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** Stats, Imports, Downloads (Android), Settings, Sign Out: the rail's and mobile Nexus's. */
+/** Account navigation and passive Imports attention, shared by the rail and mobile Nexus. */
 export default function AccountMenu(props: {
   activeId: DestinationId | null;
-  importsActive: boolean;
   placement: "above" | "below";
   align: "start" | "center" | "end";
-  renderTrigger: ComponentProps<typeof ActionMenu>["renderTrigger"];
+  renderTrigger: (
+    trigger: Parameters<NonNullable<ComponentProps<typeof ActionMenu>["renderTrigger"]>>[0],
+    attention: ReactNode,
+  ) => ReactNode;
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
   const workspace = useWorkspaceStore();
   const signOut = useContext(SignOutContext);
+  const { summary } = useImports();
+  const descriptionId = useId();
+  const count = summary.status === "ready" ? summary.data.needs_attention_count : null;
+  const refresh_failed = summary.status === "ready" && summary.error !== null;
+  const description = count !== null && count > 0
+    ? importAttentionDescription(count, refresh_failed) : null;
   // justify-defect: the authenticated shell mounts the one sign-out owner above every menu.
   if (!signOut) throw new Error("AccountMenu must be used within a SignOutProvider");
 
@@ -155,14 +166,14 @@ export default function AccountMenu(props: {
         }}
       >
         <item.icon size={16} className={collection.adornment} aria-hidden="true" />
-        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : <span className={collection.content}>{item.label}</span>}
+        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} count={count} refresh_failed={refresh_failed} /> : <span className={collection.content}>{item.label}</span>}
       </a>
     ),
   });
 
   const options: ActionDescriptor[] = [
     link(NAV_STATS, props.activeId === "stats"),
-    link(NAV_IMPORTS, props.importsActive),
+    link(NAV_IMPORTS, props.activeId === "imports"),
     link(NAV_SETTINGS, props.activeId === "settings"),
     {
       kind: "command",
@@ -193,13 +204,19 @@ export default function AccountMenu(props: {
   }
 
   return (
-    <ActionMenu
-      className={styles.account}
-      label="account"
-      placement={props.placement}
-      align={props.align}
-      renderTrigger={props.renderTrigger}
-      source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
-    />
+    <>
+      <ActionMenu
+        className={styles.account}
+        label="account"
+        placement={props.placement}
+        align={props.align}
+        renderTrigger={(trigger) => props.renderTrigger({
+          ...trigger,
+          "aria-describedby": cx(trigger["aria-describedby"], description !== null && descriptionId) || undefined,
+        }, <span className={accountStyles.attention} data-visible={description !== null} aria-hidden="true" />)}
+        source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
+      />
+      <span id={descriptionId} className="sr-only">{description}</span>
+    </>
   );
 }

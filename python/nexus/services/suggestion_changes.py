@@ -1,12 +1,16 @@
-"""Suggestions input revision and wakeups, independent of feed registration.
+"""Suggestion invalidation: durable source-owner clocks and transactional wakeups.
 
-The committing source owner calls ``record_input_change`` after its final domain
-operation. The counter is always acquired last; nothing may acquire another
-domain lock before that transaction commits.
+Each changed canonical source supplies its stable namespaced identity. Only those
+clocks advance in the source transaction; unrelated owners never share a counter
+row. Multiple changed owners may advance the aggregate by more than one. Clock
+rows remain after source deletion, so their sum (including the migrated baseline)
+never loses a committed change. Only suggestion readers compute that sum; source
+publishers never read it. Notifications are hints, delivered only after commit.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -23,8 +27,8 @@ NOTIFY_KEY = "changed"
 
 
 def input_revision(db: Session) -> int:
-    """The migration installs exactly one input owner, including before any feed."""
-    return int(db.execute(text("SELECT revision FROM suggestion_inputs")).scalar_one())
+    """The durable committed aggregate, including changes whose transactions commit late."""
+    return int(db.execute(text("SELECT sum(revision) FROM suggestion_inputs")).scalar_one())
 
 
 def notify_suggestions(db: Session) -> None:
@@ -32,12 +36,24 @@ def notify_suggestions(db: Session) -> None:
     db.execute(text("SELECT pg_notify(:channel, :key)"), {"channel": CHANNEL, "key": NOTIFY_KEY})
 
 
-def record_input_change(db: Session) -> None:
-    """Flush domain writes, advance the input owner and notify, immediately before commit."""
+def record_input_change(db: Session, *, owners: Iterable[str]) -> None:
+    """Advance each changed source once and notify in its existing transaction.
+
+    Keys name actual canonical identities, including natural composite identities;
+    they are opaque clock keys, not a new resource-ref format. The baseline is
+    migration-owned. Sorting makes a multi-owner write acquire clocks consistently.
+    """
+    keys = sorted(set(owners))
+    assert keys and all(key and key != "baseline:legacy" for key in keys)
     db.flush()
     db.execute(
-        text("UPDATE suggestion_inputs SET revision = revision + 1 RETURNING revision")
-    ).scalar_one()
+        text("""
+            INSERT INTO suggestion_inputs (id, revision)
+            SELECT owner, 1 FROM unnest(CAST(:owners AS text[])) AS owner ORDER BY owner
+            ON CONFLICT (id) DO UPDATE SET revision = suggestion_inputs.revision + 1
+        """),
+        {"owners": keys},
+    )
     notify_suggestions(db)
 
     from nexus.services.writing import effects

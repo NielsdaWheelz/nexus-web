@@ -4,11 +4,12 @@ App search, web search, attached ``<resources>`` and ``read_resource`` evidence 
 enter through ``citation_from_search_result`` (provider web hits through ``web_citation``), so
 the stored ``result_ref`` shape lives here once. It is also the model-visible
 ``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
-every built key, minus the ones whose value is null, an empty list or ``selected`` false;
-a context ref always keeps its ``passage_target`` (the captured reading owner, canonical
-locator and body identity of a passage hit; null for a whole resource), so adding the
-hit to chat or reopening it never widens a piece's passage to its source.
-Numbering and publication belong to ``citations``.
+every built key, minus the ones whose value is null, an empty list or ``selected`` false
+a context ref always keeps its ``passage_target`` so reopening a piece passage
+never widens it to the source.
+Numbering and publication belong to ``citations``. The caller starts its serializable
+attempt before source reads and fences, and refreshes retained-X viewer
+contributor text once after its complete insertion batch. This helper never commits.
 """
 
 from __future__ import annotations

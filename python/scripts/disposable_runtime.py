@@ -930,10 +930,16 @@ def main() -> int:
         phase = "dependency acquisition"
         message(f"{phase}: bounded image pull/build; logs: {run_dir}")
         command(
-            compose + ["pull", "postgres", "storage"],
+            compose + ["pull", "storage"],
             env=compose_env,
             timeout=600,
             log=run_dir / "images.log",
+        )
+        command(
+            compose + ["build", "postgres"],
+            env=compose_env,
+            timeout=1200,
+            log=run_dir / "postgres-image.log",
         )
         resources_owned = True
         command(
@@ -1079,6 +1085,8 @@ def main() -> int:
                 "-m",
                 "uvicorn",
                 "apps.api.main:app",
+                "--loop",
+                "asyncio",
                 "--host",
                 "127.0.0.1",
                 "--port",

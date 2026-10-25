@@ -19,7 +19,7 @@ import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "./PodcastCommands.module.css";
 
-export interface StopProps {
+interface StopProps {
   readonly podcastId: string;
   readonly title: string;
   readonly libraryId: string | null;
@@ -81,7 +81,7 @@ export default function PodcastStopDialog(props: StopProps) {
     </div>
   </Dialog>;
 }
-export function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }: StopProps & { readonly onSaved: () => void }) {
+function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }: StopProps & { readonly onSaved: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
   const live = useRef(false);

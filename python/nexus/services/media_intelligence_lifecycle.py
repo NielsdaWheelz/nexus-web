@@ -75,8 +75,9 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
         # of whichever post's asynchronous index happened to finish first.
         waiting, ready = db.execute(
             text("""
-            SELECT count(*) FILTER (WHERE s.status IS NULL OR s.status NOT IN ('ready', 'no_text')),
-                   count(*) FILTER (WHERE s.status = 'ready')
+            SELECT count(*) FILTER (WHERE s.status IS NULL OR s.status NOT IN ('ready', 'no_text')
+                OR (s.status = 'ready' AND s.lexical_revision IS DISTINCT FROM s.revision)),
+                   count(*) FILTER (WHERE s.status = 'ready' AND s.lexical_revision = s.revision)
             FROM x_thread_posts tp LEFT JOIN content_index_states s
               ON s.owner_kind = 'media' AND s.owner_id = tp.post_media_id
             WHERE tp.thread_media_id = :m
@@ -85,6 +86,14 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
         ).one()
         if waiting or not ready:
             return
+    elif not db.scalar(
+        text(
+            "SELECT 1 FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :m"
+            " AND status = 'ready' AND lexical_revision = revision"
+        ),
+        {"m": media_id},
+    ):
+        return
     fingerprint = current_content_fingerprint(db, media_id=media_id)
     live = db.scalar(
         text("""

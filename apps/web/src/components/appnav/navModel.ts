@@ -26,6 +26,6 @@ export const NAV_SETTINGS = navItem("settings");
 
 export function isAccountDestinationId(
   id: DestinationId | null,
-): id is "stats" | "settings" {
-  return id === "stats" || id === "settings";
+): id is "stats" | "imports" | "settings" {
+  return id === "stats" || id === "imports" || id === "settings";
 }

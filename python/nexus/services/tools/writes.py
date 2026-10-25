@@ -6,6 +6,8 @@ existed. Named filing uses frozen library/removal guards. Its entry receipt adds
 the exact final library revision; later reaffirmation invalidates undo. Default
 holdings survive undo; historical null-revision entries confer no undo authority. Note and highlight ids derive
 from the call id. There is no delete, overwrite or rewrite tool.
+Effects and exact source-clock invalidations join the tool receipt's one
+serializable attempt; participants never commit or repeat external calls.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from nexus.services import (
     notes,
     text_quote,
     users,
+    writing,
 )
 from nexus.services.consumption import lectern
 from nexus.services.passage_anchors import normalize_quote_text
@@ -40,6 +43,8 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible
+from nexus.services.search import projection
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools.contract import (
     WRITE_CAP,
     WRITES,
@@ -110,12 +115,30 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
         if live >= WRITE_CAP:
             refuse("WriteCapReached")
         try:
-            return effect(value, call)
+            result = effect(value, call)
         except ApiError as exc:
             declared = _REFUSALS.get(call.tool_id, {}).get(exc.code)
             if declared is None and exc.code not in _UNAVAILABLE:
                 raise
             refuse(declared or "ResourceUnavailable")
+        if call.tool_id == "nexus.library.add":
+            projection.refresh_viewer_contributors(
+                call.db,
+                list(
+                    call.db.scalars(
+                        text("SELECT user_id FROM memberships WHERE library_id=:id"),
+                        {"id": value.library_id},
+                    )
+                ),
+            )
+        owners = writing.input_owners(call.db) | {
+            uri
+            for item in (value, result)
+            for key in (*_URIS, "note_uri", "highlight_uri", "library_uri")
+            if (uri := getattr(item, key, None)) is not None
+        }
+        record_input_change(call.db, owners=owners)
+        return result
 
     return run
 

@@ -127,7 +127,7 @@ def prune_job(*, payload: Mapping[str, Any], context: JobExecutionContext | None
                     WHERE a.id = :id AND j.status IN ('pending', 'failed', 'running')
                     UNION ALL
                     SELECT 1 FROM background_jobs
-                    WHERE id = :id AND kind = 'media_content_reindex_job'
+                    WHERE id = :id AND kind IN ('media_content_reindex_job', 'note_reindex_job')
                       AND status IN ('pending', 'failed', 'running'))"""),
                 {"id": operation_id},
             ).scalar_one()

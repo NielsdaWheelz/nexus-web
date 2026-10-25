@@ -104,7 +104,7 @@ def build_reader_evidence(
             db,
             viewer_id=viewer_id,
             refs=[assert_resource_ref(ref) for ref in sorted(refs)],
-            reading_media_id=media_id,
+            reading_media_ids={ref: media_id for ref in refs},
         )
     }
     roots: dict[str, ReaderEvidenceRootOut] = {}
@@ -170,7 +170,9 @@ def build_reader_evidence(
             db,
             viewer_id=viewer_id,
             refs=[ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items],
-            reading_media_id=media_id,
+            reading_media_ids={
+                f"reader_apparatus_item:{item.id}": media_id for item in apparatus.items
+            },
         )
         for item in apparatus.items:
             resolution = apparatus_resolution(

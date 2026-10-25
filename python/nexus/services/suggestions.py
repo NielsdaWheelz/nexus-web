@@ -507,7 +507,7 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
                 JOIN content_embeddings ce ON ce.chunk_id = cc.id
                 JOIN content_index_states cis
                   ON cis.owner_kind = 'media' AND cis.owner_id = cc.owner_id
-                 AND cis.status = 'ready'
+                 AND cis.status = 'ready' AND cis.lexical_revision = cis.revision
                  AND cis.active_embedding_provider = :embedding_provider
                  AND cis.active_embedding_model = :embedding_model
                 WHERE cc.owner_kind = 'media'
@@ -532,7 +532,7 @@ def _media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             JOIN eligible_media_partitions eligible ON eligible.media_id=admitted.reading_media_id
             JOIN content_index_states peer_state
               ON peer_state.owner_kind = 'media' AND peer_state.owner_id = cc.owner_id
-             AND peer_state.status = 'ready'
+             AND peer_state.status = 'ready' AND peer_state.lexical_revision = peer_state.revision
              AND peer_state.active_embedding_provider = :embedding_provider
              AND peer_state.active_embedding_model = :embedding_model
             CROSS JOIN anchor_vectors av

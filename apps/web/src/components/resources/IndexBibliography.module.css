@@ -1,34 +1,25 @@
-/* The row's named container owns adaptation; names are removed, never clipped
-   with their links still focusable. Count and year retain independent slots. */
+/* Names prefer natural widths without growing. Grid tracks expose their 1em
+   minima to flex allocation while punctuation, count and year keep their widths. */
 .bibliography,
 .names,
 .credit {
   display: inline-flex;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-inline-size: min-content;
   align-items: baseline;
 }
 
 .bibliography {
-  flex: 1 1 auto;
-  min-inline-size: min-content;
   color: var(--ink-muted);
 }
 
-.names {
-  inline-size: 0;
-  flex: 1;
-  min-inline-size: min-content;
-}
-
 .credit {
-  flex: 1;
-  min-inline-size: min-content;
+  display: inline-grid;
+  grid-template-columns: minmax(1em, max-content);
 }
 
 .name {
   display: block;
-  flex: 1;
-  inline-size: 0;
   min-inline-size: 1em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -67,7 +58,7 @@
 }
 
 @container indexRow (max-width: calc(32em - 1px)) {
-  .credit:nth-child(n + 2),
+  .names > :nth-child(n + 2),
   .wideOverflow {
     display: none;
   }

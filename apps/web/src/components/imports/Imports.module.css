@@ -2,6 +2,23 @@
   min-width: 0;
 }
 
+.badgeLabel {
+  flex: 1;
+}
+
+/* Reserve the capped count, padding and border even before an observation. */
+.attentionCount {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  inline-size: calc(4ch + 2 * var(--space-2) + 2px);
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.attentionCount[data-visible="false"] {
+  visibility: hidden;
+}
+
 .modes {
   display: flex;
   flex-wrap: wrap;

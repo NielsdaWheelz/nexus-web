@@ -8,11 +8,10 @@ media excluded in SQL), limit 200. since the 2026-10-10 search reauthor the orde
 operand is a bound constant and the predicate is one EXISTS over a UNION ALL, so
 ivfflat drives it: 4.7 ms on a seeded 200k-embedding corpus (campaign
 `search/explain.txt`; the earlier shape planned a 211 ms seq scan). production scale
-is unmeasured. on a restored production corpus the semantic document search
-already times out (`semantic-document-search-times-out-on-restored-corpus.md`); a
-timeout here fails the job, and a job that keeps failing dies with its reading
-pending (`oracle-dead-jobs-can-lose-publication-replay.md`).
+is unmeasured. timeout here fails the job, and repeated failure can leave its
+reading pending (`oracle-dead-jobs-can-lose-publication-replay.md`). the integrated
+[browser search qualification](release-search.md) does not measure this caller's
+personal-lane predicate or job deadline.
 
-prerequisite: the semantic search timeout ticket's diagnosis.
 acceptance: a production-scale reading's personal lane completes inside the
 statement timeout, or its failure settles the reading typed.

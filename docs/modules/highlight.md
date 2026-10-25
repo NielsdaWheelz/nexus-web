@@ -247,9 +247,20 @@ mutation behavior.
 
 desktop selection opens an anchored, focused rich composer: primary icon row,
 then a one-line input that grows to its bounded editor scrollport. mobile retains
-native selection and its passive highlight/note/ask/more bar; explicit composition
+native selection and its passive highlight/note/ask/more icon bar; explicit composition
 uses a sheet whose guarded custom header is highlight/save/ask/more. desktop adds
 colour and existing-chat split controls. shortcuts appear only in tooltips.
+
+the passive row reuses the shared highlighter and overflow controls, with the
+canonical notebook/pen opener and question glyph between them. glyphs are 16px;
+mobile targets remain at least 44px under coarse and fine pointers. names describe
+the next operation: `open passage note` and `ask about passage` open their editor
+without saving or sending. the highlighter shows the saved colour and remains
+focusable when unavailable so its reason can be read. native clicks dispatch only
+through the existing frozen-capture gate; shared overlay and viewport owners
+retain adaptive placement.
+closing an unused passage menu returns focus to the reader before its passive
+row retires and settles again; commands retain their own focus transfers.
 
 desktop copy/share are direct commands. more exists only for remaining canonical
 navigation, bounds editing, deletion, empty-note deletion or action-read recovery.

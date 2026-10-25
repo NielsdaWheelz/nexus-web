@@ -32,6 +32,7 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
+from nexus.services.search import projection
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 from nexus.services.url_normalize import normalize_url_for_display
 
@@ -146,6 +147,7 @@ def ingest_episodes(
     ]
     media_ids: list[UUID | None] = [None] * len(episodes)
     inserted_media_ids: list[UUID] = []
+    written_media_ids: list[UUID] = []
     changed = False
     for i in order:
         episode = episodes[i]
@@ -168,6 +170,7 @@ def ingest_episodes(
             _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
             inserted_media_ids.append(media_id)
             dirty = True
+            updated = True
             changed = True
         else:
             dirty, updated = _update(db, media_id, row, _display_alias({*stored, *item}))
@@ -200,10 +203,13 @@ def ingest_episodes(
                 observation=build_observation({"author": entries})[0],
                 source="rss",
             )
+        if updated:
+            written_media_ids.append(media_id)
         chapters.observe(
             db, media_id=media_id, inline=episode.chapters, source_url=episode.chapters_source_url
         )
         media_ids[i] = media_id
+    projection.refresh(db, "media", written_media_ids)
     return IngestResult(media_ids=media_ids, changed=changed, inserted_media_ids=inserted_media_ids)
 
 

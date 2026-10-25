@@ -3,7 +3,6 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, CircleUser, Headphones, Plus, Search } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
-import ImportsBadge from "@/components/imports/ImportsBadge";
 import { ActivityControl } from "@/components/feedback/Activity";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -27,7 +26,6 @@ import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActi
 import AccountMenu from "./AccountMenu";
 import {
   isAccountDestinationId,
-  NAV_IMPORTS,
   NAV_RAIL,
   type NavItem,
 } from "./navModel";
@@ -97,7 +95,6 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   }
 
   const home = NAV_RAIL[0];
-  const ImportsIcon = NAV_IMPORTS.icon;
   return (
     <nav className={cx(styles.rail, collapsed && styles.collapsed)} aria-label="Primary">
       <div className={styles.brand}>
@@ -186,28 +183,6 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         <PlayerDisclosure collapsed={collapsed} />
         <ActivityControl className={styles.item} iconOnly={collapsed} />
         <Tooltip
-          text={NAV_IMPORTS.label}
-          placement="right"
-          openDelayMs={0}
-          disabled={!collapsed}
-          renderTrigger={help => (
-            <a
-              {...help}
-              href={NAV_IMPORTS.href}
-              className={cx(buttonClassName({}), styles.item, styles.imports)}
-              aria-current={section === "imports" ? "page" : undefined}
-              onClick={(event) => navigate(event, NAV_IMPORTS)}
-              onKeyDown={(event) => navigate(event, NAV_IMPORTS)}
-            >
-              <ImportsIcon className={styles.icon} size={20} aria-hidden="true" />
-              {/* Collapsed, the count stays above the icon, inside this link. */}
-              <span className={collapsed ? styles.importsChip : cx(styles.label, styles.importsLabel)}>
-                <ImportsBadge label={NAV_IMPORTS.label} labelVisible={!collapsed} />
-              </span>
-            </a>
-          )}
-        />
-        <Tooltip
           text="Add content"
           placement="right"
           openDelayMs={0}
@@ -231,11 +206,10 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         />
         <AccountMenu
           activeId={accountActive ? section : null}
-          importsActive={section === "imports"}
           placement="above"
           align="start"
           onNavigate={(event, item) => navigate(event, item, true)}
-          renderTrigger={(trigger) => (
+          renderTrigger={(trigger, attention) => (
             <Tooltip text="account" placement="right" openDelayMs={0}
               disabled={!collapsed || trigger["aria-expanded"]} triggerRef={trigger.ref}
               renderTrigger={help => (
@@ -247,7 +221,10 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                   aria-describedby={cx(help["aria-describedby"], trigger["aria-describedby"]) || undefined}
                   aria-current={accountActive ? "page" : undefined}
                 >
-                  <CircleUser className={styles.icon} size={20} aria-hidden="true" />
+                  <span className={styles.accountIcon}>
+                    <CircleUser className={styles.icon} size={20} aria-hidden="true" />
+                    <span className={styles.accountMarker}>{attention}</span>
+                  </span>
                   <span className={styles.label}>Account</span>
                 </button>
               )} />

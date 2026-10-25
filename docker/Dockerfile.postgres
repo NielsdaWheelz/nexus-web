@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+ARG TARGETARCH
+FROM scratch AS extension-amd64
+ADD --checksum=sha256:c444e4ada13831a7431be0f1aa99da696380e3c431360202113dbf9f44c8a074 https://github.com/paradedb/paradedb/releases/download/v0.26.2/postgresql-15-pg-search_0.26.2-1PARADEDB-bookworm_amd64.deb /pg-search.deb
+
+FROM scratch AS extension-arm64
+ADD --checksum=sha256:0fbc59149ecbebb161d6cab62c161f33a7f7f0c2f54b69e7e8597a12f05e8038 https://github.com/paradedb/paradedb/releases/download/v0.26.2/postgresql-15-pg-search_0.26.2-1PARADEDB-bookworm_arm64.deb /pg-search.deb
+
+FROM extension-${TARGETARCH} AS extension
+FROM pgvector/pgvector:pg15@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9
+COPY --from=extension /pg-search.deb /tmp/pg-search.deb
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --no-upgrade \
+        libopenblas0=0.3.21+ds-4 libopenblas0-pthread=0.3.21+ds-4 \
+    && dpkg --install /tmp/pg-search.deb \
+    && rm /tmp/pg-search.deb \
+    && rm -rf /var/lib/apt/lists/*

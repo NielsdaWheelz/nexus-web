@@ -461,9 +461,12 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
             />
           ) : null}
-          {ready && podcast ? <PaneSection ref={librariesCard} title="libraries" aria-label="libraries" tabIndex={-1}
-            actions={librariesAction ? <Button aria-haspopup="dialog" aria-disabled={librariesAction.disabled} tooltip={librariesAction.disabledReason ? { text: librariesAction.disabledReason } : undefined} onClick={event => { if (librariesAction.disabled) return; const detail = prepareActionSelect(event, event.currentTarget); if (detail) librariesAction.onSelect(detail); }}>libraries…</Button> : null}>
-            <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
+          {ready && podcast ? <PaneSection ref={librariesCard} title="Library Subscriptions" aria-label="Library Subscriptions" tabIndex={-1}
+            actions={librariesAction ? <Button iconOnly icon={librariesAction.icon} aria-label={`manage library subscriptions: ${podcast.title}`}
+              aria-haspopup="dialog" aria-disabled={librariesAction.disabled}
+              tooltip={{ text: `manage library subscriptions: ${podcast.title}${librariesAction.disabledReason ? `: ${librariesAction.disabledReason}` : ""}` }}
+              onClick={event => { if (librariesAction.disabled) return; const detail = prepareActionSelect(event, event.currentTarget); if (detail) librariesAction.onSelect(detail); }} /> : null}>
+            {libraryRows.length > 0 ? <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
               rows={libraryRows}
               rowControls={live && remoteReady() ? Object.fromEntries(namedDestinations.map(destination => {
                 const focus = {
@@ -492,8 +495,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                     onClick={event => { const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
                   {action.disabledReason ? <span className="sr-only" id={reasonId}>{action.disabledReason}</span> : null}
                 </span>];
-              })) : undefined}
-              empty={<p>choose a library to receive new episodes.</p>} />
+              })) : undefined} /> : null}
           </PaneSection> : null}
           {live && ready && podcast && (history.length > 0 || recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps) ? <PaneSection title="episode imports">
             {recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps ? <FeedbackNotice content={{ tone: "Warning", title: "the last check could not load all available episodes.", message: "nexus will try again automatically." }} announcement="Polite" actions={[{ label: "check again", onClick: checkAgain, busy: command.running !== null }]} /> : null}

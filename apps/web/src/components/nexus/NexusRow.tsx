@@ -1,17 +1,17 @@
 "use client";
 
-// Row parts: the body, resource menu, and source failures.
+// Row parts: resource bodies, menus, and visible search status.
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
-import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
+import ResourceBody, { ResourceMatchEvidence, separateMatchEvidence } from "@/components/resources/ResourceBody";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import type { ResourceItem } from "@/lib/resources/items";
 import { MediaFacts } from "@/components/media/MediaIdentity";
-import type { NexusRow, NexusSource } from "@/lib/nexus/model";
+import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -46,12 +46,10 @@ function NexusResourceContent({ item: supplied, row, excerptId }: { item: Resour
   const item = useResolvedResourceItem(supplied);
   const body = item.preview.body;
   const metadata = resourceMetadataText(item, row.matchMethod);
-  const named = body.kind === "named" || body.kind === "media";
-  const title = body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : null;
-  const evidence = named && row.match && row.match.excerpt.text !== title ? row.match : null;
+  const evidence = separateMatchEvidence(body, row.match ?? null);
   const summary = body.kind === "media" ? body.media_summary : null;
   return <>
-    <div className={styles.rowLabel} id={named ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
+    <div className={styles.rowLabel} id={row.matchingPassage || evidence ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
     <span className={collection.detail}>{metadata}
       {summary ? <>{metadata ? " · " : null}<MediaFacts summary={summary} /></> : null}
       {row.state ? ` · ${row.state.toLowerCase()}` : null}
@@ -63,8 +61,10 @@ function NexusResourceContent({ item: supplied, row, excerptId }: { item: Resour
 
 function NexusMatchingPassage({ passage, excerptId }: { passage: NonNullable<NexusRow["matchingPassage"]>; excerptId: string | undefined }) {
   const metadata = resourceMetadataText(passage.item, passage.match_method);
+  const evidence = separateMatchEvidence(passage.item.preview.body, passage.match);
   return <div className={styles.rowPassage} id={excerptId}>
     <div className={`${collection.detail} ${styles.rowSnippet}`}><ResourceBody body={passage.item.preview.body} match={passage.match} /></div>
+    {evidence ? <div className={`${collection.detail} ${styles.rowSnippet}`}><ResourceMatchEvidence match={evidence} /></div> : null}
     <span className={collection.detail}>{metadata}</span>
   </div>;
 }
@@ -101,48 +101,30 @@ export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; me
     : null;
 }
 
-export const NEXUS_SOURCE_FAILURES: Record<NexusSource, string> = {
-  Direct: "resources couldn’t be searched", Content: "couldn't search inside sources", Reference: "resource lookup failed",
-};
-
-export function NexusSourceFailures({ failures, semanticUnavailable, searchUnavailable, retry, retrying, returnFocus, announce = true }: {
-  failures: ReadonlySet<NexusSource>;
-  semanticUnavailable: boolean;
-  searchUnavailable: boolean;
-  retry(source: NexusSource): void;
-  retrying: ReadonlySet<NexusSource>;
+/** The screen owns its live region; this visible status does not announce twice. */
+export function NexusSearchStatus({ controller, returnFocus }: {
+  controller: NexusController;
   returnFocus: () => HTMLElement | null;
-  announce?: boolean;
 }) {
   const admission = useRemoteAdmission();
-  if (failures.size === 0 && !semanticUnavailable && !searchUnavailable) return null;
-  if (admission !== "Ready") return <FeedbackNotice
-    content={{ tone: "Warning", title: "search needs a connection" }}
-    announcement={announce ? "Polite" : "None"}
-    actions={[{ label: "try again", onClick: checkSession }]}
-    returnFocus={returnFocus}
+  const { text, action } = controller.searchProgress;
+  if (admission !== "Ready" && (controller.failures.size > 0 || controller.searchUnavailable)) return <FeedbackNotice
+    content={{ tone: "Warning", title: "search needs a connection" }} announcement="None"
+    actions={[{ label: "try again", onClick: checkSession }]} returnFocus={returnFocus}
   />;
-  return (
-    <div className={styles.failures}>
-      {[...failures].map((source) => (
-        <FeedbackNotice
-          key={source}
-          content={{ tone: "Warning", title: NEXUS_SOURCE_FAILURES[source] }}
-          announcement={announce ? "Polite" : "None"}
-          actions={[{ label: "retry", onClick: () => retry(source), busy: retrying.has(source) }]}
-          returnFocus={returnFocus}
-        />
-      ))}
-      {searchUnavailable ? <FeedbackNotice
-        content={{ tone: "Warning", title: "search is unavailable for this input", message: "shorten the search or ask nexus with the full text." }}
-        announcement={announce ? "Polite" : "None"}
-      /> : null}
-      {semanticUnavailable ? <FeedbackNotice
-        content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }}
-        announcement={announce ? "Polite" : "None"}
-      /> : null}
-    </div>
-  );
+  return <div className={styles.searchStatus}>
+    {text ? <FeedbackNotice content={{ tone: controller.searchUnavailable ? "Warning" : "Info", title: text }} announcement="None"
+      actions={action === null ? undefined : [{
+        label: action === "refresh" ? "refresh results" : action === "related" ? "retry related matches" : "retry search",
+        onClick: () => {
+          if (action === "refresh") controller.refreshResults();
+          else if (action === "related") controller.retryRelated();
+          else controller.retrySearch();
+          returnFocus()?.focus({ preventScroll: true });
+        },
+        busy: controller.retrying.size > 0,
+      }]} /> : null}
+  </div>;
 }
 
 export function NexusTitleFailure({ failed, retry, returnFocus, announce = true }: { failed: boolean; retry(): void; returnFocus?: () => HTMLElement | null; announce?: boolean }) {

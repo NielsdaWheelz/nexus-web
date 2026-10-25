@@ -50,8 +50,10 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.contributor_writes import (
     ContributorObservationRejected,
     CreditTarget,
+    GutenbergTarget,
     MediaTarget,
     ObservationIdentityPlan,
+    PodcastTarget,
     ensure_alias,
     materialize_observation_credits,
     plan_observation_credits,
@@ -407,20 +409,24 @@ def replace_observed_role_slices_batch(
 def _publish_chunk(
     db: Session, chunk: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]]
 ) -> None:
-    changed = False
+    changed_owners: list[str] = []
     for target, observation, source in chunk:
-        changed = (
-            apply_prepared_role_slices_in_current_transaction(
-                db,
-                prepared=prepare_observed_role_slices_in_current_transaction(
-                    db, target=target, observation=observation, source=source
-                ),
-            )
-            or changed
+        changed = apply_prepared_role_slices_in_current_transaction(
+            db,
+            prepared=prepare_observed_role_slices_in_current_transaction(
+                db, target=target, observation=observation, source=source
+            ),
         )
-    if changed:
-        record_input_change(db)
-    db.commit()
+        if changed:
+            match target:
+                case MediaTarget(media_id):
+                    changed_owners.append(f"media:{media_id}")
+                case PodcastTarget(podcast_id):
+                    changed_owners.append(f"podcast:{podcast_id}")
+                case GutenbergTarget(ebook_id):
+                    changed_owners.append(f"gutenberg_catalog:{ebook_id}")
+    if changed_owners:
+        record_input_change(db, owners=changed_owners)
 
 
 def apply_observed_role_slices_in_current_transaction(

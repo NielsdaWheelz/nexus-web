@@ -118,13 +118,12 @@ def append_collection(
                 ApiErrorCode.E_SELECTION_CHANGED, "An insertion target is now finished"
             )
         inserted = append_missing_in_txn(db, viewer_id=viewer_id, media_ids=body.media_ids)
-        record_input_change(db)
+        record_input_change(db, owners=(f"consumption:{viewer_id}:lectern",))
         result = collection_wire.CollectionLecternOut(
             order_revision=str(_revision(db, viewer_id)),
             matched_count=len(body.media_ids),
             added_count=len(inserted),
         )
-        db.commit()
         return result
 
     return viewer_txn("lectern_append_collection", viewer_id, run)
@@ -163,8 +162,7 @@ def place(
             )
             _place_visible(db, viewer_id, rows, item_id, at)
         result = wire.LecternWriteOut(order_revision=str(_advance_revision(db, viewer_id)))
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return result
 
     return viewer_txn("lectern_place", viewer_id, run)
@@ -176,8 +174,7 @@ def remove(viewer_id: UUID, media_id: UUID, expected_order_revision: int) -> wir
         removed = remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
         result = wire.LecternWriteOut(order_revision=str(_revision(db, viewer_id)))
         if removed is not None:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return result
 
     return viewer_txn("lectern_remove", viewer_id, run)
@@ -205,7 +202,6 @@ def move(
         _place_visible(db, viewer_id, rows, subject.item_id, at)
         _advance_revision(db, viewer_id)
         result = _order_snapshot(db, viewer_id, _load(db, viewer_id))
-        db.commit()
         return result
 
     return viewer_txn("lectern_move", viewer_id, run)

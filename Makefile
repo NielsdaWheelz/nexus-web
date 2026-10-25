@@ -68,7 +68,7 @@ setup:
 
 dev:
 	@echo "starting persistent local stores..."
-	@COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) docker compose -f docker/docker-compose.yml up -d --wait postgres storage
+	@COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) docker compose -f docker/docker-compose.yml up -d --build --wait postgres storage
 	@test "$$(supabase --version)" = "2.117.0" || { echo "supabase cli 2.117.0 is required" >&2; exit 1; }
 	@mkdir -p .nexus-local
 	@chmod 700 .nexus-local
@@ -112,7 +112,7 @@ api: local-runtime-identity
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
 		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
 		SUPABASE_AUTH_ADMIN_KEY= \
-		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
+		uv run --project ../../python uvicorn main:app --loop asyncio --reload --port $(API_PORT)
 
 web: local-storage
 	cd apps/web && \

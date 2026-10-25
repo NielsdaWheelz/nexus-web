@@ -96,8 +96,7 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         if kind != _EPISODE:  # a transcript is not listening
             _resume(db, viewer_id, media_id)
         if gate.moved(db, viewer_id=viewer_id):
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return snapshot
 
     return viewer_txn("reader_cursor_write", viewer_id, run)
@@ -123,8 +122,7 @@ def record_listening(
         _resume(db, viewer_id, media_id)
         result = observation.read(db, viewer_id, media_id)
         if gate.moved(db, viewer_id=viewer_id):
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return result
 
     return viewer_txn("record_listening", viewer_id, run)
@@ -143,8 +141,7 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
         ):
             _resume(db, viewer_id, media_id)
             if gate.moved(db, viewer_id=viewer_id):
-                record_input_change(db)
-        db.commit()
+                record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
 
     viewer_txn("install_preview_position", viewer_id, run)
 
@@ -159,8 +156,7 @@ def finish(viewer_id: UUID, media_id: UUID, body: wire.FinishIn) -> wire.Finish:
         result = _finish(db, viewer_id, media_id, prior)
         if body.leave_lectern:
             result.removed = lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return result
 
     return viewer_txn("finish", viewer_id, run)
@@ -198,8 +194,7 @@ def undo_finish(viewer_id: UUID, media_id: UUID, body: wire.Finish) -> wire.Cons
             revision = current.revision
         if body.removed is not None:
             lectern.restore_in_txn(db, viewer_id=viewer_id, media_id=media_id, removed=body.removed)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return wire.ConsumptionOverrideOut(override_revision=revision)
 
     return viewer_txn("undo_finish", viewer_id, run)
@@ -212,8 +207,7 @@ def mark_unread(viewer_id: UUID, media_id: UUID) -> wire.ConsumptionOverrideOut:
         kind = _kind(db, viewer_id, media_id)
         revision = _set_override(db, viewer_id, media_id, "unread")
         _fence(db, viewer_id, media_id, kind)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return wire.ConsumptionOverrideOut(override_revision=revision)
 
     return viewer_txn("mark_unread", viewer_id, run)
@@ -233,8 +227,7 @@ def reset_progress(viewer_id: UUID, media_id: UUID) -> wire.ConsumptionOverrideO
         revision = _set_override(db, viewer_id, media_id, None)
         if kind == _EPISODE:
             listening.reset(db, viewer_id=viewer_id, media_id=media_id)
-        record_input_change(db)
-        db.commit()
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
         return wire.ConsumptionOverrideOut(override_revision=revision)
 
     return viewer_txn("reset_progress", viewer_id, run)
@@ -250,7 +243,6 @@ def settle_natural_end(
     def run(db: Session) -> wire.EpisodeConsumptionObservation:
         settle_natural_end_in_txn(db, viewer_id, media_id, body)
         result = observation.read(db, viewer_id, media_id)
-        db.commit()
         return result
 
     return viewer_txn("settle_natural_end", viewer_id, run)
@@ -294,7 +286,7 @@ def settle_natural_end_in_txn(
     ):
         _finish(db, viewer_id, media_id, current)
         lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
-        record_input_change(db)
+        record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
     elif not natural_end_is_settled(db, viewer_id, media_id, body):
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT,
