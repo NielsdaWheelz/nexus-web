@@ -2,7 +2,6 @@
 
 import {
   createContext,
-  startTransition,
   useContext,
   useEffect,
   useState,
@@ -46,10 +45,7 @@ export function RenderEnvironmentProvider({
     (): ViewportKind => "desktop",
   );
   const [viewportHydrated, setViewportHydrated] = useState(false);
-  useEffect(() => {
-    // Mount bookkeeping must let streamed pane boundaries finish hydrating.
-    startTransition(() => setViewportHydrated(true));
-  }, []);
+  useEffect(() => setViewportHydrated(true), []);
   return (
     <RenderEnvironmentContext
       value={{ ...value, viewportKind, viewportHydrated }}
