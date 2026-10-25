@@ -219,12 +219,20 @@ else:
             with factory() as db:
                 assert set(db.scalars(text("SELECT media_id FROM library_entries WHERE library_id=:id"),{"id":UUID(f["shared_library"])}))=={UUID(f["part"])}, "shared library filed the source"
                 assert get_media_for_viewer(db,UUID(f["other"]),UUID(f["part"])).id==UUID(f["part"]), "part-only grantee cannot read the piece"
+                reader=read_reader_document(db,UUID(f["other"]),UUID(f["part"]))
+                assert reader.kind=="text_part" and len(reader.units)==1 and reader.units[0].canonical_text==f["chosen"].strip() and f["inside"] in reader.units[0].canonical_text and f["neighbour"] not in reader.units[0].canonical_text, "part-only grantee's reader escaped its section"
                 try:
                     get_media_for_viewer(db,UUID(f["other"]),UUID(f["source"]))
                 except NotFoundError:
                     pass
                 else:
                     raise AssertionError("part-only grantee can read the source")
+                try:
+                    read_reader_document(db,UUID(f["other"]),UUID(f["source"]))
+                except NotFoundError:
+                    pass
+                else:
+                    raise AssertionError("part-only grantee can open the source reader")
             try:
                 await read(UUID(f["other"]),"media:"+f["source"],f["inside"])
             except NotFoundError:
@@ -382,11 +390,13 @@ const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; 
 const browser = await chromium.launch({
   args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
 });
+let diagnosticPage: Awaited<ReturnType<typeof browser.newPage>> | null = null;
 try {
   const browserRequests: Array<Record<string, unknown>> = [];
   facts.browser_requests = browserRequests;
   const session = await browser.newContext({ storageState: context.browser_state_file });
   const page = await session.newPage();
+  diagnosticPage = page;
   await page.goto(context.web_origin, { waitUntil: "domcontentloaded" });
   async function search(scope = "all", text = "labneedle", kinds = "documents") {
     const query = new URLSearchParams({ q: text, phase: "lexical", view: "resources", scope,
@@ -504,18 +514,79 @@ try {
   await pieceLink.waitFor({ state: "visible", timeout: 15_000 });
   await pieceLink.click();
   await page.waitForURL(url => url.pathname + url.hash === pieceTarget, { timeout: 15_000 });
-  await page.locator("[data-reader-text]").filter({ hasText: fixture.inside }).first().waitFor({ state: "visible", timeout: 15_000 });
+  await page.locator('[data-pane-shell="true"][data-active="true"] [data-reader-text]').filter({ hasText: fixture.inside }).first().waitFor({ state: "visible", timeout: 15_000 });
+  facts.evidence = { ...(facts.evidence as Record<string, unknown>), piece_route_opened: true,
+    piece_reader_text_visible: true, piece_inspection_wait_started: true };
+  await saveFacts();
   await page.waitForFunction(({ inside, neighbour }) => {
-    const texts = [...document.querySelectorAll("[data-reader-text]")].map(node => node.textContent ?? "");
+    const active = document.querySelector('[data-pane-shell="true"][data-active="true"]');
+    if (!active) return false;
+    const texts = [...active.querySelectorAll("[data-reader-text]")].map(node => node.textContent ?? "");
     if (!texts.some(text => text.includes(inside)) || texts.some(text => text.includes(neighbour))) return false;
     const highlight = CSS.highlights.get("source-inspection");
-    return highlight !== undefined && [...highlight].some(span => span.toString().includes(inside));
+    return highlight !== undefined && [...highlight].some(span => {
+      if (!span.startContainer.isConnected || !span.endContainer.isConnected) return false;
+      const unit = span.startContainer.parentElement?.closest("[data-reader-unit]");
+      if (!unit || span.endContainer.parentElement?.closest("[data-reader-unit]") !== unit || !active.contains(unit)) return false;
+      try {
+        const range = document.createRange();
+        range.setStart(span.startContainer, span.startOffset);
+        range.setEnd(span.endContainer, span.endOffset);
+        return range.toString().includes(inside);
+      } catch { return false; }
+    });
   }, { inside: fixture.inside, neighbour: fixture.neighbour }, { timeout: 15_000 });
   facts.evidence = { ...(facts.evidence as Record<string, unknown>), piece_reader_highlight_complete: true, passed: true };
   await saveFacts();
   console.log("owner evidence passed");
 } catch (error) {
   facts.browser_error_type = error instanceof Error ? error.name : "unknown";
+  facts.browser_error_message = error instanceof Error ? error.message : String(error);
+  if (diagnosticPage) {
+    facts.browser_current_url = diagnosticPage.url();
+    try {
+      const dom = await diagnosticPage.evaluate(({ inside, neighbour }) => {
+        const active = document.querySelector('[data-pane-shell="true"][data-active="true"]');
+        const readingText = [...(active?.querySelectorAll("[data-reader-text]") ?? [])].map(node => node.textContent ?? "");
+        const ranges = (name: string) => [...(CSS.highlights.get(name) ?? [])].map(span => {
+          const connected = span.startContainer.isConnected && span.endContainer.isConnected;
+          let literal: string | null = null;
+          let rangeError: string | null = null;
+          if (connected) {
+            try {
+              const range = document.createRange();
+              range.setStart(span.startContainer, span.startOffset);
+              range.setEnd(span.endContainer, span.endOffset);
+              literal = range.toString();
+            } catch (error) {
+              rangeError = error instanceof Error ? error.name : "unknown";
+            }
+          }
+          const startUnit = span.startContainer.parentElement?.closest("[data-reader-unit]");
+          const endUnit = span.endContainer.parentElement?.closest("[data-reader-unit]");
+          return { connected, start_unit: startUnit?.getAttribute("data-reader-unit") ?? null,
+            end_unit: endUnit?.getAttribute("data-reader-unit") ?? null, in_active_pane: Boolean(active && startUnit && endUnit && active.contains(startUnit) && active.contains(endUnit)),
+            start_offset: span.startOffset, end_offset: span.endOffset, literal, range_error: rangeError };
+        });
+        return { url: location.href, active_pane_found: Boolean(active), reader_units: [...(active?.querySelectorAll("[data-reader-unit]") ?? [])].map(node => node.outerHTML),
+          reading_text: readingText, inside_present: readingText.some(text => text.includes(inside)),
+          neighbour_present: readingText.some(text => text.includes(neighbour)),
+          source_inspection: ranges("source-inspection"), source_inspection_coarse: ranges("source-inspection-coarse") };
+      }, { inside: fixture.inside, neighbour: fixture.neighbour });
+      const path = join(context.artifacts_dir, "search-browser-failure-dom.private.json");
+      await writeFile(path, JSON.stringify(dom), { mode: 0o600, flag: "wx" });
+      facts.browser_failure_dom_file = path;
+    } catch (capture) {
+      facts.browser_failure_dom_error = capture instanceof Error ? capture.name : "unknown";
+    }
+    try {
+      const path = join(context.artifacts_dir, "search-browser-failure.private.png");
+      await writeFile(path, await diagnosticPage.screenshot({ timeout: 5_000 }), { mode: 0o600, flag: "wx" });
+      facts.browser_failure_screenshot_file = path;
+    } catch (capture) {
+      facts.browser_failure_screenshot_error = capture instanceof Error ? capture.name : "unknown";
+    }
+  }
   await saveFacts();
   throw error;
 } finally {
