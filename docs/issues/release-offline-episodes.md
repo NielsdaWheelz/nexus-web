@@ -1,40 +1,27 @@
-# downloaded episodes release
+# deployed downloaded-episode acceptance
 
-pair backend, packaged interface and apk. wire revision 15 already covers the
-unreleased cutover; do not advance it again before that release. migration
-`0315_consumption_observation` follows `0314` and initializes the account observation
-watermark to 1 without changing progress, overrides or membership. apply it through
-the normal stopped-writer paired release. catalog format 2 requires a successful
-online rebuild before claiming the new offline projection contract.
+paired source `c5cf4bc27`, schema 0316, wire 15 and signed android `0.3.7`
+(code 28) are active. #801 owns isolated Android 14/16 mechanism and failure
+qualification; #805 owns release artifacts, actual upgrade and physical results.
 
-hard-cut both old native bridge names and audio-only readiness. convert released native
-state explicitly and durably before normal new-format operation: preserve reading
-copies, their pending positions, account binding, queue and listening facts. old
-audio-only rows become actionable `NeedsDownload`, never ready playback packages;
-retain their bytes until explicit retry/remove. retry acquires a new rendition,
-not new metadata blessed onto old audio. remove the format-1 compatibility arm and
-all old operational readers; conversion is a data migration, not an alternate
-playback path. offline state converts released format 2 to format 3; the released
-unversioned playback envelope converts to format 1. assign local fact sequences in
-saved lane order without changing request bodies/reset fences. preserve local
-resume/settings, queue and checkpoint; set canonical observation null until a real
-new server response supplies it. old descriptor content grants no new package
-readiness. each envelope converts durably before its owner starts; restart completes
-any unconverted envelope. migration needs no network. refuse malformed/unconvertible
-state without deleting it.
+isolated released-format conversion preserved populated reading/listening/queue
+inputs and media bytes; malformed input was retained. the actual 26→27→28
+upgrade preserved original native files, cookies and grants with a verified
+recovery copy. its downloads were initially empty, so that observation does not
+establish preservation of populated old downloads.
 
-before the paired cutover, pause and sync old pending reading/listening work where
-possible; retain a verified recovery copy. inability to preserve an unsent fact is
-a release blocker, never permission to discard it. document the exact conversion
-inputs/data effects and prove old bytes, queue, reader and listening facts are
-preserved as specified. obtain owner approval before any destructive repair.
+first play of a newly downloaded, never-queued episode succeeded after force-stop
+and cold airplane startup. playback continued through home and screen lock.
+the recorded initial-connection failure did not occur; no reload workaround was
+used. ordinary resume after app-scoped user-stop preserved its durable checkpoint,
+then paused. the device-saved listening indicator cleared after reconnect.
+the queued download remained and original radio settings were restored.
 
-qualify emulator and physical-phone cold restore, never-queued download playback,
-background/lock-screen continuation, explicit user-stop recovery, source refusal,
-storage failure and account retirement with the paired build. use an isolated qa
-application id before touching the installed personal app. resolve the recorded
-native-player initial connection failure or establish it cannot occur on the shipped
-path with concrete evidence. retain no silent reload workaround.
+source refusal, storage failure and account retirement have isolated proof;
+these fault cases were not repeated on the personal production namespace.
+retain their installed qualification limits and any unrelated/intermittent
+player issue until its own acceptance is met. never discard an unsent fact,
+reset the app or relabel old audio as a ready new-format package to pass a check.
 
-resolved when conversion, paired installation and the required device journeys are
-observed; put proof and remaining device/release limitations in the implementation pr.
+resolve after the remaining device checks and named limits receive their own
+proof or explicit owner disposition. activation alone does not close them.

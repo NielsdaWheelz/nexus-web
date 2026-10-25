@@ -202,6 +202,14 @@ the Gradle build rather than committed. Verify App Links and
 login before manually creating the `android-v*` GitHub release and attaching
 stable and versioned asset names. There is no automated Android release gate.
 
+the same release operator owns firefox capture: choose a new version for a
+changed payload, build with the paired source/wire and production origins, obtain
+unlisted signing, and qualify a persistent update plus capture. follow
+[the signing procedure](apps/extension/README.md). attach the unsigned zip,
+stable/versioned signed xpi and reviewer source zip with sha256 files. the release
+manifest binds these assets alongside the apk. keep the packet in a draft until
+the paired deployment and installed checks pass; then publish it as latest.
+
 the release operator owns compatibility between the hosted app and the
 published apk. neither bridge has a version: the object names `nexusPlayer`
 (player) and `nexusLocalContent` (offline) are their identities, and an

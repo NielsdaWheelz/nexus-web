@@ -1,71 +1,31 @@
-# dossier removal release
+# deployed dossier removal acceptance
 
-candidate implemented; operational cutover pending. owner approved deletion of all
-dossier-owned content, including
-instructions, and dossier references/previews; surrounding prose survives.
-no conversion/export feature. owner also approved resetting ALL navigation on
-each installed device through the old app, preserving writing and other data.
-data cutover: [migration 0314](../../migrations/alembic/versions/0314_remove_dossiers.py).
-retained behavior: [resource inspector and media intelligence](../architecture.md#78-resource-inspector-and-media-intelligence).
+paired activation completed at `c5cf4bc27` (schema 0316, wire 15), with signed
+android `0.3.7` / code 28. migration `0314` ran through the canonical stopped-writer,
+verified-backup release. the pre-release production restore passed the complete chain
+and retained-data comparisons. [#805](https://github.com/NielsdaWheelz/nexus-web/pull/805)
+owns the release proof and its limits.
 
-base: `2705809b1`, 2026-10-23; candidate head `0314`, wire `15`. recheck actual
-release ancestry and the once-per-release wire rule. production/device state
-has not been inspected; unused does not mean empty.
+the owner-confirmed phone and mac firefox profile were prepared through ordinary
+last-pane closure. cold restart and independent server reads confirmed one fresh
+lectern, empty history and no secondary. the paired phone upgrade retained its
+account and fresh lectern; desktop note autosave and full reload passed. these
+checks do not establish every retained dossier-adjacent flow.
 
-release steps:
+remaining deployed acceptance:
 
-1. inventory exact affected ids/counts against the approved loss contract:
-   heads/builds/ideas, instructions, both resource schemes including historical
-   revision refs, graph/view/version/authored-link facts, note bodies, chat
-   scopes/context/retrievals/citations, jobs/generations/leases, workspace state
-   launcher recents and accepted research attempts. unknown affected shapes or losses outside
-   the contract block mutation. retain content privately, not in issue logs.
-2. prepare EVERY installed device while the old app still works. settle
-   unrelated drafts, sealed/uncertain writes and pending delivery through their
-   existing owners; unresolved work blocks the cutover, never authorizes a
-   storage wipe. then close every original pane, including minimized panes,
-   through normal workspace commands. closing the last creates one fresh
-   `/lectern` pane with empty history and no secondary. simply navigating an
-   existing pane is insufficient. let native saving and the cloud mirror finish;
-   restart the old app and prove that sole pane returned. independently read
-   the same device's server row and confirm matching state. stop old clients
-   after this check. this deliberately loses device navigation, not writing,
-   account binding, downloads, playback state or activity delivery.
-3. drain/cancel affected nonterminal chats through their existing owner. stop
-   api/workers and any other writer through the release controller; prove they
-   stopped, not just that a signal was sent. retain a verified backup of this
-   quiescent database and matching build; rehearse restoration and the populated
-   migration before production. separately preserve recovery access to any
-   local writing. no new dossier export or maintenance endpoint is required.
-4. apply the one forward migration. preserve accepted research media/holdings
-   and source jobs; their pending/retried processing now uses ordinary embed
-   extraction. settle dossier execution, remove approved references, migrate
-   server layouts and drop owned schema. verify exact head and database
-   postconditions before new writers start. rollback restores matching backup
-   and code; no lossy downgrade.
-5. publish aligned api, workers, web and installed bundles; align extension wire
-   where required by the actual release bump. no mixed-version compatibility
-   window. old clients receive existing wire refusal; do not reconnect an
-   unprepared installed device. restart the prepared devices under the paired
-   release and verify the retained fresh local/server layout.
-6. qualify removed routes/actions and retained inspector/chat/search/note/
-   citation/ingest/media-intelligence flows. record static, disposable runtime,
-   live-provider, installed-device and production evidence separately in the pr.
+- verify removed routes/actions and retained inspector, chat, search, citation,
+  ingest and media-intelligence flows through the paired production build.
+- verify note/reference and accepted research-media behavior at those boundaries;
+  the ordinary autosave check does not exercise them all.
 
-why preparation is necessary: server workspace reads validate strictly
-(`services/workspace_sessions.py:30-36`); android bootstrap keeps previous local
-workspace (`DeviceSession.kt:316-317`). ordinary last-pane closure creates fresh
-state (`apps/web/src/lib/workspace/store.tsx:148-161`); recently closed panes are
-memory-only. a debounce completing or an absent warning is not durable proof.
+pre-release production and restored-backup censuses found no dossier heads,
+builds or ideas. this release does not claim a populated-production deletion.
+[0314](../../migrations/alembic/versions/0314_remove_dossiers.py) owns the strict
+reference conversion and internal postconditions; the retained product contract
+is [resource inspector and media intelligence](../architecture.md#78-resource-inspector-and-media-intelligence).
+closed generation audit remains historical. shared media-projection recovery
+concerns retain their own records.
 
-removing dossier heads removes their page/note retention
-(`resource_graph/retention.py:187-188`); inventory those subjects and disclose
-later ordinary cleanup eligibility. do not delete them during migration.
-closed generation usage/audit remains historical; media intelligence still
-feeds connection discovery (`services/connection_discovery.py:314-318`).
-
-resolved when the approved candidate passes static and focused populated/runtime
-qualification, every affected device is prepared and accepts the paired release,
-and production postconditions are observed. delete dossier-only defect records
-after removal; retain shared media-projection recovery concerns. production and installed-device qualification remains `NOT_RUN`; candidate proof
-and limits belong in the pr.
+delete this record when the remaining deployed checks are recorded. recovery
+continues through [the canonical runbook](../../deployment.md).

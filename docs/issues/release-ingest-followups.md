@@ -1,26 +1,25 @@
 # release: ingest follow-ups
 
-status: on branch `cleanup/ingest-followups`; ships with the reader python ingest
-re-slice ([release-reader-python-ingest.md](release-reader-python-ingest.md)) in the
-next backend and web release. no migration, no environment change. api and both
-worker lanes run from one image.
+status: #718 already shipped with the reader python ingest re-slice in production
+`dc12792e0` (schema 0312, wire 14). no migration or environment change was needed.
+the remaining existing-data census and repair decisions below are not established
+by deployment; [reader ingest](release-reader-python-ingest.md) owns its related counts.
 
 wire: the source issue union (`ReaderTextDocumentOut.source_issues`,
-`ImportDetail.source_issues`, offline copies) gains `TooManyNotes`. `WIRE_REVISION`
-stays 13, which no release carries yet (android-v0.3.4 carries 11). if 13 ships
-before this merges, this change needs 14. the web (reader notice, Imports) ships with
-the backend; android and the extension are unchanged.
+`ImportDetail.source_issues`, offline copies) gained `TooManyNotes`. the deployed
+wire-14 api/web pair already includes it; the original conditional wire-bump
+instructions are obsolete. #718 changed neither android nor the extension.
 
 data effect: none on stored rows. new ingests change as the PR body lists (items
 2-7 and the review's sanitizer fixes); a refresh keeps its media readable while it
 runs and after it fails (item 1).
 
-before release, on the newest production backup brought to the release's head (mac
-only, disposable, deleted after), count only:
+remaining census, on a current production backup at the current head (mac only,
+disposable, deleted after):
 
 - media whose latest source attempt is in flight with a dead `ingest_media_source`
   job (L4's stuck refreshes failed `E_RESOURCE_CONFLICT`; any other dead refresh
-  too): extracting with a publication, unreadable, offered a repair. after deploy a
+  too): extracting with a publication, unreadable, offered a repair. an ordinary
   repair makes each readable again on its publication as its run starts, and a
   refusal settles it failed at once; the owner repairs them.
 - failed web articles and pdfs that keep a reader publication (a refresh that failed

@@ -1,18 +1,19 @@
 # release: libraries + suggestions + ordering re-slice
 
-status: unreleased; steps owed by the release that ships it
+status: #693 already shipped in production `dc12792e0` (schema 0312, wire 14);
+the two residue counts below remain unrecorded
 origin: 2026-10-19 libraries + suggestions + ordering re-slice (branch
 `cleanup/libraries-ordering-reslice`)
 area: release / libraries, lectern, suggestions
 
-no migration, no env change, no job payload change, no `X-Nexus-Wire` bump: the
+#693 needed no migration, env change, job payload change or `X-Nexus-Wire` bump: the
 removed response keys (`LibraryOut.system_key/created_at/updated_at`, suggestion
 targets' `image_url`, publications' `as_of/input_revision`) are read by no web,
-apk or extension client (main is at wire 13). web and api deploy together. the
-apk is unaffected (`GET /lectern` unchanged). the extension keeps working; its
-next signed build carries the chooser's name-rule copy.
+apk or extension client. web and api shipped together. the re-slice left
+`GET /lectern` and the apk unchanged; its extension payload includes the chooser's
+name-rule copy.
 
-before deploy: on the newest restored backup (read-only), count the residue the
+remaining census: on a current restored backup (read-only), count the residue the
 fix leaves and record it in
 [lectern-rows-of-removed-media-linger](lectern-rows-of-removed-media-linger.md)
 (C4 `tombstoned_rows`: lectern rows of media their viewer removed) and
