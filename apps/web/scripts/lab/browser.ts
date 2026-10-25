@@ -9,7 +9,9 @@ import { WIRE_REVISION } from "@/lib/api/wire.gen";
 
 /** The canonical shell opens only over a persistent store: a real temporary profile
  * with the normal durable-storage permission, pinned to the lab's TLS leaf. A non-null
- * state seeds the fresh profile. close() also removes the profile. */
+ * state seeds the fresh profile. Chromium revokes the grant when its CDP session
+ * detaches, so the session stays attached to the returned page until close(); callers
+ * keep that page open. close() also removes the profile. */
 export async function openLabBrowser(input: {
   web_origin: string;
   web_tls: { leaf_spki_sha256: string };
@@ -25,7 +27,6 @@ export async function openLabBrowser(input: {
     const page = context.pages()[0] ?? await context.newPage();
     const session = await context.newCDPSession(page);
     await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
-    await session.detach();
     const opened = context;
     return { context: opened, page, close: async () => {
       try { await opened.close(); } finally { await rm(profile, { recursive: true, force: true }); }
