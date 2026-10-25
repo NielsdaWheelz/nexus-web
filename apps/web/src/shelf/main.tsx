@@ -12,6 +12,18 @@ import { createRoot } from "react-dom/client";
 import { connectLocalContent } from "@/lib/offline/localContent";
 import Shelf from "./Shelf";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
+import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
+import { NAV_COLLAPSED_COOKIE, type RenderEnvironment } from "@/lib/renderEnvironment/types";
+
+// This entry is the packaged Android shelf, independent of the workspace document.
+const environment: RenderEnvironment = {
+  androidShell: true,
+  platform: "android",
+  displayLocale: navigator.language,
+  displayTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  currentInstant: new Date().toISOString(),
+  navCollapsed: document.cookie.split(";").some(value => value.trim() === `${NAV_COLLAPSED_COOKIE}=1`),
+};
 
 function ShelfFrame() {
   const [href, setHref] = useState(window.location.href);
@@ -41,6 +53,8 @@ function ShelfAccountScope({ children }: { readonly children: ReactNode }) {
 connectLocalContent({ accountId: null, indexPath: "/shelf/downloads.json" });
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <MobileViewportProvider><ShelfFrame /></MobileViewportProvider>
+    <RenderEnvironmentProvider value={environment}>
+      <MobileViewportProvider><ShelfFrame /></MobileViewportProvider>
+    </RenderEnvironmentProvider>
   </StrictMode>,
 );

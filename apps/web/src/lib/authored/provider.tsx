@@ -1,8 +1,9 @@
 "use client";
 /** Account lifetime owns the store. Provisioning failure remains at this surface;
  * mounting another account cannot reuse a retired promise or its subscriptions. */
-import { createContext, useContext, useEffect, useState, useMemo, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useState, useMemo, useSyncExternalStore } from "react";
 import type { AuthoredStore, SyncStatus } from "@nexus/authored/types";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { localCall } from "@/lib/offline/localContent";
 import { bindApiAccount } from "@/lib/api/client";
 import { bindBrowserAdmission, installedApp } from "@/lib/native/admission";
@@ -38,6 +39,15 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const [detail, setDetail] = useState<string | null>(null);
   const [failure, setFailure] = useState<Error | null>(null);
   const [attempt, retry] = useState(0);
+  const guard = useWorkGuard();
+  useLayoutEffect(() => {
+    if (!ready) return;
+    const runtime = getWritingRuntime(accountId);
+    return guard.register({
+      id: `authored-writing:${accountId}`, scope: { kind: "account" }, subscribe: runtime.subscribe,
+      read: () => { const writing = runtime.snapshot(); return { changed: writing.saving || writing.error !== null, unconfirmed: false, stopsBrowserWork: false }; },
+    });
+  }, [accountId, guard, ready]);
   useEffect(() => {
     const releaseAccount = bindApiAccount(accountId);
     const releaseAdmission = installedApp || host !== "workspace" ? () => {} : bindBrowserAdmission();

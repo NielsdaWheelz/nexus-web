@@ -74,16 +74,16 @@ function createWorkRegistry() {
     event.preventDefault();
     event.returnValue = "";
   }
-  const confirm = (value: WorkRisk): boolean => {
+  const confirm = (value: WorkRisk, message: string | null = null): boolean => {
     if (securityTeardownStarted()) return true;
     if (!active) return false;
-    if (!risky(value)) return true;
+    if (!risky(value) && message === null) return true;
     return window.confirm([
       value.changed ? "unsaved changes may be lost." : null,
       value.unconfirmed ? "a request is unconfirmed. it may already have started work." : null,
       value.stopsBrowserWork ? "unfinished uploads and other browser work will stop." : null,
       value.unconfirmed || value.stopsBrowserWork ? "accepted server work is not cancelled." : null,
-      "leave anyway?",
+      message ?? "leave anyway?",
     ].filter(value => value !== null).join("\n\n"));
   };
   const guard: WorkGuard = {
@@ -117,14 +117,14 @@ function createWorkRegistry() {
   };
   return {
     guard,
-    async signOut(purge: () => Promise<void>, submit: () => void): Promise<boolean> {
-      if (!active || signingOut || !guard.confirmDocumentExit()) return false;
+    async signOut(purge: (confirm: (message: string | null) => boolean) => Promise<void>, submit: () => void): Promise<boolean> {
+      if (!active || signingOut) return false;
       const operation = {};
       signingOut = operation;
       previousInert = document.body.inert;
       document.body.inert = true;
       try {
-        await purge();
+        await purge(message => confirm(risk(() => true), message));
         if (!active || signingOut !== operation) return false;
         signOutUnload = true;
         refresh();

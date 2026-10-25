@@ -58,12 +58,12 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     let ended = false;
     let message = "playback couldn’t stop or save its position. your session is still open. retry sign out.";
     try {
-      await guardedSignOut(async () => {
+      await guardedSignOut(async confirm => {
         if (!live.current) throw new Error("sign-out account is no longer active");
         await unbindNativePlayer();
         if (!live.current) throw new Error("sign-out account is no longer active");
         message = "your notes on this device couldn’t be closed for sign out. your session is still open. retry sign out.";
-        if (!await prepareAuthoredSignOut(accountId)) throw new SignOutDeclined();
+        if (!await prepareAuthoredSignOut(accountId, confirm)) throw new SignOutDeclined();
         if (installedApp) {
           nativeStarted = true;
           message = "sign out was not confirmed. retry sign out to finish removing this device’s account data.";

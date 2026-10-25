@@ -109,11 +109,7 @@ function ShareCaptureContent({
   const timeZone = account?.calendar_time_zone ?? null;
   const accountId = account?.user_id ?? null;
   const guard = useWorkGuard();
-  useEffect(() => {
-    if (!accountId) return;
-    const runtime = getWritingRuntime(accountId);
-    return guard.register({id:`share-writing:${accountId}`,scope:{kind:"account"},subscribe:runtime.subscribe,read:()=>({changed:runtime.snapshot().saving||runtime.snapshot().error!==null,unconfirmed:false,stopsBrowserWork:false})});
-  },[accountId,guard]);
+
 
   useLayoutEffect(()=>guard.register({id:"share-submitted-acquisition",scope:{kind:"surface",id:"share"},
     subscribe:destinationCreation.subscribe,

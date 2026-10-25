@@ -74,12 +74,12 @@ export default function AuthenticatedShell(props: {
 }) {
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
-      <AuthoredProvider accountId={props.account.accountId}>
+      <WorkProvider><AuthoredProvider accountId={props.account.accountId}>
         <RenderEnvironmentProvider value={props.renderEnvironment}>
           <UnauthenticatedApiBoundary>
             <MobileViewportProvider>
               <FeedbackProvider returnFocus={returnWorkspaceFocus}>
-                <DeviceSettingsProvider><WorkProvider>
+                <DeviceSettingsProvider>
                   <SyncFailureReceipt />
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                     <ActivityCapture />
@@ -94,12 +94,12 @@ export default function AuthenticatedShell(props: {
                       </ReaderProvider>
                     </ServerSeedsProvider>
                   </MediaAdmissionsProvider>
-                </WorkProvider></DeviceSettingsProvider>
+                </DeviceSettingsProvider>
               </FeedbackProvider>
             </MobileViewportProvider>
           </UnauthenticatedApiBoundary>
         </RenderEnvironmentProvider>
-      </AuthoredProvider>
+      </AuthoredProvider></WorkProvider>
     </AuthenticatedAccountProvider>
   );
 }

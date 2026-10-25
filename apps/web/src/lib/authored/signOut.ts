@@ -52,7 +52,7 @@ export async function finishBrowserRetirement(alreadyRetired: boolean, onPending
     return navigator.locks.request("nexus-authored-account-transition", finish);
   });
 }
-export async function prepareAuthoredSignOut(accountId: string): Promise<boolean> {
+export async function prepareAuthoredSignOut(accountId: string, confirm: (message: string | null) => boolean): Promise<boolean> {
   const store = await openAuthoredStore(accountId);
   const browser = !("nexusAuthored" in window);
   let retiring = false;
@@ -65,12 +65,12 @@ export async function prepareAuthoredSignOut(accountId: string): Promise<boolean
       catch { accepted = false; }
     }
     const unfinished = !accepted || hasUncommittedWriting();
-    if (browser || unfinished) {
-      const message = unfinished
+    const message = browser || unfinished
+      ? unfinished
         ? "some changes haven’t been confirmed as synced. signing out removes them from this device and closes your notes in all nexus tabs.\n\ndiscard these changes and sign out?"
-        : "sign out on this device? this closes your notes in all nexus tabs. unfinished changes in those tabs will be discarded.";
-      if (!window.confirm(message)) return false;
-    }
+        : "sign out on this device? this closes your notes in all nexus tabs. unfinished changes in those tabs will be discarded."
+      : null;
+    if (!confirm(message)) return false;
     if (browser) {
       await markBrowserRetiring(accountId); retiring = true;
       await control(accountId, "retire");

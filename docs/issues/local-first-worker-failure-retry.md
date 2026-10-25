@@ -10,5 +10,14 @@ retry. this is a deliberate manual recovery contract, not a worker supervisor.
 the ignored `authored-lifecycle.spec.ts` terminates the actual production shared
 worker through its owned profile's devtools target, edits the mounted note,
 checks retained words/copy/absence of fake retry, and dismisses the real reload
-loss guard. it has not run yet. resolve after that real target case passes; the
-static gate and SQL-only cases do not prove this lifecycle.
+loss guard. lab26 (`20261025-152718-33b84520e084`, source `ca2558c79`)
+passed terminal-failure detection, retained input, copy and absence of retry,
+then failed waiting for the reload loss dialog.
+
+the workspace and shelf never register the writing runtime with `WorkGuard`.
+only `app/share/ShareCapture.tsx:115` registers its saving/error state;
+`lib/unsavedWork.tsx` installs `beforeunload` from registered risks. the separate
+`hasUncommittedWriting()` check protects automatic updates and fatal render
+recovery, not an ordinary editor reload. centralize that existing registration
+across all three hosts. resolve after the real terminal-worker case preserves
+the input when restart is cancelled; static and SQL-only checks are insufficient.
