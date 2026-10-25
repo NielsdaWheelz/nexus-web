@@ -56,6 +56,12 @@ show-more disclosure. expanded description, contributor roles, source links and
 playback defaults retain their order and 12px group spacing. description is
 primary prose; source/default facts are secondary interface text. no second title.
 
+the show header identifies the show and its section, without subscription counts.
+workspace presentation owns the title; shared pane chrome supplies the `Podcasts`
+context and suppresses it when it equals the title. live and saved detail publish
+section metadata `None` in every read state. body loading/error/retry and existing
+refresh controls own read feedback.
+
 ## owners and contracts
 
 `subscriptions.py` owns admission/stop; `imports.py` owns finite operations and

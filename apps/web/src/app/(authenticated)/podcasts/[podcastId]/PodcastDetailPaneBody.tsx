@@ -35,7 +35,6 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
@@ -303,9 +302,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
   const chips = state === "all" ? [] : [{ id: "state", label: `Playback: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
   const canReset = sort !== "newest" || chips.length > 0;
-  const headerMeta: PaneHeaderMeta = ready !== null
-    ? { kind: "Count", value: destinations.length, unit: "destination" }
-    : head.status === "loading" ? { kind: "Pending" } : { kind: "None" };
   const queryControls = {
     kind: "Controls" as const,
     label: "Filter podcast episodes",
@@ -383,7 +379,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           ? { kind: "Resolving" }
           : undefined,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-    header: { kind: "Section", meta: headerMeta },
+    header: { kind: "Section", meta: { kind: "None" } },
     query: queryControls,
   });
   usePaneReturnReady(
