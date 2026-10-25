@@ -22,4 +22,4 @@ private trace/verification archives: `operation-trace-client/` and
 the current affected operation passes; historical attribution remains uncertain.
 resolve this historical question only with attributable original evidence. do not
 repeat runs to manufacture that evidence. the observed current background 504 is
-tracked separately in [restoration latency](search-restoration-latency-tail.md).
+tracked separately in [accepted restoration behaviour](release-search.md).

@@ -192,7 +192,7 @@ top-k. lexical evidence and semantic-only evidence have separate provenance.
 
 `nearest_chunks` counts at most25,001 current ready chunks in the caller's
 snapshot. publication owns exactly one nonnull vector per current chunk on the
-active provider/model; migration0306 rejects serving legacy rows that violate
+active provider/model; migration0316 rejects serving rows that violate
 that contract. the capped scalar count therefore chooses exact retrieval through
 25,000 vectors, otherwise ivfflat with40 probes over the original full predicate.
 an empty count returns no neighbours. the exact branch fetches actual eligible
@@ -201,7 +201,7 @@ authorization, publication and model predicates remain unchanged. broad routing
 avoids per-vector existence lookups; small scopes pay one extra bounded query.
 the count never truncates the searchable domain or caller's window. this cutoff
 extrapolates slightly beyond the measured 20,137-vector exact control; it is not
-a proved crossover. migration 0306 owns the current-publication expression
+a proved crossover. migration0316 owns the current-publication expression
 statistic used by that predicate. strict search and oracle reads share this
 primitive and retain their own limits and cosine policies.
 
@@ -239,6 +239,10 @@ keystroke through paint, after normal startup and with restoration traffic retai
 without a cold-percentile or per-query empty-cache promise.
 publication overlap needs its own measured finite bound; recurrent pressure is
 ordinary use.
+
+occasional restored-pane related failure during publication is accepted when
+useful results remain visible, failure is explicit and retry remains available.
+this does not waive active after-input failure or change any deadline.
 
 offsets count displayed groups or occurrences, including unavailable ones.
 families contribute at most `offset + limit + 1` logical identities before the

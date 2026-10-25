@@ -9,8 +9,9 @@ install locked python dev/codex-agent dependencies, web dependencies, chromium,
 docker compose and supabase 2.117.0; select and start docker desktop. runs own
 fresh data, services and teardown. never attach the restored qualification volume
 or main checkout's unrelated migration chain. use canonical pg_search 0.26.2 with
-preload and 128 mib shared memory. the current search-schema lab does not qualify
-[main's conversion](release-search-main-migration-collision.md).
+preload and 128 mib shared memory. the mac checks establish current composition;
+actual populated [main conversion](release-search.md) was rehearsed separately
+on the devbox.
 
 codex clients and hosts cut over together from `NEXUS_CODEX_NATIVE_SOCKET` to
 `NEXUS_CODEX_ENDPOINT`; unix endpoints include `unix://` and omit a token.

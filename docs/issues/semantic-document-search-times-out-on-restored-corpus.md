@@ -81,7 +81,7 @@ observes the actual adopted phase before sampling paint. all six typing
 observations meet their targets: keyword1117/1160/663ms and
 related1744/2073/1155ms; the genuine paraphrase paints in1422ms. three cells
 do not establish p95. browser126's restoration timeout remains real evidence in
-[restoration latency](search-restoration-latency-tail.md). both processes reach
+[accepted restoration behaviour](release-search.md). both processes reach
 their memory limits without oom; no comfortable headroom is established.
 
 historical next step at browser129: the three retained checks and actual
@@ -111,7 +111,7 @@ interval overlaps observed native merging. affected transport verification on
 `22f06aec` then presents keyword/related results in779/2911ms during one book
 commit under unchanged limits. this is bounded proof, not a new percentile or
 fresh whole-corpus audit. the separate restored hybrid504 remains in
-[restoration latency](search-restoration-latency-tail.md). actual screen-reader
+[accepted restoration behaviour](release-search.md). actual screen-reader
 and unrestricted ordinary-worker acceptance remain explicitly owner-deferred;
 scoped publication does not satisfy the latter. [release integration](release-search.md)
 remains separate.

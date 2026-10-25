@@ -39,14 +39,21 @@ warm visible-result p95 budgets remain500/2000/4000ms for direct/keyword/related
 cold keyword3000/related4000ms has one accepted control, not a percentile.
 independent failure deadlines remain unchanged. the prior controlled candidate
 passes book publication once, durable unrelated edits and scoped browser/merge
-request observations. integrated static checks, populated conversion and the
-affected search/publication journey remain required before release preparation
-is complete; neither the checkpoint nor renumbering establishes those facts.
+request observations. integrated `a3e6b8ee2` passes the mac static gate, three
+retained checks and actual0312→0315→0316 populated preservation/native proof.
+one rebuilt-index paraphrase retains all53 reference owners with identical
+first-page order and representatives; it is no new latency or recall campaign.
+the integrated combined operation fails: publication needs a serialization retry
+and active related search expires. see [publication coupling](search-publication-retries-during-unrelated-edits.md)
+and [related cutoff](search-related-timeout-during-publication.md).
 
 the owner accepts occasional restored-pane related failure during publication
-conditional on verified honest failure, preserved useful results and retry.
-that conditional check remains pending on the integrated build; no scheduler or
-cutoff increase is authorized. preserve the [historical unjoined abort](search-hybrid-publication-cutoff.md).
+with verified honest failure, preserved useful results and retry. the integrated
+mac tls/http2 check establishes those behaviours by holding one client response
+through its unchanged3750ms cutoff and successfully retrying. it does not measure
+api queue cost or waive active after-input failure. the cost is occasional manual
+retry of restored related results; no scheduler or cutoff increase is authorized.
+preserve the [historical unjoined abort](search-hybrid-publication-cutoff.md).
 manual screen-reader and unrestricted ordinary-worker qualification remain
 explicitly deferred. give the [restored backlog](restored-search-worker-backlog.md)
 its legitimate disposition; never blanket-cancel it to create acceptance.
