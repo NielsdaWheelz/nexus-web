@@ -753,9 +753,12 @@ internal class OfflineStore private constructor(private val context: Context) {
     private fun recover() {
         val next = state.detached()
         // package history also includes webview renderers, which can die after the main process.
-        val previousExit = if (android.os.Build.VERSION.SDK_INT >= 30) context.getSystemService(android.app.ActivityManager::class.java)
-            .getHistoricalProcessExitReasons(context.packageName, 0, 0).firstOrNull { it.processName == context.packageName } else null
-        val userStopped = previousExit?.let { it.timestamp >= state.processStartedAt && it.reason == android.app.ApplicationExitInfo.REASON_USER_REQUESTED } == true
+        val userStopped = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            context.getSystemService(android.app.ActivityManager::class.java)
+                .getHistoricalProcessExitReasons(context.packageName, 0, 0)
+                .firstOrNull { it.processName == context.packageName }
+                ?.let { it.timestamp >= state.processStartedAt && it.reason == android.app.ApplicationExitInfo.REASON_USER_REQUESTED } == true
+        } else false
         next.processStartedAt = System.currentTimeMillis()
         for (item in next.items.values.toList()) {
             when (item.state) {
