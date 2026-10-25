@@ -86,10 +86,13 @@ export async function browserSignedOut(): Promise<boolean> {
   }); } finally { db.close(); }
 }
 export async function beginBrowserSignIn(): Promise<void> {
-  const db = await database();
-  try { await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("binding", "readwrite", { durability: "strict" });
-    tx.objectStore("binding").delete("signed_out");
-    tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
-  }); } finally { db.close(); }
+  await navigator.locks.request("nexus-authored-account-transition", async () => {
+    // A prior signout must finish its HTTP-only cookie clearing before login.
+    const db = await database();
+    try { await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("binding", "readwrite", { durability: "strict" });
+      tx.objectStore("binding").delete("signed_out");
+      tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
+    }); } finally { db.close(); }
+  });
 }

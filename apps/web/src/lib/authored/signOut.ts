@@ -32,13 +32,16 @@ async function purgeBrowser(accountId: string, alreadyRetired: boolean): Promise
   await clearBrowserRetiring();
 }
 export async function finishBrowserRetirement(alreadyRetired = false): Promise<boolean> {
-  const account = await readBrowserRetiring();
-  if (account === null) return false;
-  await purgeBrowser(account, alreadyRetired);
-  // The shell retirement owner outlives the account menu that requested exit.
-  try { await fetch("/auth/signout", { method: "POST", credentials: "same-origin", redirect: "manual" }); }
-  catch { /* Offline removal is enforced by the durable signed-out marker. */ }
-  return true;
+  return navigator.locks.request("nexus-authored-account-transition", async () => {
+    // Recheck after admission: another tab may already have finished removal.
+    const account = await readBrowserRetiring();
+    if (account === null) return false;
+    await purgeBrowser(account, alreadyRetired);
+    // The shell retirement owner outlives the account menu that requested exit.
+    try { await fetch("/auth/signout", { method: "POST", credentials: "same-origin", redirect: "manual" }); }
+    catch { /* Offline removal is enforced by the durable signed-out marker. */ }
+    return true;
+  });
 }
 export async function prepareAuthoredSignOut(accountId: string): Promise<boolean> {
   const store = await openAuthoredStore(accountId);
