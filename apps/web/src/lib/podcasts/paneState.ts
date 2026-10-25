@@ -43,6 +43,15 @@ export function podcastErrorMessage(
     case "E_PODCAST_NOT_FOUND":
     case "E_MEDIA_NOT_FOUND":
       return content("It isn’t available.");
+    case "E_PODCAST_SUBSCRIPTION_ACTIVE":
+      return content("included by this podcast subscription. unsubscribe before removing it.");
+    case "E_PODCAST_FEED_UNAVAILABLE":
+    case "E_BROWSE_PROVIDER_UNAVAILABLE":
+    case "E_BROWSE_PROVIDER_RATE_LIMITED":
+    case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
+      return content("the source check could not be completed. retry later.");
+    case "E_INVALID_DISCOVERY_TARGET":
+      return content("this discovery link is invalid or obsolete.");
     case "E_FORBIDDEN":
       return content("This account can’t do that.");
     case "E_RESOURCE_CONFLICT":

@@ -1,9 +1,10 @@
 # installed catalog
 
 the android catalog is a complete, dated browsing projection. it contains personal
-library memberships, followed and referenced shows with visible episodes, lectern
-selections, and owned note/chat index summaries. it contains no bodies or downloaded
-assets and authorizes no command. hosted reads keep their existing owners.
+library memberships, included shows with their full known episode metadata, lectern
+selections, and owned note/chat index summaries. metadata inclusion creates no
+membership. the snapshot contains no bodies or downloaded assets and authorizes
+no command. hosted reads keep their existing owners.
 
 ## server contract
 
@@ -30,11 +31,19 @@ orders, repeated facts and episode counts before serialization. snapshot identit
 is opaque. capture time dates the database observation, not transfer completion.
 there is no export table, server artifact, endpoint crawl or incremental protocol.
 
-roots are non-system member libraries, active personal subscriptions/imports and
-visible lectern selections. included shows admit their complete visible episode
-selection, without fetching provider history. explicit lectern selections may
-include system/grant-only media; they do not admit the surrounding corpus.
-subscription sections and media memberships remain distinct relations.
+roots are non-system member libraries, active subscriptions, unfinished
+member-library imports and readable lectern selections. each included show admits
+all known canonical episodes at capture, including unsaved episodes, excluding
+teardown. `episode_counts.known_count` counts those identities; it does not claim
+complete publisher history. capture neither fetches that history nor requests
+transcripts, audio or model work.
+
+subscription sections, episode metadata and library membership remain distinct
+relations. `library_media` alone supplies collection inclusion; an episode in
+`media` or `episodes` gains no placement. explicit lectern selections may include
+system/grant-only media and catalogue-only episodes. a selected episode includes
+its own show's catalogue. an unfiled episode remains in a later snapshot only
+while an existing root still includes its show.
 
 ## device contract
 
@@ -112,7 +121,9 @@ after that projection. no durable per-write catalog patches are made.
 
 detail routes keep retained content first, otherwise show saved identity and a
 truthful unavailable-body boundary. a summary never fabricates a media detail,
-empty authored text or empty chat. unsupported ids/scopes are coverage outcomes.
+empty authored text or empty chat. ids outside the captured shows and roots remain
+unavailable offline; live catalogue eligibility cannot extend snapshot coverage.
+unsupported ids/scopes are coverage outcomes.
 workspace titles can use saved display metadata when no retained authoritative
 presentation exists. local authored titles and authoritative absence retain their
 precedence; saved titles never enter writing watches or version adoption.

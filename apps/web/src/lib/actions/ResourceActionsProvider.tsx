@@ -85,7 +85,7 @@ export type Overlay =
   | { readonly kind: "PodcastSettings"; readonly podcastId: string }
   | { readonly kind: "PodcastLibraries"; readonly target: PodcastTarget; readonly title: string; readonly successFocus?: ReturnFocusTarget }
   | { readonly kind: "SubscribePodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
-  | { readonly kind: "ImportPodcastEpisodes"; readonly target: PodcastTarget; readonly title: string }
+  | { readonly kind: "RemoveEpisodeFromAll"; readonly mediaId: string; readonly title: string }
   | { readonly kind: "UnsubscribePodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly successFocus?: ReturnFocusTarget }
   | { readonly kind: "RemovePodcastEpisodes"; readonly podcastId: string; readonly title: string };
 
@@ -134,7 +134,7 @@ export interface ActionContext {
  * Player/queue/download and live writing operations retain their own policies. */
 const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "Metadata", "MarkCollectionFinished", "MarkCollectionUnread", "AddUnfinishedToLectern", "TranscribePodcastEpisodes", "LeaveLibrary", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
-  "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "ImportPodcastEpisodes", "RemovePodcastEpisodes",
+  "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "AddEpisodeToAll", "RemoveEpisodeFromAll", "RemovePodcastEpisodes",
   "RefreshPodcast", "Chat", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
   "ReviewMetadataResult", "LibrarySettings", "PodcastSettings", "RemoveUpload",
@@ -300,7 +300,7 @@ export default function ResourceActionsProvider({
   const mediaContinuations = useMediaContinuationOwner({
     isActive: () => !session.controller.signal.aborted,
     sessionSignal: () => session.controller.signal,
-    lectern, reportDefect: setDefect, workspace,
+    lectern, podcasts: podcasts.commands, reportDefect: setDefect, workspace,
   });
   const ctx = useMemo(
     (): ActionContext => ({

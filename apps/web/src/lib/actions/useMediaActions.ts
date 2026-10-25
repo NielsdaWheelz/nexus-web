@@ -118,6 +118,11 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
       invoke: () => { if (subject.kind === "External" && !holding && (!installedApp || remoteReady())) ctx.mediaContinuations.start(subject, { kind: "Lectern" }, null); },
     });
   }
+  if (kind === "podcast_episode" && mediaId === null) actions.push({
+    controlKey: "AddEpisodeToAll", hasPopup: null, id: "AddEpisodeToAll", menuLabel: "add to all", accessibleLabel: `add to all: ${title}`, icon: createElement(ListPlus),
+    disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
+    invoke: () => { if (subject.kind === "External" && !holding && (!installedApp || remoteReady())) ctx.mediaContinuations.start(subject, { kind: "All" }, null); },
+  });
   actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: "manage libraries", accessibleLabel: `manage libraries: ${title}`, icon: createElement(Library), disabled: holding || disconnected,
     disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding,
     invoke: ({ trigger, returnFocus }) => {

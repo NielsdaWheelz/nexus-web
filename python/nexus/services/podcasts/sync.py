@@ -1,9 +1,11 @@
-"""Show-owned recurring full-graph scans and their durable observations.
+"""Show-owned source scans and their durable observations.
 
 Retry rule: one current run per show; repeated refresh joins it. A run settles its
 observation and is deleted atomically. Success schedules the next hourly slot;
 failure sets a new head scan due after 15m/1h/6h/24h. The existing 15-minute
-sweep adds up to one sweep interval plus queue delay. No directory prerequisite.
+sweep adds up to one sweep interval plus queue delay. any known show admits an
+explicit check; accepted work may finish after the last unsubscribe and publishes
+only to then-current rules. only subscribed shows schedule another scan.
 This module stays import-light because queue terminal hooks use settlement.
 """
 
@@ -58,15 +60,21 @@ def _admit(db: Session, *, podcast_id: UUID) -> None:
 
 
 def refresh(db: Session, viewer_id: UUID, scope: wire.PodcastRefreshManualScope) -> int:
-    """Admit/coalesce shows with current rules in the viewer's readable scope."""
+    """Check any explicit known show; aggregate scopes retain member-library rules."""
     from nexus.services import libraries
 
     params: dict[str, Any] = {"viewer_id": viewer_id}
     predicate = ""
     with transaction(db):
         if isinstance(scope, wire.PodcastRefreshPodcastScope):
-            predicate = "AND p.id=:podcast_id"
-            params["podcast_id"] = scope.podcast_id
+            podcast_id = db.scalar(
+                text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"),
+                {"id": scope.podcast_id},
+            )
+            if podcast_id is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+            _admit(db, podcast_id=podcast_id)
+            return 1
         if isinstance(scope, wire.PodcastRefreshLibraryScope):
             library = libraries.access(db, viewer_id, scope.library_id, lock=False)
             if not library.is_default:
@@ -85,8 +93,6 @@ def refresh(db: Session, viewer_id: UUID, scope: wire.PodcastRefreshManualScope)
                 params,
             )
         )
-        if isinstance(scope, wire.PodcastRefreshPodcastScope) and not ids:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
         for podcast_id in ids:
             _admit(db, podcast_id=podcast_id)
         return len(ids)
@@ -128,7 +134,9 @@ def settle_recurring(db: Session, *, run_id: UUID) -> None:
         UPDATE podcasts p SET sync_run_id=NULL,last_checked_at=now(),
             last_check_had_coverage_gaps=r.had_coverage_gaps,
             last_check_error_code=r.error_code,last_check_error_detail=r.error_detail,
-            next_sync_at=CASE WHEN r.failed_at IS NULL
+            next_sync_at=CASE WHEN NOT EXISTS (
+                SELECT 1 FROM library_podcast_subscriptions s WHERE s.podcast_id=p.id)
+                THEN NULL WHEN r.failed_at IS NULL
                 THEN date_trunc('hour',now())+interval '1 hour'
                 ELSE now()+CASE LEAST(p.consecutive_sync_failures,3)
                     WHEN 0 THEN interval '15 minutes' WHEN 1 THEN interval '1 hour'
@@ -143,25 +151,16 @@ def settle_recurring(db: Session, *, run_id: UUID) -> None:
 
 
 def stop_if_unused(db: Session, *, podcast_id: UUID) -> None:
-    """Stop an unused recurring owner under the show lock, without taking queue locks."""
+    """Retire future scheduling; accepted source work keeps its pointer and fences."""
     if db.scalar(
         text("SELECT EXISTS(SELECT 1 FROM library_podcast_subscriptions WHERE podcast_id=:id)"),
         {"id": podcast_id},
     ):
         return
-    run_id = db.scalar(text("SELECT sync_run_id FROM podcasts WHERE id=:id"), {"id": podcast_id})
-    if run_id is not None:
-        db.execute(text("SELECT id FROM podcast_feed_runs WHERE id=:id FOR UPDATE"), {"id": run_id})
-        db.execute(
-            text("UPDATE podcast_feed_runs SET cancelled_at=now(),job_id=NULL WHERE id=:id"),
-            {"id": run_id},
-        )
     db.execute(
-        text("UPDATE podcasts SET sync_run_id=NULL,next_sync_at=NULL WHERE id=:id"),
+        text("UPDATE podcasts SET next_sync_at=NULL WHERE id=:id"),
         {"id": podcast_id},
     )
-    if run_id is not None:
-        db.execute(text("DELETE FROM podcast_feed_runs WHERE id=:id"), {"id": run_id})
 
 
 def run_due_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:

@@ -14,7 +14,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
+from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage
@@ -148,9 +148,8 @@ def hydrate_compact_podcast_targets(
     from nexus.services.resource_items.routing import resource_activations_for_refs
 
     rows = db.execute(
-        text(f"""
+        text("""
         SELECT p.id,p.title FROM podcasts p WHERE p.id=ANY(CAST(:ids AS uuid[]))
-        AND p.id IN ({visible_podcast_ids_cte_sql()})
     """),
         {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     ).all()
@@ -230,7 +229,7 @@ def _snapshot(db: Session, viewer_id: UUID, library_id: UUID):
                 FROM library_podcast_subscriptions s JOIN destinations d ON d.id=s.library_id),'[]') AS rules,
             COALESCE((SELECT jsonb_agg(to_jsonb(r)||to_jsonb(i)||jsonb_build_object(
                 'podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',d.name,'library_is_default',d.is_default,'updated_at',r.updated_at,'order_revision',d.order_revision,
-                'can_manage',d.can_manage))
+                'can_manage',d.can_manage,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id)))
                 FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
                 JOIN podcasts p ON p.id=r.podcast_id JOIN destinations d ON d.id=i.library_id
                 WHERE r.completed_at IS NULL AND r.cancelled_at IS NULL),'[]') AS imports
@@ -306,7 +305,7 @@ def read_library_podcast(
                 OR (NOT l.is_default AND lm.role='admin')) AS can_manage,
             (SELECT to_jsonb(s) FROM library_podcast_subscriptions s
                 WHERE s.library_id=l.id AND s.podcast_id=:podcast_id) AS subscription,
-            (SELECT to_jsonb(r)||to_jsonb(i)||jsonb_build_object('podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',l.name,'library_is_default',l.is_default,'updated_at',r.updated_at)
+            (SELECT to_jsonb(r)||to_jsonb(i)||jsonb_build_object('podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',l.name,'library_is_default',l.is_default,'updated_at',r.updated_at,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id))
                 FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
                 WHERE i.library_id=l.id AND r.podcast_id=:podcast_id
                 AND r.completed_at IS NULL AND r.cancelled_at IS NULL) AS import,
@@ -370,7 +369,7 @@ def podcast_index_rows_sql() -> str:
     )
     return f"""
         WITH episodes AS (SELECT pe.podcast_id,pe.published_at,{state} AS episode_state
-            FROM podcast_episodes pe JOIN ({visible_media_ids_cte_sql()}) vm ON vm.media_id=pe.media_id {joins}),
+            FROM podcast_episodes pe JOIN ({requested_media_ids_cte_sql()}) vm ON vm.media_id=pe.media_id {joins}),
         o AS (SELECT s.podcast_id,s.followed_at,lower(p.title) AS title_key,
             count(e.*) FILTER(WHERE e.episode_state='unplayed') AS unplayed_count,
             max(e.published_at) AS latest_published_at,(max(e.published_at) IS NULL)::int AS latest_missing

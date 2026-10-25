@@ -106,6 +106,6 @@ export default function LibraryPodcastsSection({ library, active, source, source
           </>} />;
       } : undefined}
       empty={source.status === "ready" && source.error === null ? <p>no subscribed podcasts.</p> : null} />
-    {live && data !== null && data.imports.length > 0 ? <section aria-label="episode imports"><h3>episode imports</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} following={data.subscriptions.some(show => show.podcast.id === operation.podcast_id && show.destinations.some(destination => destination.library_id === operation.library_id))} /></div>)}</section> : null}
+    {live && data !== null && data.imports.length > 0 ? <section aria-label="episode additions"><h3>episode additions</h3>{data.imports.map(operation => <div key={operation.id}><a href={`/podcasts/${operation.podcast_id}`}>{operation.podcast_title}</a><PodcastImportProgress operation={operation} title={operation.podcast_title} /></div>)}</section> : null}
   </PaneSection>;
 }

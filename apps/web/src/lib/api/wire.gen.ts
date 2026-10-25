@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 16;
+export const WIRE_REVISION = 17;
 
 export interface paths {
     "/assistant-writes": {
@@ -2638,7 +2638,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/podcast-episodes/from-discovery": {
+    "/podcast-episodes/resolve": {
         parameters: {
             query?: never;
             header?: never;
@@ -2647,8 +2647,42 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Acquire Podcast Episode */
-        post: operations["acquire_podcast_episode_podcast_episodes_from_discovery_post"];
+        /** Resolve Podcast Episode */
+        post: operations["resolve_podcast_episode_podcast_episodes_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcast-episodes/{media_id}/removal-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Episode Removal Preview */
+        get: operations["episode_removal_preview_podcast_episodes__media_id__removal_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcast-episodes/{media_id}/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove Episode */
+        post: operations["remove_episode_podcast_episodes__media_id__remove_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2700,6 +2734,23 @@ export interface paths {
         put?: never;
         /** Refresh Podcasts */
         post: operations["refresh_podcasts_podcasts_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Podcast */
+        post: operations["resolve_podcast_podcasts_resolve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4489,7 +4540,7 @@ export interface components {
         /** ConsumptionAction */
         ConsumptionAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /** Episode */
             episode: boolean;
             /** Finished */
@@ -5270,10 +5321,6 @@ export interface components {
         Data_PodcastAdmissionOut_: {
             data: components["schemas"]["PodcastAdmissionOut"];
         };
-        /** Data[PodcastEpisodeFromDiscoveryOut] */
-        Data_PodcastEpisodeFromDiscoveryOut_: {
-            data: components["schemas"]["PodcastEpisodeFromDiscoveryOut"];
-        };
         /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
         Data_PodcastEpisodeQueryTranscriptForecastOut_: {
             data: components["schemas"]["PodcastEpisodeQueryTranscriptForecastOut"];
@@ -5281,6 +5328,18 @@ export interface components {
         /** Data[PodcastEpisodeQueryTranscriptRequestOut] */
         Data_PodcastEpisodeQueryTranscriptRequestOut_: {
             data: components["schemas"]["PodcastEpisodeQueryTranscriptRequestOut"];
+        };
+        /** Data[PodcastEpisodeRemovalOut] */
+        Data_PodcastEpisodeRemovalOut_: {
+            data: components["schemas"]["PodcastEpisodeRemovalOut"];
+        };
+        /** Data[PodcastEpisodeRemovalPreviewOut] */
+        Data_PodcastEpisodeRemovalPreviewOut_: {
+            data: components["schemas"]["PodcastEpisodeRemovalPreviewOut"];
+        };
+        /** Data[PodcastEpisodeResolveOut] */
+        Data_PodcastEpisodeResolveOut_: {
+            data: components["schemas"]["PodcastEpisodeResolveOut"];
         };
         /** Data[PodcastImportOut] */
         Data_PodcastImportOut_: {
@@ -5297,6 +5356,10 @@ export interface components {
         /** Data[PodcastRemovalPreviewOut] */
         Data_PodcastRemovalPreviewOut_: {
             data: components["schemas"]["PodcastRemovalPreviewOut"];
+        };
+        /** Data[PodcastResolveOut] */
+        Data_PodcastResolveOut_: {
+            data: components["schemas"]["PodcastResolveOut"];
         };
         /** Data[PodcastStopOut] */
         Data_PodcastStopOut_: {
@@ -5662,7 +5725,7 @@ export interface components {
          */
         DownloadAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6384,7 +6447,7 @@ export interface components {
         /** HighlightNoteAction */
         HighlightNoteAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6791,7 +6854,7 @@ export interface components {
         /** LecternMembershipAction */
         LecternMembershipAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6834,6 +6897,22 @@ export interface components {
         /** LecternWriteOut */
         LecternWriteOut: {
             order_revision: components["schemas"]["OrderRevision"];
+        };
+        /**
+         * LibraryAllMembershipOut
+         * @description Effective all membership, addressed through the viewer's real personal library.
+         */
+        LibraryAllMembershipOut: {
+            /** Included */
+            included: boolean;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            order_revision: components["schemas"]["OrderRevision"];
+            /** Remove Blocked */
+            remove_blocked: ("RequiresAdmin" | "PodcastSubscription") | null;
         };
         /** LibraryCollectionTarget */
         LibraryCollectionTarget: {
@@ -7034,7 +7113,7 @@ export interface components {
          */
         LibraryPlacementOut: {
             /** Blocked */
-            blocked: ("RequiresAdmin" | "SystemManaged") | null;
+            blocked: ("RequiresAdmin" | "SystemManaged" | "PodcastSubscription") | null;
             /**
              * Library Id
              * Format: uuid
@@ -7051,6 +7130,7 @@ export interface components {
         };
         /** LibraryPlacementsOut */
         LibraryPlacementsOut: {
+            all_membership: components["schemas"]["LibraryAllMembershipOut"];
             /** Placements */
             placements: components["schemas"]["LibraryPlacementOut"][];
             removal_revision: components["schemas"]["OrderRevision"];
@@ -8476,7 +8556,7 @@ export interface components {
         /** OpenPodcastFeedAction */
         OpenPodcastFeedAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /** Href */
             href: string;
             /**
@@ -8488,7 +8568,7 @@ export interface components {
         /** OpenSourceAction */
         OpenSourceAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /** Href */
             href: string;
             /**
@@ -9154,7 +9234,7 @@ export interface components {
         /** PlaybackAction */
         PlaybackAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9432,19 +9512,6 @@ export interface components {
              */
             subscription_id: string;
         };
-        /** PodcastDestinationOutcomeOut */
-        PodcastDestinationOutcomeOut: {
-            /**
-             * Library Id
-             * Format: uuid
-             */
-            library_id: string;
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Added" | "AlreadyPresent";
-        };
         /** PodcastDetailOut */
         PodcastDetailOut: {
             /** Destinations */
@@ -9483,30 +9550,10 @@ export interface components {
         };
         /** PodcastEpisodeCountsOut */
         PodcastEpisodeCountsOut: {
-            /** Available Count */
-            available_count: number;
+            /** Known Count */
+            known_count: number;
             /** Unfinished Count */
             unfinished_count: number;
-        };
-        /** PodcastEpisodeFromDiscoveryOut */
-        PodcastEpisodeFromDiscoveryOut: {
-            /** Destination Outcomes */
-            destination_outcomes: components["schemas"]["PodcastDestinationOutcomeOut"][];
-            /** Href */
-            href: string;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
-        /** PodcastEpisodeFromDiscoveryRequest */
-        PodcastEpisodeFromDiscoveryRequest: {
-            /** Destinations */
-            destinations: components["schemas"]["DestinationGuard"][];
-            expected_removal_revision: components["schemas"]["OrderRevision"];
-            /** Target */
-            target: string;
         };
         /** PodcastEpisodeListItemOut */
         PodcastEpisodeListItemOut: {
@@ -9556,6 +9603,51 @@ export interface components {
              */
             reason: "search" | "highlight" | "quote";
             selection: components["schemas"]["PodcastEpisodeSelection"];
+        };
+        /** PodcastEpisodeRemovalOut */
+        PodcastEpisodeRemovalOut: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            removal_revision: components["schemas"]["OrderRevision"];
+        };
+        /** PodcastEpisodeRemovalPreviewOut */
+        PodcastEpisodeRemovalPreviewOut: {
+            /** Blocked */
+            blocked: components["schemas"]["PodcastRemovalBlockedOut"][];
+            /** Can Execute */
+            can_execute: boolean;
+            /** Destinations */
+            destinations: components["schemas"]["PodcastRemovalDestinationOut"][];
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            removal_revision: components["schemas"]["OrderRevision"];
+        };
+        /** PodcastEpisodeRemovalRequest */
+        PodcastEpisodeRemovalRequest: {
+            /** Destinations */
+            destinations: components["schemas"]["PodcastStopDestinationRequest"][];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+        };
+        /** PodcastEpisodeResolveOut */
+        PodcastEpisodeResolveOut: {
+            /** Href */
+            href: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
         };
         /** PodcastEpisodeSelection */
         PodcastEpisodeSelection: {
@@ -9639,6 +9731,8 @@ export interface components {
              */
             run_id: string;
             state: components["schemas"]["PodcastImportState"];
+            /** Subscription Id */
+            subscription_id: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -9910,9 +10004,9 @@ export interface components {
             name: string;
             /**
              * Reason
-             * @constant
+             * @enum {string}
              */
-            reason: "requires_admin";
+            reason: "requires_admin" | "subscription_active";
         };
         /** PodcastRemovalDestinationOut */
         PodcastRemovalDestinationOut: {
@@ -9965,6 +10059,21 @@ export interface components {
              * @enum {string}
              */
             scope: "all" | "library";
+        };
+        /** PodcastResolveOut */
+        PodcastResolveOut: {
+            /** Href */
+            href: string;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+        };
+        /** PodcastResolveRequest */
+        PodcastResolveRequest: {
+            /** Target */
+            target: string;
         };
         /** PodcastStopDestinationRequest */
         PodcastStopDestinationRequest: {
@@ -11308,7 +11417,7 @@ export interface components {
          */
         RecoveryAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11334,7 +11443,7 @@ export interface components {
          */
         RefreshSourceAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /** Expected Attempt Id */
             expected_attempt_id: string | null;
             /**
@@ -11760,7 +11869,7 @@ export interface components {
         /** RetryMetadataAction */
         RetryMetadataAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11815,7 +11924,7 @@ export interface components {
          */
         ReviewMetadataResultAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * Job Id
              * Format: uuid
@@ -12105,12 +12214,12 @@ export interface components {
         /** SimpleAction */
         SimpleAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "ImportPodcastEpisodes" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateMessage" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
+            kind: "AddEpisodeToAll" | "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastLibraries" | "PodcastSettings" | "RefreshPodcast" | "RegenerateMessage" | "RemoveEpisodeFromAll" | "RemoveMedia" | "RemovePodcastEpisodes" | "RerunMessage" | "ResetProgress" | "Share" | "SubscribePodcast" | "TranscribePodcastEpisodes" | "UnsubscribePodcast";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -12655,7 +12764,7 @@ export interface components {
         /** TranscriptAction */
         TranscriptAction: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -19043,7 +19152,7 @@ export interface operations {
             };
         };
     };
-    acquire_podcast_episode_podcast_episodes_from_discovery_post: {
+    resolve_podcast_episode_podcast_episodes_resolve_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -19052,7 +19161,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PodcastEpisodeFromDiscoveryRequest"];
+                "application/json": components["schemas"]["PodcastResolveRequest"];
             };
         };
         responses: {
@@ -19062,7 +19171,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PodcastEpisodeFromDiscoveryOut_"];
+                    "application/json": components["schemas"]["Data_PodcastEpisodeResolveOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    episode_removal_preview_podcast_episodes__media_id__removal_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastEpisodeRemovalPreviewOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_episode_podcast_episodes__media_id__remove_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastEpisodeRemovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastEpisodeRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19149,6 +19324,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_PodcastRefreshAcceptedOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_podcast_podcasts_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastResolveOut_"];
                 };
             };
             /** @description Validation Error */
