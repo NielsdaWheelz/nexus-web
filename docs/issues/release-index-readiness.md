@@ -5,13 +5,16 @@ selected finite endpoints remove cursors and limits; podcast and library indexes
 return atomic aggregates. old clients cannot read the new representation.
 
 the paired search release shipped wire 16 on 2026-10-25 at `3d81ef45ef28`
-(schema 0317, android 0.3.8/code 29; `release-search.md`). this branch rebases
-onto `a09557224` and advances the breaking index representation to wire 17.
+(schema 0317, android 0.3.8/code 29; `release-search.md`). this branch builds on
+`51d458ebc` and shares the catalogue cutover's unreleased wire 17.
 recheck the release boundary before merge; later breaking changes before the
 next release share this bump.
 
 ship api/web and installed clients together under the existing release owner.
-there is no data migration, compatibility path or automatic deployment here.
+this change adds no migration or compatibility path and does not deploy.
+the integrated head is 0319: coordinate the existing
+[catalogue](release-podcast-architecture.md) and [queue](release-playback-queue.md)
+migration/installed-state obligations with the same paired release.
 the existing wire fence rejects saved wire-16 catalogs after the paired upgrade;
 obtain a wire-17 catalog online before qualifying disconnected use.
 qualify installed catalog promotion, native consumption observations, trusted
