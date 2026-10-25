@@ -6,7 +6,6 @@ import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
 import Button from "@/components/ui/Button";
-import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
 import { isApiError } from "@/lib/api/client";
 import { installedApp, publishAdmission } from "@/lib/native/admission";
@@ -178,24 +177,18 @@ export default function AccountMenu(props: {
   ];
   if (localContentAvailable) {
     options.splice(2, 0, {
-      kind: "custom", id: "downloads", label: "Downloads",
-      render: ({ closeMenu, closeMenuWithoutFocus, presentation }) => {
-        const navigate = (event: TargetActivationEvent) => {
-          const result = activateTargetLink({ event, target: { href: "/downloads" }, runtime: {
-            activateTarget: ({ target, disposition }) => workspace.activateWorkspaceTarget({
-              originPaneId: workspace.state.active_primary_pane_id, target, disposition,
-            }),
-          } });
-          if (result === "handled-default" || result === "handled-new-pane") closeMenuWithoutFocus();
-          else if (result === "consumed") closeMenu();
-        };
-        return <ButtonLink href="/downloads" data-workspace-rich-target="true" className={collection.row}
-          role={presentation === "menu" ? "menuitem" : undefined} tabIndex={presentation === "menu" ? -1 : 0}
-          onClick={navigate} onKeyDown={navigate}>
-          <Download size={16} className={collection.adornment} aria-hidden="true" />
-          <span className={collection.content}>Downloads</span>
-        </ButtonLink>;
-      },
+      kind: "link",
+      id: "downloads",
+      label: "Downloads",
+      href: "/downloads",
+      icon: <Download size={16} aria-hidden="true" />,
+      onActivate: (event) => activateTargetLink({
+        event, target: { href: "/downloads" }, runtime: {
+          activateTarget: ({ target, disposition }) => workspace.activateWorkspaceTarget({
+            originPaneId: workspace.state.active_primary_pane_id, target, disposition,
+          }),
+        },
+      }),
     });
   }
 
