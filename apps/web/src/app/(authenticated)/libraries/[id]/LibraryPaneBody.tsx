@@ -28,7 +28,6 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
-import { paneFilterText } from "@/lib/panes/paneFilterText";
 import { useCatalogRead, useCatalogState, useLiveGroup, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { oldestRevision, unstamped, type ConsumptionStamp as Stamp, type StampedRead } from "@/lib/consumption/listening";
 import { catalogLibrary, catalogEntries, catalogLibraryShows } from "@/lib/catalog/selectors";
@@ -462,7 +461,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     const sourceProjection = (["unfiled", "in_progress"] as const).find(value => value === projection) ?? null;
     const view = { library_id: id, sort: sourceSort, entry_type, projection: sourceProjection, completion: hideFinished ? "unfinished" as const : null };
     if (list.source.kind === "catalog")
-      return captureSavedView(visible.map(entry => entry.media_summary), selected_media_id, { kind: "Library", label: name, query: paneFilterText(text), ...view });
+      return captureSavedView(visible.map(entry => entry.media_summary), selected_media_id);
     if (!live || !remoteReady() || !list.current || order.state.pending !== null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current library before starting this queue");
     return capturePlaybackSource({ source: { kind: "Library", query: text, ...view }, selected_media_id });
   };

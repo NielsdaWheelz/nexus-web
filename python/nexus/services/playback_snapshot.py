@@ -1,6 +1,6 @@
 """Frozen playback sources. Listing owners supply exact membership and total order.
 
-A read-only repeatable-read transaction freezes provenance and identities together.
+A read-only repeatable-read transaction freezes ordered identities.
 Filtering pins browser NFC/lowercase substring matching to Unicode 15 (Python 3.12) over title and every
 credited/canonical author name. Only playable episodes enter a queue; shows never
 expand. Selection loss and oversized results refuse the entire capture.
@@ -30,7 +30,7 @@ def capture(
     source = body.source
     query = normalize("NFC", source.query.strip(_JS_WHITESPACE)).lower()
     if isinstance(source, wire.LibraryQueueCapture):
-        label, ids = library_listing.ordered_selection_ids(
+        _, ids = library_listing.ordered_selection_ids(
             db,
             viewer_id,
             source.library_id,
@@ -38,13 +38,10 @@ def capture(
                 source.sort, source.entry_type, source.projection, source.completion
             ),
         )
-        provenance = wire.LibraryQueueSource(**source.model_dump(), label=label)
     else:
-        label, ids = episodes.ordered_selection_ids(
+        _, ids = episodes.ordered_selection_ids(
             db, viewer_id, source.podcast_id, state=source.state, sort=source.sort
         )
-        provenance = wire.PodcastQueueSource(**source.model_dump(), label=label)
-    provenance.query = query
     eligible = playable_episode_fields(db, viewer_id, ids)
     matches = [
         media_id
@@ -59,7 +56,7 @@ def capture(
         raise ConflictError(ApiErrorCode.E_LIMIT, "Too many episodes; narrow this view")
     if body.selected_media_id not in matches:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Selected episode left the view")
-    return wire.PlaybackSnapshotOut(source=provenance, media_ids=matches)
+    return wire.PlaybackSnapshotOut(media_ids=matches)
 
 
 def playable_episode_fields(

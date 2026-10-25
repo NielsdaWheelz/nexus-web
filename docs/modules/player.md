@@ -302,9 +302,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   retry its id; move/remove/select name occurrences, never media ids or indexes.
   only upcoming rows can move/remove, except explicit failed-current recovery.
   selection, previous and next preserve history without wrapping. stop retains
-  the queue; clear persists empty state under a new identity. replacement/clear
-  offer one memory-owned restore, paused under a new identity; later edits,
-  selection, account change or reload retire it. `QueueCommandError` identifies
+  the queue. replacement of a nonempty sequence offers one memory-owned restore,
+  paused under a new identity; later structural/cursor edits, account change or
+  reload retire it. same-current transport preserves the offer. `QueueCommandError` identifies
   modeled refusals across persistence, coordination, native and action callers;
   these keep the workspace mounted with recovery feedback. channel replies
   preserve this distinction; arbitrary faults remain defects.
@@ -383,7 +383,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   `Loaded` retains identity, transport and stop while load-scoped preferences
   initialize; preference-dependent controls require the current settings subject.
   `Unavailable` exposes the actual warning and android update link only when
-  required. stop unloads and retains sequence/cursor; clear remains distinct. closing an overlay preserves playback. the downloaded shelf is a
+  required. stop unloads and retains sequence/cursor. closing an overlay preserves playback. the downloaded shelf is a
   separate composition.
   desktop shares one source/transport/seek/options anatomy across empty, pending,
   unavailable and loaded states. unavailable controls are natively disabled;
@@ -409,15 +409,14 @@ finish, undo, unread, reset and settle publish `Consumption`.
   lives inside playback; chapter context lives in chapters.
   preview exposes rate only, with no queue advancement, chapters or default save.
   numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
-  work uses control markers; failures expose details and recovery. queue preparing
-  and saving mark up next busy; other pending episode/preview activation marks
-  transport busy, independently of loaded buffering. routine work adds no footer
-  row. preparing/cancel and saving text belong inside up next. queue replacement
-  emits no notice; one plain restore action lives below the up-next heading.
-  restore captures the rendered queue identity/revision and requires the owner's
-  undo snapshot before cancelling pending work or pausing playback. restoration
-  stays paused with up next open. focused restore/cancel transfers focus to its
-  heading before dispatch; replies never reclaim focus. application
+  work uses control markers and shared app feedback. preparing and saving mark
+  up next busy; other pending activation marks transport busy independently of
+  loaded buffering. routine work adds no footer row. failures expose details and
+  recovery through the same feedback owner. up next is the complete compact
+  occurrence index; its opening/focus, revision-bound commands and shared replacement
+  undo follow [playback sessions](playback-sessions.md). mobile queue/player
+  invocation chooses one initial target inside the same sheet; automatic advance
+  does not refocus it. application
   gain is unity; volume belongs exclusively to the os/device.
   pointer scrubbing previews locally and commits once on captured release,
   including outside the range. cancellation, capture loss, source retirement or

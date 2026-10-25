@@ -229,3 +229,19 @@ a.primary:hover { text-decoration: underline; }
 :global([data-mobile="true"]) .row .controls > * {
   --control-min-size: 48px;
 }
+
+.compact .grid {
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+}
+
+.compact .titleLine { font-size: var(--text-sm); }
+.compact .metadata,
+.compact .excerpt { font-size: var(--text-xs); }
+
+@media (forced-colors: active) {
+  .row.selected {
+    outline: var(--stroke-hairline) solid Highlight;
+    outline-offset: calc(-1 * var(--stroke-hairline));
+  }
+}

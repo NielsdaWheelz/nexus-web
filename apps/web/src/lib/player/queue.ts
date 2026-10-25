@@ -10,8 +10,17 @@ import type { Schema } from "@/lib/api/wire";
 export class QueueCommandError extends Error {}
 
 export type QueueEntry = Schema<"QueueEntry">;
-export type QueueSource = NonNullable<Schema<"QueueState">["source"]>;
 export type QueueState = Schema<"QueueState">;
+
+export interface QueueManifest {
+  readonly queue_id: string;
+  readonly revision: string;
+  readonly entries: readonly QueueEntry[];
+}
+
+export type QueueIndex =
+  | { readonly kind: "Ready"; readonly snapshot: QueueManifest }
+  | { readonly kind: "Loading" | "Failed"; readonly previous: QueueManifest | null };
 
 export interface QueueHeader {
   readonly queue_id: string;
@@ -21,7 +30,6 @@ export interface QueueHeader {
   readonly current_index: number | null;
   readonly count: number;
   readonly can_restore: boolean;
-  readonly source: QueueSource | null;
 }
 
 export type QueueCommand =
@@ -29,13 +37,15 @@ export type QueueCommand =
   | { readonly kind: "move-before"; readonly entry_id: string; readonly before_entry_id: string | null }
   | { readonly kind: "remove"; readonly entry_id: string; readonly failed_current: boolean }
   | { readonly kind: "select"; readonly entry_id: string; readonly play: boolean; readonly position_ms: number | null }
-  | { readonly kind: "previous" | "next" | "stop" | "clear" | "restore" };
+  | { readonly kind: "previous" | "next" | "stop" | "restore" };
 
 export interface QueueRequest {
   readonly queue_id: string;
   readonly expected_revision: string;
   readonly command: QueueCommand;
 }
+
+export type QueueFence = Pick<QueueRequest, "queue_id" | "expected_revision">;
 
 /** The native service alone owns its cursor, including while the webview is absent.
  * `known` distinguishes its initial placeholder from an accepted null snapshot. */
@@ -55,19 +65,15 @@ export function currentQueueEntry(state: QueueState): QueueEntry | null {
 export function queueHeader(state: QueueState, revision: string): QueueHeader {
   const index = state.entries.findIndex(entry => entry.id === state.current_entry_id);
   return { queue_id: state.queue_id, revision, current_entry_id: state.current_entry_id, current_entry: currentQueueEntry(state),
-    current_index: index < 0 ? null : index, count: state.entries.length, can_restore: false, source: state.source };
+    current_index: index < 0 ? null : index, count: state.entries.length, can_restore: false };
 }
 
-export function emptyQueue(): QueueState {
-  return { queue_id: crypto.randomUUID(), entries: [], current_entry_id: null, source: null };
-}
-
-export function captureQueue(mediaIds: readonly string[], selected: string, source: QueueSource | null): QueueState {
+export function captureQueue(mediaIds: readonly string[], selected: string): QueueState {
   if (mediaIds.length > 10_000) throw new QueueCommandError("too many episodes; narrow this view");
   const entries = mediaIds.map(media_id => ({ id: crypto.randomUUID(), media_id }));
   const current = entries.find(entry => entry.media_id === selected);
   if (current === undefined) throw new QueueCommandError("no playable episodes in this view");
-  return { queue_id: crypto.randomUUID(), entries, current_entry_id: current.id, source };
+  return { queue_id: crypto.randomUUID(), entries, current_entry_id: current.id };
 }
 
 /** Pure sequence edits. Restart timing and playback intent belong to the command owner. */
@@ -106,13 +112,12 @@ export function editQueue(state: QueueState, command: QueueCommand): QueueState 
     }
     case "select":
       if (!state.entries.some(entry => entry.id === command.entry_id)) throw new QueueCommandError("episode is no longer queued");
-      return { ...state, current_entry_id: command.entry_id };
+      return state.current_entry_id === command.entry_id ? state : { ...state, current_entry_id: command.entry_id };
     case "next":
       return current < 0 ? state : { ...state, current_entry_id: state.entries[current + 1]?.id ?? null };
     case "previous":
       return { ...state, current_entry_id: current < 0 ? state.entries.at(-1)?.id ?? null : state.entries[Math.max(0, current - 1)]?.id ?? null };
     case "stop": return state;
-    case "clear": return emptyQueue();
     case "restore": throw new Error("restore belongs to the saved queue owner");
   }
 }

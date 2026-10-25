@@ -1,7 +1,7 @@
 """Device queue wire contracts. Occurrences are identities, never media identities.
 
-A null cursor is empty or exhausted. Provenance freezes the source view, not
-playback authority; progress and descriptors remain consumption-owned.
+A null cursor is empty or exhausted. Progress and descriptors remain
+consumption-owned; source capture retains no provenance.
 """
 
 from typing import Annotated, Literal, Self
@@ -25,7 +25,6 @@ LibrarySort = Literal[
     "added_asc",
     "added_desc",
 ]
-LecternSort = Literal["added_asc", "added_desc", "title_asc", "title_desc"]
 EntryType = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
 
 
@@ -38,13 +37,6 @@ class QueueEntry(Closed):
     media_id: UUID = Field(strict=False)
 
 
-class LecternQueueSource(Closed):
-    kind: Literal["Lectern"]
-    label: str
-    query: str
-    sort: LecternSort | None
-
-
 class LibraryQueueCapture(Closed):
     kind: Literal["Library"]
     library_id: UUID = Field(strict=False)
@@ -55,10 +47,6 @@ class LibraryQueueCapture(Closed):
     completion: Literal["unfinished"] | None
 
 
-class LibraryQueueSource(LibraryQueueCapture):
-    label: str
-
-
 class PodcastQueueCapture(Closed):
     kind: Literal["Podcast"]
     podcast_id: UUID = Field(strict=False)
@@ -67,20 +55,10 @@ class PodcastQueueCapture(Closed):
     sort: EpisodeSort
 
 
-class PodcastQueueSource(PodcastQueueCapture):
-    label: str
-
-
-QueueSource = Annotated[
-    LecternQueueSource | LibraryQueueSource | PodcastQueueSource, Field(discriminator="kind")
-]
-
-
 class QueueState(Closed):
     queue_id: UUID = Field(strict=False)
     entries: list[QueueEntry]
     current_entry_id: UUID | None = Field(strict=False)
-    source: QueueSource | None
 
     @model_validator(mode="after")
     def valid_occurrences(self) -> Self:
@@ -117,5 +95,4 @@ class PlaybackSnapshotRequest(Closed):
 
 
 class PlaybackSnapshotOut(Closed):
-    source: Annotated[LibraryQueueSource | PodcastQueueSource, Field(discriminator="kind")]
     media_ids: list[UUID]

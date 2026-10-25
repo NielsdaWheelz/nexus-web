@@ -3,8 +3,8 @@
 Writes lock viewer then session. Absolute state already present is inert success;
 otherwise the captured revision must match. Creation uses the client UUID once,
 with no other-device fallback. A terminal retry additionally inspects consumption's
-finished/epoch/lectern postcondition, never reapplying it. Clearing retains the row
-and its revision. Present malformed persisted state is a defect, never absence.
+finished/epoch/lectern postcondition, never reapplying it. Present malformed
+persisted state is a defect, never absence.
 """
 
 from uuid import UUID
@@ -108,7 +108,6 @@ def put_session(
                 or current.queue_id != body.state.queue_id
                 or current.current_entry_id != terminal.ended_entry_id
                 or current.entries != body.state.entries
-                or current.source != body.state.source
             ):
                 raise _conflict()
             consumption.settle_natural_end_in_txn(db, user_id, media_id, end)
@@ -133,12 +132,6 @@ def _validate_entries(
         if current is not None and current.queue_id == desired.queue_id
         else {}
     )
-    if (
-        current is not None
-        and current.queue_id == desired.queue_id
-        and current.source != desired.source
-    ):
-        raise _conflict()
     added: list[UUID] = []
     for entry in desired.entries:
         if entry.id in unchanged:

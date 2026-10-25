@@ -44,12 +44,10 @@ import {
 } from "@/lib/lectern/lectern";
 import { filterFields, ordered, selectLectern } from "@/lib/lectern/select";
 import { PlaybackSourceContext, type PlaybackSource } from "@/lib/actions/playbackSource";
-import type { QueueSource } from "@/lib/player/queue";
 import { ApiError } from "@/lib/api/client";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import { paneFilterText } from "@/lib/panes/paneFilterText";
 import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
@@ -176,9 +174,7 @@ export default function LecternPaneBody() {
       .filter(item => item.media_summary.media_kind === "podcast_episode" && item.media_summary.can_play)
       .map(item => item.media_summary.media_id);
     if (!media_ids.includes(selected)) throw new ApiError(409, "E_RESOURCE_CONFLICT", "no playable episodes in this view");
-    const sourceSort = (["added_asc", "added_desc", "title_asc", "title_desc"] as const).find(value => value === sort) ?? null;
-    const queueSource: QueueSource = { kind: "Lectern", label: "lectern", query: paneFilterText(query), sort: sourceSort };
-    return { media_ids, source: queueSource };
+    return { media_ids };
   };
   const ordering = source.kind === "live" ? presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
