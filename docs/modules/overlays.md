@@ -257,14 +257,18 @@ search, scope and recovery stay above the result scrollport. when they cannot
 leave one usable result row, the body becomes the sole scrollport and the list
 stops scrolling independently. the sheet header/close remains reachable.
 
-**MobileSheet**: fixed visible title and close x above an independently scrolling
-body; the full title names the dialog and close control. `renderHeader` replaces
-the standard header and receives the frame's guarded `requestDismiss`; specialized
-headers retain an explicit guarded exit. the compact passage composer places
-`close composer` in its always-available overflow; its primary row has no x.
+**MobileSheet**: an independently scrolling body beneath a fixed header.
+`handleLabel` supplies an accessible native tap/drag dismissal handle;
+`renderHeader` supplies custom content and receives guarded `requestDismiss`.
+both compose the handle above custom content. either replaces the generated
+title/x; custom content without a handle supplies its own guarded exit. with
+neither, the full title names the dialog and close x. the passage composer uses
+the handle above its toolbar, with no close command in overflow.
 noninteractive header space is a drag target
 at least 44px high, with a 36×4px grabber. a drag of 96px asks the same guard as
-x, scrim, escape and back; cancellation restores position. reduced motion removes
+x, scrim, escape and back; cancellation restores position. interactive header
+controls drag only when they are the actual handle. portal descendants retain
+their own gestures and clicks, including after a cancelled header press. reduced motion removes
 animated travel while retaining dismissal. scrim is `"default"`, or `"soft"` for
 in-context companion sheets. keyboard lift uses `--keyboard-inset` and safe-area
 padding. `heightLimit="available"` instead projects the backdrop onto the visual
@@ -447,10 +451,12 @@ overlay; focus collapse cannot remove a pressed control, and the more owner
 outlives the passive row. native handle hit regions remain unavailable to the
 page; endpoint clearance and quiet time are approximations, not a release signal.
 
-mobile note/ask and saved-mark entry use the existing `MobileSheet` with its
-close, back, focus and existing scrolling body behavior. the shared composer body
-keeps note history, destinations and recovery controls. closing retains authored
-work and never reconstructs a native selection. desktop composition remains a
+mobile note/ask and saved-mark entry use `MobileSheet` with its guarded handle,
+back, focus and scrolling body behavior. the shared composer body keeps note
+history, destinations and recovery controls. outer dismissal abandons unsubmitted
+prose; child dismissal preserves it. attachment loss retains its guard, submitted
+operations settle in their owner, and closing never reconstructs native selection.
+desktop composition remains a
 nonmodal anchored group with normal tab order; its rich editor consumes escape
 only for nested controls. explicit navigation retires the source interaction
 before its destination can own focus or escape.

@@ -251,9 +251,23 @@ native selection and its passive highlight/note/ask/more bar; explicit compositi
 uses a sheet whose guarded custom header is highlight/save/ask/more. desktop adds
 colour and existing-chat split controls. shortcuts appear only in tooltips.
 
-copy, share, canonical resource actions, clamped source preview, colours on mobile,
-empty-note deletion and close live in overflow. copy and close do not wait for
-remote resource actions or pending writes. existing-chat actions use the newest
+desktop copy/share are direct commands. more exists only for remaining canonical
+navigation, bounds editing, deletion, empty-note deletion or action-read recovery.
+mobile keeps copy/share, colours and existing-chat choices in more. neither menu
+repeats the passage or offers close. the mobile sheet composes a fixed native
+`close passage editor` handle above its fixed toolbar and scrolling editor.
+
+composer copy requires nonblank frozen passage text, independently of other reads or
+writes, and copies the original string unchanged. blank loading, failed and
+geometry-only passages explain why copy is unavailable. share uses a supplied
+piece command, otherwise ensures a fresh passage without saving note prose,
+otherwise invokes the current canonical saved-highlight command. its native
+desktop invoker survives ensure and fact loading; unavailable facts leave a
+focusable disabled control, with retry in more. ready capability absence removes
+that control and returns only its owned focus to copy or the reader. sharing
+returns to its actual invoker or the pane captured at invocation.
+
+existing-chat actions use the newest
 updated chat linked to this source; an explicit choice replaces it without a
 send. `ConversationDestinationOverlay` composes `PickerSurface` and the existing
 search owner; the reader restores its caret after selection or dismissal.

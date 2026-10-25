@@ -165,16 +165,6 @@
   overflow: auto;
 }
 
-.passageCue {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
 .dock[data-mobile="true"] {
   --control-min-size: var(--size-xl);
   padding: var(--space-2) var(--space-4);
