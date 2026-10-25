@@ -1105,7 +1105,9 @@ def main() -> int:
             shared_cwd_prepared = True
             shared_host.prepare_run(run_id)
         command(
-            compose + ["up", "-d", "--no-build", *worker_services],
+            # Stores are already healthy and migrated; worker startup must not
+            # reconcile their containers (lab postgres data lives on tmpfs).
+            compose + ["up", "-d", "--no-build", "--no-deps", *worker_services],
             env=compose_env,
             log=run_dir / "workers-start.log",
         )
