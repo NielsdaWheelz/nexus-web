@@ -635,11 +635,11 @@ filter identity uses the document-map count keys: `highlights`, `citations`,
 directly by its key. hidden filters, exact-fact reveals and marker classification
 share those keys; presentation labels never determine membership. each filter is
 a shared pressed `Button` named by its label alone: a decorative check holds a
-reserved slot whether or not it shows, and the exact count, zero included, is a
-separate description (`1 item`, `{n} items`). zero never disables a filter.
-while inline reference linking holds a reference, both the view and the filters
-disable natively and one visible reason, "finish linking or return to prose
-first", describes each of them.
+reserved slot whether or not it shows, and its exact count, zero included, shows
+as an aria-hidden numeral and is described separately (`1 item`, `{n} items`).
+zero never disables a filter. while inline reference linking holds a reference,
+both the view and the filters disable natively and one visible reason, "finish
+linking or return to prose first", describes each of them.
 
 connections view is remembered in the pane-visit memento. on desktop a segmented
 `RadioGroup` with a hidden legend shows `follow` and `all`, named natively
@@ -692,6 +692,9 @@ composite maps merge exact refs/facts, keep canonical source media/identity and
 apparatus attribution internally, and project only mapped own extents. an unmapped
 canonical location is unanchorable. one shared chat/marker is retained across
 constituent publications; embeds keep their separate projection.
+pdf roots stay page-space quads, never reader points: the surface measures
+their alignment; canonical document-map markers, normalized by page height,
+give their rail position and order.
 
 ## around the reader
 

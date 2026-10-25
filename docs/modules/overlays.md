@@ -104,8 +104,8 @@ is `inert` and its scrim `data-suspended="true"` (clear, no pointer events). Tab
 wraps inside the top modal's panel (a handler that prevented Tab keeps it;
 `contenteditable` counts as focusable). tab candidates follow native radio
 scope: a group is one name and one form owner across the document (an unnamed
-radio stands alone), and offers one stop: its checked member, or none when that
-is unfocusable; with none checked, its first focusable member. a stop outside
+radio stands alone), and offers one stop: its checked member when focusable,
+otherwise its first focusable member. a stop outside
 the panel is not a candidate. a frame focuses `initialFocus(panel)`,
 else its first focusable, else the panel, one frame after it becomes topmost,
 once per open and `focusKey`.

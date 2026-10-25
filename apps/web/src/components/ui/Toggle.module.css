@@ -62,3 +62,28 @@
 .input:focus-visible ~ .track {
   box-shadow: 0 0 0 3px var(--ring);
 }
+
+/* Adjustment would flatten track and thumb to Canvas in both states; on is a
+   Highlight track. */
+@media (forced-colors: active) {
+  .input:focus-visible ~ .track {
+    box-shadow: none;
+    outline: var(--focus-ring-width) solid CanvasText;
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .input:checked ~ .track {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .thumb {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .input:checked ~ .track .thumb {
+    background: HighlightText;
+  }
+}

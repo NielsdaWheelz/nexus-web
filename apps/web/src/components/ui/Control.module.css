@@ -163,5 +163,6 @@
 
   .control:is(:active, [aria-expanded="true"], [aria-pressed="true"], :where([aria-current]:not([aria-current="false"])), :where(details[open]) > :where(summary)):not(:disabled):not([aria-disabled="true"]):focus-visible {
     outline-color: HighlightText;
+    outline-offset: calc(-2 * var(--focus-ring-width));
   }
 }

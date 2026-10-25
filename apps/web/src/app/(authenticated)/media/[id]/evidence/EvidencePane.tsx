@@ -133,9 +133,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       const measured = locatedRoots.flatMap((root) => {
         const extent = rootExtent(root.resolution, doc);
         if (!extent) return [];
-        const at = structure.fraction(extent.start);
         const held = focused === root.ref;
-        if (!held && (at < viewport.start - span || at > viewport.end + span)) return [];
+        if (!held && extent.kind === "text") {
+          const at = structure.fraction(extent.start);
+          if (at < viewport.start - span || at > viewport.end + span) return [];
+        }
         const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
         const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(root.ref)}"]:not([hidden])`);
         if (!geometry && !held) return [];

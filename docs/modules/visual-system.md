@@ -232,14 +232,18 @@ be a node, such as a font named in its own face, beside a decorative icon.
 native radio covering its label. state selectors match `aria-checked` and
 `aria-disabled` on menu buttons and the input's state on native labels.
 every segment reserves a transparent 1px border inside its box. selection is an
-accent fill read in `--accent-ink`, focus an inward outline; neither changes a
-box. selection is never expressed as disabled. disabled removes tone and hover,
-never the value: a disabled checked option keeps a neutral `--surface-active`
-fill. in forced colours segments opt out of adjustment and paint system colours,
-which hover leaves alone: unchecked `CanvasText` on `Canvas`, checked
-`HighlightText` on `Highlight` with a `currentColor` border, disabled `GrayText`
-on `Canvas`, keeping that border when checked. focus is a `CanvasText` outline,
-or `HighlightText` inset two ring widths over an enabled checked fill.
+accent fill read in `--accent-ink`; focus is an inward `--ring` outline and hover
+`--surface-hover`, the control tokens; none changes a box. selection is never
+expressed as disabled. disabled removes tone and hover, never the value: a
+disabled checked option keeps a neutral `--surface-active` fill. in forced
+colours segments opt out of adjustment and paint system colours, which hover
+leaves alone: unchecked `CanvasText` on `Canvas`, checked `HighlightText` on
+`Highlight` with a `currentColor` border, disabled `GrayText` on `Canvas`,
+keeping that border when checked. focus there insets two ring widths on every
+checked option, disabled or not, so the border marker survives, as a pressed
+control's ring does; it is `HighlightText` over an enabled checked fill and
+`CanvasText` otherwise. equal columns are an accepted cost: a narrow track may
+break a long word mid-word, but a label never overflows or clips.
 
 ## action controls
 

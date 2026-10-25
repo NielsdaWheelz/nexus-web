@@ -112,7 +112,7 @@
 }
 
 .segment:hover {
-  background: var(--surface-2);
+  background: var(--surface-hover);
 }
 
 .segment[aria-checked="true"],
@@ -123,7 +123,7 @@
 
 .segment:focus-visible,
 .segment:has(> input:focus-visible) {
-  outline: var(--focus-ring-width) solid var(--accent);
+  outline: var(--focus-ring-width) solid var(--ring);
   outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
@@ -146,7 +146,8 @@
 
 /* Adjustment would draw every reserved border and backplate the checked word, so
    segments paint system colours themselves, hover included. The border marks a
-   checked option, disabled or not; over a checked fill the ring clears it. */
+   checked option, disabled or not; on every checked option the ring insets to
+   clear it, in HighlightText only over an enabled fill. */
 @media (forced-colors: active) {
   .segment,
   .segment:hover { forced-color-adjust: none; background: Canvas; color: CanvasText; border-color: transparent; }
@@ -158,8 +159,10 @@
   .segment:has(> input:disabled:checked) { background: Canvas; border-color: currentColor; }
   .segment:focus-visible,
   .segment:has(> input:focus-visible) { outline-color: CanvasText; }
-  .segment[aria-checked="true"]:not([aria-disabled="true"]):focus-visible,
+  .segment[aria-checked="true"]:focus-visible,
   .segment:has(> input:checked:focus-visible) { outline-color: HighlightText; outline-offset: calc(-2 * var(--focus-ring-width)); }
+  .segment[aria-disabled="true"]:focus-visible,
+  .segment:has(> input:disabled:focus-visible) { outline-color: CanvasText; }
 }
 
 @media (prefers-reduced-motion: reduce) {

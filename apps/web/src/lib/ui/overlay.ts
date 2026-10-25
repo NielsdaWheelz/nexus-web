@@ -198,12 +198,11 @@ export function focusableElements(root: Element): HTMLElement[] {
     if (!focusable(element)) return false;
     if (!(element instanceof HTMLInputElement) || element.type !== "radio" || !element.name) return true;
     // Native Tab stops once per radio group (one name, one form owner): at its
-    // checked member, or nowhere when that is unfocusable; with none checked, at
-    // its first focusable member.
+    // checked focusable member, otherwise its first focusable member.
     const group = [...document.getElementsByName(element.name)].filter((radio): radio is HTMLInputElement =>
       radio instanceof HTMLInputElement && radio.type === "radio" && radio.form === element.form);
-    const checked = group.find((radio) => radio.checked);
-    return checked ? checked === element : group.find(focusable) === element;
+    const checked = group.find((radio) => radio.checked && focusable(radio));
+    return (checked ?? group.find(focusable)) === element;
   });
 }
 
