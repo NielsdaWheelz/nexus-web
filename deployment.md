@@ -117,12 +117,21 @@ verify concurrent requests complete within their existing deadlines on the
 
 ## Immutable artifact lineage
 
-On every push to `main`, `.github/workflows/backend-images.yml` builds the API
-and worker images once, pushes them to GHCR, proves each image's
-`org.opencontainers.image.revision` label and baked `/app/runtime-identity.json`
-agree with the source SHA, and uploads one artifact
+on a qualifying push to `main` or `release/**`, `.github/workflows/backend-images.yml`
+builds postgres, api and worker images once and pushes them to ghcr. it proves
+all three `org.opencontainers.image.revision` labels and both application
+`/app/runtime-identity.json` files agree with the source sha, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
-the two image digests and the expected Alembic revision.
+the two application image digests and the expected Alembic revision. beside
+that unchanged manifest, `postgres-image.txt` records the postgres digest and
+`postgres-runtime-proof.txt` records its pg15/package/control checks and binary
+hashes. review that digest, set the existing `POSTGRES_IMAGE` input, and publish
+it through `sync-env.sh` before release; publishing does not restart postgres.
+
+the first postgres publication waits at most 300 seconds for anonymous digest
+access. if the new package is private, its owner must make it public at the
+workflow's printed package settings url. failure preserves the first-attempt
+rule: repair visibility and publish a fresh source commit, never rerun it.
 
 backend publication uses a fresh github-hosted `ubuntu-24.04` linux/x64 vm
 per job. devbox labs, rehearsal data and retained images cannot consume its
@@ -131,9 +140,10 @@ build cache does not survive the job. pr static checks remain self-hosted.
 
 before creating a builder, publication requires at
 least 8 gib free at the actual docker data root and runner temp directory. this
-budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
-roughly 3 gb of additional scratch and runner output; the build-state measurement
-is a lower bound, so this is an admission floor, not a guaranteed peak.
+floor follows the historical api/worker observation of 3.5 gb build state,
+2.05 gb of runtime images and roughly 3 gb of additional scratch and runner
+output. those measurements exclude the added postgres build and are lower
+bounds; the floor does not guarantee the three-image publication's peak.
 after both builds, the workflow removes only its own
 builder and cache before pulling the published images. build summaries and
 local build-record export are disabled; image provenance and sboms remain.
@@ -210,7 +220,8 @@ host backup lock from before preflight until it exits (see
    root `/var/backups/nexus/r2`; reload systemd, enable the boot guard, enable
    and start the nightly timer and start the resource slice.
 3. **images** — pull both application digests; prove the oci revision label and
-   baked runtime identity against the manifest. pull the pinned connector, prove
+   baked runtime identity against the manifest. pull the configured immutable
+   postgres image and pinned connector, prove
    its non-root credential access, and require 2 gib free under `/` again.
    validate/install private caddy configuration before service recreation.
 4. **backup** — read the current Alembic revision, prove it descends from the
@@ -222,24 +233,33 @@ host backup lock from before preflight until it exits (see
    into a private R2 multipart upload, reads the remote bytes back through
    `pg_restore`, publishes a `database.json` recovery manifest beside the
    archive and prints the verified evidence.
-5. **migrate** — `alembic upgrade head`, then re-read the revision.
-6. **up** — `docker compose up --detach --wait`, then require every service
+5. **postgres** — with writers still stopped and the backup verified, converge
+   only postgres from the configured immutable image using `up --no-deps --wait`.
+   require that exact image, pg15, preloaded `pg_search` and available version
+   `0.26.2`; require unchanged database identity and current revision across
+   recreation. a rerun compares the live revision, not its older backup receipt.
+   the extension catalog may be absent until migration creates it. retain the
+   existing volume and require the actual 512 mib/no-swap ceiling, 64 mib shared
+   buffers and 128 mib shared memory before migration.
+6. **migrate** — `alembic upgrade head`, then re-read the revision. migration
+   0317 checks the exact extension catalog and binary versions.
+7. **up** — `docker compose up --detach --wait`, then require every service
    healthy. prove the persistent parent unit/property and kernel swap max/current
    are zero, all eight actual process cgroups descend from it, and each actual
    memory cap matches compose with zero swap usage. report the leaf swap limit
    separately; a leaf `max` does not override the parent's zero.
-7. **caddy** — reload the already installed candidate and require the loaded
+8. **caddy** — reload the already installed candidate and require the loaded
    config to equal the adapted candidate.
-8. **health** — the API's private `/version` and `/readyz`; every application
+9. **health** — the API's private `/version` and `/readyz`; every application
    container running the manifest digest; one public `https://<api-host>/version`
    fetch that must serve the SHA with `Cache-Control: no-store`.
-9. **isolation** — see below.
-10. **current pointer** — write the SHA to `/var/lib/nexus/releases/current`,
+10. **isolation** — see below.
+11. **current pointer** — write the SHA to `/var/lib/nexus/releases/current`,
     then, if step 4 took a backup, prune expired archives. a failed release
     prunes nothing; a failed prune is reported and leaves the release standing.
 
-Steps 4 and 5 are the ordered guarantee: writers stop, the dump is verified and
-off-host, and only then does the schema move.
+steps 4–6 are the ordered guarantee: writers stop, the dump is verified and
+off-host, postgres prerequisites converge, and only then does the schema move.
 
 ## Database backups
 

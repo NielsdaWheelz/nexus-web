@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 15;
+export const WIRE_REVISION = 16;
 
 export interface paths {
     "/assistant-writes": {

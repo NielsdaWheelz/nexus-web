@@ -1,27 +1,40 @@
 # coordinated search rollout
 
-status: implementation integrated; coordinated deployment remains. freeze main at
-`2b85ecb3d`. preserve its unchanged0306–0316 chain and apply search0317 once.
-import no unrelated main changes. the older functional checkpoint remains retained;
+status: coordinated rollout in preparation. preserve the qualified `2b85ecb3d`
+base plus only the already-deployed `c5cf4bc27` pdf/android fixes, explicitly
+approved by the owner after preflight. import no later main-only changes.
+preserve the unchanged0306–0316 chain and apply search0317 once. the older functional checkpoint remains retained;
 its warm percentile measurements are not relabeled as integrated measurements.
 
 ## before deployment
 
 - recheck actual deployed source, schema ancestry and every writer. read-only
-  inspection on2026-10-24 found `dc12792e`/0312; that is not a rollout guarantee.
+  preflight on2026-10-25 finds paired web/api/workers at `c5cf4bc27`/0316, with
+  zero live jobs in its read snapshot. recheck immediately before stopping writers.
 - let legitimate live media-reindex jobs finish through their existing owners.
   main0316 refuses them. never cancel, park or rewrite jobs to force migration.
-  the verified0312 rehearsal backup has zero live jobs; recheck with writers stopped.
+  the actual0316 starting revision does not rerun0316 conversion. recheck with
+  writers stopped rather than relying on an earlier snapshot.
 - use the existing stopped-writer and verified-backup deployment owner. account for
   main0313/0314 intentional removals and0315/0316 transformations before comparing
   search0317 preservation. invalid input must refuse conversion.
 - provision the immutable pg15 image with pinned pg_search0.26.2, preload and
   128mib shared memory BEFORE migration. the deployment command uses `--no-deps`;
-  ordinary application startup cannot install this prerequisite. preserve
+  the release owner now pulls the database image before its disk gate and
+  converges only postgres after the verified backup, before migration. prove
+  actual image, pg15/preload/available0.26.2, unchanged live database identity and
+  revision, and resource limits. obtain the pinned digest from the same
+  first-attempt candidate bundle’s `postgres-image.txt`. first publication of
+  `ghcr.io/nielsdawheelz/nexus-postgres` also needs its package visibility set
+  public through github settings; the pipeline requires anonymous digest access
+  and never installs registry credentials on production. preserve
   postgres512mib/no-swap,64mib shared buffers and api384mib/no-swap. verify actual
   binary/catalog versions and exact alembic head.
 - ship paired api, workers, hosted web and generated wire. apply the wire bump
-  rule against the actual released clients. reload open clients after pending
+  rule against the actual released clients: production already has wire15, so
+  the breaking search contract requires wire16. ship signed android code29/0.3.8
+  and extension1.0.2 with the new wire; preserve existing signing identities.
+  reload open clients after pending
   writes settle; preserve main's account and installed-client admission rules.
 - use session connections for shared expensive-read admission through consumption
   and cleanup. transaction-pooling proxies and old workers violate this contract.
@@ -67,7 +80,11 @@ wrong nullable-highlight oracle; neither later proof relabels that receipt.
 
 qualification plans and receipts stay in the private pr body. no new warm
 percentile, unrestricted-worker capacity or historical causal claim follows.
-there is no production deployment yet. after coordinated rollout, check independent
+the current static gate passes. the rollout-only postgres ordering proof and
+three retained checks,
+immutable candidate builds, frontend authentication/staging and paired client
+activation are still pending. there is no production deployment yet. after
+coordinated rollout, check independent
 phases, interaction-held refresh, continuation, canonical evidence/activation,
 mobile ime/announcements and lexical publication before embeddings. remove this
 issue after rollout and its owner checks.
