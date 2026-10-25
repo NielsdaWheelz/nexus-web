@@ -1,120 +1,73 @@
-# coordinated search release
+# coordinated search rollout
 
-release baseline: main `2b85ecb3d`, schema0316, frozen once by the owner. import no
-later unrelated main changes. preserve current authored
-identities, retention, online-first writing, account-scoped reads, tls/http2 and
-removed dossier/link-note/author-editing contracts and source-backed pieces.
-the measured older candidate is
-preserved at `2cacaa3c2`; its observations are not relabeled as integrated proof.
+status: implementation integrated; coordinated deployment remains. freeze main at
+`2b85ecb3d`. preserve its unchanged0306–0316 chain and apply search0317 once.
+import no unrelated main changes. the older functional checkpoint remains retained;
+its warm percentile measurements are not relabeled as integrated measurements.
 
-read-only deployment inspection on2026-10-24 observed source `dc12792e` and
-schema0312. its existing verified nightly backup is retained privately; recheck
-actual ancestry and stopped-writer state at rollout. keep main's0306–0316 chain
-unchanged and apply one0317 search conversion after it. earlier search0306/0307
-identities and the0292 qualification clone cannot be stamped into this history.
+## before deployment
 
-0313/0314 remove author-editing/dossier state under their existing owner steps;
-0315 adds consumption observation;0316 adds piece/schema and stored-payload fields.
-qualify those intentional changes separately from0317 preservation. compare
-surviving canonical identities, text, vectors, revisions/readiness and
-suggestion-clock state at0316 against0317. require exact
-logical/native projection agreement across the fifteen surviving families.
-no repair, reindex or provider call is hidden in conversion; invalid input refuses.
+- recheck actual deployed source, schema ancestry and every writer. read-only
+  inspection on2026-10-24 found `dc12792e`/0312; that is not a rollout guarantee.
+- let legitimate live media-reindex jobs finish through their existing owners.
+  main0316 refuses them. never cancel, park or rewrite jobs to force migration.
+  the verified0312 rehearsal backup has zero live jobs; recheck with writers stopped.
+- use the existing stopped-writer and verified-backup deployment owner. account for
+  main0313/0314 intentional removals and0315/0316 transformations before comparing
+  search0317 preservation. invalid input must refuse conversion.
+- provision the immutable pg15 image with pinned pg_search0.26.2, preload and
+  128mib shared memory BEFORE migration. the deployment command uses `--no-deps`;
+  ordinary application startup cannot install this prerequisite. preserve
+  postgres512mib/no-swap,64mib shared buffers and api384mib/no-swap. verify actual
+  binary/catalog versions and exact alembic head.
+- ship paired api, workers, hosted web and generated wire. apply the wire bump
+  rule against the actual released clients. reload open clients after pending
+  writes settle; preserve main's account and installed-client admission rules.
+- use session connections for shared expensive-read admission through consumption
+  and cleanup. transaction-pooling proxies and old workers violate this contract.
+  retain stock asyncio and sdk preparation before readiness.
+- complete the [endpoint/client cutover](release-desktop-lab.md). rollback restores
+  the verified backup and paired binaries; there is no downgrade or mixed reader.
 
-main's0316 refuses live old media-reindex jobs. finish legitimate work through its
-existing queue/publication owners before migration; never cancel or rewrite jobs
-to satisfy this precondition. offline extraction of the verified0312 backup finds
-zero live media-reindex jobs (150 succeeded, three dead). this is a rehearsal input
-fact, not a rollout-time queue guarantee. recheck with writers stopped.
+## accepted product limits
 
-piece access must not grant source/neighboring text or whole-source activation.
-passages/vectors remain source-owned; results carry the authorized reading
-identity and bounded literal evidence. lexical publication proves the current
-source partition independently of embeddings. highlight context uses clipped
-reading-qualified index variants with canonical highlight ids; extra derived rows
-and atomic refresh work preserve contextual matching without scoring outside text.
+warm visible-result p95 budgets are direct500/keyword2000/related4000ms. cold
+keyword3000/related4000ms has one accepted control, not a cold percentile.
+related failure caps are api5000ms/browser-bff5750ms; publication-time related
+paint has a5000ms bound. the longer failure allowance permits more waiting and
+shared-admission occupancy; it does not improve retrieval speed.
 
-before migration, stop every writer and use the verified-backup deployment owner.
-the infra-owned `POSTGRES_IMAGE` must point to the immutable pg15 image providing
-pinned pg_search0.26.2 with preload; preserve512mib/no-swap and128mib shared memory.
-the migration command uses `--no-deps`, so installing the extension at ordinary
-application startup is too late. verify binary/catalog versions and exact head.
-rollback restores backup plus paired binaries; no downgrade/mixed-version reader.
+normal english word boundaries and bm25 ordering replace the older lexical
+ranking. direct navigation covers titles, names and aliases; body matches arrive
+in later phases. broad semantic retrieval is approximate: qualify at least95%
+of exact200 qualifying owners and every reference semantic first-page owner,
+with changed passages and ordering inspected. source-backed pieces retain
+source-owned identities/vectors, authorized reading contexts and bounded evidence.
 
-ship api, workers, hosted web and generated wire together. apply the wire bump
-rule against the actual released pair, not an old recorded wire number. include
-[endpoint/client cutover](release-desktop-lab.md), reload open clients after pending
-writes settle, and retain main's account and installed-client admission rules.
-api/worker expensive retrieval holds shared session admission through cleanup;
-transaction-pooling proxies and old workers violate this contract. provider waits
-and direct lookup remain outside admission. preserve stock asyncio and sdk import
-preparation before readiness; the [native fault](search-api-segfault-on-launcher-workload.md)
-remains unattributed with selected-runtime measured stability accepted.
+restored-background related failure during publication is accepted only with
+honest failure, preserved useful results and retry. this does not waive active
+search failure. the5750ms client failure/retry behavior passes locally.
+manual [screen-reader acceptance](search-screen-reader-acceptance.md) and
+[unrestricted ordinary-worker qualification](restored-search-worker-backlog.md)
+remain explicitly deferred. selected-runtime stability is accepted while the
+[original native fault](search-api-segfault-on-launcher-workload.md) remains
+unattributed. preserve the [historical unjoined abort](search-hybrid-publication-cutoff.md).
 
-warm visible-result p95 budgets remain500/2000/4000ms for direct/keyword/related;
-cold keyword3000/related4000ms has one accepted control, not a percentile.
-the owner approves related failure budgets of api5000ms and browser/bff5750ms,
-with a publication-visible5000ms bound; warm related remains4000ms. the revised
-budgets are not yet qualified and can increase shared-admission occupancy.
-current `b5234285` passes
-`./scripts/test`, the three retained checks, six same-snapshot presentation
-parity/count cases and the separate semantic piece/owner fixture. the actual0312 restore through unchanged
-main0316 and search0317 preserves104 canonical tables and3,396,985 rows, with exact
-agreement across all fifteen native families, vectors, readiness and clocks. one
-current-index semantic comparison retains52/53 qualifying owners (98.113%) and
-every reference semantic first-page owner without lexical masking. one weaker but
-relevant representative moves10→18; this is bounded recall, not latency acceptance.
+## current handoff
 
-the strict-v6 populated operation remains unqualified. one confirmed changed input
-produces one fresh keyword200 and one fresh related504 over h2, with browser
-monotonic dispatch and request-id joins. keyword takes870.39ms at the api and paints
-in1332ms. related expires after3032.92ms during presentation, following provider
-803ms, indexed selection280ms and extra semantic retrieval1843.94ms. the deadline
-stage does not establish presentation as the sole cause. this active related
-failure is outside the restored-background waiver. the separate
-[note-search admission gap](search-publication-note-check-waits-for-admission.md)
-leaves updated-note searchability unproved. a controlled replay attributes its
-queue to qualification verification; the earlier strict holder remains unknown.
+static checks, the three retained integration checks, populated0312→0316→0317
+preservation and local piece/evidence boundaries pass on their recorded source.
+the current immutable runtime completes fresh keyword/related responses during
+publication, meets the5000ms related-paint bound, commits one audited replacement,
+keeps unrelated edits durably responsive, finds the updated note and restores its
+fixtures. a separate read-only browser check on those binaries verifies canonical
+semantic fallback text and the matching passage link. local checks separately
+cover canonical reader activation. the raw combined receipt remains failed on its
+wrong nullable-highlight oracle; neither later proof relabels that receipt.
 
-one completed diagnostic measures hybrid core work at4204.427ms before transport
-and paint; the original3000ms crossing is inside ann scoring. it returns20 results
-with18 semantic matches. its overall receipt remains failed on a stale sql-hash
-guard, independently explained by exact approved-expression and parameter parity.
-this is no browser/p95 pass or verification of the newly approved failure budgets.
-
-the initial publication completes in36.69s; the held replacement commits in one
-audited attempt in40.75s. these elapsed intervals include setup, verification and
-control waits; they do not measure lock occupancy. initial publication was not
-attempt-audited. unrelated colour/note edits acknowledge200 in613.90/613.27ms and pass durable rereads before
-and after commit. source equality, owned native-row withdrawal, fixture restoration
-and normal runtime cleanup pass. these wins do not qualify the combined read gate
-or reconstruct the historical40001 dependency cycle.
-
-highlight eligibility equivalence, removed unrelated-reading work and the affected
-keyword delivery pass; presentation reuses authorized facts with exact local
-output parity and one resolution per reading context. retain the
-[active related gate](search-related-timeout-during-publication.md),
-[semantic integration](search-semantic-eligibility-count-resolves-readers.md) and
-[piece integration](release-search-contained-works-integration.md). earlier
-missing-dispatch and mixed-clock receipts retain their failures but do not prove
-after-input ordering or paint. publication-interval overlap is distinct from a
-native-merge subinterval; neither alone establishes timeout causality. the next
-repair decision needs completed timing; these observations establish no hardware or engine conclusion.
-
-the owner accepts occasional restored-pane related failure during publication
-with verified honest failure, preserved useful results and retry. the integrated
-mac tls/http2 check establishes those behaviours by holding one client response
-through the earlier3750ms cutoff and successfully retrying. that observation does
-not qualify the revised5750ms cutoff. it does not measure
-api queue cost or waive active after-input failure. the cost is occasional manual
-retry of restored related results. no scheduler is authorized; the approved
-related cutoff increase is recorded above.
-preserve the [historical unjoined abort](search-hybrid-publication-cutoff.md).
-manual screen-reader and unrestricted ordinary-worker qualification remain
-explicitly deferred. give the [restored backlog](restored-search-worker-backlog.md)
-its legitimate disposition; never blanket-cancel it to create acceptance.
-
-after coordinated rollout, check independent phases, interaction-held refresh,
-continuation, literal evidence/canonical activation, mobile ime and announcements,
-and text publication before embeddings. release execution remains a separate
-owner action. delete this issue after rollout and owner checks.
+qualification plans and receipts stay in the private pr body. no new warm
+percentile, unrestricted-worker capacity or historical causal claim follows.
+there is no production deployment yet. after coordinated rollout, check independent
+phases, interaction-held refresh, continuation, canonical evidence/activation,
+mobile ime/announcements and lexical publication before embeddings. remove this
+issue after rollout and its owner checks.

@@ -13,8 +13,8 @@ these are historical strict-query controls, not browser latency acceptance.
 
 browser lexical retrieval now uses its separate native occurrence contract.
 `semantic.py:nearest_chunks` now uses the corrected predicate and the owned
-`content_index_states_lexical_current` statistic in unreleased0306; its complete
-browser qualification remains open in the semantic recall issue. that does not
+`content_index_states_lexical_current` statistic in search0317; the integrated browser check is recorded in
+[the coordinated release](release-search.md). that does not
 repair the distinct strict lexical query.
 
 resolve by measuring and correcting the strict caller's actual plan, preserving

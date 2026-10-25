@@ -30,3 +30,10 @@ explicitly leaves unrestricted ordinary-worker acceptance open. a bounded reinde
 claim/execution can prove publication fences through existing queue primitives,
 but does not establish unrestricted ordinary-worker overlap or completed summary
 work. resolve that capability before making the broader claim.
+
+registered suggestion refresh now uses the shared expensive-read admission owner;
+its fenced publication remains separate. the small real-handler fixture proves
+waiting, ordered publication, connection retirement and stale-claim rejection.
+restored-corpus worker contention/memory is part of the deferred ordinary-worker
+qualification above; that small fixture contains no embeddings and does not
+establish this broader claim.
