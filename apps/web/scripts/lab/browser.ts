@@ -1,8 +1,40 @@
-// follow the real password form's continuation. callers own authenticated
-// readiness, identity checks, browser lifetime and any scenario-specific reset.
-import type { Page } from "@playwright/test";
+// lab browsers and the real password form's continuation. callers own
+// authenticated readiness, identity checks and any scenario-specific reset.
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, type BrowserContext, type Page } from "@playwright/test";
 import { DEFAULT_RETURN_TARGET } from "@/lib/auth/urls";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
+
+/** The canonical shell opens only over a persistent store: a real temporary profile
+ * with the normal durable-storage permission, pinned to the lab's TLS leaf. A non-null
+ * state seeds the fresh profile. close() also removes the profile. */
+export async function openLabBrowser(input: {
+  web_origin: string;
+  web_tls: { leaf_spki_sha256: string };
+  storage_state: string | null;
+}): Promise<{ context: BrowserContext; page: Page; close(): Promise<void> }> {
+  const profile = await mkdtemp(join(tmpdir(), "nexus-lab-browser-"));
+  let context: BrowserContext | null = null;
+  try {
+    context = await chromium.launchPersistentContext(profile, {
+      args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
+    });
+    if (input.storage_state !== null) await context.setStorageState(input.storage_state);
+    const page = context.pages()[0] ?? await context.newPage();
+    const session = await context.newCDPSession(page);
+    await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
+    await session.detach();
+    const opened = context;
+    return { context: opened, page, close: async () => {
+      try { await opened.close(); } finally { await rm(profile, { recursive: true, force: true }); }
+    } };
+  } catch (error) {
+    try { await context?.close(); } finally { await rm(profile, { recursive: true, force: true }); }
+    throw error;
+  }
+}
 
 export async function login(
   page: Page,

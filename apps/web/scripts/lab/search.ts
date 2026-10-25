@@ -4,9 +4,9 @@ import { execFile } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { join } from "node:path";
-import { chromium } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { components } from "@/lib/api/wire.gen";
-import { browserRequest } from "./browser";
+import { browserRequest, openLabBrowser } from "./browser";
 import { readLabContext } from "./context";
 
 const context = readLabContext();
@@ -413,15 +413,13 @@ async function run(mode: string): Promise<void> {
 // justify-type-assertion: the owned fixture emits exactly these public ids.
 await run("seed");
 const fixture = JSON.parse(await readFile(fixturePath, "utf8")) as { a: string; b: string; left: string; right: string; fragment_id: string; source: string; part: string; inside: string; neighbour: string; stale_term: string; stale_quote: string };
-const browser = await chromium.launch({
-  args: [`--ignore-certificate-errors-spki-list=${context.web_tls.leaf_spki_sha256}`],
-});
-let diagnosticPage: Awaited<ReturnType<typeof browser.newPage>> | null = null;
+const browser = await openLabBrowser({ web_origin: context.web_origin, web_tls: context.web_tls,
+  storage_state: context.browser_state_file });
+let diagnosticPage: Page | null = null;
 try {
   const browserRequests: Array<Record<string, unknown>> = [];
   facts.browser_requests = browserRequests;
-  const session = await browser.newContext({ storageState: context.browser_state_file });
-  const page = await session.newPage();
+  const { page } = browser;
   diagnosticPage = page;
   await page.goto(context.web_origin, { waitUntil: "domcontentloaded" });
   async function search(scope = "all", text = "labneedle", kinds = "documents") {

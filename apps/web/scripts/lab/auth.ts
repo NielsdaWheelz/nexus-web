@@ -1,13 +1,11 @@
 // disposable browser bootstrap. the runtime owns the private input and verifies
 // the returned identity; this helper owns real password login and a fresh state.
 // stdout is exactly one json result. diagnostics belong on stderr.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
-import { login } from "./browser";
+import { login, openLabBrowser } from "./browser";
 
 interface BootstrapInput {
   web_origin: string;
@@ -31,26 +29,28 @@ async function bootstrap() {
     throw new Error("browser bootstrap state path must be absolute");
   if (!isAbsolute(input.artifacts_dir))
     throw new Error("browser bootstrap artifacts path must be absolute");
-  const profile = await mkdtemp(join(tmpdir(), "nexus-lab-bootstrap-"));
-  const context = await chromium.launchPersistentContext(profile, {
-    args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
-  });
+  const browser = await openLabBrowser({ ...input, storage_state: null });
   try {
+    const { context, page } = browser;
     context.setDefaultTimeout(30_000);
     context.setDefaultNavigationTimeout(30_000);
-    const page = context.pages()[0] ?? await context.newPage();
-    const session = await context.newCDPSession(page);
-    await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
-    await session.detach();
     const redact = (value: string) => value.replaceAll(input.seed.email, "[redacted]").replaceAll(input.seed.password, "[redacted]");
     page.on("console", message => {
       if (message.type() === "error") console.error(`browser console: ${redact(message.text())}`);
     });
     page.on("pageerror", error => console.error(`browser page error: ${redact(error.message)}`));
+    page.on("requestfailed", request => {
+      const url = new URL(request.url());
+      if (url.origin === input.web_origin) console.error(`browser request failed: ${url.pathname} ${redact(request.failure()?.errorText ?? "unknown")}`);
+    });
+    const diagnostics = await context.newCDPSession(page);
+    diagnostics.on("ServiceWorker.workerErrorReported", event => console.error(`browser service worker error: ${redact(JSON.stringify(event.errorMessage))}`));
+    await diagnostics.send("ServiceWorker.enable");
+
     page.on("response", response => {
       const url = new URL(response.url());
-      if (url.origin === input.web_origin && url.pathname.startsWith("/api/") && response.status() >= 400)
-        console.error(`browser api response: ${response.status()} ${url.pathname}`);
+      if (url.origin === input.web_origin && response.status() >= 400)
+        console.error(`browser response: ${response.status()} ${url.pathname}`);
     });
     await login(page, { web_origin: input.web_origin, ...input.seed });
     try {
@@ -58,6 +58,17 @@ async function bootstrap() {
     } catch {
       await page.screenshot({ path: join(input.artifacts_dir, "browser-bootstrap-failure.png"), mask: [page.locator("input")] });
       console.error(`browser ended at: ${new URL(page.url()).pathname}`);
+      const details = redact(await page.locator("body").textContent() ?? "");
+      await writeFile(join(input.artifacts_dir, "browser-bootstrap-failure.txt"), details, { mode: 0o600 });
+      console.error(`browser failure surface: ${details.slice(0, 12000)}`);
+      const storage = await page.evaluate(async () => ({
+        persisted: await navigator.storage.persisted(),
+        estimate: await navigator.storage.estimate(),
+        controller: navigator.serviceWorker.controller?.scriptURL ?? null,
+        registrations: (await navigator.serviceWorker.getRegistrations()).map(registration => ({ scope: registration.scope, active: registration.active?.state ?? null, installing: registration.installing?.state ?? null, waiting: registration.waiting?.state ?? null })),
+      }));
+      console.error(`browser local readiness: ${JSON.stringify(storage)}`);
+
       throw new Error("browser authenticated primary navigation missing");
     }
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
@@ -85,8 +96,7 @@ async function bootstrap() {
     });
     process.stdout.write(JSON.stringify({ user_id: data.user_id, default_library_id: data.default_library_id }) + "\n");
   } finally {
-    await context.close();
-    await rm(profile, { recursive: true, force: true });
+    await browser.close();
   }
 }
 
