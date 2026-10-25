@@ -31,6 +31,7 @@ import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatInt
 import { chatFailure, type Catalog, type Selection } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { useReaderState, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
+import { sameAnchor } from "@/lib/documentReader/anchors";
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { emptyNoteBodyHistory, recordNoteBodyEdit } from "@/lib/notes/bodyHistory";
@@ -73,7 +74,7 @@ function matchesSourceAnchor(highlight: Highlight, source: ReturnType<Annotation
     ? saved.type === "fragment_offsets" && saved.fragment_id === anchor.unit &&
       saved.start_offset === anchor.start && saved.end_offset === anchor.end
     : saved.type === "pdf_page_geometry" && saved.media_id === source.mediaId &&
-      saved.page_number === anchor.page && JSON.stringify(saved.quads) === JSON.stringify(anchor.quads);
+      sameAnchor({ kind: "pdf", page: saved.page_number, quads: saved.quads }, anchor);
 }
 
 /** A settled draft cannot claim a later command that happens to use the same chat. */
