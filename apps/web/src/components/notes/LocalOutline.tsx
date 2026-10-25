@@ -86,12 +86,12 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
   const [focusRevision,setFocusRevision]=useState(0);
   const focusRequest=useRef(0);
   const focusVisible = useCallback((ref: string): boolean => {
-    const row = [...surface.current?.querySelectorAll<HTMLElement>("[data-resource-ref]") ?? []].find(row => row.dataset.resourceRef === ref);
-    const editor=row?.querySelector<HTMLElement>('[role="textbox"]');
+    const row = [...surface.current?.querySelectorAll<HTMLElement>("[data-outline-occurrence][data-resource-ref]") ?? []].find(row => row.dataset.resourceRef === ref && row.closest("[data-local-outline]")===surface.current);
+    const editor=ref.startsWith("note_block:")?row?.querySelector<HTMLElement>('[role="textbox"]'):row;
     editor?.focus();
     return editor!==null && editor!==undefined;
   }, []);
-  const focusNote = useCallback(async(ref:string,signal?:AbortSignal):Promise<boolean> => {
+  const focusResource = useCallback(async(ref:string,signal?:AbortSignal):Promise<boolean> => {
     const requestId=++focusRequest.current;
     pendingFocus.current?.fail(new DOMException("focus superseded","AbortError"));
     signal?.throwIfAborted();
@@ -102,11 +102,12 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
     const binding=await store.query({kind:"binding",key:{kind:"link",endpoint_a,endpoint_b}});
     signal?.throwIfAborted();
     if(binding.binding_id===null)return false;
-    const states=await store.readStates(selectStates({refs:[ref],link_ids:[binding.binding_id]}));
+    const [states,projection]=await Promise.all([store.readStates(selectStates({link_ids:[binding.binding_id]})),store.query({kind:"resource",ref})]);
     signal?.throwIfAborted();
-    const link=states.links.find(link=>link.link_id===binding.binding_id),note=states.resources.find(note=>note.ref===ref);
-    if(!link||!isVisible(link.add_vv,link.remove_vv)||note?.kind!=="note"||!isVisible(note.touch_vv,note.delete_vv))return false;
-    const document=await runtime.openDocument(ref),release=document.retain();
+    const link=states.links.find(link=>link.link_id===binding.binding_id),resource=projection.rows[0]?.resource;
+    if(!link||!isVisible(link.add_vv,link.remove_vv)||!resource?.visible)return false;
+    const document=resource.kind==="note"?await runtime.openDocument(ref):null;
+    const release=document?.retain()??(()=>{});
     if(signal?.aborted){release();signal.throwIfAborted();}
     if(requestId!==focusRequest.current){release();throw new DOMException("focus retired","AbortError");}
     return new Promise<boolean>((resolve,reject)=>{
@@ -124,7 +125,7 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
       setWindow({root:rootRef,anchor:binding.binding_id,cursor:null});setFocusRevision(value=>value+1);
     });
   },[focusVisible,runtime,rootRef]);
-  const focus = useCallback(async(ref:string)=>{await focusNote(ref);},[focusNote]);
+  const focus = useCallback(async(ref:string)=>{await focusResource(ref);},[focusResource]);
   useEffect(()=>{
     const request=pendingFocus.current;
     if(!request)return;
@@ -134,15 +135,15 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
       if(read.error){request.fail(read.error);return;}
       if(read.data&&!read.data.rows.some(row=>row.resource.ref===request.ref))request.finish(false);
     };
+    const observer=new MutationObserver(()=>{attempt();if(pendingFocus.current!==request)observer.disconnect();});
     attempt();
-    const observer=new MutationObserver(attempt);
-    if(surface.current)observer.observe(surface.current,{childList:true,subtree:true});
+    if(pendingFocus.current===request&&surface.current)observer.observe(surface.current,{childList:true,subtree:true});
     return()=>observer.disconnect();
   },[focusRevision,read.data,read.error,focusVisible]);
   useEffect(()=>()=>{focusRequest.current++;pendingFocus.current?.fail(new DOMException("outline closed","AbortError"));},[]);
   useLayoutEffect(()=>{
     if(!apiRef||!history)return;
-    const handle:LocalOutlineHandle={append:async()=>focus(await history.create(rootRef,null,undefined,prelude)),focusNote,focusFirst:()=>{const first=rows[0];if(first)act(focus(first.resource.ref));}};
+    const handle:LocalOutlineHandle={append:async()=>focus(await history.create(rootRef,null,undefined,prelude)),focusNote:focusResource,focusFirst:()=>{const first=rows[0];if(first)act(focus(first.resource.ref));}};
     apiRef.current=handle;
     return()=>{if(apiRef.current===handle)apiRef.current=null;};
   });
@@ -267,6 +268,6 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
     </ResourceOutlineList>
     {current.cursor!==null || current.anchor!==null ? <Button onClick={()=>setWindow({root:rootRef,anchor:read.data?.previous_cursor??null,cursor:null})}>previous links</Button> : null}
     {read.data?.next_cursor !== null && read.data !== null ? <Button onClick={()=>setWindow({root:rootRef,anchor:null,cursor:read.data!.next_cursor})}>next links</Button> : null}
-    {!filter.trim() ? <ResourceComposer destinationRef={rootRef} occurrenceKey={`local:${rootRef}:insert`} label="add a note or link" prelude={prelude} afterSave="clear" /> : null}
+    {!filter.trim() ? <ResourceComposer destinationRef={rootRef} occurrenceKey={`local:${rootRef}:insert`} label="add a note or link" prelude={prelude} afterSave="clear" onSaved={ref=>act(focus(ref))} /> : null}
   </div></HistoryContext></BlockSelectionContext>;
 }

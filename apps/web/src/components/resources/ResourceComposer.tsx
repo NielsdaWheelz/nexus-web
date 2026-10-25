@@ -29,8 +29,8 @@ type Composer = {
   /** Minted once per draft; a retried commit keeps it. */
   noteRef: string;
   state: "editing" | "saving" | "saved";
-  /** A failed local commit's frozen retry, held until it lands; `kind` picks how the current render finishes it. */
-  failure: { content: FeedbackContent; retry: { kind: "save" | "link"; attempt: () => Promise<unknown> } | null } | null;
+  /** A failed local commit's frozen retry and its captured target, held until it lands; `kind` picks how the current render finishes it. */
+  failure: { content: FeedbackContent; retry: { kind: "save" | "link"; attempt: () => Promise<unknown>; target: string } | null } | null;
 };
 type Props = {
   destinationRef: string; occurrenceKey: string; label: string;
@@ -41,7 +41,9 @@ type Props = {
   /** `keep`: the saved note keeps editing in place. `clear`: a surface that lists the new
    * note itself starts a fresh draft instead of showing it twice. */
   afterSave?: "keep" | "clear";
-  onSaved?: () => void; onActiveChange?: (active: boolean) => void;
+  /** After each durable local insertion, the new note or a linked reference, with its committed target ref. */
+  onSaved?: (targetRef: string) => void;
+  onActiveChange?: (active: boolean) => void;
 };
 const LOCAL_FAILURE: FeedbackContent = { tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." };
 
@@ -70,40 +72,47 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
     return local.rows[0]?.resource.title ?? destinationRef;
   };
   /** Finishing reads this render's props, so a retry after a pane return calls the live owner. */
-  const finish = (kind: "save" | "link") => {
-    if (kind === "link") { draft.set(current => ({ ...current, state: "editing" })); return; }
-    draft.set(current => afterSave === "keep" ? { ...current, state: "saved" } : fresh(current.revision + 1));
-    onSaved?.();
+  const finish = (kind: "save" | "link", target: string) => {
+    if (kind === "link") draft.set(current => ({ ...current, state: "editing" }));
+    else draft.set(current => afterSave === "keep" ? { ...current, state: "saved" } : fresh(current.revision + 1));
+    onSaved?.(target);
   };
-  const commit = async (kind: "save" | "link", attempt: () => Promise<unknown>, frozen: (() => Promise<unknown>) | null = null) => {
+  /** `attempt` names its target before committing, so a failed commit keeps that exact ref beside its frozen retry. */
+  const commit = async (kind: "save" | "link", attempt: (target: { ref: string | null }) => Promise<unknown>,
+    frozen: { attempt: () => Promise<unknown>; target: string } | null = null) => {
+    const target = { ref: frozen?.target ?? null };
     draft.set(current => ({ ...current, state: "saving", failure: null }));
     try {
-      await attempt();
+      await attempt(target);
     } catch (error) {
-      const retry = error instanceof LocalCommitError ? error.retry : frozen;
-      draft.set(current => ({ ...current, state: "editing", failure: retry
-        ? { content: LOCAL_FAILURE, retry: { kind, attempt: retry } }
+      const retry = error instanceof LocalCommitError ? error.retry : frozen?.attempt ?? null;
+      draft.set(current => ({ ...current, state: "editing", failure: retry && target.ref !== null
+        ? { content: LOCAL_FAILURE, retry: { kind, attempt: retry, target: target.ref } }
         : { content: { tone: "Warning", title: "couldn’t save this note", message: error instanceof Error ? error.message : undefined }, retry: null } }));
       return;
     }
-    finish(kind);
+    if (target.ref !== null) finish(kind, target.ref);
   };
   const save = () => {
     const submitted = draft.read();
     if (writing === null || submitted.state !== "editing") return;
     const retry = submitted.failure?.retry;
-    if (retry) { void commit(retry.kind, retry.attempt, retry.attempt); return; }
+    if (retry) { void commit(retry.kind, () => retry.attempt(), retry); return; }
     if (submitted.searching || !bodyHasContent(submitted.body)) return;
-    void commit("save", async () => createLink(writing, {
-      source_ref: destinationRef, target_ref: submitted.noteRef, source_label: await sourceLabel(), target_label: null,
-      after: null, prelude: [...prelude, { kind: "create_note", ref: submitted.noteRef, body: submitted.body }],
-    }));
+    void commit("save", async target => {
+      target.ref = submitted.noteRef;
+      return createLink(writing, {
+        source_ref: destinationRef, target_ref: submitted.noteRef, source_label: await sourceLabel(), target_label: null,
+        after: null, prelude: [...prelude, { kind: "create_note", ref: submitted.noteRef, body: submitted.body }],
+      });
+    });
   };
   /** A picked reference links to the destination now; the draft note stays unsent. */
-  const linkReference = (target: LinkTarget, item: ResourceItem) => {
+  const linkReference = (picked: LinkTarget, item: ResourceItem) => {
     if (writing === null) return;
-    void commit("link", async () => {
-      const endpoint = await prepareTarget(writing, target);
+    void commit("link", async target => {
+      const endpoint = await prepareTarget(writing, picked);
+      target.ref = endpoint.ref;
       return createLink(writing, { source_ref: destinationRef, target_ref: endpoint.ref, source_label: await sourceLabel(),
         target_label: item.label, after: null, prelude: [...prelude, ...endpoint.intents] });
     });
