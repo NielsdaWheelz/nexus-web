@@ -32,6 +32,8 @@
 }
 .provenance {
   flex: 1;
+  /* grow within the allocation without adding a source-title minimum. */
+  inline-size: 0;
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
