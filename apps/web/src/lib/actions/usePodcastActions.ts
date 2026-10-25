@@ -1,7 +1,6 @@
 "use client";
 
 /** Current view facts authorize new intents; retained commands keep their target. */
-import { assertNever } from "@/lib/assertNever";
 import { installedApp } from "@/lib/native/admission";
 import { createElement } from "react";
 import { ACTION_CATALOG } from "./catalog";
@@ -13,27 +12,13 @@ import type { PodcastTarget } from "@/lib/podcasts/api";
 
 function project(subject: PodcastActionSubject, ctx: ActionContext, run: (command: ActionCommand) => void, focus?: PodcastActionFocus) {
   const facts = subject.facts;
-  let target: PodcastTarget = subject.target;
-  let subscribed = false;
-  let reason: string | null = null;
-  let subscriptionLabel: string | null = null;
-  switch (facts.kind) {
-    case "Resolving": reason = "checking subscription…"; subscriptionLabel = reason; break;
-    case "Failed": reason = "couldn’t check subscription"; subscriptionLabel = reason; break;
-    case "Ready":
-      switch (facts.resolution.kind) {
-        case "Canonical": target = { kind: "Canonical", podcast_id: facts.resolution.podcast_id }; subscribed = facts.resolution.subscribed; break;
-        case "Discovery": break;
-        case "Unavailable": subscriptionLabel = "subscription unavailable"; reason = facts.resolution.reason === "NotFound" ? "this podcast is no longer available" : "this podcast discovery target is invalid"; break;
-        default: assertNever(facts.resolution);
-      }
-      break;
-    default: assertNever(facts);
-  }
-  const subscription = projectPodcastSubscriptionAction({ target, title: subject.title, subscribed, disabledReason: reason, ctx, run, focus });
+  const subscription = projectPodcastSubscriptionAction({ target: subject.target, title: subject.title, facts, disabledReason: null, ctx, run, focus });
+  const target: PodcastTarget = facts.kind === "Ready" && facts.resolution.kind === "Canonical"
+    ? { kind: "Canonical", podcast_id: facts.resolution.podcast_id } : subject.target;
   return [
-    { ...subscription, label: subscriptionLabel ?? subscription.label },
-    projectPodcastLibrariesAction({ target, title: subject.title, disabledReason: reason, ctx, run, focus }),
+    subscription,
+    { ...projectPodcastLibrariesAction({ target, title: subject.title, disabledReason: subscription.disabledReason ?? null, ctx, run, focus }),
+      accessibleLabel: `manage libraries: ${subject.title}` },
   ];
 }
 
@@ -41,7 +26,7 @@ export function usePodcastActions(subject: PodcastActionSubject): readonly Actio
   const { ctx, run } = useActionRuntime();
   return project(subject, ctx, run).map<ActionButtonSpec>((action, index) => ({
     controlKey: index === 0 ? "PodcastSubscription" : "PodcastLibraries", id: action.id,
-    label: index === 0 ? action.label : "manage libraries", icon: action.icon,
+    menuLabel: action.label, accessibleLabel: action.accessibleLabel, icon: action.icon,
     disabled: action.disabled === true, disabledReason: action.disabledReason ?? null, busy: false, hasPopup: "dialog",
     invoke: focus => { project(subject, ctx, run, focus)[index].onSelect({ triggerEl: focus.trigger, openIntent: "default" }); },
   }));
