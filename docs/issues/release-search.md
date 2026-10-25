@@ -53,23 +53,37 @@ remains unattributed with selected-runtime measured stability accepted.
 
 warm visible-result p95 budgets remain500/2000/4000ms for direct/keyword/related;
 cold keyword3000/related4000ms has one accepted control, not a percentile.
-independent failure deadlines remain unchanged. the prior controlled candidate
-passes book publication once, durable unrelated edits and scoped browser/merge
-request observations. integrated `a3e6b8ee2` passes the mac static gate, three
-retained checks and actual0312→0315→0316 populated preservation/native proof.
-one rebuilt-index paraphrase retains all53 reference owners with identical
-first-page order and representatives; it is no new latency or recall campaign.
-the integrated combined operation fails: publication needs a serialization retry
-and active related search expires. current `0a4098235` passes local static and the
-three retained checks, including source-backed piece boundaries and native
-publication equality. its controlled local publisher probe removes the late
-state-table read and commits once alongside an unrelated edit. these results do
-not replace the failed populated operation or establish a new latency result.
-see [publication coupling](search-publication-retries-during-unrelated-edits.md)
-and [related cutoff](search-related-timeout-during-publication.md).
-the older populated preservation and recall proofs retain their recorded scope.
-complete the [piece integration](release-search-contained-works-integration.md)
-with an affected populated0316→0317 conversion and combined operation before release.
+independent failure deadlines remain unchanged. earlier failed observations retain
+those verdicts. current `7776e45f6` passes static checks and the targeted semantic
+piece fixture; the three retained checks passed before the semantic-only change.
+the actual0312 restore through unchanged main0316 and search0317 preserves104
+canonical tables and3,396,985 rows, with exact agreement across all fifteen native
+families, vectors, readiness and clocks. one current-index semantic comparison
+retains52/53 qualifying owners (98.113%) and every reference semantic first-page
+owner without lexical masking. one representative is weaker but relevant, moving
+from position10 to18; this is accepted bounded recall, not latency acceptance.
+
+the current controlled populated operation proves single-attempt book publication
+without rollback or sqlstate error (initial31.04s, replacement35.34s). unrelated
+colour/note edits acknowledge200 in735/457ms, with six distinct request identities
+and durable rereads before and after publication. original source equality,
+owned native-row withdrawal and normal cleanup pass. this closes the publication-retry gate for
+that controlled case; it does not explain the historical40001 dependency cycle
+or qualify unrestricted conflicting writers.
+
+the combined operation remains unqualified: keyword and active related return504
+while publication is in progress; note search also returns504. both focal requests
+expire inside indexed selection, before extra semantic retrieval or presentation.
+request overlap proves no native-merge cause. a later read-only native plan exposes
+repeated highlight admission against unrelated reading candidates, not physical
+reads. the source prefilter preserves full eligibility in a same-snapshot comparison
+and removes the measured cross-product; its native diagnostic improves. affected
+retained checks and actual bff/publication acceptance remain pending. retain the
+[active read failure](search-related-timeout-during-publication.md) and
+[highlight admission issue](search-highlight-admission-scans-unrelated-readings.md).
+complete the affected browser/search operation under unchanged limits before
+release; the populated conversion condition in
+[piece integration](release-search-contained-works-integration.md) is already met.
 
 the owner accepts occasional restored-pane related failure during publication
 with verified honest failure, preserved useful results and retry. the integrated

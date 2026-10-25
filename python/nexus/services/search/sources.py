@@ -212,6 +212,7 @@ _HIGHLIGHT_OWNER = _requested_owner(
         FROM ({candidates}) candidate
         WHERE candidate.media_id=h.anchor_media_id
             OR (h.anchor_kind='fragment_offsets'
+                AND candidate.media_id IN (SELECT part.media_id FROM media_parts part WHERE part.source_media_id=h.anchor_media_id)
                 AND {highlight_in_reading_scope_sql("h.id", "candidate.media_id")})"""),
 )
 
