@@ -403,7 +403,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
               rows={visible}
               status={works.status === "loading" ? "loading" : "ready"}
               ariaLabel="Works"
-              rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+              anchorKey={text}
               collectionBusy={worksBusy}
               surface={false}
               notice={<>

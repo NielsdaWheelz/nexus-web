@@ -173,7 +173,7 @@ export default function LibrariesPaneBody() {
         rows={visible.map(presentLibrary)}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Libraries"
-        rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+        anchorKey={text}
         collectionBusy={busy}
         error={loadFailure}
         notice={list.status === "ready" ? loadFailure : null}

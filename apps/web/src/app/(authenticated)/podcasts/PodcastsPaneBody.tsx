@@ -284,7 +284,7 @@ export default function PodcastsPaneBody() {
         )}
         status={list.status === "loading" ? "loading" : "ready"}
         ariaLabel="Followed podcasts"
-        rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+        anchorKey={text}
         notice={<>
           {list.status === "ready" && failure !== null ? (
             <FeedbackNotice

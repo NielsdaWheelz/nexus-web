@@ -454,7 +454,7 @@ function LibraryPane({ id }: { readonly id: string }) {
             ) : null
           }
           ariaLabel={name}
-          rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+          anchorKey={text}
           rowActionsAvailable={(list.status === "ready")}
           collectionBusy={busy}
           surface={false}

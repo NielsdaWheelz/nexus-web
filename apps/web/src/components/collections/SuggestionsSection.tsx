@@ -148,7 +148,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         status={waiting ? "loading" : "ready"}
         ariaLabel={ariaLabel}
         surface={false}
-        rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: rows.map((item) => item.target.ref).join(",") }}
+        anchorKey={rows.map((item) => item.target.ref).join(",")}
         notice={<>
           {needsRepair ? <FeedbackNotice content={{ tone: "Warning", title: "suggestions need repair." }} announcement="None" /> : null}
           {atCapacity ? <FeedbackStatus content={{ tone: "Neutral", title: "lectern is full. remove an item to add another." }} announcement="None" /> : null}

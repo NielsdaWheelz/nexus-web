@@ -259,10 +259,7 @@ export default function NotesPaneBody() {
         rows={visible}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Notes"
-        rowChangePresentation={{
-          kind: "ImmediateOnKeyChange",
-          key: query.trim(),
-        }}
+        anchorKey={query.trim()}
         collectionBusy={busy}
         notice={list.status === "ready" ? loadFailure : null}
         error={list.status === "ready" ? undefined : loadFailure}

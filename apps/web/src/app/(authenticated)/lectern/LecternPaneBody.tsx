@@ -320,7 +320,7 @@ export default function LecternPaneBody() {
                   : "Nothing on the lectern yet."}
               </p>
             }
-            rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
+            anchorKey={query}
             order={ordering}
           />
           </PlaybackSourceContext.Provider>

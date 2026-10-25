@@ -483,7 +483,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               ariaLabel="Episodes"
               rowActionsAvailable={(episodes.status === "ready")}
               collectionBusy={busy}
-              rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
+              anchorKey={text}
               notice={<>
                 {episodes.status === "ready" && episodeFailure !== null ? <FeedbackNotice
                   content={podcastErrorMessage(episodeFailure, "couldn’t refresh episodes")}

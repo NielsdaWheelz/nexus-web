@@ -223,10 +223,7 @@ export default function ConversationsPaneBody() {
         rows={visible}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Conversations"
-        rowChangePresentation={{
-          kind: "ImmediateOnKeyChange",
-          key: query.trim(),
-        }}
+        anchorKey={query.trim()}
         collectionBusy={busy}
         notice={list.status === "ready" ? failureNotice : null}
         error={list.status === "ready" ? undefined : failureNotice}

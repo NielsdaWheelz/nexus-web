@@ -16,7 +16,7 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
-- `lib/ui/{eventTarget,viewTransitions,actionDescriptor,copyText,rovingIndex}.ts`.
+- `lib/ui/{eventTarget,actionDescriptor,copyText,rovingIndex}.ts`.
 - `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`).
 
 ## rooms
