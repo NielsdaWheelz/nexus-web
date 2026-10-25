@@ -16,8 +16,10 @@ the existing wire fence rejects saved wire-16 catalogs after the paired upgrade;
 obtain a wire-17 catalog online before qualifying disconnected use.
 qualify installed catalog promotion, native consumption observations, trusted
 android touch fling/find/selection/drag and actual screen-reader announcements
-on the paired binaries. no attached android device or physical-input evidence
-is available in this checkout. local chromium proof does not discharge these
+on the paired binaries. an attached android 16 handset is available; isolated
+debug qualification is being prepared without replacing its release or existing
+debug app. physical finger and screen-reader checks remain unqualified.
+local chromium proof does not discharge these
 checks. record measured large-index opening and sustained refresh costs with
 the change's proof in the pr body.
 
