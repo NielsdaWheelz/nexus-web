@@ -11,6 +11,11 @@
   transition: background-color var(--duration-fast) var(--ease-glide);
 }
 
+:global([data-resource-list]) > .row,
+:global([data-resource-list]) > :global([data-sortable-row-id]) > .row {
+  container: none;
+}
+
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
