@@ -67,8 +67,8 @@ function orderedIncident(where:string,direction:"ASC"|"DESC",limit:string,exclud
     return `SELECT * FROM(SELECT l.link_id,l.endpoint_a,l.endpoint_b,l.position_${side} AS position,l.state_json AS position_json,l.endpoint_${other} AS other_ref FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=?1 AND l.visible=1 AND l.link_id<>COALESCE(${exclude},'') AND ${requireRootLive?live("?1"):"1"} AND ${live(`l.endpoint_${other}`)} ${condition} ORDER BY l.position_${side} ${direction},l.link_id ${direction} LIMIT ${limit})`;
   }).join(" UNION ALL ");
 }
-function anchor(parameter:string):string {
-  return `SELECT link_id,CASE WHEN endpoint_a=?1 THEN position_a ELSE position_b END AS position FROM links WHERE link_id=${parameter} AND visible=1 AND(endpoint_a=?1 OR endpoint_b=?1)`;
+function anchor(parameter:string,requireLive=true):string {
+  return `SELECT link_id,CASE WHEN endpoint_a=?1 THEN position_a ELSE position_b END AS position FROM links WHERE link_id=${parameter} ${requireLive?"AND visible=1":""} AND(endpoint_a=?1 OR endpoint_b=?1)`;
 }
 function positions(query: Extract<AuthoredQuery,{kind:"positions"}>):CompiledQuery {
   const params:(string|number|null)[]=[query.ref,query.exclude_link_id];
@@ -128,13 +128,14 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       return {sql:`WITH bound(ref,exclude_link_id) AS (VALUES(?,NULL)),incident AS NOT MATERIALIZED (${INCIDENT}),selected AS MATERIALIZED (SELECT * FROM incident ${where} ORDER BY position,link_id LIMIT ?),wanted(ref) AS (SELECT other_ref FROM selected),readable AS NOT MATERIALIZED (${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,...cursor?[cursor[0],cursor[1]]:[],limit]};
     }
     case "adjacency_window": {
+      // Removing the focused relationship retains its place among live neighbors.
       const cursor=readAdjacencyCursor(query.cursor);
       if(cursor!==null)return compileQuery({kind:'adjacency',ref:query.ref,cursor:query.cursor,limit});
       const before=Math.floor(limit/2),after=limit-before;
       const earlier=orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM anchor),(SELECT link_id FROM anchor))","DESC","?3","NULL");
       const later=orderedIncident("AND(POSITION,l.link_id)>=((SELECT position FROM anchor),(SELECT link_id FROM anchor))","ASC","?4","NULL");
       const previous=orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM first),(SELECT link_id FROM first))","DESC","1","NULL");
-      return {sql:`WITH anchor AS MATERIALIZED(${anchor("?2")}),before_candidates AS(${earlier}),after_candidates AS(${later}),earlier AS(SELECT * FROM before_candidates ORDER BY position DESC,link_id DESC LIMIT ?3),later AS(SELECT * FROM after_candidates ORDER BY position,link_id LIMIT ?4),selected AS MATERIALIZED(SELECT * FROM earlier UNION ALL SELECT * FROM later),first AS(SELECT position,link_id FROM selected ORDER BY position,link_id LIMIT 1),previous_candidates AS(${previous}),wanted(ref) AS(SELECT other_ref FROM selected),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json,CASE WHEN EXISTS(SELECT 1 FROM previous_candidates) THEN (SELECT link_id FROM first) ELSE NULL END AS previous_cursor FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,query.link_id,before,after]};
+      return {sql:`WITH anchor AS MATERIALIZED(${anchor("?2",false)}),before_candidates AS(${earlier}),after_candidates AS(${later}),earlier AS(SELECT * FROM before_candidates ORDER BY position DESC,link_id DESC LIMIT ?3),later AS(SELECT * FROM after_candidates ORDER BY position,link_id LIMIT ?4),selected AS MATERIALIZED(SELECT * FROM earlier UNION ALL SELECT * FROM later),first AS(SELECT position,link_id FROM selected ORDER BY position,link_id LIMIT 1),previous_candidates AS(${previous}),wanted(ref) AS(SELECT other_ref FROM selected),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json,CASE WHEN EXISTS(SELECT 1 FROM previous_candidates) THEN (SELECT link_id FROM first) ELSE NULL END AS previous_cursor FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,query.link_id,before,after]};
     }
   }
 }

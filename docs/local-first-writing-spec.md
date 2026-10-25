@@ -362,8 +362,9 @@ source commands, allocate consecutive feed sequences transactionally, merge and
 validate touched states through the shared helper. commit canonical states,
 projections, feed rows, head and accepted sequence together. source byte identity is
 frozen at local commit. no replay-result ledger or `client_mutation_id` exists.
-this feed is replication data, not an activity feature. a lost reply retries the
-same changes; it never executes a fresh delete/edit.
+this feed is replication data, not an activity feature. a lost reply is resolved
+by the verified accepted prefix returned by registration or upload. any resend
+uses the same changes; it never executes a fresh delete/edit.
 verified acknowledgement deletes only that replica's accepted pending prefix in
 one local transaction. applying its own echoed feed changes is idempotent and
 creates no new touch. permanent protocol/schema defects show one sync error and
