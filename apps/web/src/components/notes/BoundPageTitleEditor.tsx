@@ -47,7 +47,7 @@ export default function BoundPageTitleEditor({ pageRef, label = "page title", ed
     const finish = () => { queueMicrotask(() => { composing.current = false; receive(); }); };
     const input = ref.current;
     input?.addEventListener("compositionend", finish);
-    return () => { input?.removeEventListener("compositionend", finish); document.doc.off("update", receive); baseline.current = null; manager.current?.destroy(); manager.current = null; doc.destroy(); };
+    return () => { input?.removeEventListener("compositionend", finish); document.doc.off("update", receive); baseline.current = null; manager.current?.clear(); manager.current?.destroy(); manager.current = null; doc.destroy(); };
   }, [document, ref]);
   const initialized = useRef<string | null>(null);
   useEffect(() => {

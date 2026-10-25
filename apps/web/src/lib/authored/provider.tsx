@@ -87,7 +87,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
       : detail === SIGN_IN_SYNC_DETAIL ? [{ label: host !== "workspace" ? "open workspace to sign in" : "sign in", onClick: signIn }]
       : detail === UPDATE_SYNC_DETAIL ? installedApp || host !== "workspace" ? undefined : [{ label: "reload", onClick: () => window.location.reload() }]
       : [{ label: "retry", onClick: () => retry(value => value + 1) }];
-    return <FeedbackState content={{ tone: "Neutral", title: "preparing your notes", message: detail ?? undefined }} announcement={detail === null ? "None" : "Polite"} actions={actions} />;
+    return <FeedbackState content={{ tone: "Neutral", title: "preparing your notes", message: detail ?? undefined }} announcement={detail === null ? "None" : "Polite"} actions={host === "workspace" ? [...(actions ?? []), { label: "sign out on this device", onClick: () => { void discardFailedAuthoredSetup(accountId).catch(error => setFailure(error)); } }] : actions} />;
   }
   return <AccountContext value={accountId}><StoreContext value={store}><StatusContext value={status}><DetailContext value={detail}>{children}</DetailContext></StatusContext></StoreContext></AccountContext>;
 }

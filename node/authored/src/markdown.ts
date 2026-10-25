@@ -5,7 +5,7 @@ import type { Delete, Emphasis, Link, Paragraph, PhrasingContent, RootContent, S
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { defaultHandlers, toMarkdown } from "mdast-util-to-markdown";
 import type { Mark } from "prosemirror-model";
-import { noteBodySchema, type NoteBody } from "@nexus/authored/body";
+import { noteBodySchema, parseBody, type NoteBody } from "./body.ts";
 
 export type ReaderQuestion =
   | { kind: "Blank" }
@@ -50,8 +50,8 @@ function markdownMarkEdges(children: PhrasingContent[]): PhrasingContent[] {
 
 /** Preserve the complete question as markdown source; this does not save the note. */
 export function convertReaderQuestion(body: NoteBody): ReaderQuestion {
-  const block = noteBodySchema.nodeFromJSON(body.body_pm_json);
-  let unsupported: "Images" | "Embeds" | null = false ? "Embeds" : null;
+  const block = noteBodySchema.nodeFromJSON(parseBody(body.body_pm_json).body_pm_json);
+  let unsupported: "Images" | "Embeds" | null = null;
   block.descendants((node) => {
     if (node.type.name === "image") unsupported ??= "Images";
     if (node.type.name === "resource_embed") unsupported ??= "Embeds";
@@ -155,7 +155,7 @@ export function convertReaderQuestion(body: NoteBody): ReaderQuestion {
       break;
     }
     default:
-      // justify-defect: one trusted note body is a paragraph, code block or refused embed.
+      // justify-defect: the canonical body has prose or code presentation.
       throw new Error(`Unexpected reader question block: ${block.type.name}`);
   }
   if (!substantive) return { kind: "Blank" };

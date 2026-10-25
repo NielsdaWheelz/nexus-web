@@ -25,7 +25,7 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed() { for (const port of ports) port.postMessage({ kind: "changed", status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.last_error ?? null }); }
+function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.last_error ?? null }); }
 async function response(path: string, body: unknown | null, signal: AbortSignal) {
   let result: Response;
   const deadline = AbortSignal.timeout(path === "/api/authored/snapshot" ? 280_000 : 30_000);
@@ -102,6 +102,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       sync!.facts.saving = true; changed();
       try {
         const result = await persistence.commit(input.frame as unknown as CommitFrame);
+        if (result.kind === "committed") changed(true);
         sync!.localFailure(false);
         sync!.facts.pending = (await persistence.pending()).length > 0;
         setTimeout(() => sync?.wake(), 0);

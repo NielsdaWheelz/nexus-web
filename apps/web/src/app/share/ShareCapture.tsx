@@ -7,13 +7,14 @@
 // note id fixed on first send. Results offer Open (in the shell, through
 // `nexus-share://open`) and Done.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import {
   isApiError,
+  outcomeUnknown,
   isUnauthenticatedApiError,
 } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
@@ -100,7 +101,7 @@ function ShareCaptureContent({
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard }>());
+  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard;unconfirmed:boolean }>());
   const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
   const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: Promise<string>; failure: LocalCommitError | null } | null>(null);
   const sentAttempt = useRef<number | null>(null);
@@ -113,6 +114,11 @@ function ShareCaptureContent({
     const runtime = getWritingRuntime(accountId);
     return guard.register({id:`share-writing:${accountId}`,scope:{kind:"account"},subscribe:runtime.subscribe,read:()=>({changed:runtime.snapshot().saving||runtime.snapshot().error!==null,unconfirmed:false,stopsBrowserWork:false})});
   },[accountId,guard]);
+
+  useLayoutEffect(()=>guard.register({id:"share-submitted-acquisition",scope:{kind:"surface",id:"share"},
+    subscribe:destinationCreation.subscribe,
+    read:()=>({changed:false,unconfirmed:saving||destinationCreation.readUnconfirmed()||[...commands.current.values()].some(command=>command.unconfirmed),stopsBrowserWork:saving||creating}),
+  }),[guard,destinationCreation,saving,creating,results]);
 
   // One live attempt freezes its date, ids and text. Retries use its handle;
   // admission is never reported as a successful capture.
@@ -146,7 +152,9 @@ function ShareCaptureContent({
     const command = commands.current.get(url);
     if (command === undefined) throw new Error("share submission has no frozen acquisition command");
     try {
-      const accepted = await addMediaFromUrl({ url, ...command });
+      command.unconfirmed=true;
+      const accepted = await addMediaFromUrl({ url,id:command.id,guard:command.guard });
+      command.unconfirmed=false;
       return {
         label: url,
         ok: true,
@@ -155,6 +163,7 @@ function ShareCaptureContent({
         path: accepted.href,
       };
     } catch (error) {
+      command.unconfirmed=outcomeUnknown(error);
       if (isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
       return failed(url, error, () =>
         captureErrorFeedback(error, "SaveSource"),
@@ -169,7 +178,7 @@ function ShareCaptureContent({
     try {
       if (targets.some(url => !commands.current.has(url))) {
         const snapshot = await libraryDestinations();
-        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision) });
+        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false });
       }
     } catch (error) {
       setResults(targets.map(url => failed(url, error, () => captureErrorFeedback(error, "SaveSource"))));

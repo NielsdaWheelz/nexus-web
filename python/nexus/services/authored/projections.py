@@ -213,11 +213,6 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
             else [require_ref(item.ref).id for item in result.projections if item.kind == kind],
         )
     projection.refresh(db, "passage_anchor", [passage.anchor_id for passage in result.passages])
-    contributor_link = any(
-        endpoint.startswith("contributor:")
-        for link in result.links
-        for endpoint in (link.endpoint_a, link.endpoint_b)
-    )
     captures = [
         item.source_ref
         for item in result.projections
@@ -236,16 +231,7 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
             ]
         },
     )
-    visibility_notes = [
-        require_ref(ref).id for ref in visibility_changes if ref.startswith("note_block:")
-    ]
-    contributor_note = bool(visibility_notes) and db.scalar(
-        text("""SELECT EXISTS (SELECT 1 FROM resource_edges e WHERE e.user_id=:a
-            AND ((e.source_scheme='note_block' AND e.source_id=ANY(CAST(:ids AS uuid[])) AND e.target_scheme='contributor')
-                OR (e.target_scheme='note_block' AND e.target_id=ANY(CAST(:ids AS uuid[])) AND e.source_scheme='contributor')))"""),
-        {"a": account_id, "ids": visibility_notes},
-    )
-    if contributor_link or retained_x_source or contributor_note:
+    if retained_x_source:
         projection.refresh_viewer_contributors(db, [account_id])
     owners = {item.ref for item in result.projections}
     owners |= {endpoint for link in result.links for endpoint in (link.endpoint_a, link.endpoint_b)}

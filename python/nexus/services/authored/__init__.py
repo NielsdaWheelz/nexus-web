@@ -527,16 +527,21 @@ def server_command(
     )
     # One untouched tail survives at most one removal/move per intent. This
     # bounded prefix lets the kernel append after earlier effects in the same
-    # command without sending a large page's entire adjacency to Node.
+    # command without sending a large page's entire adjacency to Node. Ignore
+    # this root's current visibility: an earlier intent may restore it. Link
+    # membership and the opposite endpoint still determine candidate liveness.
     incident = []
     for endpoint in endpoints:
         for side in ("a", "b"):
             incident.extend(
                 db.scalars(
                     text(
-                        "SELECT l.state FROM authored_links l JOIN resource_edges e "
-                        "ON e.id=l.link_id::uuid AND e.user_id=:a AND e.authored_visible "
+                        "SELECT l.state FROM authored_links l "
                         f"WHERE l.account_id=:a AND l.state->>'endpoint_{side}'=:ref "
+                        "AND EXISTS (SELECT 1 FROM jsonb_each_text(l.state->'add_vv') dot "
+                        "WHERE dot.value::bigint>COALESCE((l.state->'remove_vv'->>dot.key)::bigint,0)) "
+                        "AND NOT EXISTS (SELECT 1 FROM authored_resources r WHERE r.account_id=:a "
+                        f"AND r.ref=l.state->>'endpoint_{'b' if side == 'a' else 'a'}' AND NOT r.visible) "
                         f"ORDER BY (l.state #>> '{{position_{side},value}}') COLLATE \"C\" DESC NULLS LAST,l.link_id DESC "
                         "LIMIT :limit"
                     ),

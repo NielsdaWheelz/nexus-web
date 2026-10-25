@@ -18,7 +18,7 @@ import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/pan
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import { convertReaderQuestion } from "@/lib/chat/readerQuestion";
+import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { bodyHasContent } from "@nexus/authored/body";
 import type { MediaAnnotations } from "./annotations";
 import type { AnnotationVerbs, MobileSelection } from "./useAnnotationVerbs";

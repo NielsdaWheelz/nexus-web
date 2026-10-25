@@ -10,7 +10,7 @@ export const STATUS_COPY: Record<SyncStatus, string> = {
 };
 export interface SyncFacts {
   local_error: boolean; saving: boolean; ready: boolean; admission: "ready" | "auth" | "format";
-  sync_error: boolean; online: boolean; pending: boolean; cursor: string; head: string;
+  sync_error: boolean; online: boolean; pending: boolean; cursor: string; head: string | null;
 }
 export function syncStatus(facts: SyncFacts): SyncStatus {
   if (facts.local_error) return "local_error";
@@ -20,5 +20,5 @@ export function syncStatus(facts: SyncFacts): SyncStatus {
   if (facts.admission === "auth") return "sign_in_required";
   if (facts.sync_error) return "sync_error";
   if (!facts.online) return "offline";
-  return facts.pending || BigInt(facts.cursor) < BigInt(facts.head) ? "syncing" : "current";
+  return facts.pending || facts.head === null || BigInt(facts.cursor) < BigInt(facts.head) ? "syncing" : "current";
 }

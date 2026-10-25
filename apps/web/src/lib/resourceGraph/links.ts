@@ -51,7 +51,7 @@ export async function preparePosition(runtime: WritingRuntime, ref: string, id: 
   const positions=insertionPositions(siblings.map(link=>({link_id:link.link_id,position:key(link)})),index,id);
   return {value:positions.find(item=>item.link_id===id)!.position,previous:siblings,moves:positions.filter(item=>item.link_id!==id).map(item=>({kind:"move_link",link_id:item.link_id,endpoint_ref:ref,position:item.position}))};
 }
-export async function prepareLink(runtime: WritingRuntime, input: LinkRequest): Promise<{ link_id: string; intents: Intent[] }> {
+export async function prepareLink(runtime: WritingRuntime, input: LinkRequest, sourcePlacement?: {value:string;moves:Intent[]}): Promise<{ link_id: string; intents: Intent[] }> {
   const store = await runtime.store;
   const replica = await store.readReplica();
   const [a, b] = sortedEndpoints(input.source_ref, input.target_ref);
@@ -60,7 +60,7 @@ export async function prepareLink(runtime: WritingRuntime, input: LinkRequest): 
   const known = (await store.readStates(selectStates({ link_ids: [id] }))).links[0];
   const intents: Intent[] = [];
   if (!known || !isVisible(known.add_vv, known.remove_vv)) {
-    const sourcePosition = await preparePosition(runtime, input.source_ref, id, input.after, input.before ?? null);
+    const sourcePosition = sourcePlacement ?? await preparePosition(runtime, input.source_ref, id, input.after, input.before ?? null);
     const targetPosition = await preparePosition(runtime, input.target_ref, id, null, null);
     intents.push(...sourcePosition.moves, ...targetPosition.moves, {
       kind: "add_link", link_id: id, endpoint_a: a, endpoint_b: b,

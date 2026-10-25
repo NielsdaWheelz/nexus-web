@@ -1,6 +1,7 @@
 "use client";
 
-// The editor host (pane visit or reader document) owns unsent rich input; nothing unsaved is stored. Explicit save commits
+// The editor host (pane visit or reader document) owns unsent rich input; nothing unsaved is
+// stored, and the host's loss guard covers it until it is saved or cleared. Explicit save commits
 // the new note and its first link to the destination in one local transaction,
 // after any caller prelude (a latent day's page). A
 // failed commit keeps its input visible and frozen until its retry lands the same
@@ -17,6 +18,7 @@ import type { NoteEdit } from "@/lib/notes/editorTypes";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { createLink, prepareTarget, type LinkTarget } from "@/lib/resourceGraph/links";
 import { useEditorDraft } from "@/lib/notes/editorHost";
+import type { WorkRisk } from "@/lib/unsavedWork";
 import type { ResourceItem } from "@/lib/resources/items";
 import styles from "./ResourceComposer.module.css";
 
@@ -43,6 +45,14 @@ type Props = {
 };
 const LOCAL_FAILURE: FeedbackContent = { tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." };
 
+/** Unsent input and a held failed commit would be lost; an in-flight local commit is unconfirmed. */
+function composerRisk(value: Composer): WorkRisk {
+  return {
+    changed: value.state === "editing" && (bodyHasContent(value.body) || value.failure?.retry != null),
+    unconfirmed: value.state === "saving",
+    stopsBrowserWork: false,
+  };
+}
 const fresh = (revision: number): Composer => ({
   body: emptyBody(), revision, searching: false, history: emptyNoteBodyHistory(), focus: null,
   noteRef: `note_block:${crypto.randomUUID()}`, state: "editing", failure: null,
@@ -50,7 +60,7 @@ const fresh = (revision: number): Composer => ({
 
 export default function ResourceComposer({ destinationRef, occurrenceKey, label, destinationLabel, prelude = [], afterSave = "keep", onSaved, onActiveChange }: Props) {
   const writing = useWritingRuntime();
-  const draft = useEditorDraft<Composer>(`Resources.ItemDraft:${occurrenceKey}`, () => fresh(0));
+  const draft = useEditorDraft<Composer>(`Resources.ItemDraft:${occurrenceKey}`, () => fresh(0), composerRisk);
   const value = draft.value;
   /** Local writing never waits for a server label: the host's capture, the existing stub, else the literal ref. */
   const sourceLabel = async (): Promise<string | null> => {

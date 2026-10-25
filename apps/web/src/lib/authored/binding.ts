@@ -18,11 +18,19 @@ export async function readBrowserBinding(): Promise<BrowserBinding | null> {
     request.onsuccess = () => resolve(request.result ?? null); request.onerror = () => reject(request.error);
   }); } finally { db.close(); }
 }
-export async function writeBrowserBinding(binding: BrowserBinding | null): Promise<void> {
+export async function writeBrowserBinding(binding: BrowserBinding): Promise<void> {
   const db = await database();
   try { await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("binding", "readwrite", { durability: "strict" });
-    if (binding === null) tx.objectStore("binding").delete("current"); else tx.objectStore("binding").put(binding, "current");
+    const store = tx.objectStore("binding");
+    const retiring = store.get("retiring");
+    const signedOut = store.get("signed_out");
+    const current = store.get("current");
+    current.onsuccess = () => {
+      const existing = current.result as BrowserBinding | undefined;
+      if (retiring.result != null || signedOut.result === true || existing && existing.account.account_id !== binding.account.account_id) { tx.abort(); return; }
+      if (!existing) store.put(binding, "current");
+    };
     tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
   }); } finally { db.close(); }
 }

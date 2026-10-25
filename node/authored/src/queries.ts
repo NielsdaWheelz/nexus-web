@@ -58,16 +58,26 @@ const BOUNDED_READABLE = `
   UNION ALL
   SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN passages p ON p.anchor_id=substr(w.ref,16) WHERE w.ref='passage_anchor:'||p.anchor_id`;
+/** Each endpoint arm is an ordered index range with its own bound. The outer
+ * merge sees at most twice the requested rows, including sparse live endpoints. */
+function orderedIncident(where:string,direction:"ASC"|"DESC",limit:string,exclude:string,requireRootLive=true):string {
+  return (["a","b"] as const).map(side=>{
+    const other=side==="a"?"b":"a";
+    const condition=where.replaceAll("POSITION",`l.position_${side}`);
+    return `SELECT * FROM(SELECT l.link_id,l.endpoint_a,l.endpoint_b,l.position_${side} AS position,l.state_json AS position_json,l.endpoint_${other} AS other_ref FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=?1 AND l.visible=1 AND l.link_id<>COALESCE(${exclude},'') AND ${requireRootLive?live("?1"):"1"} AND ${live(`l.endpoint_${other}`)} ${condition} ORDER BY l.position_${side} ${direction},l.link_id ${direction} LIMIT ${limit})`;
+  }).join(" UNION ALL ");
+}
+function anchor(parameter:string):string {
+  return `SELECT link_id,CASE WHEN endpoint_a=?1 THEN position_a ELSE position_b END AS position FROM links WHERE link_id=${parameter} AND visible=1 AND(endpoint_a=?1 OR endpoint_b=?1)`;
+}
 function positions(query: Extract<AuthoredQuery,{kind:"positions"}>):CompiledQuery {
-  const base=`WITH bound(ref,exclude_link_id) AS (VALUES(?,?)),incident AS NOT MATERIALIZED (${INCIDENT})`;
   const params:(string|number|null)[]=[query.ref,query.exclude_link_id];
   const at=query.at;
-  if(at.kind==='tail')return {sql:`${base} SELECT position_json FROM incident ORDER BY position DESC,link_id DESC LIMIT 1`,params};
-  if(at.kind==='tie')return {sql:`${base} SELECT position_json,link_id AS cursor_json FROM incident WHERE position=? AND link_id>? ORDER BY link_id LIMIT ?`,params:[...params,at.position,at.cursor??'',Math.max(1,Math.min(100,Math.floor(at.limit)))]};
-  if(at.kind==='bounds')return {sql:`${base},lo AS (SELECT * FROM incident WHERE position<? ORDER BY position DESC,link_id DESC LIMIT 1),hi AS (SELECT * FROM incident WHERE position>? ORDER BY position,link_id LIMIT 1) SELECT position_json FROM (SELECT * FROM lo UNION ALL SELECT * FROM hi) ORDER BY position,link_id`,params:[...params,at.position,at.position]};
-  const direction=at.side==='before'?'DESC':'ASC';
-  const comparison=at.side==='before'?'<':'>';
-  return {sql:`${base},anchor AS (SELECT * FROM incident WHERE link_id=?),neighbor AS (SELECT i.* FROM incident i,anchor a WHERE (i.position,i.link_id) ${comparison} (a.position,a.link_id) ORDER BY i.position ${direction},i.link_id ${direction} LIMIT 1) SELECT position_json FROM (SELECT * FROM anchor UNION ALL SELECT * FROM neighbor) ORDER BY position,link_id`,params:[...params,at.link_id]};
+  if(at.kind==="tail")return {sql:`WITH selected AS(${orderedIncident("","DESC","1","?2",false)}) SELECT position_json FROM selected ORDER BY position DESC,link_id DESC LIMIT 1`,params};
+  if(at.kind==="tie")return {sql:`WITH selected AS(${orderedIncident("AND POSITION=?3 AND l.link_id>?4","ASC","?5","?2",false)}) SELECT position_json,link_id AS cursor_json FROM selected ORDER BY position,link_id LIMIT ?5`,params:[...params,at.position,at.cursor??"",Math.max(1,Math.min(100,Math.floor(at.limit)))]};
+  if(at.kind==="bounds")return {sql:`WITH lo AS(${orderedIncident("AND POSITION<?3","DESC","1","?2",false)}),hi AS(${orderedIncident("AND POSITION>?3","ASC","1","?2",false)}),first AS(SELECT * FROM lo ORDER BY position DESC,link_id DESC LIMIT 1),last AS(SELECT * FROM hi ORDER BY position,link_id LIMIT 1) SELECT position_json FROM(SELECT * FROM first UNION ALL SELECT * FROM last) ORDER BY position,link_id`,params:[...params,at.position]};
+  const direction=at.side==="before"?"DESC":"ASC",comparison=at.side==="before"?"<":">";
+  return {sql:`WITH anchor AS MATERIALIZED(${anchor("?3")}),neighbors AS(${orderedIncident(`AND(POSITION,l.link_id)${comparison}((SELECT position FROM anchor),(SELECT link_id FROM anchor))`,direction,"1","?2",false)}),nearest AS(SELECT * FROM neighbors ORDER BY position ${direction},link_id ${direction} LIMIT 1),selected AS(SELECT l.state_json AS position_json,CASE WHEN l.endpoint_a=?1 THEN l.position_a ELSE l.position_b END AS position,l.link_id FROM links l WHERE l.link_id=?3 AND EXISTS(SELECT 1 FROM anchor) UNION ALL SELECT position_json,position,link_id FROM nearest) SELECT position_json FROM selected ORDER BY position,link_id`,params:[...params,at.link_id]};
 }
 
 export function compileQuery(query: AuthoredQuery): CompiledQuery {
@@ -111,7 +121,7 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
     }
     case "annotations": return { sql: "SELECT projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
     case "backlinks": return { sql: "SELECT r.projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
-    case "search": return { sql: `${READABLE} SELECT r.projection_json,NULL AS link_json FROM search_fts f JOIN search_documents d ON d.rowid=f.rowid JOIN readable r ON r.ref=d.ref WHERE search_fts MATCH ? AND r.ref>? ORDER BY r.ref LIMIT ?`, params: [searchExpression(query.text) || '""', query.cursor ?? "", limit] };
+    case "search": return { sql: `WITH wanted AS MATERIALIZED(SELECT d.ref FROM search_fts f CROSS JOIN search_documents d ON d.rowid=f.rowid WHERE search_fts MATCH ? AND d.ref>? ORDER BY d.ref LIMIT ?),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT projection_json,NULL AS link_json FROM readable ORDER BY ref`, params: [searchExpression(query.text) || '""', query.cursor ?? "", limit] };
     case "adjacency": {
       const cursor=readAdjacencyCursor(query.cursor);
       const where=cursor===null?'':`WHERE (position,link_id)>(?,?)`;
@@ -121,7 +131,10 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       const cursor=readAdjacencyCursor(query.cursor);
       if(cursor!==null)return compileQuery({kind:'adjacency',ref:query.ref,cursor:query.cursor,limit});
       const before=Math.floor(limit/2),after=limit-before;
-      return {sql:`WITH bound(ref,exclude_link_id) AS (VALUES(?,NULL)),incident AS NOT MATERIALIZED (${INCIDENT}),anchor AS (SELECT * FROM incident WHERE link_id=?),earlier AS (SELECT i.* FROM incident i,anchor a WHERE (i.position,i.link_id)<(a.position,a.link_id) ORDER BY i.position DESC,i.link_id DESC LIMIT ?),later AS (SELECT i.* FROM incident i,anchor a WHERE(i.position,i.link_id)>=(a.position,a.link_id) ORDER BY i.position,i.link_id LIMIT ?),selected AS MATERIALIZED (SELECT * FROM earlier UNION ALL SELECT * FROM later),first AS (SELECT position,link_id FROM selected ORDER BY position,link_id LIMIT 1),wanted(ref) AS (SELECT other_ref FROM selected),readable AS NOT MATERIALIZED (${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json,(SELECT CASE WHEN EXISTS(SELECT 1 FROM incident i,first f WHERE (i.position,i.link_id)<(f.position,f.link_id)) THEN (SELECT link_id FROM first) ELSE NULL END) AS previous_cursor FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,query.link_id,before,after]};
+      const earlier=orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM anchor),(SELECT link_id FROM anchor))","DESC","?3","NULL");
+      const later=orderedIncident("AND(POSITION,l.link_id)>=((SELECT position FROM anchor),(SELECT link_id FROM anchor))","ASC","?4","NULL");
+      const previous=orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM first),(SELECT link_id FROM first))","DESC","1","NULL");
+      return {sql:`WITH anchor AS MATERIALIZED(${anchor("?2")}),before_candidates AS(${earlier}),after_candidates AS(${later}),earlier AS(SELECT * FROM before_candidates ORDER BY position DESC,link_id DESC LIMIT ?3),later AS(SELECT * FROM after_candidates ORDER BY position,link_id LIMIT ?4),selected AS MATERIALIZED(SELECT * FROM earlier UNION ALL SELECT * FROM later),first AS(SELECT position,link_id FROM selected ORDER BY position,link_id LIMIT 1),previous_candidates AS(${previous}),wanted(ref) AS(SELECT other_ref FROM selected),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json,CASE WHEN EXISTS(SELECT 1 FROM previous_candidates) THEN (SELECT link_id FROM first) ELSE NULL END AS previous_cursor FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,query.link_id,before,after]};
     }
   }
 }

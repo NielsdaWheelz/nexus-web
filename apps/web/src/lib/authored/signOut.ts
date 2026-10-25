@@ -3,7 +3,7 @@
  * obtains explicit discard, then retires before purge. Cancel resumes deferred
  * preparation unchanged. A durable retirement marker owns interrupted cleanup. */
 import { FORMAT_REVISION } from "@nexus/authored/types";
-import { openAuthoredStore } from "./client";
+import { openAuthoredStore, retireAuthoredAccount } from "./client";
 import { markBrowserRetiring, readBrowserRetiring, clearBrowserRetiring } from "./binding";
 import { closeWritingRuntime, discardWritingRuntime, hasUncommittedWriting } from "@/lib/notes/runtime";
 async function control(accountId: string, op: "pause_commands" | "retire", paused = false): Promise<void> {
@@ -12,7 +12,7 @@ async function control(accountId: string, op: "pause_commands" | "retire", pause
     const close = () => { clearTimeout(timer); worker.port.postMessage({ id: 3, op: "close" }); worker.port.close(); };
     const timer = setTimeout(() => { close(); reject(new Error("couldn’t close local writing owners. close other nexus tabs and retry sign out.")); }, 30_000);
     worker.port.onmessage = ({ data }) => {
-      if (data.kind === "retired" || data.id === 2 && data.ok) { close(); resolve(); }
+      if (data.kind === "retired" || data.id === 2 && data.ok) { if (op === "retire") retireAuthoredAccount(accountId); close(); resolve(); }
       else if (data.id === 1 && data.ok) worker.port.postMessage({ id: 2, op, paused, account_id: accountId, format_revision: FORMAT_REVISION });
       else if (data.ok === false) { close(); reject(new Error(data.error)); }
     };
@@ -32,7 +32,11 @@ async function purgeBrowser(accountId: string): Promise<void> {
 export async function finishBrowserRetirement(): Promise<boolean> {
   const account = await readBrowserRetiring();
   if (account === null) return false;
-  await purgeBrowser(account); return true;
+  await purgeBrowser(account);
+  // The shell retirement owner outlives the account menu that requested exit.
+  try { await fetch("/auth/signout", { method: "POST", credentials: "same-origin", redirect: "manual" }); }
+  catch { /* Offline removal is enforced by the durable signed-out marker. */ }
+  return true;
 }
 export async function prepareAuthoredSignOut(accountId: string): Promise<boolean> {
   const store = await openAuthoredStore(accountId);
@@ -55,7 +59,7 @@ export async function prepareAuthoredSignOut(accountId: string): Promise<boolean
     }
     if (browser) {
       await markBrowserRetiring(accountId); retiring = true;
-      await purgeBrowser(accountId);
+      await control(accountId, "retire");
     } else if (unfinished) await discardWritingRuntime(accountId);
     else await closeWritingRuntime(accountId);
     return true;
@@ -76,9 +80,6 @@ export async function discardFailedAuthoredSetup(accountId: string): Promise<voi
     await sessionSignOut(true);
   } else {
     await markBrowserRetiring(accountId);
-    await purgeBrowser(accountId);
-    window.dispatchEvent(new Event("nexus:authored-retired"));
-    try { await fetch("/auth/signout", { method: "POST", credentials: "same-origin", redirect: "manual" }); }
-    catch { /* The durable local signout remains effective without a connection. */ }
+    await control(accountId, "retire");
   }
 }

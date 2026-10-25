@@ -33,16 +33,20 @@ export default function PagePaneBody() {
   const accountId = useAuthoredAccountId();
   const page = usePaneParam("pageId");
   const date = usePaneParam("localDate");
-  const key = date === null ? page ?? "new" : `daily:${date}`;
   if (writing === null) return <PaneLoadingState label="preparing your notes" announcement="None" />;
-  return <PageContent key={`${accountId}:${key}`} writing={writing} pageId={page === "new" ? null : page} localDate={date} />;
+  return <PageAccount key={accountId} writing={writing} pageId={page} localDate={date} />;
 }
 
-function PageContent({ writing, pageId, localDate }: { writing: WritingRuntime; pageId: string | null; localDate: string | null }) {
+function PageAccount({ writing, pageId, localDate }: { writing: WritingRuntime; pageId: string | null; localDate: string | null }) {
+  const [createdId] = useState(() => crypto.randomUUID());
+  const identity = localDate === null ? pageId === "new" || pageId === null ? createdId : pageId : `daily:${localDate}`;
+  return <PageContent key={identity} writing={writing} createdId={createdId} pageId={pageId === "new" ? null : pageId} localDate={localDate} />;
+}
+
+function PageContent({ writing, createdId, pageId, localDate }: { writing: WritingRuntime; createdId: string; pageId: string | null; localDate: string | null }) {
   const pane = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
   const params = usePaneSearchParams();
   const { delivery, claim } = usePaneEntryDelivery();
-  const [createdId] = useState(() => crypto.randomUUID());
   const newPage = pageId === null && localDate === null;
   const direct = useMemo<ResolvedPage>(() => ({
     ref: `page:${pageId ?? createdId}`,
@@ -112,21 +116,20 @@ function PageContent({ writing, pageId, localDate }: { writing: WritingRuntime; 
       if (outline.current && claim(delivery)) void outline.current.append().catch(setEntryError);
     } else if (entry.kind === "FocusNote") {
       setFilter("");
-      const focus = () => {
-        if (!outline.current?.focusNote(`note_block:${entry.noteBlockId}`)) return false;
+      const controller = new AbortController();
+      const handle = outline.current;
+      if (handle === null) return;
+      void handle.focusNote(`note_block:${entry.noteBlockId}`, controller.signal).then(found => {
+        if (controller.signal.aborted || !claim(delivery)) return;
+        if (!found) { setEntryMessage("this note is no longer on this page."); return; }
         const editor = [...surface.current?.querySelectorAll<HTMLElement>("[data-resource-ref]") ?? []]
           .find(row => row.dataset.resourceRef === `note_block:${entry.noteBlockId}`)?.querySelector<HTMLElement>('[role="textbox"]');
         if (editor?.isContentEditable) {
           const range = editor.ownerDocument.createRange(); range.selectNodeContents(editor); range.collapse(false);
           const selection = editor.ownerDocument.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
         }
-        claim(delivery);
-        return true;
-      };
-      if (focus()) return;
-      const observer = new MutationObserver(focus);
-      if (surface.current) observer.observe(surface.current, { childList: true, subtree: true });
-      return () => observer.disconnect();
+      }).catch(error => { if (!controller.signal.aborted) setEntryError(error); });
+      return () => controller.abort();
     }
   }, [claim, delivery, gone, id, newPage, ready]);
   const enterTitle = () => {

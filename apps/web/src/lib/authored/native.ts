@@ -78,10 +78,10 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
-  const queries = new Set<() => void>();
+  const queries = new Set<(corpusChanged?: boolean) => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
-  const changed = () => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(); };
+  const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(corpusChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => call("query", { query, ...await nativeQueryPlan(query) });
   const changeStates = async (changes: Change[]) => {
     const selection: StateSelection = { refs: [], link_ids: [], anchor_ids: [], source_refs: [] };
@@ -166,13 +166,13 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const states = await changeStates([frame.change]);
         await validateBindings(accountId, states, [frame.change]);
         frame = { ...frame, states: mergeChanges(states, [frame.change]) };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.localFailure(false); sync.facts.pending = true; sync.wake(); return result; }
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.localFailure(false); sync.facts.pending = true; if (result.kind === "committed") changed(true); sync.wake(); return result; }
       catch (error) { sync.localFailure(true); throw error; }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener) => {
       let live = true;
-      const read = () => { void serialize(() => queryLocal(query)).then(result => { if (live) listener(result); }, error => { if (live && sync.facts.ready) reportError(error); }); };
+      const read = (corpusChanged = true) => { if (!corpusChanged) return; void serialize(() => queryLocal(query)).then(result => { if (live) listener(result); }, error => { if (live && sync.facts.ready) reportError(error); }); };
       queries.add(read); read(); return () => { live = false; queries.delete(read); };
     },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.last_error); return () => { statuses.delete(listener); }; },

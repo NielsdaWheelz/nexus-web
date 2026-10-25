@@ -1,5 +1,6 @@
 /** Commands freeze observed causal coverage and Yjs deltas once. Retrying remerges
- * identical bytes; it never rereads delete coverage or allocates another touch. */
+ * identical bytes; it never rereads delete coverage or allocates another touch.
+ * Creating an already-owned identity does nothing; revival is an explicit restore. */
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import type { Change, Corpus, HighlightColor, PassageCapture, SourceCapture, LinkState, ResourcePatch, ResourceState, SelectionCapture, Stamp, Vector } from "./types.ts";
 import { createNote, createTitle } from "./documents.ts";
@@ -37,7 +38,8 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
   const change:Change={command_seq:context.command_seq,lamport:context.lamport,resources:[],links:[],passages:[],source_stubs:[]};
   const stamp={lamport:context.lamport,replica_id:context.replica_id};
   const dot:Vector={[context.replica_id]:context.command_seq};
-  const resource=(ref:string):ResourceState=>{const r=mergeChanges(states,[change]).resources.find(r=>r.ref===ref);if(!r)throw new TypeError(`Unknown resource ${ref}`);return r;};
+  const knownResource=(ref:string):ResourceState|null=>mergeChanges(states,[change]).resources.find(resource=>resource.ref===ref)??null;
+  const resource=(ref:string):ResourceState=>{const r=knownResource(ref);if(!r)throw new TypeError(`Unknown resource ${ref}`);return r;};
   const link=(id:string):LinkState=>{const l=mergeChanges(states,[change]).links.find(l=>l.link_id===id);if(!l)throw new TypeError(`Unknown link ${id}`);return l;};
   const register=<T>(value:T)=>({value,stamp});
   const add=(action:Intent):void=>{
@@ -45,8 +47,16 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       case "capture_passage": change.passages.push({anchor_id:action.anchor_id,source_ref:action.source_ref,normalized_exact:action.normalized_exact,prefix:action.prefix,suffix:action.suffix,capture:register(action.capture)});return;
       case "capture_source": change.source_stubs.push({source_ref:action.source_ref,capture:register(action.capture)});return;
       case "batch": for(const child of action.intents)add(child);return;
-      case "create_note": change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:createNote(action.body)});return;
-      case "create_page": change.resources.push({kind:"page",ref:action.ref,touch_vv:dot,delete_vv:{},local_date:action.local_date,title_update:createTitle(action.title)});return;
+      case "create_note": {
+        const known=knownResource(action.ref);
+        if(known){if(known.kind!=="note")throw new TypeError("Resource kind is immutable");return;}
+        change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:createNote(action.body)});return;
+      }
+      case "create_page": {
+        const known=knownResource(action.ref);
+        if(known){if(known.kind!=="page"||known.local_date!==action.local_date)throw new TypeError("Resource kind and daily binding are immutable");return;}
+        change.resources.push({kind:"page",ref:action.ref,touch_vv:dot,delete_vv:{},local_date:action.local_date,title_update:createTitle(action.title)});return;
+      }
       case "edit_body": {
         if(resource(action.ref).kind!=="note")throw new TypeError("Body edit addresses a note");
         change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update});return;

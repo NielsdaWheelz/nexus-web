@@ -8,7 +8,8 @@ import type { WritingDocument } from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys } from "./NoteEditor";
 import NoteEditor from "./NoteEditor";
-export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoinPrevious, history, structuralKeys, inspection }: {
+export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoinPrevious, history, structuralKeys, inspection, reference }: {
+  reference?: import("@/lib/resourceGraph/useReferenceInput").ReferenceInputHost | null;
   document: WritingDocument; label: string; editable?: boolean;
   onSplit?: (displayed: import("@/lib/notes/editorTypes").DisplayedSplit) => void; onJoinPrevious?: () => void;
   history?: EditorHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;
@@ -28,7 +29,7 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
     return () => document.doc.off("update", update);
   }, [document]);
   if(!history && own?.document!==document)return <p>opening note…</p>;
-  return <NoteEditor writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
+  return <NoteEditor reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable} compact
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}
     keys={{ ...structuralKeys, ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoinPrevious ? { join: direction => { if (direction === "backward") onJoinPrevious(); }, emptyBackspace: onJoinPrevious } : {}) }}

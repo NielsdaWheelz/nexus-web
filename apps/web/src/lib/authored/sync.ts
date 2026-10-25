@@ -20,8 +20,8 @@ export class Sync {
   private failures = 0;
   private commitError = false;
   last_error: string | null = null;
-  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, cursor: "0", head: "0" };
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: () => void) {}
+  readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, cursor: "0", head: null };
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void) {}
   wake() {
     if (this.retired || !this.foreground) return;
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
@@ -96,7 +96,7 @@ export class Sync {
       await this.local(async () => {
         const current = await this.persistence.applyRemote(data.changes, data.next_cursor);
         this.facts.cursor = current.server_cursor;
-        this.changed();
+        this.changed(data.changes.some(change => BigInt(change.server_seq) > BigInt(replica.server_cursor)));
       });
       if (BigInt(this.facts.cursor) >= BigInt(data.head_cursor)) return;
       if (!data.changes.length) throw new Error("authored feed did not advance");
@@ -162,8 +162,8 @@ export class Sync {
       const cursor = header.head_cursor;
       await this.local(() => this.persistence.finishProvisioning(cursor, counts, header!.lamport));
       this.facts.ready = true; this.facts.cursor = cursor;
-      this.changed();
+      this.changed(true);
     } finally { await reader.cancel(); reader.releaseLock(); }
   }
 }
-function max(a: string, b: string) { return BigInt(a) > BigInt(b) ? a : b; }
+function max(a: string | null, b: string) { return a !== null && BigInt(a) > BigInt(b) ? a : b; }

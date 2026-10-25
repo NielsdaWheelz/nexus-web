@@ -170,7 +170,7 @@ export function bodyText(text: string): NoteBody {
 }
 
 export function docFromBody(body: NoteBody): PMNode {
-  const block = noteBodySchema.nodeFromJSON(body.body_pm_json);
+  const block = noteBodySchema.nodeFromJSON(parseBody(body.body_pm_json).body_pm_json);
   return noteBodySchema.nodes.note_body_doc!.create(null, block);
 }
 
@@ -190,7 +190,7 @@ export const sameBody = (a: NoteBody, b: NoteBody): boolean =>
 
 /** Only an unadorned empty paragraph is blank; all other rich structure is content. */
 export function bodyHasContent(body: NoteBody): boolean {
-  const block = noteBodySchema.nodeFromJSON(body.body_pm_json);
+  const block = noteBodySchema.nodeFromJSON(parseBody(body.body_pm_json).body_pm_json);
   return block.attrs.presentation === "code" || block.content.size > 0;
 }
 

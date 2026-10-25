@@ -141,6 +141,17 @@ export type PreparationState =
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly content: MenuContent }
   | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
 
+/**
+ * Facts that settle after a prepared snapshot is published, for the same request. They
+ * render in one region after it and are never part of it: arrival cannot reorder,
+ * replace or close the published actions, move focus or change their meaning.
+ */
+export type TrailingState =
+  | null
+  | { readonly kind: "Loading"; readonly request: AbortSignal }
+  | { readonly kind: "Ready"; readonly request: AbortSignal; readonly label: string | null; readonly options: readonly ActionDescriptor[] }
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
+
 /** The presenter owns invocation, cancellation and its preparation deadline. */
 export type MenuSource = { readonly subjectKey: string; readonly title: string } & (
   | { readonly kind: "Immediate"; readonly content: MenuContent }
@@ -148,5 +159,7 @@ export type MenuSource = { readonly subjectKey: string; readonly title: string }
       readonly kind: "Prepared";
       readonly state: PreparationState;
       readonly prepare: (signal: AbortSignal) => void;
+      /** Present only when the source has a trailing region; it has no deadline of its own. */
+      readonly trailing?: TrailingState;
     }
 );

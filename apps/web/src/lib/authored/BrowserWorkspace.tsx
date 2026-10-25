@@ -11,20 +11,28 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { normalizeWorkspaceHref, resolveTodayHref, MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
 import { enterWorkspace } from "@/lib/workspace/model";
-import { beginBrowserSignIn, browserSignedOut, readBrowserBinding, writeBrowserBinding, type BrowserBinding } from "./binding";
+import { beginBrowserSignIn, browserSignedOut, readBrowserRetiring, readBrowserBinding, writeBrowserBinding, type BrowserBinding } from "./binding";
 import { admitAuthoredAccount } from "./client";
 import { finishBrowserRetirement } from "./signOut";
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<BrowserBinding | null>(null);
   const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
+  const [retiring, setRetiring] = useState(false);
   const [failure, setFailure] = useState<Error | null>(null);
   const [attempt, retry] = useState(0);
   useEffect(() => {
     let live = true;
-    void (async () => {
+    let handlingRetirement = false;
+    const finishRetirement = async () => {
+      handlingRetirement = true;
+      if (live) { setBinding(null); setRetiring(true); setFailure(null); }
       await finishBrowserRetirement();
-      if (await browserSignedOut()) { if (live) setSignedOut(true); return; }
+      if (live) { setRetiring(false); setSignedOut(true); }
+    };
+    void (async () => {
+      if (await readBrowserRetiring() !== null) { await finishRetirement(); return; }
+      if (await browserSignedOut()) { if (live) { setRetiring(false); setSignedOut(true); setFailure(null); } return; }
       let saved = await readBrowserBinding();
       if (saved === null) {
         const [me, profile, workspace] = await Promise.all([
@@ -33,21 +41,33 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
           apiFetch<ApiJson<"/me/workspace-session", "get">>("/api/me/workspace-session"),
         ]);
         saved = { account: { account_id: me.data.user_id, calendar_time_zone: me.data.calendar_time_zone }, reader_profile: profile.data, workspace: enterWorkspace(workspace.data.own, workspace.data.most_recent_elsewhere, null) };
+        if (handlingRetirement) return;
         await writeBrowserBinding(saved);
         admitAuthoredAccount(saved.account.account_id);
       }
+      if (handlingRetirement) return;
       const url = new URL(window.location.href);
       const raw = `${url.pathname}${url.search}${url.hash}`;
       const tooLong = raw.length > MAX_WORKSPACE_HREF_LENGTH;
       const canonical = url.pathname === "/" || tooLong ? null : normalizeWorkspaceHref(parseNexusOpenUrl(url)?.href ?? raw);
       const href = canonical === null ? null : resolveTodayHref(canonical, saved.account.calendar_time_zone);
       if (live) { setBinding({ ...saved, workspace: enterWorkspace(saved.workspace, null, href) }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : null); setFailure(null); }
-    })().catch(error => { if (live) setFailure(error instanceof Error ? error : new Error("couldn’t open your workspace")); });
-    const retired = () => { setBinding(null); setSignedOut(true); };
+    })().catch(async error => {
+      let ended = false;
+      try { ended = await browserSignedOut(); } catch { /* Preserve the original startup failure. */ }
+      if (!live) return;
+      if (ended) { setBinding(null); setRetiring(false); setSignedOut(true); setFailure(null); }
+      else setFailure(error instanceof Error ? error : new Error("couldn’t open your workspace"));
+    });
+    const retired = () => {
+      if (handlingRetirement) return;
+      void finishRetirement().catch(error => { if (live) setFailure(error instanceof Error ? error : new Error("local notes could not be removed")); });
+    };
     window.addEventListener("nexus:authored-retired", retired);
     return () => { live = false; window.removeEventListener("nexus:authored-retired", retired); };
   }, [attempt]);
   const signIn = () => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); };
+  if (retiring) return <FeedbackState content={{ tone: failure === null ? "Neutral" : "Danger", title: failure === null ? "signing out on this device…" : "sign out not completed", message: failure?.message }} announcement="Polite" actions={failure === null ? undefined : [{ label: "retry sign out", onClick: () => retry(value => value + 1) }]} />;
   if (signedOut) return <FeedbackState content={{ tone: "Neutral", title: "signed out on this device", message: failure?.message }} announcement="None" actions={[{ label: "sign in", onClick: signIn }]} />;
   if (failure) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your workspace", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: "sign in", onClick: signIn }]} />;
   if (!binding) return <FeedbackState content={{ tone: "Neutral", title: "opening your workspace…" }} announcement="None" />;

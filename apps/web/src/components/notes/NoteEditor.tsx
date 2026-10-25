@@ -177,7 +177,6 @@ export default function NoteEditor(props: NoteEditorProps) {
 }
 function NoteEditorContent(props: NoteEditorProps) {
   const editorHost = useNoteEditorHost();
-  const paused = false;
   const bindingRef = useRef<InlineBinding | null>(null);
   const inheritedBranch = useContext(ResourceBranch);
   const outline = useContext(ResourceOutlineContext);
@@ -203,7 +202,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const viewRef = useRef<EditorView | null>(null);
   const consumedFocus = useRef<number | null>(null);
   const latest = useRef(props);
-  latest.current = { ...props, editable: props.editable && !paused };
+  latest.current = { ...props, editable: props.editable };
   const busy = useRef(false);
   const guard = useWorkGuard();
   const retainedInput = editorHost.retained_input;
@@ -245,7 +244,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const [referenceVisible, setReferenceVisible] = useState(true);
   const reference = useReferenceInput(props.editorKey, props.reference ?? null, referenceFocused && referenceVisible);
   const referenceReady = reference.isReady();
-  latest.current = { ...props, editable: props.editable && !paused && referenceReady };
+  latest.current = { ...props, editable: props.editable && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const suspended = useRef(false);
@@ -436,7 +435,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       const refuse = (message: string) => setAttachmentFeedback({
         tone: "Danger", title: message,
       });
-      if (!latest.current.editable || false || referenceRef.current.getState() !== null)
+      if (!latest.current.editable || referenceRef.current.getState() !== null)
         return;
       setAttachmentFeedback(null);
       if (!replaceable(view))
@@ -494,21 +493,21 @@ function NoteEditorContent(props: NoteEditorProps) {
 
   useEffect(() => {
     const task = attachmentValue;
-    if (!task?.body || !props.editable || paused || !referenceReady || viewRef.current?.composing || !sameBody(props.body, task.base)) return;
+    if (!task?.body || !props.editable || !referenceReady || viewRef.current?.composing || !sameBody(props.body, task.base)) return;
     reportEdit({ before: props.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
     setAttachment(null);
-  }, [attachmentValue, setAttachment, props, paused, referenceReady, reportEdit]);
+  }, [attachmentValue, setAttachment, props, referenceReady, reportEdit]);
 
   useLayoutEffect(() => {
     // Fresh reference ownership is installed by the hook's preceding layout
     // effect. Read it before any view update; the earlier render's false value
     // would briefly disable and blur this body during canonical binding.
-    latest.current = { ...latest.current, editable: props.editable && !paused && referenceRef.current.isReady() };
+    latest.current = { ...latest.current, editable: props.editable && referenceRef.current.isReady() };
     viewRef.current?.setProps({
       editable: () => latest.current.editable && !busy.current,
     });
-    if (!props.editable || paused) setLinkVisible(false);
-  }, [props.editable, paused, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
+    if (!props.editable) setLinkVisible(false);
+  }, [props.editable, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -643,6 +642,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         )
           return false;
         latest.current.history?.boundary();
+        current.updateState(EditorState.create({doc:current.state.doc,selection:current.state.selection,plugins:current.state.plugins}));
         referenceRef.current.begin(bodyFromNode(body));
         setReferenceVisible(true);
         return false;
@@ -759,7 +759,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             if (current.isDestroyed || current.composing) return;
             const original = compositionBase.current;
             compositionBase.current = null;
-            if (!latest.current.editable || false) return;
+            if (!latest.current.editable) return;
             if (original) {
               const block = current.state.doc.firstChild!;
               const committed = bodyFromNode(block);
@@ -775,8 +775,11 @@ function NoteEditorContent(props: NoteEditorProps) {
                 block.textContent === "@" &&
                 block.childCount === 1 &&
                 block.firstChild?.isText
-              )
+              ) {
                 referenceRef.current.begin(original.body);
+                current.updateState(EditorState.create({doc:docFromBody(original.body),plugins:current.state.plugins}));
+                current.dispatch(current.state.tr.insertText("@",1));
+              }
               else if (!sameBody(original.body, committed))
                 reportEdit({
                   before: original.body,
@@ -939,7 +942,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         return act(() => keys.split!(left, right, binding ? {body_state:binding.bodyState(),from:selection.from-1,to:selection.to-1} : null));
       },
       dispatchTransaction(tr) {
-        if (binding && tr.docChanged && tr.getMeta(SOURCE) !== "external" && referenceRef.current.getState() === null) {
+        if (binding && tr.docChanged && tr.getMeta(SOURCE) !== "external" && referenceRef.current.getState() === null && !compositionBase.current?.reference) {
           try { binding.apply(tr); }
           catch (error) { warn("edit couldn’t be applied", error instanceof Error ? error.message : "your existing writing is kept."); return; }
         }
@@ -1047,6 +1050,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         plugins: view.state.plugins,
       }),
     );
+    bindingRef.current?.refresh();
   }, [reference.owner, reference.completion]);
 
   const focusSerial = props.focus?.serial;
@@ -1177,7 +1181,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
         />
       ) : null}
-      {props.editable && !paused && toolbar && !(link && linkVisible) && reference.state === null ? (
+      {props.editable && toolbar && !(link && linkVisible) && reference.state === null ? (
         <div
           className={styles.toolbar}
           role="toolbar"

@@ -1,15 +1,14 @@
-# a failed shared worker can leave later requests waiting forever
+# terminal shared worker failure needs live copy/restart proof
 
-`apps/web/src/lib/authored/client.ts` handles `worker.onerror` by rejecting the
-requests already in `waiting`. it does not close admission or reject later calls.
-`WritingRuntime.store` retains the successfully opened store promise, so retry
-can enqueue another request to the failed worker with no responder.
+an opened worker can stop after the runtime retains its store handle. formerly
+`worker.onerror` rejected only current requests; future calls could hang forever.
+the client now remembers terminal failure, rejects future calls deterministically,
+and limits unanswered RPCs. the runtime retains the accepted input and uncertain
+command; a terminal fault exposes copy and guarded restart, never an inoperative
+retry. this is a deliberate manual recovery contract, not a worker supervisor.
 
-impact: retained unsaved input can lose an effective retry path after a worker
-failure. the initial-open rejection path already clears its failed promise; this
-is the failure after successful opening.
-
-resolve at the store/runtime boundary: later requests must fail deterministically,
-and retry must reopen a valid owner while retaining the same admitted intent and
-uncertain commit identity. prove a worker failure after open, retry, and durable
-reopen without a duplicate command or lost words. no recovery inventory.
+the ignored `authored-lifecycle.spec.ts` terminates the actual production shared
+worker through its owned profile's devtools target, edits the mounted note,
+checks retained words/copy/absence of fake retry, and dismisses the real reload
+loss guard. it has not run yet. resolve after that real target case passes; the
+static gate and SQL-only cases do not prove this lifecycle.

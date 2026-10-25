@@ -4,9 +4,11 @@
 import * as Y from "yjs";
 import { applyBodyEdits, bodyInline, encodeBytes, hydrateNote, readBody, sliceInline } from "@nexus/authored/documents";
 import { emptyBody, parseBody } from "@nexus/authored/body";
-import { type Intent } from "@nexus/authored/commands";
+import { insertionPositions, type Intent } from "@nexus/authored/commands";
+import { linkId } from "@nexus/authored/identity";
+import type { ClipItem } from "./clipboard";
 import type { LinkState, Vector } from "@nexus/authored/types";
-import { preparePosition, prepareLink } from "@/lib/resourceGraph/links";
+import { endpointForResource, preparePosition, prepareLink } from "@/lib/resourceGraph/links";
 import { LocalCommitError, type LocalCommit, type WritingDocument, type WritingRuntime } from "./runtime";
 export interface EditorHistory {
   origin: unknown;
@@ -81,12 +83,16 @@ export class OutlineHistory {
   undo = (): void => this.enqueue(async () => {
     const group = this.past.at(-1);
     if (!group) return;
-    await group.undo(); this.past.pop(); this.future.push(group);
+    const completion=group.undo();
+    this.past.pop();this.future.push(group);
+    await completion;
   });
   redo = (): void => this.enqueue(async () => {
     const group = this.future.at(-1);
     if (!group) return;
-    await group.redo(); this.future.pop(); this.past.push(group);
+    const completion=group.redo();
+    this.future.pop();this.past.push(group);
+    await completion;
   });
   private stopTyping(): void { for (const history of this.texts.values()) history.manager.stopCapturing(); }
   async create(parent_ref: string, after: string | null = null, body = emptyBody(), prelude: readonly Intent[] = []): Promise<string> {
@@ -102,6 +108,56 @@ export class OutlineHistory {
       redo: async () => { restored=await this.commit({kind:"batch",intents:[{kind:"restore_resource",ref},...addition?[{kind:"restore_link" as const,link_id:placement.link_id}]:[]]}); }, release:()=>{},
     });
     return ref;
+  }
+  async paste(parent_ref:string,after:string|null,items:readonly ClipItem[],prelude:readonly Intent[]=[]):Promise<string[]> {
+    this.stopTyping();
+    const accountId=(await (await this.runtime.store).readReplica()).account_id;
+    const refs=items.map(item=>item.kind==="note"?`note_block:${crypto.randomUUID()}`:item.ref);
+    const positions=new Map<string,{last:string;upper:string|null}>();
+    const moved=new Map<string,{link:LinkState;endpoint:string}>();
+    const intents:Intent[]=[...prelude];
+    const additions:string[]=[];
+    for(const [index,item] of items.entries()){
+      const parent=item.parent===null?parent_ref:refs[item.parent]!;
+      if(item.parent!==null&&items[item.parent]!.kind!=="note"&&endpointForResource(parent)?.kind!=="resource")throw new Error("Only copied notes can hold copied children");
+      const ref=refs[index]!;
+      if(item.kind==="note")intents.push({kind:"create_note",ref,body:item.body});
+      const id=linkId(accountId,parent,ref);
+      const previous=positions.get(parent);
+      let placement:{value:string;moves:Intent[]};
+      if(previous){
+        const neighbors=[{link_id:"left",position:previous.last},...previous.upper===null?[]:[{link_id:"right",position:previous.upper}]];
+        placement={value:insertionPositions(neighbors,1,id)[0]!.position,moves:[]};
+      }else{
+        const prepared=await preparePosition(this.runtime,parent,id,parent===parent_ref?after:null,null);
+        placement=prepared;
+        const upper=prepared.previous.map(link=>(link.endpoint_a===parent?link.position_a:link.position_b)!.value).filter(key=>key>prepared.value).sort()[0]??null;
+        positions.set(parent,{last:prepared.value,upper});
+        for(const move of prepared.moves)if(move.kind==="move_link"){
+          const link=prepared.previous.find(link=>link.link_id===move.link_id)!;
+          moved.set(`${parent}/${link.link_id}`,{link,endpoint:parent});
+        }
+      }
+      positions.get(parent)!.last=placement.value;
+      const prepared=await prepareLink(this.runtime,{source_ref:parent,target_ref:ref,source_label:null,target_label:item.kind==="resource"?item.label:null,after:null},placement);
+      if(!prepared.intents.some(intent=>intent.kind==="add_link"))throw new Error("A copied resource is already linked here");
+      intents.push(...prepared.intents);additions.push(prepared.link_id);
+    }
+    if(!items.length)return [];
+    const saved=await this.commit({kind:"batch",intents});
+    let current=saved,restored:LocalCommit|null=null;
+    const reorder=(redo:boolean):Intent[]=>[...moved.values()].flatMap(({link,endpoint})=>{
+      const expected=current.change.links.find(item=>item.link_id===link.link_id);
+      const register=expected?.endpoint_a===endpoint?expected.position_a:expected?.position_b;
+      const desired=redo?saved.change.links.find(item=>item.link_id===link.link_id):link;
+      const position=desired?.endpoint_a===endpoint?desired.position_a:desired?.position_b;
+      return register&&position?[{kind:"restore_position" as const,link_id:link.link_id,endpoint_ref:endpoint,expected:register.stamp,position:position.value}]:[];
+    });
+    this.push({refs,bytes:items.reduce((n,item)=>n+(item.kind==="note"?JSON.stringify(item.body).length:0),0),
+      undo:async()=>{current=await this.commit({kind:"batch",intents:[...saved.change.resources.map(resource=>({kind:"delete_resource" as const,ref:resource.ref,observed_touch:mergeDots(resource.touch_vv,restored?.change.resources.find(item=>item.ref===resource.ref)?.touch_vv??{})})),...additions.map(link_id=>({kind:"unlink" as const,link_id,observed_add:mergeDots(saved.change.links.find(link=>link.link_id===link_id)!.add_vv,restored?.change.links.find(link=>link.link_id===link_id)?.add_vv??{})})),...reorder(false)]});},
+      redo:async()=>{restored=current=await this.commit({kind:"batch",intents:[...saved.change.resources.map(resource=>({kind:"restore_resource" as const,ref:resource.ref})),...additions.map(link_id=>({kind:"restore_link" as const,link_id})),...reorder(true)]});},release:()=>{},
+    });
+    return refs;
   }
   async split(source_ref: string, displayed: import("./editorTypes").DisplayedSplit, parent_ref: string, occurrence_link: string | null): Promise<string> {
     this.stopTyping();
@@ -170,13 +226,16 @@ export class OutlineHistory {
     } finally { sourceClone.destroy();if(!retained){manager.clear();manager.destroy();clone.destroy();} }
   }
 
-  async unlink(link: LinkState): Promise<void> {
+  canUndo():boolean {return this.past.length>0;}
+  canRedo():boolean {return this.future.length>0;}
+  async unlink(link:LinkState):Promise<void> {return this.unlinkMany([link]);}
+  async unlinkMany(links:readonly LinkState[]):Promise<void> {
     this.stopTyping();
-    await this.commit({ kind: "unlink", link_id: link.link_id, observed_add: link.add_vv });
-    let restored: LocalCommit | null = null;
-    this.push({ refs: [link.endpoint_a, link.endpoint_b], bytes: 0,
-      undo: async () => { restored = await this.commit({ kind: "restore_link", link_id: link.link_id }); },
-      redo: async () => { await this.commit({ kind: "unlink", link_id: link.link_id, observed_add: mergeDots(link.add_vv, restored?.change.links.find(l => l.link_id === link.link_id)?.add_vv ?? {}) }); }, release: () => {},
+    await this.commit({kind:"batch",intents:links.map(link=>({kind:"unlink",link_id:link.link_id,observed_add:link.add_vv}))});
+    let restored:LocalCommit|null=null;
+    this.push({refs:links.flatMap(link=>[link.endpoint_a,link.endpoint_b]),bytes:0,
+      undo:async()=>{restored=await this.commit({kind:"batch",intents:links.map(link=>({kind:"restore_link",link_id:link.link_id}))});},
+      redo:async()=>{await this.commit({kind:"batch",intents:links.map(link=>({kind:"unlink",link_id:link.link_id,observed_add:mergeDots(link.add_vv,restored?.change.links.find(item=>item.link_id===link.link_id)?.add_vv??{})}))});},release:()=>{},
     });
   }
   async moveAdjacent(link:LinkState, endpoint_ref:string, direction:"before"|"after"):Promise<void> {

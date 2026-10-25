@@ -7,6 +7,10 @@ import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncStatus 
 
 const retiredAccounts = new Set<string>();
 export function admitAuthoredAccount(accountId: string): void { retiredAccounts.delete(accountId); }
+export function retireAuthoredAccount(accountId: string): void {
+  retiredAccounts.add(accountId); accounts.delete(accountId);
+  window.dispatchEvent(new Event("nexus:authored-retired"));
+}
 const accounts = new Map<string, { promise: Promise<AuthoredStore>; users: number; closing: Promise<void> | null }>();
 export async function openAuthoredStore(accountId: string): Promise<AuthoredStore> {
   if (retiredAccounts.has(accountId)) throw new Error("authored account has been retired on this device");
@@ -37,6 +41,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
   if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new Error("persistent storage is required to make your notes available offline. allow persistent storage for nexus, then retry.");
   await prepareShell();
+  if (retiredAccounts.has(accountId)) throw new Error("authored account retired before opening storage");
   if (typeof SharedWorker === "undefined") throw new Error("this browser cannot open the shared authored store");
   const worker = new SharedWorker("/_nexus/authored/worker.js", { type: "module", name: `nexus-authored-${accountId}-format-${FORMAT_REVISION}` });
   const port = worker.port;
@@ -48,7 +53,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   let detail: string | null = null;
   let status: SyncStatus = "preparing";
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
-  const queries = new Set<() => void>();
+  const queries = new Set<(corpusChanged?: boolean) => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
   function failPort(message: string) {
@@ -77,14 +82,12 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       if (terminalFailure !== null) return;
       status = data.status; detail = data.detail ?? null;
       for (const listener of statuses) listener(status, detail);
-      for (const query of queries) query();
+      for (const query of queries) query(data.corpus_changed === true);
     } else if (data.kind === "retired") {
       window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
       queries.clear(); statuses.clear();
-      retiredAccounts.add(accountId);
-      accounts.delete(accountId);
-      window.dispatchEvent(new Event("nexus:authored-retired"));
+      retireAuthoredAccount(accountId);
       closed = true;
       for (const pending of waiting.values()) pending.reject(new Error("authored account retired"));
       waiting.clear(); port.close();
@@ -134,7 +137,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     subscribe: (query, listener) => {
       let active = true;
       let generation = 0;
-      const read = () => { const current = ++generation; void call<QueryResult>("query", { query }).then(result => { if (active && generation === current) listener(result); }, error => { if (active && status !== "preparing") reportError(error); }); };
+      const read = (corpusChanged = true) => { if (!corpusChanged) return; const current = ++generation; void call<QueryResult>("query", { query }).then(result => { if (active && generation === current) listener(result); }, error => { if (active && status !== "preparing") reportError(error); }); };
       queries.add(read); read();
       return () => { active = false; queries.delete(read); };
     },

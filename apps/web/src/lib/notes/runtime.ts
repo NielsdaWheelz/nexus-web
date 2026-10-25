@@ -49,7 +49,7 @@ export class WritingRuntime {
     }
     return this.opened_store;
   }
-  private readonly documents = new Map<string, Promise<CachedDocument>>();
+  private readonly documents = new Map<string, {promise:Promise<CachedDocument>;value:CachedDocument|null}>();
   private readonly listeners = new Set<() => void>();
   private tail: Promise<unknown> = Promise.resolve();
   private failed: FailedCommit | null = null;
@@ -196,20 +196,25 @@ export class WritingRuntime {
     for (const ref of this.state.error_refs) {
       const pending = this.documents.get(ref);
       if (!pending) continue;
-      const { doc } = await pending;
+      const { doc } = await pending.promise;
       texts.set(ref, doc.share.has("title") ? doc.getText("title").toString() : text(readBody(doc)));
     }
     return [...texts.values()].filter(text => text.trim() !== "").join("\n\n");
   }
   async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
     if (this.retired) throw new Error("Writing account is closed");
-    let pending = this.documents.get(ref);
-    if (!pending) {
-      pending = this.loadDocument(ref, prelude);
-      this.documents.set(ref, pending);
-      void pending.catch(() => this.documents.delete(ref));
+    let entry = this.documents.get(ref);
+    if (!entry) {
+      entry={promise:this.loadDocument(ref,prelude),value:null};
+      this.documents.set(ref,entry);
+      const owner=entry;
+      void owner.promise.then(value=>{owner.value=value;},()=>{if(this.documents.get(ref)===owner)this.documents.delete(ref);});
     }
-    return pending;
+    return entry.promise;
+  }
+  openBody(ref:string):NoteBody|null {
+    const document=this.documents.get(ref)?.value;
+    return document?readBody(document.doc):null;
   }
   private async loadDocument(ref: string, prelude: readonly Intent[]): Promise<CachedDocument> {
     const store = await this.store;
@@ -268,7 +273,8 @@ export class WritingRuntime {
     return cached;
   }
   private async evict(): Promise<void> {
-    const entries = await Promise.all(this.documents.values());
+    const opened = await Promise.allSettled([...this.documents.values()].map(entry=>entry.promise));
+    const entries=opened.flatMap(entry=>entry.status==="fulfilled"?[entry.value]:[]);
     const unmounted = entries.filter(d => d.pins === 0).sort((a, b) => a.last_used - b.last_used);
     let count = unmounted.length;
     let bytes = unmounted.reduce((n, d) => n + d.bytes, 0);
@@ -294,7 +300,8 @@ export class WritingRuntime {
   }
   private async finishClose(): Promise<void> {
     await this.tail;
-    for (const pending of this.documents.values()) { const doc = await pending; doc.unsubscribe(); doc.doc.destroy(); }
+    const opened=await Promise.allSettled([...this.documents.values()].map(entry=>entry.promise));
+    for (const entry of opened) if(entry.status==="fulfilled"){entry.value.unsubscribe();entry.value.doc.destroy();}
     this.documents.clear();
     if (this.opened_store) await (await this.opened_store).close();
     if (runtimes.get(this.accountId) === this) runtimes.delete(this.accountId);

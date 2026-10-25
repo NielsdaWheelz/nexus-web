@@ -21,7 +21,7 @@ import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { getConversationCommands, getNewChatCommands, readConversationTree, recoveryOf, IDLE_COMMAND, type CommandOutcome, type ConversationTree } from "@/lib/chat/commands";
 import { fetchConversationIndex, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import type { ListPage } from "@/lib/api/useServerList";
-import { convertReaderQuestion } from "@/lib/chat/readerQuestion";
+import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { isSelectable } from "@/lib/chat/selection";
 import { chatView } from "@/lib/chat/tree";
 import { assertNever } from "@/lib/assertNever";

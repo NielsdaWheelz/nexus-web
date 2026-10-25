@@ -55,3 +55,15 @@
   inline-size: 16px;
   block-size: 16px;
 }
+
+/* A trailing region wraps to the published width instead of widening the panel. */
+.trailing {
+  inline-size: 0;
+  min-inline-size: 100%;
+}
+
+/* Its own scroller, capped at publication to the room the published rows leave. */
+.trailingRegion {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
