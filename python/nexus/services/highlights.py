@@ -31,6 +31,7 @@ from nexus.auth.permissions import (
     highlight_readability_filter,
     highlight_readability_sql,
     highlight_visibility_filter,
+    requested_media_ids_cte_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.db.models import (
@@ -598,7 +599,7 @@ def _project_anchored(
             SELECT hfa.highlight_id,min(scope.start_offset) AS start_offset,
                    max(scope.end_offset) AS end_offset,f.canonical_text
             FROM highlight_fragment_anchors hfa
-            JOIN ({text_scope_rows_sql(visible_media_ids_cte_sql())}) scope
+            JOIN ({text_scope_rows_sql(requested_media_ids_cte_sql())}) scope
               ON scope.fragment_id=hfa.fragment_id
              AND scope.start_offset<=hfa.start_offset AND scope.end_offset>=hfa.end_offset
             JOIN fragments f ON f.id=hfa.fragment_id

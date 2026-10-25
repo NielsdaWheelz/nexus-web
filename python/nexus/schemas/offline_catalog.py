@@ -193,7 +193,7 @@ class OfflineCatalogOut(_Closed):
                 raise ValueError("catalog lectern summary differs")
         for show_id, detail in shows.items():
             episodes = [row for row in self.episodes if row.podcast_id == show_id]
-            if detail.episode_counts.available_count != len(episodes) or (
+            if detail.episode_counts.known_count != len(episodes) or (
                 detail.episode_counts.unfinished_count
                 != sum(row.episode_state != "played" for row in episodes)
             ):

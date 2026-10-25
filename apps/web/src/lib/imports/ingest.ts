@@ -11,7 +11,7 @@ import { ApiError, apiFetch, isApiError, requestWithDeadline, isSameSystemApiDef
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import type { BrowsePreview } from "@/lib/browse/api";
-import { addEpisodeFromDiscovery } from "@/lib/podcasts/api";
+import { resolvePodcastEpisode } from "@/lib/podcasts/api";
 import {
   UploadSessionError,
   publishImportsInvalidation,
@@ -312,7 +312,7 @@ export async function fetchAcceptedSource(sourceAttemptId: string, signal?: Abor
   return data;
 }
 
-/** One explicit preview acquisition. URL retries keep id; episode retries dedupe by source. */
+/** Explicit URL acquisition or catalogue-only episode resolution. Filing stays with the caller. */
 export async function acquirePreviewMedia({ preview, guard, id, signal, onAccepted }: {
   readonly preview: BrowsePreview;
   readonly guard: AcquisitionGuard;
@@ -321,10 +321,10 @@ export async function acquirePreviewMedia({ preview, guard, id, signal, onAccept
   readonly onAccepted?: (receipt: MediaAcceptance) => void;
 }): Promise<AcceptedMediaAcquisition> {
   if (preview.kind === "Episode") {
-    const result = await addEpisodeFromDiscovery({ target: preview.target, guard, signal,
-      onAccepted: receipt => onAccepted?.({ kind: "Episode", mediaId: receipt.media_id, href: receipt.href }),
-    });
-    return { kind: "Episode", available: result.available, mediaId: result.media_id, href: result.href };
+    const result = await resolvePodcastEpisode(preview.target, signal);
+    const receipt = { kind: "Episode" as const, mediaId: result.media_id, href: result.href };
+    onAccepted?.(receipt);
+    return { ...receipt, available: await mediaAcquisitionAvailable(result.media_id, signal) };
   }
   if (preview.kind === "Podcast") throw new Error("podcast subscription is not media acquisition");
   return addMediaFromUrl({

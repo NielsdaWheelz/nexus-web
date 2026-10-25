@@ -19,7 +19,9 @@ from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.note_bodies import Body
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
-BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
+BlockReason = Literal[
+    "PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable", "PodcastSubscription"
+]
 
 
 class _Out(BaseModel):
@@ -215,13 +217,14 @@ SimpleActionKind = Literal[
     "DownloadOriginal",
     "ResetProgress",
     "RemoveMedia",
+    "AddEpisodeToAll",
+    "RemoveEpisodeFromAll",
     "LibraryPlacement",
     "LibrarySettings",
     "DeleteLibrary",
     "PodcastSettings",
     "SubscribePodcast",
     "PodcastLibraries",
-    "ImportPodcastEpisodes",
     "UnsubscribePodcast",
     "RemovePodcastEpisodes",
     "RefreshPodcast",

@@ -1,26 +1,22 @@
 "use client";
 
-// A preview shows something outside Nexus without acquiring it: opening,
-// playing and leaving write nothing. Media actions retain admission intent. A
-// target already in Nexus redirects to its owned pane.
+// Explicit podcast/episode opening resolves catalogue identity without filing.
+// Preview reads remain read-only; the canonical show visit owns its source check.
 
-import { useEffect, useState } from "react";
-import { podcastActionFacts } from "@/lib/actions/inlineActions";
-import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
+import { useEffect, useRef, useState } from "react";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { resolvePodcast, resolvePodcastEpisode } from "@/lib/podcasts/api";
+import { useCommand } from "@/lib/podcasts/paneState";
 import MediaActions from "@/components/media/MediaActions";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
-  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
-import PodcastOverview from "@/components/podcasts/PodcastOverview";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
-import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -31,9 +27,8 @@ import {
   type BrowsePreview,
 } from "@/lib/browse/api";
 import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
-import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
+import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import {
   usePaneRouter,
@@ -103,32 +98,13 @@ function previewErrorMessage(error: ApiError): Failure {
   }
 }
 
-/** The preview read owns the whole bounded snapshot; this section never fetches. */
-function PreviewEpisodes({ preview }: {
-  readonly preview: Extract<BrowsePreview, { kind: "Podcast" }>;
-}) {
-  const display = useRenderEnvironment();
-  return (
-    <PaneSection title="Episodes">
-      <p className={styles.note}>{`directory preview: up to ${formatDisplayNumber(preview.episodes.source_limit, display)} episodes. playable episodes shown; full history may differ.`}</p>
-      <CollectionView
-        returnScope="Browse.Preview.PodcastEpisodes"
-        rows={preview.episodes.items.map(presentPreviewEpisode)}
-        status="ready"
-        ariaLabel="Podcast episodes"
-        empty={<FeedbackStatus content={{ tone: "Neutral", title: "no playable episodes in this directory preview" }} announcement="None" />}
-        surface={false}
-      />
-    </PaneSection>
-  );
-}
-
 export default function BrowsePreviewPaneBody() {
   const display = useRenderEnvironment();
   const pane = requirePaneRuntime(usePaneRuntime(), "BrowsePreviewPaneBody");
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const target = params.get("target");
+  const { ctx } = useActionRuntime();
   const resource = usePaneFreeServerValue<BrowsePreview>({
     key: target === null ? null : `browse-preview:${target}`,
     stale: "",
@@ -137,26 +113,25 @@ export default function BrowsePreviewPaneBody() {
   });
   const [videoLoaded, setVideoLoaded] = useState(false);
   const preview = resource.status === "ready" ? resource.data : null;
-  const actionFacts = usePodcastActionFacts({ scope: `Browse.Preview:${target}`,
-    targets: preview?.kind === "Podcast" ? [{ kind: "Discovery", target: preview.target }] : [],
-    refresh: `${resource.status}:${resource.status === "ready" ? resource.generation : ""}`,
-  });
-  const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
-  const sourceError = resource.status === "loading" ? null : resource.error;
-  const podcast = preview?.kind === "Podcast" ? {
-    target: { kind: "Discovery" as const, target: preview.target }, title: preview.title,
-    facts: podcastActionFacts(actionFacts, { kind: "Discovery", target: preview.target },
-      sourceError !== null
-        ? { kind: "Failed", error: sourceError, retry: resource.refetch, retrying: resource.status === "failed" ? resource.retrying : resource.status === "ready" && resource.refreshing }
-        : resource.status !== "ready" || resource.refreshing ? { kind: "Resolving" } : null),
-  } : null;
-  const owned = preview?.kind === "Podcast"
-    ? podcast?.facts.kind === "Ready" && podcast.facts.resolution.kind === "Canonical" ? `/podcasts/${podcast.facts.resolution.podcast_id}` : null
-    : preview !== null && preview.resolution.kind !== "Preview" ? preview.resolution.href : null;
+  const owned = preview !== null && preview.resolution.kind !== "Preview" ? preview.resolution.href : null;
+  const opening = useCommand();
+  const attempted = useRef(false);
+  const resolve = () => {
+    if (preview === null || (preview.kind !== "Podcast" && preview.kind !== "Episode") || owned !== null) return;
+    opening.run("couldn’t open the catalogue item", async () => {
+      const resolved = preview.kind === "Podcast" ? await resolvePodcast(preview.target, ctx.sessionSignal()) : await resolvePodcastEpisode(preview.target, ctx.sessionSignal());
+      if (!ctx.isActive()) return;
+      const current = ctx.workspace().state.panes.find(item => item.id === pane.paneId)?.current_visit;
+      if (current?.id !== pane.visitId || current.href !== pane.href) return;
+      router.replace(resolved.href, { labelHint: preview.title, activate: false });
+    });
+  };
   useEffect(() => {
-    // A background read canonicalizes its pane without changing the active pane.
-    if (owned !== null) router.replace(owned, { labelHint: preview?.title, activate: false });
-  }, [owned, preview?.title, router]);
+    if (owned !== null) { router.replace(owned, { labelHint: preview?.title, activate: false }); return; }
+    if (attempted.current || preview === null || resource.status !== "ready" || resource.refreshing || resource.error !== null || (preview.kind !== "Podcast" && preview.kind !== "Episode")) return;
+    attempted.current = true;
+    resolve();
+  });
   const failure =
     target === null
       ? INVALID
@@ -166,7 +141,6 @@ export default function BrowsePreviewPaneBody() {
   usePreviewTitleHint(target, preview?.title);
   usePaneChrome({
     podcastMetadata: preview?.kind === "Podcast" ? { kind: "DiscoveryPodcastPreview", preview } : undefined,
-    resourceActions: podcast === null || owned !== null ? undefined : { kind: "Podcast", subject: podcast },
     header:
       failure !== null
         ? { kind: "Resource", resource: { status: "Failed" } }
@@ -210,11 +184,12 @@ export default function BrowsePreviewPaneBody() {
       />
     );
   }
-  if (preview === null || owned !== null) {
+  if (preview === null || owned !== null || preview.kind === "Podcast" || preview.kind === "Episode") {
     return (
       <PaneSurface
         state={
-          <PaneLoadingState label="Loading preview…" announcement="Polite" />
+          opening.failure !== null ? <FeedbackNotice content={opening.failure} announcement="Polite" actions={[{ label: "retry opening", onClick: resolve, busy: opening.running !== null }]} />
+            : <PaneLoadingState label={preview?.kind === "Podcast" || preview?.kind === "Episode" ? "opening catalogue…" : "loading preview…"} announcement="Polite" />
         }
       />
     );
@@ -228,31 +203,6 @@ export default function BrowsePreviewPaneBody() {
       : null;
   const description = preview.description;
 
-  if (preview.kind === "Podcast") {
-    const website = preview.kind_facts.website_href;
-    return (
-      <PaneSurface>
-        <PodcastOverview
-          title={preview.title}
-          image={image ? { kind: "Proxied", url: image } : { kind: "Absent" }}
-          contributors={preview.contributors}
-          description={description}
-          facts={["Podcast Index"]}
-          links={[
-            { label: "open feed", href: preview.kind_facts.feed_href },
-            ...(website !== null
-              ? [{ label: "open source", href: website }]
-              : []),
-          ]}
-          note="Previewing does not subscribe or add episodes."
-        />
-        {factsError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check subscription", requestId: factsError.requestId }} announcement="Polite"
-          actions={[{ label: "retry checking subscription", onClick: actionFacts.refetch, busy: actionFacts.status === "failed" ? actionFacts.retrying : actionFacts.status === "ready" && actionFacts.refreshing }]} /> : null}
-        <PreviewEpisodes preview={preview} />
-      </PaneSurface>
-    );
-  }
-  const audio = preview.kind === "Episode" ? preview.kind_facts : null;
   return (
     <PaneSurface>
       <div className={styles.lead}>
@@ -267,7 +217,6 @@ export default function BrowsePreviewPaneBody() {
           />
         ) : null}
         <div>
-          {audio ? <p>{audio.podcast_title}</p> : null}
           <ContributorRoleGroups credits={preview.contributors} />
           {preview.published_at ? <p>source published: <time dateTime={preview.published_at}>{formatDisplayDate(preview.published_at, display, { dateStyle: "medium" })}</time></p> : null}
           <p>{description ?? "No summary from source."}</p>
@@ -294,8 +243,7 @@ export default function BrowsePreviewPaneBody() {
         subject={{
           kind: "External",
           target: preview.target,
-          media_kind: preview.kind === "Episode" ? "podcast_episode"
-            : preview.kind === "Epub" ? "epub"
+          media_kind: preview.kind === "Epub" ? "epub"
             : preview.kind === "Video" ? "video" : "web_article",
           title: preview.title,
           contributors: preview.contributors,

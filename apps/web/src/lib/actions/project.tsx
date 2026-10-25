@@ -34,7 +34,7 @@ import { getConversationCommands, readConversationTree, repeatMessage, type Comm
 import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { LECTERN_INTENT_COPY, lecternFull } from "@/lib/lectern/lectern";
-import { deleteLibrary, leaveLibrary } from "@/lib/libraries/api";
+import { deleteLibrary, leaveLibrary, placements } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
   metadataResearchLabel,
@@ -371,7 +371,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
       if (disabledReason !== null) return;
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
       const successFocus = focus?.afterRemoval;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: "libraries…", title,
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: "add to library…", title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "PodcastLibraries", target, title, successFocus },
           focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
@@ -665,7 +665,17 @@ export function projectResourceActions(
     LeaveLibrary: deleted(() => leaveLibrary(id), "/libraries"),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
-    ImportPodcastEpisodes: overlay({ kind: "ImportPodcastEpisodes", target: { kind: "Canonical", podcast_id: id }, title: facts.label }),
+    AddEpisodeToAll: [async () => {
+      if (ctx.podcasts.pending(`episode-save:${id}`) !== null) return;
+      const snapshot = await placements({ kind: "Media", id }, ctx.sessionSignal());
+      if (!ctx.isActive() || snapshot.all_membership.included) return;
+      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: `${facts.label} · all`, command: {
+        kind: "EpisodeSave", mediaId: id, libraryId: snapshot.all_membership.library_id,
+        body: { included: true, expected_order_revision: snapshot.all_membership.order_revision,
+          expected_removal_revision: snapshot.removal_revision },
+      } });
+    }],
+    RemoveEpisodeFromAll: overlay({ kind: "RemoveEpisodeFromAll", mediaId: id, title: facts.label }),
     RemovePodcastEpisodes: overlay({ kind: "RemovePodcastEpisodes", podcastId: id, title: facts.label }),
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),

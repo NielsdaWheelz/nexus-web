@@ -1,10 +1,9 @@
-/** Browse result rows: candidates and podcast-preview episodes. */
+/** Browse result rows keep catalogue identity separate from membership. */
 
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import {
   browsePreviewHref,
   type BrowseCandidate,
-  type PreviewEpisode,
 } from "@/lib/browse/api";
 import { BROWSE_SOURCE_LABELS } from "@/lib/browse/query";
 import { presentMedia } from "@/lib/collections/presenters/media";
@@ -80,43 +79,6 @@ export function presentBrowseCandidate(
     exceptionalStatus: null,
     resourceRef: candidate.kind === "Podcast" ? local === null ? null : assumeCanonicalResourceRef(`podcast:${local.podcast_id}`)
       : resolution.kind === "Preview" ? null : assumeCanonicalResourceRef(resolution.action_ref),
-    selected: false,
-  };
-}
-
-export function presentPreviewEpisode(
-  episode: PreviewEpisode,
-): CollectionRowView {
-  return {
-    presentation: "Index",
-    id: `PodcastIndex:episode:${episode.target}`,
-    kind: "search_result",
-    resourceActions: {
-      kind: "Media" as const,
-      subject: {
-        kind: "External",
-        target: episode.target,
-        media_kind: "podcast_episode",
-        title: episode.title,
-        contributors: episode.contributors,
-      },
-      knownDescriptor: null,
-    },
-    primary: {
-      kind: "link",
-      href: browsePreviewHref(episode.target),
-      paneLabelHint: episode.title,
-    },
-    title: { text: episode.title },
-    contributors: selectMediaAuthors(episode.contributors),
-    publicationDate: null,
-    context: {
-      kind: "Text",
-      text: `Podcast Index · ${episode.kind_facts.podcast_title}`,
-    },
-    activity: null,
-    exceptionalStatus: null,
-    resourceRef: null,
     selected: false,
   };
 }

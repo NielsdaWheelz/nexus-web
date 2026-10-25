@@ -51,9 +51,16 @@ function published(raw: unknown): Schema<"Published"> {
   const value = expectExactRecord(raw, ["kind", "import_ref", "session_id", "media_id", "created", "current_placements"], "published capture");
   let current: Schema<"LibraryPlacementsOut"> | null = null;
   if (value.current_placements !== null) {
-    const snapshot = expectExactRecord(value.current_placements, ["removal_revision", "placements"], "current placements");
+    const snapshot = expectExactRecord(value.current_placements, ["removal_revision", "all_membership", "placements"], "current placements");
+    const all = expectExactRecord(snapshot.all_membership, ["library_id", "order_revision", "included", "remove_blocked"], "all membership");
     current = {
       removal_revision: revision(snapshot.removal_revision),
+      all_membership: {
+        library_id: expectCanonicalRfcUuid(all.library_id, "all_membership.library_id"),
+        order_revision: revision(all.order_revision),
+        included: expectBoolean(all.included, "all_membership.included"),
+        remove_blocked: all.remove_blocked === null ? null : expectOneOf(all.remove_blocked, ["RequiresAdmin", "PodcastSubscription"], "all_membership.remove_blocked"),
+      },
       placements: expectArray(snapshot.placements, raw => {
         const item = expectExactRecord(raw, ["library_id", "name", "order_revision", "relation", "blocked"], "placement");
         return {
@@ -61,7 +68,7 @@ function published(raw: unknown): Schema<"Published"> {
           name: expectString(item.name, "placement.name"),
           order_revision: revision(item.order_revision),
           relation: expectOneOf(item.relation, ["Absent", "Direct"], "placement.relation"),
-          blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "SystemManaged"], "placement.blocked"),
+          blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "SystemManaged", "PodcastSubscription"], "placement.blocked"),
         };
       }, "placements"),
     };

@@ -1,9 +1,6 @@
 "use client";
 
 /** Current view facts authorize new intents; retained commands keep their target. */
-import { installedApp } from "@/lib/native/admission";
-import { createElement } from "react";
-import { ACTION_CATALOG } from "./catalog";
 import type { ActionButtonSpec, PodcastActionFocus, PodcastActionSubject } from "./inlineActions";
 import { useActionRuntime, type ActionContext } from "./ResourceActionsProvider";
 import { projectConsumptionUndoActions, projectPodcastLibrariesAction, projectPodcastSubscriptionAction, type ActionCommand } from "./project";
@@ -18,7 +15,7 @@ function project(subject: PodcastActionSubject, ctx: ActionContext, run: (comman
   return [
     subscription,
     { ...projectPodcastLibrariesAction({ target, title: subject.title, disabledReason: subscription.disabledReason ?? null, ctx, run, focus }),
-      accessibleLabel: `manage libraries: ${subject.title}` },
+      accessibleLabel: `add to library: ${subject.title}` },
   ];
 }
 
@@ -35,23 +32,6 @@ export function usePodcastActions(subject: PodcastActionSubject): readonly Actio
 export function usePodcastMenuActions(subject: PodcastActionSubject, focus: PodcastActionFocus): readonly ActionDescriptor[] {
   const { ctx, run } = useActionRuntime();
   const actions: ActionDescriptor[] = project(subject, ctx, run, focus);
-  const disconnected = installedApp && !ctx.online;
-  const ready = !disconnected && subject.facts.kind === "Ready" && subject.facts.resolution.kind !== "Unavailable";
-  actions.push({ kind: "command", id: "ImportPodcastEpisodes", label: ACTION_CATALOG.ImportPodcastEpisodes.label,
-    icon: createElement(ACTION_CATALOG.ImportPodcastEpisodes.icon, { size: 16, "aria-hidden": true }),
-    disabled: !ready, disabledReason: ready ? undefined : actions[0].disabledReason, restoreFocusOnClose: false,
-    onSelect: () => {
-      if (!ready) return;
-      const target: PodcastTarget = subject.facts.kind === "Ready" && subject.facts.resolution.kind === "Canonical"
-        ? { kind: "Canonical", podcast_id: subject.facts.resolution.podcast_id } : subject.target;
-      const trigger = focus.trigger;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "ImportPodcastEpisodes",
-        label: ACTION_CATALOG.ImportPodcastEpisodes.label, title: subject.title, tracked: false, confirmation: null,
-        execute: () => ctx.overlays.open({ kind: "ImportPodcastEpisodes", target, title: subject.title },
-          { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
-      });
-    },
-  });
   const facts = subject.facts;
   if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "retry checking subscription", disabled: facts.retrying, onSelect: facts.retry });
   if (facts.kind === "Ready" && facts.resolution.kind === "Canonical") actions.push(...projectConsumptionUndoActions({ kind: "Podcast", podcast_id: facts.resolution.podcast_id }, ctx));

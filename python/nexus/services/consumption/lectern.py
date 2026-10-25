@@ -17,7 +17,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
+from nexus.auth.permissions import can_read_media, requested_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import collection_actions as collection_wire
 from nexus.schemas import consumption as wire
@@ -377,7 +377,7 @@ def _order_snapshot(db: Session, viewer_id: UUID, rows: list[_Row]) -> wire.Lect
 def lectern_rows_sql() -> str:
     """Whole ordered membership with visibility; hidden rows still determine capacity."""
     return f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
+            WITH visible_media AS ({requested_media_ids_cte_sql()})
             SELECT q.id, q.media_id, m.kind, q.added_at,
                    (vm.media_id IS NOT NULL AND ti.media_id IS NULL) AS visible
             FROM consumption_queue_items q

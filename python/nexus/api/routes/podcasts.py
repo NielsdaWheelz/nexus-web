@@ -13,8 +13,9 @@ from nexus.responses import Data
 from nexus.schemas import podcast as wire
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.consumption import ConsumptionData
+from nexus.services import media_deletion
 from nexus.services.consumption import observation
-from nexus.services.podcasts import episode_acquisition, episodes, settings, subscriptions, sync
+from nexus.services.podcasts import catalog, episodes, settings, subscriptions, sync
 from nexus.services.podcasts import subscriptions_query as queries
 
 router = APIRouter(tags=["podcasts"])
@@ -31,11 +32,35 @@ def _option[T: str](
     return cast(T, value)
 
 
-@router.post("/podcast-episodes/from-discovery")
-def acquire_podcast_episode(
-    body: wire.PodcastEpisodeFromDiscoveryRequest, viewer: ViewerDep, db: DbSession
-) -> Data[wire.PodcastEpisodeFromDiscoveryOut]:
-    return Data(data=episode_acquisition.acquire_episode(db, viewer.user_id, body))
+@router.post("/podcasts/resolve")
+def resolve_podcast(
+    body: wire.PodcastResolveRequest, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastResolveOut]:
+    return Data(data=catalog.resolve_podcast(db, body))
+
+
+@router.post("/podcast-episodes/resolve")
+def resolve_podcast_episode(
+    body: wire.PodcastResolveRequest, viewer: ViewerDep, db: DbSession
+) -> Data[wire.PodcastEpisodeResolveOut]:
+    return Data(data=catalog.resolve_episode(db, viewer.user_id, body))
+
+
+@router.get("/podcast-episodes/{media_id}/removal-preview")
+def episode_removal_preview(
+    media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[wire.PodcastEpisodeRemovalPreviewOut]:
+    return Data(data=media_deletion.episode_removal_preview(db, viewer.user_id, media_id))
+
+
+@router.post("/podcast-episodes/{media_id}/remove")
+def remove_episode(
+    media_id: UUID,
+    body: wire.PodcastEpisodeRemovalRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[wire.PodcastEpisodeRemovalOut]:
+    return Data(data=media_deletion.remove_episode(db, viewer.user_id, media_id, body))
 
 
 @router.get("/podcasts")

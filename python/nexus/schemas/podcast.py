@@ -7,7 +7,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import TranscriptState as MediaTranscriptState
-from nexus.schemas.acquisition import AcquisitionGuard
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
@@ -35,25 +34,21 @@ class PodcastCanonicalCommitTarget(BaseModel):
     model_config = _CLOSED
 
 
-class PodcastEpisodeFromDiscoveryRequest(AcquisitionGuard):
+class PodcastResolveRequest(BaseModel):
     target: DiscoveryTargetHandle
 
     model_config = _CLOSED
 
 
-class PodcastDestinationOutcomeOut(BaseModel):
-    library_id: UUID
-    outcome: Literal["Added", "AlreadyPresent"]
-
-    model_config = _CLOSED
-
-
-class PodcastEpisodeFromDiscoveryOut(BaseModel):
+class PodcastResolveOut(BaseModel):
+    podcast_id: UUID
     href: str = Field(min_length=1)
-    media_id: UUID
-    destination_outcomes: list[PodcastDestinationOutcomeOut]
 
     model_config = _CLOSED
+
+
+class PodcastEpisodeResolveOut(PodcastResolveOut):
+    media_id: UUID
 
 
 class PodcastListItemOut(BaseModel):
@@ -73,13 +68,13 @@ class PodcastListItemOut(BaseModel):
 
 
 class PodcastEpisodeCountsOut(BaseModel):
-    available_count: int = Field(ge=0)
+    known_count: int = Field(ge=0)
     unfinished_count: int = Field(ge=0)
 
     @model_validator(mode="after")
     def require_subset(self) -> "PodcastEpisodeCountsOut":
-        if self.unfinished_count > self.available_count:
-            raise ValueError("Unfinished episodes exceed available episodes")
+        if self.unfinished_count > self.known_count:
+            raise ValueError("Unfinished episodes exceed known episodes")
         return self
 
     model_config = _CLOSED
@@ -156,6 +151,7 @@ class PodcastImportOut(BaseModel):
     library_id: UUID
     podcast_id: UUID
     run_id: UUID
+    subscription_id: UUID | None
     state: PodcastImportState
     attempt_version: int
     added_count: int = Field(ge=0)
@@ -325,7 +321,7 @@ class PodcastRemovalDestinationOut(BaseModel):
 class PodcastRemovalBlockedOut(BaseModel):
     library_id: UUID
     name: str
-    reason: Literal["requires_admin"]
+    reason: Literal["requires_admin", "subscription_active"]
 
     model_config = _CLOSED
 
@@ -349,6 +345,43 @@ class PodcastStopDestinationRequest(BaseModel):
     expected_import_id: UUID | None
     expected_import_attempt_version: int | None = Field(strict=True, ge=1)
     expected_order_revision: OrderRevision | None
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeRemovalRequest(BaseModel):
+    expected_removal_revision: OrderRevision
+    destinations: list[PodcastStopDestinationRequest]
+
+    @model_validator(mode="after")
+    def require_guards(self) -> "PodcastEpisodeRemovalRequest":
+        if len({d.library_id for d in self.destinations}) != len(self.destinations):
+            raise ValueError("Duplicate destinations")
+        for destination in self.destinations:
+            if (destination.expected_import_id is None) != (
+                destination.expected_import_attempt_version is None
+            ):
+                raise ValueError("Import identity and attempt must be supplied together")
+            if destination.expected_order_revision is None:
+                raise ValueError("Episode removal requires exact revisions")
+        return self
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeRemovalPreviewOut(BaseModel):
+    media_id: UUID
+    removal_revision: OrderRevision
+    destinations: list[PodcastRemovalDestinationOut]
+    can_execute: bool
+    blocked: list[PodcastRemovalBlockedOut]
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeRemovalOut(BaseModel):
+    media_id: UUID
+    removal_revision: OrderRevision
 
     model_config = _CLOSED
 
