@@ -1,7 +1,8 @@
 // disposable browser bootstrap. the runtime owns the private input and verifies
 // the returned identity; this helper owns real password login and a fresh state.
 // stdout is exactly one json result. diagnostics belong on stderr.
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
@@ -30,14 +31,17 @@ async function bootstrap() {
     throw new Error("browser bootstrap state path must be absolute");
   if (!isAbsolute(input.artifacts_dir))
     throw new Error("browser bootstrap artifacts path must be absolute");
-  const browser = await chromium.launch({
+  const profile = await mkdtemp(join(tmpdir(), "nexus-lab-bootstrap-"));
+  const context = await chromium.launchPersistentContext(profile, {
     args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
   });
   try {
-    const context = await browser.newContext();
     context.setDefaultTimeout(30_000);
     context.setDefaultNavigationTimeout(30_000);
-    const page = await context.newPage();
+    const page = context.pages()[0] ?? await context.newPage();
+    const session = await context.newCDPSession(page);
+    await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
+    await session.detach();
     const redact = (value: string) => value.replaceAll(input.seed.email, "[redacted]").replaceAll(input.seed.password, "[redacted]");
     page.on("console", message => {
       if (message.type() === "error") console.error(`browser console: ${redact(message.text())}`);
@@ -81,7 +85,8 @@ async function bootstrap() {
     });
     process.stdout.write(JSON.stringify({ user_id: data.user_id, default_library_id: data.default_library_id }) + "\n");
   } finally {
-    await browser.close();
+    await context.close();
+    await rm(profile, { recursive: true, force: true });
   }
 }
 
