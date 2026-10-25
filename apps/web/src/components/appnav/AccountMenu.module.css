@@ -6,3 +6,28 @@
 .choices p {
   margin: 0 0 var(--space-1);
 }
+
+/* Hidden attention keeps the mobile trigger's geometry and focus stable. */
+.attention {
+  display: inline-block;
+  box-sizing: border-box;
+  inline-size: var(--space-2);
+  block-size: var(--space-2);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-full);
+  background: var(--warning);
+  vertical-align: middle;
+  pointer-events: none;
+}
+
+.attention[data-visible="false"] {
+  visibility: hidden;
+}
+
+@media (forced-colors: active) {
+  .attention {
+    background: CanvasText;
+    border-color: Canvas;
+    forced-color-adjust: none;
+  }
+}

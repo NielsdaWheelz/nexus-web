@@ -1,40 +1,32 @@
 "use client";
 
 import Pill from "@/components/ui/Pill";
-import { attentionPhrase, countText } from "@/lib/imports/copy";
-import { useImports } from "@/lib/imports/ImportsProvider";
+import { countText, importAttentionDescription } from "@/lib/imports/copy";
+import styles from "./Imports.module.css";
 
 /**
- * The Imports destination's label and attention badge, so the rail link and
- * the account menu item show one count with one meaning (contract D9). Zero or
- * an unknown summary shows the label only; the visible count is capped and the
- * accessible name, the whole name of the control, carries the exact one. A
- * collapsed rail hides the label and paints the count at the glyph's size.
+ * Account's passive Imports label and count. The hidden maximum-width pill
+ * reserves menu geometry at zero or unknown; positive counts have one complete
+ * accessible description, including a retained read failure and the exact count.
  */
 export default function ImportsBadge({
   label,
-  labelVisible,
+  count,
+  refresh_failed,
 }: {
   readonly label: string;
-  readonly labelVisible: boolean;
+  readonly count: number | null;
+  readonly refresh_failed: boolean;
 }) {
-  const { summary } = useImports();
-  const count =
-    summary.status === "ready" ? summary.data.needs_attention_count : 0;
-  if (count === 0) {
-    return labelVisible ? (
-      <>{label}</>
-    ) : (
-      <span className="sr-only">{label}</span>
-    );
-  }
+  const description = count !== null && count > 0
+    ? importAttentionDescription(count, refresh_failed) : null;
   return (
     <>
-      {labelVisible ? <span aria-hidden="true">{label}</span> : null}
-      <Pill tone="warning" size={labelVisible ? "sm" : "xs"} aria-hidden="true">
-        {countText(count)}
+      <span className={styles.badgeLabel} aria-hidden={description !== null}>{label}</span>
+      <Pill tone="warning" size="sm" className={styles.attentionCount} data-visible={description !== null} aria-hidden="true">
+        {count !== null && count > 0 ? countText(count) : "99+"}
       </Pill>
-      <span className="sr-only">{`${label}, ${attentionPhrase(count)}`}</span>
+      {description !== null ? <span className="sr-only">{description}</span> : null}
     </>
   );
 }

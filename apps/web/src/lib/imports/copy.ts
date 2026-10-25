@@ -893,6 +893,13 @@ export function attentionPhrase(count: number): string {
   return count === 1 ? "1 needs attention" : `${count} need attention`;
 }
 
+/** The complete description of a positive Imports attention observation. */
+export function importAttentionDescription(count: number, refresh_failed: boolean): string {
+  return refresh_failed
+    ? `couldn’t refresh imports; last update: ${attentionPhrase(count)}`
+    : `imports: ${attentionPhrase(count)}`;
+}
+
 /** A count as the badge and mode navigation print it; the exact count is spoken. */
 export function countText(count: number): string {
   return count > 99 ? "99+" : String(count);

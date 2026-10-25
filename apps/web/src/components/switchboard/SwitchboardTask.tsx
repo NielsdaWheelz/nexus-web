@@ -4,7 +4,7 @@
 import { useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
-import { isAccountDestinationId, NAV_IMPORTS } from "@/components/appnav/navModel";
+import { isAccountDestinationId } from "@/components/appnav/navModel";
 import { NEXUS_SOURCE_FAILURES, NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
@@ -77,11 +77,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         <div className={styles.headerActions}>
           <AccountMenu
             activeId={accountId}
-            importsActive={section === NAV_IMPORTS.id}
             placement="below"
             align="end"
-            renderTrigger={(trigger) => (
-              <Button {...trigger} className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account</Button>
+            renderTrigger={(trigger, attention) => (
+              <Button {...trigger} className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account {attention}</Button>
             )}
             onNavigate={(event, destination) => {
               const activation = workspaceTargetActivationIntent(event);
