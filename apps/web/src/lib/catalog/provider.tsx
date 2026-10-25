@@ -179,16 +179,22 @@ export function useCatalogState() {
  * A pane group's shown source. Lost remote admission returns the whole group to its
  * saved projection; afterwards it promotes only when every part is a complete live
  * read and those reads cover this device's relevant listening (`usePromoteLiveGroup`).
- * A promoted connected group stays live. While dated, `stale` follows `Consumption`,
+ * A promoted connected group stays live and retains its accepted token. While dated, `stale` follows `Consumption`,
  * so every part rereads once a receipt can raise the floor; live groups keep their
  * ordinary invalidation. Call before the group's reads.
  */
 export function useLiveGroup(key: string) {
   const admission = useRemoteAdmission();
   const consumption = useChangeStamp("Consumption");
-  const [promoted, setPromoted] = useState<string | null>(null);
+  const [promotion, setPromotion] = useState<{ key: string; stale: string } | null>(null);
+  const promoted = promotion?.key ?? null;
+  const setPromoted = useCallback((next: string | null) => {
+    setPromotion(next === null ? null : { key: next, stale: consumption });
+  }, [consumption]);
   const live = promoted === key && admission === "Ready";
-  return { key, live, stale: live ? "live" : consumption, admission, promoted, setPromoted };
+  // Promotion changes presentation, not read demand. Keep the token whose
+  // complete stamped observation passed the listening floor at promotion.
+  return { key, live, stale: live && promotion !== null ? promotion.stale : consumption, admission, promoted, setPromoted };
 }
 
 /**

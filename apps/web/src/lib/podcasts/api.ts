@@ -10,7 +10,8 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
 export type PodcastDetail = Schema<"PodcastDetailOut">;
-export type PodcastRow = Schema<"PodcastListItemOut">;
+export type PodcastRow = Schema<"PodcastIndexItemOut">;
+export type LibraryPodcastIndex = Schema<"LibraryPodcastIndexOut">;
 export type PodcastEpisodeRow = Schema<"PodcastEpisodeListItemOut">;
 export type PodcastImport = Schema<"PodcastImportOut">;
 export type PodcastSection = Schema<"LibraryPodcastsOut">;
@@ -41,11 +42,10 @@ export async function resolvePodcastActionFacts(
   })).data.items;
 }
 
-/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
+/** One complete stamped index observation. */
 export async function listPodcasts(query: URLSearchParams, signal: AbortSignal) {
   type Body = ApiJson<"/podcasts", "get">;
-  const { data, consumption_revision } = stampedRead(await apiFetch<Body>(`/api/podcasts?${query}`, { signal }));
-  return { ...data, metadata: { consumption_revision } };
+  return stampedRead(await apiFetch<Body>(`/api/podcasts?${query}`, { signal }));
 }
 
 /** Stamped with its read snapshot's consumption revision; observations reach native. */
@@ -54,11 +54,10 @@ export async function getPodcastDetail(podcastId: string, signal: AbortSignal): 
   return stampedRead(await apiFetch<Body>(`/api/podcasts/${podcastId}`, { signal }));
 }
 
-/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
+/** One complete stamped index observation. */
 export async function listEpisodes(podcastId: string, query: URLSearchParams, signal: AbortSignal) {
   type Body = ApiJson<"/podcasts/{podcast_id}/episodes", "get">;
-  const { data, consumption_revision } = stampedRead(await apiFetch<Body>(`/api/podcasts/${podcastId}/episodes?${query}`, { signal }));
-  return { ...data, metadata: { consumption_revision } };
+  return stampedRead(await apiFetch<Body>(`/api/podcasts/${podcastId}/episodes?${query}`, { signal }));
 }
 
 /** Contextless admission reads the default destination's actual revision. */

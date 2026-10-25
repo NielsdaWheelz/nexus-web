@@ -137,7 +137,7 @@ function watchText(ref: string, version: number): void {
               if (content.kind !== "page") throw new Error("page title read returned another resource kind");
               return { value: content.title, version: content.title_version };
             })
-          : readSharedValue({ accountId, key: `/notes/blocks/${encodeURIComponent(ref.slice("note_block:".length))}`, signal: controller.signal, revalidate: true,
+          : readSharedValue({ accountId, key: `/notes/blocks/${encodeURIComponent(ref.slice("note_block:".length))}`, signal: controller.signal, invalidate: true,
               load: signal => fetchNote(ref.slice("note_block:".length), signal),
             }).then(note => ({ value: { body_pm_json: note.body_pm_json, body_text: note.body_text }, version: note.body_version }));
         void read.then(saved => {

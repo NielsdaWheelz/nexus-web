@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyCaptureRequest,
@@ -28,7 +28,7 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 @router.get("/pages")
 def list_pages(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[NotePageSummaryOut]]:
+) -> Data[CollectionIndex[NotePageSummaryOut]]:
     """Keyset pages of the viewer's pages in the chats index's four views."""
     items = request.query_params.multi_items()
     return Data(data=notes.list_pages(db, viewer.user_id, items))

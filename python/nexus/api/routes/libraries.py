@@ -15,12 +15,12 @@ from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas import podcast as podcast_wire
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.consumption import ConsumptionData
 from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationsOut,
-    LibraryEntriesPageOut,
+    LibraryEntriesIndexOut,
     LibraryMetadataOut,
     LibraryOrderOut,
     LibraryOut,
@@ -53,7 +53,7 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 @router.get("/libraries")
 def list_libraries(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[LibraryOut]]:
+) -> Data[CollectionIndex[LibraryOut]]:
     """`sort` = created_desc | name_asc | name_desc; absent is oldest created."""
     return Data(
         data=libraries.list_libraries(db, viewer.user_id, request.query_params.multi_items())
@@ -131,13 +131,11 @@ def list_entries(
     viewer: ViewerDep,
     db: RepeatableReadDbSession,
     response: Response,
-) -> ConsumptionData[LibraryEntriesPageOut]:
+) -> ConsumptionData[LibraryEntriesIndexOut]:
     """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
     response.headers["Cache-Control"] = "private, no-store"
-    view, query = library_listing.parse_entries_query(request.query_params.multi_items())
-    data = library_listing.list_library_entries(
-        db, viewer.user_id, library_id, view=view, cursor=query.cursor, limit=query.limit
-    )
+    view = library_listing.parse_entries_query(request.query_params.multi_items())
+    data = library_listing.list_library_entries(db, viewer.user_id, library_id, view=view)
     return observation.stamp(
         db, viewer.user_id, data, [row.media_summary.media_id for row in data.items]
     )

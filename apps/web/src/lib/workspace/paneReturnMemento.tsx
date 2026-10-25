@@ -5,6 +5,7 @@
 // body had loaded. Captured when a visit leaves the screen, restored when its
 // body reports ready, forgotten when the visit leaves every history stack.
 import {
+  Component,
   createContext,
   useCallback,
   useContext,
@@ -36,6 +37,15 @@ interface Scrollport {
   routeKey: string;
   element: HTMLElement;
   content: HTMLElement;
+  inputGeneration: number;
+}
+interface RefreshSnapshot {
+  paneId: string;
+  port: Scrollport;
+  inputGeneration: number;
+  eyeLine: Memento["eyeLine"];
+  anchors: Anchor[];
+  restored: boolean;
 }
 interface Readiness {
   kind: "Body" | "Descendant";
@@ -85,6 +95,17 @@ function findAnchor(content: HTMLElement, anchor: Anchor): HTMLElement | null {
   return null;
 }
 
+function captureEyeLine(port: Scrollport): Memento["eyeLine"] {
+  const viewport = port.element.getBoundingClientRect();
+  for (const row of port.content.querySelectorAll<HTMLElement>(ANCHORS)) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
+    const anchor = anchorOf(row, port.content);
+    if (anchor) return { ...anchor, offset: rect.top - viewport.top };
+  }
+  return null;
+}
+
 /** The eye-line row back at its offset, else the clamped scroll offset. */
 function place(port: Scrollport, memento: Memento): void {
   const { element } = port;
@@ -106,6 +127,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   const scrollports = new Map<string, Scrollport>(); // by pane
   const readiness = new Map<string, Set<Readiness>>(); // by `${visit}|${route}`
   const pending = new Map<string, PendingRestore>(); // by pane
+  const refreshes = new Map<string, RefreshSnapshot>();
 
   function isReady(port: Scrollport): boolean {
     const entries = [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])];
@@ -184,17 +206,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       // A pending restore's memento is still the truth for its visit.
       if (!port || pending.get(paneId)?.visitId === port.visitId) return;
       const { element, content } = port;
-      const viewport = element.getBoundingClientRect();
-      let eyeLine: Memento["eyeLine"] = null;
-      for (const row of content.querySelectorAll<HTMLElement>(ANCHORS)) {
-        const rect = row.getBoundingClientRect();
-        if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
-        const anchor = anchorOf(row, content);
-        if (anchor) {
-          eyeLine = { ...anchor, offset: rect.top - viewport.top };
-          break;
-        }
-      }
+      const eyeLine = captureEyeLine(port);
       // Leaving by keyboard is read now (D6): a visible focus ring inside the pane.
       const active = document.activeElement;
       const keyboard =
@@ -235,9 +247,16 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     },
     register(paneId: string, port: Scrollport, restore: boolean): () => void {
       scrollports.set(paneId, port);
+      const intent = (event: Event) => {
+        if (!(event instanceof KeyboardEvent) || SCROLL_KEY.test(event.key)) port.inputGeneration += 1;
+      };
+      const intents = ["wheel", "touchstart", "pointerdown", "keydown"];
+      for (const type of intents) port.element.addEventListener(type, intent, { capture: true, passive: true });
       if (restore) requestRestore(paneId, port);
       return () => {
+        for (const type of intents) port.element.removeEventListener(type, intent, { capture: true });
         if (scrollports.get(paneId) !== port) return;
+        refreshes.delete(paneId);
         if (pending.get(paneId)?.visitId === port.visitId) finish(paneId, false);
         scrollports.delete(paneId);
       };
@@ -281,6 +300,67 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       else values.set(name, value);
       if (values.size) visitData.set(visitId, { routeKey, values });
       else visitData.delete(visitId);
+    },
+    captureRefresh(paneId: string): RefreshSnapshot | null {
+      const port = scrollports.get(paneId);
+      if (!port || pending.has(paneId)) return null;
+      const captured = refreshes.get(paneId);
+      if (captured) return captured;
+      const snapshot = {
+        paneId,
+        port,
+        inputGeneration: port.inputGeneration,
+        eyeLine: captureEyeLine(port),
+        anchors: Array.from(port.content.querySelectorAll<HTMLElement>(ANCHORS))
+          .map((row) => anchorOf(row, port.content))
+          .filter((anchor): anchor is Anchor => anchor !== null),
+        restored: false,
+      };
+      refreshes.set(paneId, snapshot);
+      return snapshot;
+    },
+    restoreRefresh(snapshot: RefreshSnapshot): void {
+      if (snapshot.restored) return;
+      snapshot.restored = true;
+      refreshes.delete(snapshot.paneId);
+      const { port, eyeLine } = snapshot;
+      if (
+        scrollports.get(snapshot.paneId) !== port ||
+        port.inputGeneration !== snapshot.inputGeneration ||
+        !eyeLine
+      )
+        return;
+      let anchor: Anchor = eyeLine;
+      let row = findAnchor(port.content, anchor);
+      if (!row) {
+        const surviving = new Map<string, HTMLElement>();
+        for (const element of port.content.querySelectorAll<HTMLElement>(
+          ANCHORS,
+        )) {
+          const found = anchorOf(element, port.content);
+          if (found) surviving.set(JSON.stringify(found), element);
+        }
+        const position = snapshot.anchors.findIndex(
+          (item) => item.scope === eyeLine.scope && item.id === eyeLine.id,
+        );
+        for (
+          let index = position + 1;
+          index < snapshot.anchors.length;
+          index += 1
+        ) {
+          anchor = snapshot.anchors[index];
+          row = surviving.get(JSON.stringify(anchor)) ?? null;
+          if (row) break;
+        }
+      }
+      if (row)
+        place(port, {
+          routeKey: port.routeKey,
+          scrollTop: 0,
+          eyeLine: { ...anchor, offset: eyeLine.offset },
+          focus: null,
+        });
+      else port.element.scrollTop = 0;
     },
     /** Keeps the live offset across a same-path view swap (filters, sort). */
     hold(paneId: string): (() => void) | null {
@@ -371,9 +451,73 @@ export function usePaneReturnScrollport(input: {
     // An in-place query change (same continuity key) keeps the live scroll.
     const restore = continuityKey === null || previous.current !== continuityKey;
     previous.current = continuityKey;
-    const port = { visitId, routeKey, element, content };
+    const port = { visitId, routeKey, element, content, inputGeneration: 0 };
     return memory.register(paneId, port, restore);
   }, [enabled, scrollportRef, contentRef, continuityKey, memory, paneId, visitId, routeKey]);
+}
+
+interface RefreshAnchorProps {
+  identity: string;
+  value: unknown;
+  enabled: boolean;
+  capture: () => RefreshSnapshot | null;
+  restore: (snapshot: RefreshSnapshot) => void;
+  children: ReactNode;
+}
+
+/** React's snapshot phase is the last chance to observe the old row geometry. */
+class RefreshAnchorBoundary extends Component<
+  RefreshAnchorProps,
+  Record<string, never>,
+  RefreshSnapshot | null
+> {
+  state = {};
+  getSnapshotBeforeUpdate(
+    previous: RefreshAnchorProps,
+  ): RefreshSnapshot | null {
+    return this.props.enabled &&
+      previous.enabled &&
+      previous.identity === this.props.identity &&
+      previous.value !== this.props.value
+      ? this.props.capture()
+      : null;
+  }
+  componentDidUpdate(
+    _previous: RefreshAnchorProps,
+    _state: Record<string, never>,
+    snapshot?: RefreshSnapshot | null,
+  ): void {
+    if (snapshot) this.props.restore(snapshot);
+  }
+  render() {
+    return this.props.children;
+  }
+}
+
+/** All changing sections in a pane share one capture and one restoration per commit. */
+export function PaneRefreshAnchor({
+  identity,
+  value,
+  ready,
+  children,
+}: {
+  identity: string;
+  value: unknown;
+  ready: boolean;
+  children: ReactNode;
+}) {
+  const { memory, paneId } = useScope();
+  return (
+    <RefreshAnchorBoundary
+      identity={identity}
+      value={value}
+      enabled={ready && paneId !== null}
+      capture={() => (paneId ? memory.captureRefresh(paneId) : null)}
+      restore={memory.restoreRefresh}
+    >
+      {children}
+    </RefreshAnchorBoundary>
+  );
 }
 
 /** Every scroll-restoring body reports when its first content is on screen. */

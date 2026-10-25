@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import DailyPageBinding, Highlight, NoteBlock, Page, ResourceEdge
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
-from nexus.schemas.collection_page import CollectionPage, parse_collection_query
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.highlights import HighlightNoteExpected
 from nexus.schemas.notes import (
     DailyPageOut,
@@ -40,7 +40,7 @@ from nexus.schemas.notes import (
 from nexus.schemas.resource_graph import LinkResourceEndpoint
 from nexus.schemas.writing import IdentityKind, WritingAck, WritingInsertion
 from nexus.services import authored_identities, note_bodies, writing
-from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, keyset_page
+from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, order_by_sql
 from nexus.services.highlights import get_highlight_for_visible_read_or_404
 from nexus.services.resource_graph import edges, retention
 from nexus.services.resource_graph.cleanup import (
@@ -82,36 +82,22 @@ def page_index_rows_sql() -> str:
 
 def list_pages(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
-) -> CollectionPage[NotePageSummaryOut]:
-    """One keyset page of the viewer's pages in an updated/title view (as the chats index)."""
-    query = parse_collection_query(items, domain_keys={"sort", "direction"})
-    plan = UPDATED_TITLE_PLANS.get(
-        (query.parameters.get("sort"), query.parameters.get("direction"))
-    )
+) -> CollectionIndex[NotePageSummaryOut]:
+    """Every owned page in its canonical updated/title view."""
+    query = parse_index_query(items, domain_keys={"sort", "direction"})
+    plan = UPDATED_TITLE_PLANS.get((query.get("sort"), query.get("direction")))
     if plan is None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view")
-    rows, cursor = keyset_page(
-        db,
-        binding={"list": "Pages", "viewer": viewer_id},
-        plan=plan,
-        cursor=query.cursor,
-        limit=query.limit,
-        params={"viewer": viewer_id},
-        sql=lambda keyset, order: f"""
-            WITH facts AS (
-                {page_index_rows_sql()}
-            )
-            SELECT * FROM facts WHERE true {keyset}
-            ORDER BY {order}
-            LIMIT :limit
-        """,
-    )
-    return CollectionPage[NotePageSummaryOut](
+    order = order_by_sql(plan, alias="facts")
+    rows = db.execute(
+        text(f"SELECT * FROM ({page_index_rows_sql()}) facts ORDER BY {order}"),
+        {"viewer": viewer_id},
+    ).mappings()
+    return CollectionIndex[NotePageSummaryOut](
         items=[
             NotePageSummaryOut(id=row["id"], title=row["title"], updated_at=row["updated_at"])
             for row in rows
         ],
-        next_cursor=cursor,
     )
 
 

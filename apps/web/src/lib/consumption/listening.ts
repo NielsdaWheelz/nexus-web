@@ -191,6 +191,7 @@ export function announceListeningRevision(revision: string): void {
 /** The native player registers while bound; observations are dropped without it. */
 export function setObservationTransport(next: typeof transport): void {
   transport = next;
+  for (const listener of listeners) listener();
   if (next !== null) listeningSourceReconnected();
 }
 
@@ -274,6 +275,11 @@ export function currentListening(): ListeningState {
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+/** Bootstrap observations wait for both bound facts and their native transport. */
+export function useConsumptionObservationReady(): boolean {
+  return useSyncExternalStore(subscribe, () => transport !== null && state.facts !== null && accountId === state.facts.account_id, () => false);
 }
 
 export function useListening(): ListeningState {

@@ -11,8 +11,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.collection_order import OrderRevision
-from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.podcast import LibraryPodcastIndexOut
 
 LibraryRole = Literal["admin", "member"]
 LibraryName = Annotated[str, Field(min_length=1, max_length=100)]
@@ -120,10 +120,15 @@ class LibraryMediaEntryOut(BaseModel):
 LibraryEntryOut = LibraryMediaEntryOut
 
 
-class LibraryEntriesPageOut(CollectionPage[LibraryEntryOut]):
+class LibraryEntriesIndexOut(BaseModel):
     """Only the unfiltered manual-order view carries a structural revision."""
 
+    library: LibraryOut
+    items: list[LibraryEntryOut]
     order_revision: OrderRevision | None
+    podcasts: LibraryPodcastIndexOut
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class LibraryPlacementOut(BaseModel):

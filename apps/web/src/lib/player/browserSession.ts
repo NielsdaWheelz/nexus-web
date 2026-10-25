@@ -30,9 +30,8 @@ export function createBrowserSession(accountId: string, changed: () => void) {
   const read = async () => {
     if (pending !== null) throw new QueueCommandError("couldn’t confirm queue change");
     try {
-      const response = await requestWithDeadline({ signal: new AbortController().signal, timeoutMs: 5_000,
-        request: signal => readSharedValue({ accountId, key: "playback-session", signal, revalidate: true,
-          load: requestSignal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal: requestSignal, cache: "no-store" }) }) });
+      const response = await readSharedValue({ accountId, key: "/me/playback-session", signal: new AbortController().signal, timeoutMs: 5_000, invalidate: true,
+        load: signal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal, cache: "no-store" }) });
       if (saved?.state.queue_id !== response.data?.state.queue_id || saved?.revision !== response.data?.revision) previous = null;
       saved = response.data;
       known = true;

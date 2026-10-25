@@ -39,8 +39,10 @@ server components: callFastAPI ────────────────�
 
 - `serverState.tsx`: the one owner of keyed async reads.
   `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
-  pane visit) answer `loading | failed | ready {data, source, generation, error,
-  refreshing}` with `refetch()`. A new key loads (a null key waits); a moved
+  pane visit) answer `loading | failed | ready {data, source, acceptedStale,
+  fresh, generation, error, refreshing}` with strict awaitable `refetch()` and
+  non-superseding `revalidate()`. freshness compares the accepted token with
+  the requested token; retained data never borrows new authority. A new key loads (a null key waits); a moved
   `stale` refetches over the shown data; invalidation aborts the superseded flight and queues one fresh read.
   invalidation supersedes that read's success and failure; only the
   current key/stale request may publish. existing snapshots remain while the
@@ -54,7 +56,13 @@ server components: callFastAPI ────────────────�
   pane is seeded), under the key of the hook that reads them, the api path. A hook in the pane body's first commit paints
   its first key's seed without a fetch; that commit spends the pane's seeds
   (`ServerSeedsSpent`, beside the body), so every later mount reads and a seed
-  no hook took is dropped unread. concurrent identical reads share only a flight,
+  no hook took is dropped unread. accepted route entry also starts declared reads
+  while lazy code loads; the same one-use account/visit/route owner holds pending,
+  successful or failed outcomes until effect-time claims. mounted hooks own the
+  result thereafter. retirement cancels unused work; no completed-read cache
+  remains. bootstrap consumption observations reach the existing native owner
+  once its account facts and transport are ready.
+  concurrent identical reads share only a flight,
   keyed by account, representation/query, policy and prefix demand. subscribers
   cancel independently; the last departure aborts. completed responses never
   suppress later mounts. account generations fence stale success and failure;
@@ -63,7 +71,8 @@ server components: callFastAPI ────────────────�
   once it held still: a search reads by its settled text and shows results
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
-  way (architecture §8.12), exposing only the requested key’s rows and metadata
+  way for genuinely paged domains (architecture §8.12); finite saved indexes use
+  complete values. paged readers expose only the requested key’s rows and metadata
   from the first render and automatically exhausting active collections quietly.
   same-key refresh retains its usable snapshot; a different key exposes loading
   until its own snapshot exists. `requestedKey` names that requested scope, even

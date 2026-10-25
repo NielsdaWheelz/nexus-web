@@ -286,7 +286,7 @@ function canonicalStore(mediaId: string, accountId: string): CanonicalStore {
             const signal = binding.controller.signal;
             const noteId = ref.slice("note_block:".length);
             void readSharedValue({ accountId, key: `/notes/blocks/${encodeURIComponent(noteId)}`,
-              load: readSignal => fetchNote(noteId, readSignal), signal, revalidate: true,
+              load: readSignal => fetchNote(noteId, readSignal), signal, invalidate: true,
             }).then(body => {
               if (signal.aborted || noteWatches.get(ref) !== binding ||
                 !binding.watch.adopt({ body_version: body.body_version }, generation)) return;

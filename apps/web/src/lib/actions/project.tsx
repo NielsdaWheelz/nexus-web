@@ -82,6 +82,8 @@ export interface ActionCommand {
   /** The resource's label, for `{title}` in the confirmation. */
   readonly title: string;
   readonly confirmation: Confirmation | null;
+  /** A removal confirmation falls back here only when its opener disappeared. */
+  readonly afterRemoval?: ReturnFocusTarget;
   /** Opening an overlay, navigating or handing a pane an entry is untracked. */
   readonly tracked: boolean;
   readonly execute: () => unknown;
@@ -100,6 +102,7 @@ interface Options {
   readonly disabledReason?: string;
   readonly confirmation?: Confirmation | null;
   readonly tracked?: boolean;
+  readonly afterRemoval?: ReturnFocusTarget;
 }
 type Verb = readonly [
   execute: (detail: ActionSelectDetail) => unknown,
@@ -478,6 +481,7 @@ export function projectResourceActions(
             ? entry.confirmation ?? null
             : options.confirmation,
           tracked: options.tracked ?? true,
+          afterRemoval: options.afterRemoval,
           execute: () => execute(detail),
         }),
     };
@@ -529,6 +533,7 @@ export function projectResourceActions(
         fallbackHref,
       });
     },
+    { afterRemoval: podcastFocus?.afterRemoval },
   ];
   const deleteChat = async () => {
     const owner = getConversationCommands(ctx.accountId, id);

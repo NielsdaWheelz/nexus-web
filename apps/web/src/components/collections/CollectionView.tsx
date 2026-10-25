@@ -2,6 +2,7 @@
 
 import {
   Fragment,
+  useCallback,
   useId,
   useLayoutEffect,
   useMemo,
@@ -19,16 +20,18 @@ import {
   startSameDocumentViewTransition,
   useClientViewTransitionsReady,
 } from "@/lib/ui/viewTransitions";
-import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { focusableElements } from "@/lib/ui/overlay";
 
-function followingRowIds(root: HTMLElement, target: HTMLElement): string[] {
-  const row = target.closest<HTMLElement>("[data-collection-row-id]");
-  if (row === null) return [];
-  const all = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-  return all.slice(all.indexOf(row) + 1).map((item) => item.dataset.collectionRowId!);
+function followingRow(root: HTMLElement, rowId: string, orderedIds: readonly string[]): HTMLElement | undefined {
+  const remaining = new Map(Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"))
+    .map(row => [row.dataset.collectionRowId!, row]));
+  for (let index = orderedIds.indexOf(rowId) + 1; index < orderedIds.length; index += 1) {
+    const row = remaining.get(orderedIds[index]);
+    if (row) return row;
+  }
 }
 
 export interface CollectionViewRowRenderProps {
@@ -89,34 +92,12 @@ export default function CollectionView({
     target: HTMLElement;
     rowId: string;
     controlSelector: string | null;
-    followingIds: string[];
+    orderedIds: readonly string[];
   } | null>(null);
   const viewTransitionsReady = useClientViewTransitionsReady();
+  const orderedView = order !== undefined;
+  const previouslyOrdered = useRef(orderedView);
   const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
-  useLayoutEffect(() => {
-    const focus = ownedFocusRef.current;
-    const root = returnScopeRef.current;
-    if (focus === null || root === null) return;
-    if (focus.target.isConnected) {
-      focus.followingIds = followingRowIds(root, focus.target);
-      return;
-    }
-    if (document.activeElement !== document.body || root.closest("[inert]")) return;
-    ownedFocusRef.current = null;
-    const remaining = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-    const sameRow = remaining.find((item) => item.dataset.collectionRowId === focus.rowId);
-    const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
-    const sameControl = control?.hasAttribute("data-row-primary-control")
-      ? focusableElements(control)[0] : control;
-    const followingRow = focus.followingIds.map((id) => remaining.find((item) => item.dataset.collectionRowId === id))
-      .find((item) => item !== undefined);
-    const paneId = root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-    const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??
-      followingRow?.querySelector<HTMLElement>("a[href], button:not([disabled])") ??
-      root.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]') ??
-      findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
-    target?.focus({ preventScroll: true });
-  });
   const [displayRows, setDisplayRows] = useState<readonly CollectionRowView[]>(rows);
   const displayRowIdsRef = useRef(rowIds);
   const latestRowsRef = useRef(rows);
@@ -127,10 +108,13 @@ export default function CollectionView({
   latestRowIdsRef.current = rowIds;
 
   useLayoutEffect(() => {
-    if (status !== "ready" || order) {
+    const wasOrdered = previouslyOrdered.current;
+    previouslyOrdered.current = orderedView;
+    if (status !== "ready" || orderedView || wasOrdered) {
       displayedRowChangeKeyRef.current = rowChangePresentation?.key;
       displayRowIdsRef.current = rowIds;
-      setDisplayRows(rows);
+      // Ordered rows render directly; only ordinary transitions need mirrored state.
+      if (!orderedView) setDisplayRows(rows);
       return;
     }
     if (
@@ -159,23 +143,47 @@ export default function CollectionView({
     transitionUpdatePendingRef.current = true;
     startSameDocumentViewTransition(() => {
       transitionUpdatePendingRef.current = false;
+      if (previouslyOrdered.current) return;
       displayRowIdsRef.current = latestRowIdsRef.current;
       setDisplayRows(latestRowsRef.current);
     });
-  }, [order, rowChangePresentation, rowIds, rows, status]);
+  }, [orderedView, rowChangePresentation, rowIds, rows, status]);
 
-  const rowsForRender = status === "ready" && !order ? displayRows : rows;
-  const renderCollectionRow = (
+  const directRows = status !== "ready" || orderedView || previouslyOrdered.current;
+  const rowsForRender = directRows ? rows : displayRows;
+  const renderedIds = useMemo(() => rowsForRender.map(row => row.id), [rowsForRender]);
+  useLayoutEffect(() => {
+    const focus = ownedFocusRef.current;
+    const root = returnScopeRef.current;
+    if (focus === null || root === null) return;
+    if (focus.target.isConnected) {
+      focus.orderedIds = renderedIds;
+      return;
+    }
+    if (document.activeElement !== document.body || root.closest("[inert]")) return;
+    ownedFocusRef.current = null;
+    const remaining = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
+    const sameRow = remaining.find((item) => item.dataset.collectionRowId === focus.rowId);
+    const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
+    const sameControl = control?.hasAttribute("data-row-primary-control")
+      ? focusableElements(control)[0] : control;
+    const following = followingRow(root, focus.rowId, focus.orderedIds);
+    const paneId = root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+    const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??
+      following?.querySelector<HTMLElement>("a[href], button:not([disabled])") ??
+      root.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]') ??
+      findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
+    target?.focus({ preventScroll: true });
+  });
+  const renderCollectionRow = useCallback((
     row: CollectionRowView,
     as?: "li" | "div",
   ) => {
-    const following = rowsForRender.slice(rowsForRender.indexOf(row) + 1).map(item => item.id);
     const props: CollectionViewRowRenderProps = {
       afterRemoval: () => {
         const root = returnScopeRef.current;
-        const remaining = Array.from(root?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
         const paneId = root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-        return following.map(id => remaining.find(item => item.dataset.collectionRowId === id)?.querySelector<HTMLElement>("[data-row-focusable]")).find(item => item !== undefined && item !== null)
+        return (root && followingRow(root, row.id, renderedIds)?.querySelector<HTMLElement>("[data-row-focusable]"))
           ?? root?.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]')
           ?? findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
       },
@@ -183,18 +191,18 @@ export default function CollectionView({
       as,
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
-      viewTransitionName: viewTransitionsReady && !order
+      viewTransitionName: viewTransitionsReady && !orderedView
         ? collectionRowViewTransitionName(transitionScopeId, row.id)
         : undefined,
     };
     return renderRow ? renderRow(props) : <CollectionRow {...props} />;
-  };
+  }, [renderedIds, rowControls, rowActionsAvailable, viewTransitionsReady, orderedView, transitionScopeId, renderRow]);
+  const renderSortableRow = useCallback((row: CollectionRowView) => renderCollectionRow(row, "div"), [renderCollectionRow]);
   usePaneReturnDescendantReady({
     rootRef: returnScopeRef,
     ready:
       status !== "loading" &&
-      (order !== undefined || status !== "ready" ||
-        displayRowIdsRef.current === rowIds),
+      (directRows || displayRowIdsRef.current === rowIds),
   });
   const body =
     status === "loading" ? (
@@ -213,7 +221,7 @@ export default function CollectionView({
         order={order}
         ariaLabel={ariaLabel}
         busy={collectionBusy}
-        renderItem={(row) => renderCollectionRow(row, "div")}
+        renderItem={renderSortableRow}
       />
     ) : (
       <ResourceList ariaLabel={ariaLabel} busy={collectionBusy}>
@@ -224,6 +232,7 @@ export default function CollectionView({
     );
 
   return (
+    <PaneRefreshAnchor identity={`${returnScope}:${rowChangePresentation?.key ?? ""}`} value={rowsForRender} ready={status === "ready"}>
     <div
       ref={returnScopeRef}
       data-pane-return-scope={returnScope}
@@ -244,7 +253,7 @@ export default function CollectionView({
           controlSelector = `a[href="${CSS.escape(href)}"]`;
         }
         ownedFocusRef.current = { target, rowId: row.dataset.collectionRowId!, controlSelector,
-          followingIds: followingRowIds(event.currentTarget, target) };
+          orderedIds: renderedIds };
       }}
       onBlurCapture={(event) => {
         if (event.target.isConnected && (event.relatedTarget === null ||
@@ -269,5 +278,6 @@ export default function CollectionView({
         </>
       )}
     </div>
+    </PaneRefreshAnchor>
   );
 }

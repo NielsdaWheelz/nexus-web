@@ -84,7 +84,7 @@ through that route remains forbidden.
 | `POST /libraries` | client id, name, `initial_items`, removal fence; empty create uses `[]` and null. create-and-file is atomic; replay never reapplies initial items |
 | `GET /libraries/destinations` | one snapshot `{removal_revision,destinations}`; complete named admin destinations |
 | `GET /libraries/placements/media:{id}` | one snapshot `{removal_revision,all_membership,placements}`; actual default id/revision, effective all inclusion and aggregate removal blocker; named direct/absent relations and exact-rule blockers |
-| `GET /libraries/{id}/entries` | intersected media sort/type/projection/completion, then keyset paging; structural revision only for unfiltered named manual order |
+| `GET /libraries/{id}/entries` | complete intersected media view plus library and podcast section in one snapshot; structural revision only for unfiltered named manual order |
 | `GET /libraries/{id}/order` | complete visible entry ids and revision |
 | `PUT /libraries/{id}/entries/{entry_id}/position` | exact revision, nullable successor; preserves entry identity/date |
 | `PATCH /libraries/{id}` | name plus expected predecessor; already desired succeeds |
@@ -109,7 +109,7 @@ only acknowledged local predecessors may supply dependent revisions. external
 changes require a new choice. closing presentation preserves accepted work.
 
 canonical media/show relations feed search scopes, atlas and suggestions.
-`library_listing` owns media lenses and paging. `library_members` owns invitations,
+`library_listing` owns complete media lenses and their atomic pane aggregate. `library_members` owns invitations,
 leaving/transfer; passive membership changes acquire nothing. resource grants,
 consumption and suggestions retain their own owners.
 
@@ -126,9 +126,8 @@ the [index shell](resource-references.md#presentation-contract) owns density.
 value, nulls last in either direction, then title/id. partial values retain their
 existing deterministic ordering without asserting invented days. feed timestamps
 never substitute. fresh library playback snapshots share this query; durable
-queues keep their recorded order. publication keyset plans name the original-date
-columns, so prior publication-plan cursors are invalid and require a fresh list
-read. public sort names and wire shapes remain unchanged. explicit episode/source
+queues keep their recorded order. complete publication order plans name the original-date columns and also serve
+ordered command selections. explicit episode/source
 release views retain release chronology.
 
 ## chooser presentation

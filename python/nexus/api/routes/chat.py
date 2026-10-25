@@ -18,7 +18,7 @@ from nexus.db.session import (
     get_session_factory,
 )
 from nexus.responses import Data
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.conversation import (
     ChatAdmissionReceipt,
     ChatRunCreateRequest,
@@ -137,21 +137,31 @@ async def regenerate_assistant_message(
 @router.get("/conversations")
 def list_conversations(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[ConversationListItemOut]]:
-    """The owned-chat index: four views, literal title search and keyset paging.
+) -> Data[CollectionIndex[ConversationListItemOut]]:
+    """The complete owned-chat index: four views and literal title search.
 
     Optional ``media_id`` scopes current direct context by its endpoint's media owner.
 
     Errors:
         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
             or repeated key, invalid media id, or title search over 200 characters.
-        E_INVALID_CURSOR (400): malformed or mismatched viewer, media, search or view.
         E_MEDIA_NOT_FOUND (404): scoped media is missing or unreadable, including
             viewer tombstones and pending teardown.
     """
 
     items = request.query_params.multi_items()
     return Data(data=conversations.index(db, viewer_id=viewer.user_id, items=items))
+
+
+@router.get("/conversations/latest")
+def latest_conversation(
+    request: Request,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    media_id: UUID,
+) -> Data[ConversationListItemOut | None]:
+    parse_index_query(request.query_params.multi_items(), domain_keys={"media_id"})
+    return Data(data=conversations.latest(db, viewer_id=viewer.user_id, media_id=media_id))
 
 
 @router.post("/conversations", status_code=201)

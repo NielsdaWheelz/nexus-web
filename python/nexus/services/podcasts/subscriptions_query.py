@@ -17,10 +17,10 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas import podcast as wire
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.services import libraries, library_entries
 from nexus.services.browse.targets import PodcastIndexPodcastTarget, unseal_target
-from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 
@@ -169,13 +169,25 @@ def hydrate_compact_podcast_targets(
     return result
 
 
-def _catalog(
-    db: Session, ids: list[UUID]
-) -> tuple[dict[UUID, wire.PodcastListItemOut], dict[UUID, wire.PodcastRecurringOut]]:
+def _catalog[T: (wire.PodcastListItemOut, wire.PodcastIndexItemOut)](
+    db: Session, ids: list[UUID], model: type[T]
+) -> tuple[dict[UUID, T], dict[UUID, wire.PodcastRecurringOut]]:
+    columns = {f"p.{key}" for key in model.model_fields if key != "contributors"}
+    columns.update(
+        f"p.{key}"
+        for key in (
+            "sync_run_id",
+            "last_checked_at",
+            "last_check_had_coverage_gaps",
+            "last_check_error_code",
+            "last_check_error_detail",
+            "next_sync_at",
+        )
+    )
     rows = (
         db.execute(
-            text("""
-        SELECT p.*,r.started_at AS run_started_at FROM podcasts p
+            text(f"""
+        SELECT {", ".join(sorted(columns))},r.started_at AS run_started_at FROM podcasts p
         LEFT JOIN podcast_feed_runs r ON r.id=p.sync_run_id
         WHERE p.id=ANY(CAST(:ids AS uuid[]))
     """),
@@ -188,8 +200,8 @@ def _catalog(
     shows = {}
     recurring = {}
     for row in rows:
-        shows[row["id"]] = wire.PodcastListItemOut(
-            **{k: row[k] for k in wire.PodcastListItemOut.model_fields if k != "contributors"},
+        shows[row["id"]] = model(
+            **{k: row[k] for k in model.model_fields if k != "contributors"},
             contributors=credits.get(row["id"], []),
         )
         recurring[row["id"]] = wire.PodcastRecurringOut(
@@ -249,15 +261,28 @@ def read_library_podcasts(
     db: Session, viewer_id: UUID, library_id: UUID
 ) -> wire.LibraryPodcastsOut:
     snapshot = _snapshot(db, viewer_id, library_id)
-    shows, recurring = _catalog(db, [UUID(rule["podcast_id"]) for rule in snapshot["rules"]])
-    return _library_podcasts(dict(snapshot), shows, recurring)
+    shows, recurring = _catalog(
+        db, [UUID(rule["podcast_id"]) for rule in snapshot["rules"]], wire.PodcastListItemOut
+    )
+    return _library_podcasts(dict(snapshot), shows, recurring, wire.LibraryPodcastsOut)
 
 
-def _library_podcasts(
+def read_library_podcast_index(
+    db: Session, viewer_id: UUID, library_id: UUID
+) -> wire.LibraryPodcastIndexOut:
+    snapshot = _snapshot(db, viewer_id, library_id)
+    shows, recurring = _catalog(
+        db, [UUID(rule["podcast_id"]) for rule in snapshot["rules"]], wire.PodcastIndexItemOut
+    )
+    return _library_podcasts(dict(snapshot), shows, recurring, wire.LibraryPodcastIndexOut)
+
+
+def _library_podcasts[T: (wire.LibraryPodcastsOut, wire.LibraryPodcastIndexOut)](
     snapshot: Mapping[str, Any],
-    shows: dict[UUID, wire.PodcastListItemOut],
+    shows: Mapping[UUID, wire.PodcastListItemOut | wire.PodcastIndexItemOut],
     recurring: dict[UUID, wire.PodcastRecurringOut],
-) -> wire.LibraryPodcastsOut:
+    model: type[T],
+) -> T:
     destinations: dict[UUID, list[wire.PodcastDestinationOut]] = {}
     history_ids = {UUID(rule["initial_import_id"]) for rule in snapshot["rules"]}
     for rule in snapshot["rules"]:
@@ -277,20 +302,29 @@ def _library_podcasts(
         )
         for row in snapshot["imports"]
     ]
-    return wire.LibraryPodcastsOut(
-        order_revision=str(snapshot["order_revision"]),
-        removal_revision=str(snapshot["removal_revision"]),
-        can_add_content=snapshot["can_manage"],
-        subscriptions=[
-            wire.PodcastLibraryShowOut(
-                podcast=shows[p],
-                destinations=destinations[p],
-                recurring=recurring[p],
-                imports=[op for op in operations if op.podcast_id == p and op.id in history_ids],
-            )
-            for p in sorted(destinations, key=lambda p: (shows[p].title.casefold(), p))
-        ],
-        imports=[op for op in operations if op.id not in history_ids],
+    followed_imports: dict[UUID, list[wire.PodcastImportOut]] = {}
+    standalone_imports = []
+    for operation in operations:
+        if operation.id in history_ids:
+            followed_imports.setdefault(operation.podcast_id, []).append(operation)
+        else:
+            standalone_imports.append(operation)
+    return model.model_validate(
+        {
+            "order_revision": str(snapshot["order_revision"]),
+            "removal_revision": str(snapshot["removal_revision"]),
+            "can_add_content": snapshot["can_manage"],
+            "subscriptions": [
+                {
+                    "podcast": shows[p],
+                    "destinations": destinations[p],
+                    "recurring": recurring[p],
+                    "imports": followed_imports.get(p, []),
+                }
+                for p in sorted(destinations, key=lambda p: (shows[p].title.casefold(), p))
+            ],
+            "imports": standalone_imports,
+        }
     )
 
 
@@ -388,12 +422,10 @@ def list_podcasts(
     db: Session,
     viewer_id: UUID,
     *,
-    limit: int,
-    cursor: str | None,
     sort: SubscriptionSort,
     filter: SubscriptionFilter,
     library_id: UUID | None,
-) -> CollectionPage[wire.PodcastListItemOut]:
+) -> CollectionIndex[wire.PodcastIndexItemOut]:
     params: dict[str, object] = {"viewer_id": viewer_id}
     where = []
     if filter == "has_new":
@@ -406,27 +438,20 @@ def list_podcasts(
         where.append(
             f"AND podcast_id IN (SELECT podcast_id FROM ({library_entries.library_podcast_rows_sql()}) scoped)"
         )
-    rows, next_cursor = keyset_page(
-        db,
-        binding={
-            "list": "Podcasts",
-            "viewer": viewer_id,
-            "sort": sort,
-            "filter": filter,
-            "library": library_id,
-        },
-        plan=podcast_order_plan(sort),
-        cursor=cursor,
-        limit=limit,
-        params=params,
-        alias="o",
-        sql=lambda keyset, order: f"""
-        WITH o AS ({podcast_index_rows_sql()})
-        SELECT * FROM o WHERE TRUE {" ".join(where)} {keyset} ORDER BY {order} LIMIT :limit
-    """,
+    order = order_by_sql(podcast_order_plan(sort), alias="o")
+    rows = (
+        db.execute(
+            text(f"""
+            WITH o AS ({podcast_index_rows_sql()})
+            SELECT * FROM o WHERE TRUE {" ".join(where)} ORDER BY {order}
+        """),
+            params,
+        )
+        .mappings()
+        .all()
     )
-    shows, _ = _catalog(db, [row["podcast_id"] for row in rows])
-    return CollectionPage(items=[shows[row["podcast_id"]] for row in rows], next_cursor=next_cursor)
+    shows, _ = _catalog(db, [row["podcast_id"] for row in rows], wire.PodcastIndexItemOut)
+    return CollectionIndex(items=[shows[row["podcast_id"]] for row in rows])
 
 
 def get_podcast_detail(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastDetailOut:
@@ -463,7 +488,7 @@ def read_catalog(
     """
     default_id = libraries.default_library_id(db, viewer_id)
     snapshot = _snapshot(db, viewer_id, default_id)
-    shows, recurring = _catalog(db, list(counts))
+    shows, recurring = _catalog(db, list(counts), wire.PodcastListItemOut)
     if set(shows) != set(counts):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
     playback_settings = settings.get_settings_many(db, viewer_id, list(counts))
@@ -479,7 +504,7 @@ def read_catalog(
             ]
         scoped["order_revision"] = library.order_revision
         scoped["can_manage"] = library.out(viewer_id).can_add_content
-        sections[library.id] = _library_podcasts(scoped, shows, recurring)
+        sections[library.id] = _library_podcasts(scoped, shows, recurring, wire.LibraryPodcastsOut)
     destinations: dict[UUID, list[wire.PodcastDestinationOut]] = {}
     for rule in snapshot["rules"]:
         destinations.setdefault(UUID(rule["podcast_id"]), []).append(

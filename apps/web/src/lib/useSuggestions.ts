@@ -3,13 +3,15 @@
 import { installedApp, remoteReady } from "@/lib/native/admission";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isApiError, isSameSystemApiDefect, isStaleBuild, type ApiError, type ApiPath } from "@/lib/api/client";
-import { useServerSeed } from "@/lib/api/serverState";
+import { readSharedValue, useServerArrival, type ArrivalClaim } from "@/lib/api/serverState";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useSuggestionEntryRead } from "@/lib/panes/suggestionEntryReads";
 import { openStream } from "@/lib/api/stream";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import {
-  getSuggestions, refreshSuggestions, viewSuggestions,
+  refreshSuggestions, viewSuggestions,
   type SuggestionItem, type SuggestionObservation, type SuggestionPublication,
   type Suggestions, type SuggestionsDestination, type SuggestionState,
 } from "@/lib/suggestions";
@@ -76,7 +78,20 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
   const captured = useRef<AdoptedPool | null>(null);
   const restored = usePaneVisitData(VISIT, () => captured.current);
   const writeVisit = usePaneVisitDataWriter(VISIT);
-  const seed = useServerSeed<Suggestions>(key)?.data ?? null;
+  const { accountId } = useAuthenticatedAccount();
+  const descriptor = useSuggestionEntryRead();
+  // justify-defect: library and lectern entries own their published-selection GET.
+  if (descriptor === null) throw new Error("suggestions without route entry");
+  const ownedDescriptor = descriptor;
+  const { peek: preparedOutcome, claim: claimArrival } = useServerArrival(ownedDescriptor);
+  const seed = preparedOutcome?.status === "success" ? preparedOutcome.data : null;
+  const prepared = useRef<ArrivalClaim<Suggestions> | null>(null);
+  useEffect(() => {
+    prepared.current = claimArrival();
+    return () => { prepared.current?.release(); prepared.current = null; };
+  // Claim only this body's first arrival, including strict effect replay.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
   const [view, setView] = useState<SuggestionsView>(() => ({
     state: seed?.state ?? null,
     adopted: seed?.state.capability === "NotApplicable" ? null : restored ?? (seed?.publication != null ? {
@@ -204,8 +219,13 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       if (unavailable()) return outcome();
       const beganAt = receiptSequence.current;
       const version = observationVersion;
+      const claimed = intention === "Initial" ? prepared.current : null;
+      if (claimed !== null) prepared.current = null;
+      const release = () => claimed?.release();
+      signal.addEventListener("abort", release, { once: true });
       try {
-        const response = await getSuggestions(path, signal);
+        const response = claimed !== null ? await claimed.promise
+          : await readSharedValue({ ...ownedDescriptor, key, accountId, signal, invalidate: intention === "Refresh" });
         if (unavailable()) return outcome();
         if (signal.aborted || controller.signal.aborted) throw new DOMException("Suggestions read retired", "AbortError");
         readState(response, version, current.current.adopted, response.publication?.id ?? null);
@@ -225,11 +245,14 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
         if (unavailable()) return outcome();
         if (signal.aborted || controller.signal.aborted || isAbortError(error)) throw new DOMException("Suggestions read retired", "AbortError");
         if (authorityLost(error)) return outcome();
-        if (intention === "Initial" && current.current.adopted !== null) return outcome();
-        failed(error, intention, owner);
+        if (intention === "Initial" && current.current.adopted !== null && claimed === null) return outcome();
+        failed(error, claimed !== null && current.current.adopted !== null ? "Reconcile" : intention, owner);
         if (unavailable()) return outcome();
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
         return "Failed";
+      } finally {
+        signal.removeEventListener("abort", release);
+        claimed?.release();
       }
     }
 
@@ -287,7 +310,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     }
 
     function queue(input: { initial?: boolean; view?: boolean }) {
-      pendingInitial ||= input.initial === true && current.current.adopted === null;
+      pendingInitial ||= input.initial === true && (prepared.current !== null || current.current.adopted === null && current.current.readFailure?.intention !== "Initial");
       pendingView ||= input.view === true && current.current.adopted !== null;
       if (reading !== null) return reading;
       if (controller.signal.aborted || unavailable() || (!pendingInitial && !pendingView)) return Promise.resolve();
@@ -298,7 +321,10 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
             const initial = pendingInitial;
             const viewPool = pendingView;
             pendingInitial = false; pendingView = false;
-            if (initial && current.current.adopted === null) await readLatest("Initial", "Inline", controller.signal, true);
+            if (initial && (prepared.current !== null || current.current.adopted === null)) {
+              const result = await readLatest("Initial", "Inline", controller.signal, true);
+              if (result === "Failed") { pendingInitial = false; pendingView = false; break; }
+            }
             if (viewPool && current.current.adopted !== null) await reconcilePool();
           }
         } catch (error) {
@@ -446,7 +472,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       clock.current = { serverTime: Date.parse(seed.observed_at), receivedAt: performance.now() };
     observe();
     armTimer();
-    void queue({ initial: current.current.adopted === null, view: current.current.adopted !== null });
+    void queue({ initial: prepared.current !== null || current.current.adopted === null, view: current.current.adopted !== null });
     return () => {
       runtime.current = null;
       window.removeEventListener("focus", wake);
@@ -454,7 +480,9 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       stopObservation();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [path, libraryId, isActive, visible, seed, commit, writeVisit]);
+  // The descriptor policy is fixed for this destination; the first claim alone adopts preparation.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, libraryId, key, accountId, isActive, visible, commit, writeVisit]);
 
   const acknowledge = useCallback((ref: string) => {
     accepted.current.set(ref, ++receiptSequence.current);

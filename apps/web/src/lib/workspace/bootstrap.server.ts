@@ -3,6 +3,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { isApiError, type ApiError } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
+import type { EpisodeConsumptionObservation } from "@/lib/consumption/listening";
 import type { ApiJson } from "@/lib/api/wire";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/urls";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
@@ -57,12 +58,13 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
   )!;
   const route = resolvePaneRouteModel(pane.current_visit.href);
   const named = route.id === "unsupported" ? undefined : paneSeeds[route.id];
-  const get: Get = (path) => callFastAPI(path, { timeoutMs: 500 });
+  const consumptionObservations: EpisodeConsumptionObservation[] = [];
+  const get: Get = path => callFastAPI(path, { timeoutMs: 500 });
   const seeded: Record<string, unknown> = {};
   await Promise.all(
-    Object.entries(named?.(route.params) ?? {}).map(async ([key, load]) => {
+    Object.entries(named?.(route.params, parseWorkspaceHref(pane.current_visit.href)?.searchParams ?? new URLSearchParams()) ?? {}).map(async ([key, load]) => {
       try {
-        seeded[key] = await load(get);
+        seeded[key] = await load(get, observations => consumptionObservations.push(...observations));
       } catch (error) {
         const resourceMiss = isApiError(error) && (
           (route.id === "media" && error.code === "E_MEDIA_NOT_FOUND") ||
@@ -80,6 +82,7 @@ export async function loadWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
     readerProfile: profile.data,
     initialState,
     seeds: { [pane.id]: seeded },
+    consumptionObservations,
     locationLinkFailure,
   };
 }

@@ -68,7 +68,7 @@ export function usePodcastActionFacts(input: {
       };
     },
   });
-  if (targets.length === 0) return { status: "ready", data: EMPTY, source: LIVE_SOURCE, generation: 0, error: null, refreshing: false, refetch: read.refetch };
+  if (targets.length === 0) return { status: "ready", data: EMPTY, source: LIVE_SOURCE, acceptedStale: stale, fresh: true, generation: 0, error: null, refreshing: false, refetch: read.refetch, revalidate: read.revalidate };
   if (read.status !== "ready") return read;
   return { ...read, data: read.data.items, refreshing: read.refreshing || (read.error === null && read.data.stale !== stale) };
 }

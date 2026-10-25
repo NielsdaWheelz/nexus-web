@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useState } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import ActionMenu from "@/components/ui/ActionMenu";
+import { ActionMenuHost, ActionMenuInvocation, type ActionMenuProps, type ActionMenuSession } from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneSubject } from "@/lib/panes/paneChrome";
@@ -10,8 +10,6 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
-
-type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 export interface ContextActionSection {
   readonly id: "Pane" | "Occurrence" | "View";
@@ -24,10 +22,7 @@ export interface ContextActionSection {
  * result; an optional source label names that principal. A supplied disabled
  * reason blocks commands.
  */
-export default function ContextualActionMenu({
-  sections, resourceRef, title, subjectKey, onDefect, actionFocus,
-  omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, ...props
-}: Pick<ActionMenuProps,
+type ContextualMenuProps = Pick<ActionMenuProps,
   "label" | "placement" | "align" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
 > & {
   readonly actionFocus?: PodcastActionFocus;
@@ -41,10 +36,24 @@ export default function ContextualActionMenu({
   readonly commandDisabledReason?: string;
   /** Loading defects belong to the resource's pane, even outside its provider. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
-}) {
+};
+
+export default function ContextualActionMenu(props: ContextualMenuProps) {
+  const pane = usePaneRuntime();
+  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${JSON.stringify(props.displayedActivation ?? null)}`;
+  return <ActionMenuHost {...props} title={props.title} subjectKey={subjectKey}>{session =>
+    <ContextualMenuInvocation {...props} session={session} />
+  }</ActionMenuHost>;
+}
+
+/** Authoritative facts and client subscriptions belong only to an invocation. */
+function ContextualMenuInvocation({
+  sections, resourceRef, title, subjectKey, onDefect, actionFocus,
+  omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, session, ...props
+}: ContextualMenuProps & { readonly session: ActionMenuSession }) {
   const pane = usePaneRuntime();
   const paneSubject = usePaneSubject();
-  const [coarse, setCoarse] = useState(false);
+  const [coarse, setCoarse] = useState(() => window.matchMedia("(any-pointer: coarse)").matches);
   useEffect(() => {
     const query = window.matchMedia("(any-pointer: coarse)");
     const update = () => setCoarse(query.matches);
@@ -99,5 +108,5 @@ export default function ContextualActionMenu({
     ...identity, kind: "Prepared", prepare: resource.prepare,
     state: state?.kind === "Ready" || state?.kind === "Failed" && state.connectionRequired ? { kind: "Ready", request: state.request, content } : state,
   } : { ...identity, kind: "Immediate", content };
-  return <ActionMenu {...props} label={props.label ?? `more actions for ${title}`} source={source} />;
+  return <ActionMenuInvocation source={source} session={session} placement={props.placement} align={props.align} returnFocusTo={props.returnFocusTo} />;
 }

@@ -2,7 +2,6 @@
 // Page deletion is idempotent. Capture retries retain the client note/link ids
 // and frozen local date; its accepted insertion alone resolves the daily page.
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 import { admitWriting, type WriteHandle } from "./writes";
@@ -27,11 +26,11 @@ export function deletePage(pageId: string): WriteHandle {
   return write;
 }
 
-/** One keyset page of the viewer's pages; `query` holds the view's keys, `limit` and `cursor`. */
+/** The viewer's complete ordered page index. */
 export async function fetchNotePages(
   query: URLSearchParams,
   signal: AbortSignal,
-): Promise<ListPage<NotePageSummary>> {
+) {
   const { data } = await apiFetch<ApiJson<"/notes/pages", "get">>(
     `/api/notes/pages?${query}`,
     { cache: "no-store", signal },

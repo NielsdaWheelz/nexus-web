@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useCallback,
   useLayoutEffect,
   useRef,
@@ -8,6 +9,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -92,38 +94,51 @@ function acceptsTarget(node: HTMLLIElement, target: EventTarget | null): boolean
     : !isInteractiveTarget(target, row);
 }
 
-function Row({ item, enabled, dragging, renderItem, nodes, begin, canActivate }: {
+const Row = memo(function Row({ item, enabled, dragging, renderItem, nodes }: {
   readonly item: CollectionRowView;
   readonly enabled: boolean;
   readonly dragging: boolean;
   readonly renderItem: (item: CollectionRowView) => ReactNode;
   readonly nodes: Map<string, HTMLLIElement>;
-  readonly begin: (id: string, event: ReactPointerEvent<HTMLLIElement>) => void;
-  readonly canActivate: (id: string, event: MouseEvent | TouchEvent) => boolean;
 }) {
-  const draggable = useDraggable({ id: item.id, disabled: !enabled });
-  return (
-    <li
-      ref={(node) => {
-        draggable.setNodeRef(node);
-        draggable.setActivatorNodeRef(node);
-        if (node) nodes.set(item.id, node);
-        else nodes.delete(item.id);
-      }}
-      className={styles.item}
-      data-draggable={enabled || undefined}
-      data-dragging={dragging || undefined}
-      onPointerDownCapture={(event) => begin(item.id, event)}
-      onMouseDown={(event) => {
-        if (canActivate(item.id, event.nativeEvent)) draggable.listeners?.onMouseDown?.(event);
-      }}
-      onTouchStart={(event) => {
-        if (canActivate(item.id, event.nativeEvent)) draggable.listeners?.onTouchStart?.(event);
-      }}
-    >
-      {renderItem(item)}
-    </li>
-  );
+  return <li ref={node => {
+    if (node) nodes.set(item.id, node);
+    else nodes.delete(item.id);
+  }} className={styles.item} data-sortable-row-id={item.id}
+    data-draggable={enabled || undefined} data-dragging={dragging || undefined}>
+    {renderItem(item)}
+  </li>;
+});
+
+/** One registered actor binds the admitted row before the unchanged sensor starts. */
+function GestureSurface({ rootRef, begin, canActivate, children }: {
+  readonly rootRef: RefObject<HTMLDivElement | null>;
+  readonly begin: (event: ReactPointerEvent<HTMLDivElement>) => HTMLLIElement | null;
+  readonly canActivate: (event: MouseEvent | TouchEvent) => boolean;
+  readonly children: ReactNode;
+}) {
+  const draggable = useDraggable({ id: "collection" });
+  useLayoutEffect(() => {
+    if (draggable.node.current && !rootRef.current?.contains(draggable.node.current)) {
+      draggable.setNodeRef(null);
+      draggable.setActivatorNodeRef(null);
+    }
+  });
+  return <div ref={rootRef} className={styles.root}
+    onPointerDownCapture={event => {
+      const row = begin(event);
+      if (!row) return;
+      draggable.setNodeRef(row);
+      draggable.setActivatorNodeRef(row);
+    }}
+    onMouseDown={event => {
+      if (canActivate(event.nativeEvent)) draggable.listeners?.onMouseDown?.(event);
+    }}
+    onTouchStart={event => {
+      if (canActivate(event.nativeEvent)) draggable.listeners?.onTouchStart?.(event);
+    }}>
+    {children}
+  </div>;
 }
 
 /**
@@ -200,22 +215,27 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       latest.items.every((item, index) => item.id === session.ids[index]);
   };
 
-  const begin = (id: string, event: ReactPointerEvent<HTMLLIElement>) => {
+  const begin = (event: ReactPointerEvent<HTMLDivElement>): HTMLLIElement | null => {
+    const node = event.target instanceof Element ? event.target.closest<HTMLLIElement>("[data-sortable-row-id]") : null;
+    const id = node?.dataset.sortableRowId;
+    if (!node || !id || nodes.get(id) !== node) return null;
     const latest = current.current;
     const port = scrollport === null ? root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') : scrollport();
     if (held.current || event.defaultPrevented || !event.isPrimary || event.button !== 0 ||
         event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
         (event.pointerType !== "mouse" && event.pointerType !== "touch") ||
         latest.order.state.kind !== "Ready" || latest.items.length < 2 || !port || !visible() ||
-        !acceptsTarget(event.currentTarget, event.target)) return;
+        !acceptsTarget(node, event.target)) return null;
     held.current = { id, pointerId: event.pointerId, pointerType: event.pointerType, port,
       scopeKey: latest.order.scopeKey, revision: latest.order.state.revision,
       ids: latest.items.map((item) => item.id), touchId: null, invalidated: false };
+    return node;
   };
 
-  const canActivate = (id: string, event: MouseEvent | TouchEvent) => {
+  const canActivate = (event: MouseEvent | TouchEvent) => {
     const press = held.current;
-    if (!press || press.id !== id || press.invalidated || event.defaultPrevented) return false;
+    const node = press ? nodes.get(press.id) : null;
+    if (!press || !node || press.invalidated || event.defaultPrevented || !acceptsTarget(node, event.target)) return false;
     if (event instanceof MouseEvent) {
       if (press.pointerType !== "mouse" || event.button !== 0 ||
           event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
@@ -307,7 +327,11 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
         ? `before “${target.title.text}”, position ${next.position} of ${session.ids.length}.`
         : `last, position ${session.ids.length} of ${session.ids.length}.`);
     }
-    setDestination(next);
+    setDestination(previous => {
+      if (previous === null || next === null) return next;
+      return previous.beforeId === next.beforeId && previous.top === next.top && previous.left === next.left && previous.width === next.width
+        ? previous : next;
+    });
   };
 
   const move = (id: string, beforeId: string | null) => {
@@ -335,7 +359,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     suppressDragReleaseClick(press.pointerId);
     if (press.pointerType === "touch") press.port.dispatchEvent(new Event(TOUCH_DRAG_CLAIMED));
     const latest = current.current;
-    const id = String(event.active.id);
+    const id = press.id;
     const node = nodes.get(id);
     const title = node?.querySelector<HTMLElement>("[data-row-title]");
     const port = press.port;
@@ -456,18 +480,17 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
         move(session.id, shown.beforeId);
       }}
     >
-      <div ref={root} className={styles.root}>
+      <GestureSurface rootRef={root} begin={begin} canActivate={canActivate}>
         <ResourceList ariaLabel={ariaLabel} busy={busy}>
           {items.map((item) => (
             <Row key={item.id} item={item} enabled={order.state.kind === "Ready" && items.length > 1}
-              dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes}
-              begin={begin} canActivate={canActivate} />
+              dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes} />
           ))}
         </ResourceList>
         {destination ? <div className={styles.insertion} aria-hidden="true"
           data-append={destination.beforeId === null || undefined}
           style={{ top: destination.top, left: destination.left, width: destination.width }} /> : null}
-      </div>
+      </GestureSurface>
       {overlay ? createPortal(
         <DragOverlay adjustScale={false} dropAnimation={null} style={{ pointerEvents: "none" }}>
           {drag ? <div className={styles.preview} inert aria-hidden="true"

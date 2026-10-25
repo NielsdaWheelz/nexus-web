@@ -43,7 +43,7 @@ import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
 import { connectLocalContent } from "@/lib/offline/localContent";
-import { connectListening } from "@/lib/consumption/listening";
+import { connectListening, observeConsumption, useConsumptionObservationReady, type EpisodeConsumptionObservation } from "@/lib/consumption/listening";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
@@ -76,6 +76,7 @@ export default function AuthenticatedShell(props: {
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   seeds: Record<string, Record<string, unknown>>;
+  consumptionObservations: readonly EpisodeConsumptionObservation[];
   entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
@@ -94,6 +95,7 @@ export default function AuthenticatedShell(props: {
                       <Workspace
                         accountId={props.account.accountId}
                         initialState={props.initialState}
+                        consumptionObservations={props.consumptionObservations}
                         entryFailure={props.entryFailure}
                         locationLinkFailure={props.locationLinkFailure}
                       />
@@ -112,10 +114,18 @@ export default function AuthenticatedShell(props: {
 function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
+  consumptionObservations: readonly EpisodeConsumptionObservation[];
   entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
   const { accountId } = props;
+  const observationReady = useConsumptionObservationReady();
+  const sentBootstrapObservations = useRef(false);
+  useEffect(() => {
+    if (!observationReady || sentBootstrapObservations.current) return;
+    sentBootstrapObservations.current = true;
+    observeConsumption(props.consumptionObservations);
+  }, [observationReady, props.consumptionObservations]);
   const { profile } = useReaderContext();
   // The reader column is every pane's preferred and default width: the server
   // estimates it from the profile, and this hidden probe measures it.
