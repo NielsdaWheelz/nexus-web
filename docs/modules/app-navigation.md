@@ -63,7 +63,7 @@ Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
 Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
-owns the autofocused query; Choose Create, Choose Browse, Manage Tabs, Add, and
+owns the autofocused query; Choose Create, Choose Browse, Manage Panes, Add, and
 recovery pages replace one another inside one opaque viewport-fixed dialog.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
 the nexus control opens through native button activation: pointer click,
@@ -121,7 +121,7 @@ Quick Actions, optional Continue, Recent, Places; mobile renders every group as
 one sectioned vertical list inside a single content scroller. Independent caps
 prevent one group from erasing another. Quick Actions are Quick Note, Today,
 New Chat, New Page, New Library, and Import.
-the Open group always ends with Manage tabs, including a one-pane workspace.
+the Open group always ends with Manage panes, including a one-pane workspace.
 
 Typing removes blank groups. The shared composer admits at most eight owned
 Results, then reuses the `QuickActions` section labelled **Do with query** for
@@ -311,15 +311,15 @@ related link gestures still work. The rendered anchor always retains a real
 The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
 the Nexus trigger. workspace creation has no pane-count refusal. the launcher's
-own close/minimize/layout commands stay in place on root or manage tabs,
+own close/minimize/layout commands stay in place on root or manage panes,
 including final close; primary open and recently closed restore dismiss it and
 focus the destination. external navigation still dismisses the task. the desktop Account
 menu retains its existing focus contract.
 
-manage-tabs shares direct control content with the desktop strip. there are no
-tab menus or move-earlier/later commands. mobile omits layout controls and
+manage-panes shares direct control content with the desktop strip. there are no
+management menus or move-earlier/later commands. mobile omits layout controls and
 reorder; its minimized title restores through ordinary activation. see
-[panes and tabs](panes-tabs.md) for the state table and focus contract.
+[panes](panes.md) for the state table and focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the

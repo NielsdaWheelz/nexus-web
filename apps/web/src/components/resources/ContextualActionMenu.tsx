@@ -5,6 +5,7 @@ import type { ResourceActivation } from "@/lib/resources/activation";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
+import { usePaneSubject } from "@/lib/panes/paneChrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
@@ -42,6 +43,7 @@ export default function ContextualActionMenu({
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 }) {
   const pane = usePaneRuntime();
+  const paneSubject = usePaneSubject();
   const [coarse, setCoarse] = useState(false);
   useEffect(() => {
     const query = window.matchMedia("(any-pointer: coarse)");
@@ -72,7 +74,9 @@ export default function ContextualActionMenu({
     }] });
   }
   if (state?.kind === "Ready") {
-    const options = state.options.filter((action) => !omitResourceActions.includes(action.id) && !(displayedActivation && ["Open", "OpenInNewPane"].includes(action.id)));
+    // No open verbs where a displayed activation already opens the subject, or on the pane's own subject.
+    const options = state.options.filter((action) => !omitResourceActions.includes(action.id)
+      && !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
     if (options.length > 0) groups.push({
       id: "Resource", label: showSourceSubject ? `source: ${state.facts.label}` : "item", options,
     });

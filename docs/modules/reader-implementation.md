@@ -444,7 +444,8 @@ through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;
 activation succeeds only for `Shown`. `FindSource.href(at)` projects immutable
 canonical targets through the host; standalone hosts return null. named-result
 activation validates the exact row and computation/source before local reveal or
-workspace dispatch. find/contents/chapter menus expose “open in new pane”.
+workspace dispatch. find matches and contents entries fork by shift alone; player
+chapter menus expose “open in new pane”.
 `inspect({target, signal?})` links external
 abort to one navigation request. pdf match page arrival, canvas/text-layer
 readiness and match positioning form one request with the transient

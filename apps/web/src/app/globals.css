@@ -97,7 +97,7 @@
   --navbar-width: 240px;
   --navbar-collapsed-width: 48px;
   --pane-chrome-header-height: max(60px, 3.75rem);
-  --tabsbar-height: 40px;
+  --pane-strip-height: 40px;
   /* platform protection; shell geometry consumes it once. */
   --viewport-safe-top: env(safe-area-inset-top);
   --viewport-safe-right: env(safe-area-inset-right);

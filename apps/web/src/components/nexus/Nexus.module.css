@@ -183,10 +183,10 @@
 
 .empty { margin: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
 .section,
-.tabs { display: grid; gap: var(--space-2); }
+.panes { display: grid; gap: var(--space-2); }
 
 .section h3,
-.tabs h3 {
+.panes h3 {
   margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
@@ -195,7 +195,7 @@
 }
 
 .rows,
-.tabs ul {
+.panes ul {
   display: grid;
   gap: 1px;
   padding: 0;
@@ -208,7 +208,7 @@
 }
 
 .row,
-.tabs li { display: flex; min-width: 0; background: var(--surface-2); }
+.panes li { display: flex; min-width: 0; background: var(--surface-2); }
 .row[data-nested="true"] { padding-inline-start: var(--space-4); }
 
 .rowMain { flex: 1; }
@@ -221,7 +221,7 @@
 
 .choices button,
 .actions button,
-.tabOpen {
+.paneOpen {
   min-height: 48px;
   padding: 0 var(--space-3);
   border: 1px solid var(--edge-subtle);
@@ -236,7 +236,7 @@
 .choices small { color: var(--danger); font-size: var(--text-sm); }
 .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--space-2); }
 
-.tabOpen {
+.paneOpen {
   display: flex;
   flex: 1;
   min-width: 0;
@@ -247,16 +247,16 @@
   text-align: start;
 }
 
-.tabOpen span {
+.paneOpen span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tabs small { color: var(--ink-muted); }
+.panes small { color: var(--ink-muted); }
 
-.tabActions {
+.paneActions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -265,9 +265,9 @@
 
 .form { display: grid; gap: var(--space-3); }
 .form label { display: grid; gap: var(--space-2); }
-.page :is(.rowMain, .tabOpen):disabled { cursor: not-allowed; opacity: 0.55; }
+.page :is(.rowMain, .paneOpen):disabled { cursor: not-allowed; opacity: 0.55; }
 
-/* The mobile trigger: a 48px disc riding above the bottom chrome, with a tab-count badge. */
+/* The mobile trigger: a 48px disc riding above the bottom chrome, with a pane-count badge. */
 
 .nexusWrapper {
   --nexus-bottom-gap: 12px;
@@ -427,10 +427,10 @@
 .mobile .searchScroll { gap: var(--space-5); padding-block-start: var(--space-3); padding-block-end: var(--space-5); }
 .mobile .section { gap: var(--space-2); }
 .mobile .section h3,
-.mobile .tabs h3 { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-muted); }
+.mobile .panes h3 { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-muted); }
 
 .mobile .rows,
-.mobile .tabs ul {
+.mobile .panes ul {
   gap: var(--space-1);
   border: 0;
   border-radius: 0;
@@ -439,7 +439,7 @@
 }
 
 .mobile .row,
-.mobile .tabs li { align-items: center; border-radius: var(--radius-md); background: transparent; }
+.mobile .panes li { align-items: center; border-radius: var(--radius-md); background: transparent; }
 .mobile .row[data-nested="true"] { margin-inline-start: var(--space-3); padding-inline-start: 0; border-inline-start: 1px solid var(--edge-subtle); }
 .mobile .rowMain {
   min-height: 64px;
@@ -460,7 +460,7 @@
 
 .mobile .row .rowMenu { --control-min-size: 48px; flex: 0 0 auto; align-self: center; }
 
-.allTabs,
+.allPanes,
 .useText {
   display: inline-flex;
   min-width: 48px;
@@ -478,7 +478,7 @@
   text-align: start;
 }
 
-.allTabs span { font-variant-numeric: tabular-nums; }
+.allPanes span { font-variant-numeric: tabular-nums; }
 .mobile [data-mode="Overview"] [data-group="Places"] .rows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); gap: var(--space-1) var(--space-3); }
 .mobile [data-mode="Overview"] [data-group="Places"] .rowMain { min-height: 52px; padding-block: var(--space-2); }
 .mobile [data-mode="Overview"] [data-group="QuickActions"] { padding-block-start: var(--space-3); border-block-start: 1px solid var(--edge-subtle); }
@@ -490,20 +490,20 @@
 .mobile .choices { gap: var(--space-1); }
 .mobile .choices button { min-height: 64px; padding: var(--space-3) var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; font-size: var(--text-md); }
 .mobile .choices button + button { border-block-start: 1px solid var(--edge-subtle); }
-.mobile .tabOpen { min-height: 64px; padding: var(--space-3) var(--space-2); background: transparent; font-size: var(--text-md); }
-.mobile .tabOpen span { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
-.tabIdentity { display: grid; min-width: 0; gap: var(--space-1); }
-.mobile .tabIdentity > span { font-weight: var(--weight-medium); line-height: 1.4; }
-.mobile .tabIdentity small { font-size: var(--text-sm); line-height: 1.45; }
-.mobile .tabActions { --control-min-size: 48px; align-self: flex-start; padding: var(--space-2) 0; }
+.mobile .paneOpen { min-height: 64px; padding: var(--space-3) var(--space-2); background: transparent; font-size: var(--text-md); }
+.mobile .paneOpen span { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+.paneIdentity { display: grid; min-width: 0; gap: var(--space-1); }
+.mobile .paneIdentity > span { font-weight: var(--weight-medium); line-height: 1.4; }
+.mobile .paneIdentity small { font-size: var(--text-sm); line-height: 1.45; }
+.mobile .paneActions { --control-min-size: 48px; align-self: flex-start; padding: var(--space-2) 0; }
 .mobile .form input { font-size: var(--text-md); }
 .mobile .form { --control-min-size: 48px; }
-.mobile :is(.rowMain, .tabOpen, .choices button):focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
+.mobile :is(.rowMain, .paneOpen, .choices button):focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
 
 
 @media (hover: hover) {
-  .mobile .allTabs:hover,
+  .mobile .allPanes:hover,
   .mobile .useText:hover,
-  .mobile .tabOpen:hover,
+  .mobile .paneOpen:hover,
   .mobile .choices button:hover { background: var(--surface-hover); color: var(--ink); }
 }

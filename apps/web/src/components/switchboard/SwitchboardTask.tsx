@@ -13,10 +13,11 @@ import Button from "@/components/ui/Button";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
-import { rowFacts } from "@/lib/nexus/rows";
+import { rowFacts, rowName } from "@/lib/nexus/rows";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
+import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import styles from "@/components/nexus/Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
 
@@ -153,7 +154,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             <ul className={styles.rows}>
               {group.rows.map((row) => {
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
-                const name = [row.label, rowFacts(row, false), unavailable].filter(Boolean).join(". ");
+                const name = rowName([row.label, rowFacts(row, false), unavailable]);
                 const body = row.item?.preview.body;
                 const hasEvidence = row.matchingPassage || (body && ((body.kind !== "named" && body.kind !== "media") || (row.match && row.match.excerpt.text !== (body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : null))));
                 return (
@@ -173,10 +174,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                     >
                       <NexusRowBody row={row} desktop={false} />
                     </button>
-                    {row.secondary?.kind === "CloseTab" ? (
+                    {row.secondary?.kind === "ClosePane" ? (
                       <Button iconOnly className={styles.rowMenu} aria-label={`close ${row.label}`}
                         onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
-                        onClick={() => { if (row.secondary?.kind === "CloseTab") controller.closePane(row.secondary.paneId); }}
+                        onClick={() => { if (row.secondary?.kind === "ClosePane") controller.closePane(row.secondary.paneId); }}
                         icon={<X size={18} aria-hidden="true" />} />
                     ) : row.secondary?.kind === "ResourceMenu" ? (
                       <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} menuProps={{
@@ -190,7 +191,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 );
               })}
             </ul>
-            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} ${controller.panes.length === 1 ? "tab" : "tabs"}`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
+            {group.id === "Open" && !searching ? <button type="button" className={styles.allPanes} data-nexus-control="AllPanes" aria-label={`all ${controller.panes.length} ${controller.panes.length === 1 ? "pane" : "panes"}`} onClick={controller.managePanes}>all panes <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
           </section>
         ))}
         {searching && typed ? (
@@ -199,10 +200,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
           />
         ) : null}
-        {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your tabs, library and commands.</p> : null}
+        {searching && !typed && controller.groups.length === 0 ? <p className={styles.empty}>search your panes, library and commands.</p> : null}
       </div>
       <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.titlesFailed ? "couldn’t refresh tab titles." : null, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+        {[controller.announcement, controller.titlesFailed ? PANE_TITLES_FAILED : null, searching ? controller.searchProgress.text : null, searching && typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
       </div>
     </div>
   );

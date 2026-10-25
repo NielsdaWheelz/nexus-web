@@ -298,7 +298,7 @@ in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
 retain selection and focus. controls use shared `Button` paint, tooltips and
 decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
-`lib/workspace/paneControls.ts` owns content shared with manage-tabs. mobile keeps
+`lib/workspace/paneControls.ts` owns content shared with manage-panes. mobile keeps
 48px controls and wrapping titles. reorder completion uses one polite position
 announcement; layout management emits no success toast.
 

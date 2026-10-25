@@ -33,7 +33,7 @@ export default function KeybindingsPaneBody() {
       </PaneSection>
       <PaneSection
         title="Pane strip"
-        description="These shortcuts apply only while a desktop tab title or its menu button has focus. Open tab actions to minimize, restore, or reorder a pane."
+        description="These shortcuts apply while a pane title or one of its controls in the desktop strip has focus. Drag a title to reorder panes."
       >
         <CollectionView
           returnScope="Settings.Keybindings.PaneStrip"

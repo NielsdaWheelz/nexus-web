@@ -15,6 +15,7 @@ import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { PANE_TITLES_FAILED } from "@/lib/workspace/presentations";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 import collection from "@/components/ui/Collection.module.css";
@@ -80,7 +81,7 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
     });
   }
   if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)
-    ownOptions.push({ kind: "command", id: `Nexus.CloseTab:${pane.id}`, label: pane.label, onSelect: () => closePane(pane.id) });
+    ownOptions.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, onSelect: () => closePane(pane.id) });
   const target = row.action.kind === "Available" ? row.action.target : null;
   const activation = row.item?.activation ?? (target?.kind === "Resource" ? target.activation : {
     kind: target?.kind === "InternalHref" ? "route" as const : "none" as const,
@@ -94,7 +95,7 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
     displayedActivation={activation} sections={[{ id: "Occurrence", actions: ownOptions }]} />;
 }
 
-/** Only a resource action is a menu; direct tab close keeps its native button. */
+/** Only a resource action is a menu; direct pane close keeps its native button. */
 export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
   return row.secondary?.kind === "ResourceMenu"
     ? <ResourceMenu row={row} menuProps={menuProps} {...actions} />
@@ -131,7 +132,7 @@ export function NexusTitleFailure({ failed, retry, returnFocus, announce = true 
   return failed ? (
     <div className={styles.failures}>
       <FeedbackNotice
-        content={{ tone: "Warning", title: "couldn’t refresh tab titles." }}
+        content={{ tone: "Warning", title: PANE_TITLES_FAILED }}
         announcement={announce ? "Polite" : "None"}
         actions={[{ label: "retry", onClick: retry }]}
         returnFocus={returnFocus}

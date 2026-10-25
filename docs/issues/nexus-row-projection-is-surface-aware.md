@@ -4,7 +4,7 @@ status: deferred (owner decision) · origin: 2026-09-28 nexus launcher rewrite (
 
 `apps/web/src/lib/nexus/rows.ts` projects different rows per surface: mobile adds the
 Places group (`MOBILE_PLACES`), strips type labels and details from blank groups and
-Do-with-query rows, omits the parent, and says "Current" where desktop says "Current tab".
+Do-with-query rows, omits the parent, and says "current" where desktop says "Pane · Current".
 the renderers then trust that projection. a surface-neutral projection with presentation
 choices in each shell is the other layering.
 
