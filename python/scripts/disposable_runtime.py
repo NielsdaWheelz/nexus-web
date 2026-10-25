@@ -1104,6 +1104,8 @@ def main() -> int:
         if shared_host is not None:
             shared_cwd_prepared = True
             shared_host.prepare_run(run_id)
+        # stores and optional provider dependencies are already qualified. reconciling
+        # their shared image tags here can recreate postgres and erase its tmpfs data.
         command(
             compose + ["up", "-d", "--no-build", "--no-deps", *worker_services],
             env=compose_env,
