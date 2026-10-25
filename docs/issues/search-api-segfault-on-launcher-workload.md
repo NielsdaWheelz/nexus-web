@@ -84,4 +84,6 @@ the historical failure images were absent on inspected daemon `ff10…` before
 current allowlisted cleanup. absence supplies no crash attribution or repair
 claim. source250, verified `f92` backup and retained canonical95 data preserve
 rebuild inputs; exact current images must be rebuilt for environment-specific
-qualification. see [the release record](release-desktop-lab.md).
+qualification. current routine verification uses the
+[mac docker desktop lab](../local-rules/testing-standards.md); paired production
+endpoint/client configuration is deployed and preserved by the search release.
