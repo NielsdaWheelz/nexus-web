@@ -211,6 +211,8 @@ boundaries govern observation lifetime; changed target sets may clear marks.
 observations never settle uncertain commands. the shared subscription projector
 owns glyph, menu/state copy, complete inline names, dialog semantics and the
 activation guard, including the default-library shortcut's direct renderer.
+failed reads report busy only during an actual retry; an old observation's stale
+stamp cannot keep retry disabled after the request ends.
 
 the account action owner retains one scoped library-creation helper and loss
 guard. creation retries preserve the exact uuid/name. only the originating live
