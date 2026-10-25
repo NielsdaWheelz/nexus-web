@@ -169,6 +169,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     const observer = new ResizeObserver(schedule);
     observer.observe(port);
+    // Outline feedback can move the list without resizing its rows.
+    const outline = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"]');
+    if (outline) observer.observe(outline);
     for (const row of port.querySelectorAll("[data-group]")) observer.observe(row);
     const unsubscribe = reader.subscribe(schedule);
     schedule();

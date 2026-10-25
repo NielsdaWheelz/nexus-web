@@ -8,7 +8,7 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-reader view menu against `1b1e6ef71`: +253 authored runtime lines (484 added,
+reader view menu against `1b1e6ef71`: +256 authored runtime lines (487 added,
 231 deleted), all web source. shared absolute menu choices and segmented native
 radios replace theme commands, settings selects and local connections controls;
 the Activity shortcut, routine evidence help and duplicate interaction paint go.
@@ -441,7 +441,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | api transport, bff, sse | 2,877 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · reference interaction +14 · connection actions +13 · unsaved work +0 · collection loading +26 · notes re-slice (server) +3 · podcast collection +8 · durable writing +548 · podcast libraries -29 · offline catalog +97 · resource menu parity · online-first writing · quiet suggestions -7 · offline episodes +4 · contained works +0 · podcast catalogue +25 | keep |
 | android shell | 2,199 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 · durable writing +21 · native control cutover · playback queue -4 · offline catalog +55 · online-first writing · offline episodes +65 | android slice (late) |
 | api substrate, config, storage, wire schemas | 2,797 | reauthored #585 #586 #622 | x threads +3 · #670 +3 · resource-first search +4 · empty-resource lifecycle +19 · python auth -5 · podcast details +4 · durable writing +124 · libraries retention +1 · podcast libraries -4 · playback queue +123 · author editing -15 · offline catalog +2 · resource menu parity · quiet suggestions -14 · offline episodes +98 · contained works +502 · podcast catalogue +34 · queue index -23 | keep |
-| reader: document map, evidence | 2,038 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · #670 +5 · #679 +5 · shift-open +65 · resource metadata +1 · resource insertion +4 · reader connections -469 · shared outline +203 · durable writing +6 · native control cutover · contained works +109 · reader view menu +24 | reader python read (13b, deferred) |
+| reader: document map, evidence | 2,038 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · #670 +5 · #679 +5 · shift-open +65 · resource metadata +1 · resource insertion +4 · reader connections -469 · shared outline +203 · durable writing +6 · native control cutover · contained works +109 · reader view menu +27 | reader python read (13b, deferred) |
 | search retriever | 3,124 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 · media controls +2 · libraries retention +1 · contained works +451 · indexed search (bounded integrated checks pass) · podcast catalogue +4 | keep |
 | suggestions | 1,978 | reauthored #596, re-sliced (cleanup/libraries-ordering-reslice) | — · media controls -48 · durable writing +5 · native control cutover · podcast libraries -4 · quiet suggestions -22 · contained works +25 | keep |
 | consumption core (read state) | 1,976 | reauthored #417 #596 | #650 +170 · x threads +163 · media controls +1 · podcast collection +23 · libraries retention -4 · playback queue +24 · resource menu parity · offline episodes +498 · feedback activity · contained works +111 · podcast catalogue +1 | keep; #650 with feedback admission recovery |
