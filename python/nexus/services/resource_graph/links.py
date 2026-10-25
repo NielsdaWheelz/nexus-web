@@ -16,6 +16,7 @@ action: the viewer's current reading owner of the candidate.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -23,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyPageBinding, ResourceEdge
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import (
     InsertionSource,
@@ -58,24 +59,43 @@ def insertion_source_for_ref(
     A quote that no longer resolves retains its explicit candidate destination, so
     a later materialization can refuse without retargeting the document.
     """
-    match capability(ref.scheme).link_mode:
-        case "none":
-            return None
-        case "direct":
-            return LinkResourceEndpoint(ref=ref.uri)
-        case "materialize_passage":
-            from nexus.services.search.pickers import source_identity
+    return insertion_sources_for_refs(db, viewer_id=viewer_id, refs=[ref])[ref.uri]
 
-            try:
-                _, anchor = source_identity(db, viewer_id, ref)
-            except NotFoundError:
-                # justify-ignore-error: an unavailable locator does not retarget its source.
-                anchor = None
-            return (
-                LinkResourceEndpoint(ref=anchor.uri)
-                if anchor is not None
-                else LinkPassageEndpoint(candidate_ref=ref.uri, passage_target=None)
-            )
+
+def insertion_sources_for_refs(
+    db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
+) -> dict[str, LinkEndpoint | None]:
+    """Read insertion owners for caller-proven visible refs in its repeatable snapshot.
+
+    Passage absence is per ref; it preserves the candidate destination. Resolver
+    defects and infrastructure errors fail the whole read. No anchor is materialized.
+    """
+    from nexus.services.search.pickers import source_identities
+
+    passages = [ref for ref in refs if capability(ref.scheme).link_mode == "materialize_passage"]
+    identities = source_identities(db, viewer_id=viewer_id, refs=passages)
+    out: dict[str, LinkEndpoint | None] = {}
+    for ref in refs:
+        match capability(ref.scheme).link_mode:
+            case "none":
+                out[ref.uri] = None
+            case "direct":
+                out[ref.uri] = LinkResourceEndpoint(ref=ref.uri)
+            case "materialize_passage":
+                identity = identities[ref.uri]
+                if isinstance(identity, NotFoundError):
+                    # justify-ignore-error: unavailable passages retain their explicit candidate.
+                    anchor = None
+                elif isinstance(identity, InvalidRequestError):
+                    raise identity
+                else:
+                    _, anchor = identity
+                out[ref.uri] = (
+                    LinkResourceEndpoint(ref=anchor.uri)
+                    if anchor is not None
+                    else LinkPassageEndpoint(candidate_ref=ref.uri, passage_target=None)
+                )
+    return out
 
 
 def materialize_source(

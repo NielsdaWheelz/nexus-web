@@ -12,7 +12,7 @@ import {outlineFilterFields} from "./outlineFilterFields";
 import {UnavailableTexts} from "./NoteNotices";
 import {hasUnsavedText, useText} from "@/lib/notes/texts";
 import {indentParent, readClipboard, structuralRow, type Row} from "@/lib/notes/outline";
-import type {DailyPublication, OutlineDestination, OutlineSession} from "@/lib/notes/useOutlineSession";
+import {insertionSourceRef, type DailyPublication, type OutlineDestination, type OutlineSession} from "@/lib/notes/useOutlineSession";
 import {endpointForResource, type InsertionSource} from "@/lib/resourceGraph/links";
 import {matchesPaneFilterQuery} from "@/lib/panes/paneFilterRows";
 import {resolveResourceItem} from "@/lib/resources/items";
@@ -119,8 +119,8 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
   const tail = session.position({endpoint, edgeId: null, side: "after"});
   const trailing = source && tail ? {source, position: tail, occurrencePrefix, path} : null;
   const composer = session.composer;
-  const surfaceComposer = source !== null &&
-    composer?.destination.occurrencePrefix === occurrencePrefix &&
+  const surfaceComposer = composer !== null && insertionSourceRef(composer.destination.source) === endpoint &&
+    composer.destination.occurrencePrefix === occurrencePrefix &&
     composer.destination.path.length === path.length &&
     composer.destination.path.every((id, index) => id === path[index])
       ? composer : null;
@@ -139,7 +139,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
         content={{tone: "Neutral", title: "link selected. backspace or delete removes the connection; resources remain."}}/> : null}
       <ResourceOutlineList scope={occurrencePrefix} ariaLabel="note items" ancestorRef={endpoint}
         viewLocked={session.activeReference !== null} onRevealRoot={onRevealRoot}
-        after={writable && trailingDestination ? <>
+        after={trailingDestination && (writable || surfaceComposer !== null) ? <>
           {originalPositionMissing ? <FeedbackStatus announcement="Polite" content={{
             tone: "Warning", title: "original insertion position is no longer available",
             message: "your input stays at its original destination. discard it before choosing another position.",

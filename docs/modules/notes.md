@@ -172,6 +172,17 @@ splitting the title. root title enter focuses/inserts the first child. compositi
 native text grammar and `@` input take precedence. reference-query undo is local;
 structural commands remain disabled until it settles. mixed/group moves refuse.
 
+disclosure availability is independent of folds and composer lifetime. removing
+the last child removes its parent's chevron while preserving open insertion hosts,
+reference query, selection and captured destination. a closed composer host uses
+the destination's occurrence prefix/path to identify its parent; sibling continuation
+never retargets it. the command union has no add-child action.
+
+undo can fence removal of its own created edge through that exact producer's
+insertion receipt and live source lane. the occurrence retains this proof through
+edge reminting and redo truncation. it grants no positional authority, never
+refreshes an independent observation, and cannot bypass a later server version.
+
 `PageTitleEditor` binds root and inline page titles to the same `texts` entry and
 authoritative `title_version`. history uses `TextValue`, keeps caret/direction and
 belongs to the editing surface; another surface's later edit invalidates old title

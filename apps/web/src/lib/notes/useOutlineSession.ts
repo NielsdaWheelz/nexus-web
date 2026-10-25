@@ -25,7 +25,7 @@ import {
 } from "./noteBody";
 import * as model from "./outline";
 import * as store from "./texts";
-import { admitWriting, canRetryWriting, captureLane, readWriting, subscribeWriting, subscribeWritingBindings, type AuthoredSnapshot, type LaneDependency, type WritingAck, type WritingCommand, type WritingPosition, type Publication, type RestoreNoteProof, type WriteHandle } from "./writes";
+import { admitWriting, canRetryWriting, captureLane, readWriting, subscribeWriting, subscribeWritingBindings, type AuthoredSnapshot, type CreatedLinkSource, type LaneDependency, type WritingAck, type WritingCommand, type WritingPosition, type Publication, type RestoreNoteProof, type WriteHandle } from "./writes";
 import {
   isDeletedResource,
   subscribeLinkMutations,
@@ -48,7 +48,7 @@ import type {
   OutlineBranch,
   OutlineTarget,
 } from "@/lib/resources/outlineProjection";
-import { enterOutlineOccurrence } from "@/lib/resources/outlineProjection";
+import { enterOutlineOccurrence, outlineChildExclusions } from "@/lib/resources/outlineProjection";
 type Reply = WritingAck;
 type Admission = { write: WriteHandle };
 type Restore = Extract<WritingCommand, { kind: "restore_note" }>["removed_by"];
@@ -115,6 +115,8 @@ function remapResource(item: ResourceItem, refs: ReadonlyMap<string, string>): R
     activation: { ...item.activation, resource_ref: ref, href: ref.startsWith("note_block:") ? `/notes/${model.noteIdOf(ref)}` : item.activation.href } };
 }
 function remapGraph(refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string, string>): void {
+  if (refs.size === 0 && edges.size === 0) return;
+  invalidateResourceOutlines(new Set([...refs.keys(), ...refs.values()]), "structure");
   for (const [ref, outline] of [...graph]) {
     const targetRef = refs.get(ref) ?? ref;
     const source = { ...outline.source, item: remapResource(outline.source.item, refs) };
@@ -134,7 +136,9 @@ function remapGraph(refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string
 // fence. Keeping that cell live does not change the bytes once the head is sealed.
 type CapturedLinksVersion = number | (Admission & { version: number });
 const graph: model.Graph = new Map();
-const latest = new Map<string, model.OutlineData>();
+// Deferred reads keep their original generation: a write may supersede them
+// while their endpoint is carried, before release is allowed to adopt anything.
+const latest = new Map<string, model.OutlineData & {generation: number}>();
 const insertionCapabilities = new Map<string, InsertionSource | null>();
 const reviewedRefs = new Set<string>();
 /** A surface may undo only its own uninterrupted title/body history. */
@@ -199,6 +203,7 @@ subscribeWriting(() => {
   graph.clear(); latest.clear(); insertionCapabilities.clear(); reviewedRefs.clear();
   textHistoryOwners.clear(); pendingUnlinks.clear(); carried.clear();
   pendingRemovals.clear(); pendingOccurrences.clear(); historyDeletionOwners.clear();
+  invalidateResourceOutlines(new Set(), "structure");
   publish();
 });
 
@@ -247,7 +252,7 @@ function linkedEndpoints(ids: ReadonlySet<string>): Set<string> {
 }
 /** An acknowledged edge removal invalidates old reads and their retained replies. */
 function dropLinks(ids: ReadonlySet<string>, endpoints: ReadonlySet<string>) {
-  invalidateResourceOutlines(endpoints);
+  invalidateResourceOutlines(endpoints, "structure");
   for (const ref of endpoints) reviewedRefs.delete(ref);
   for (const entries of [graph, latest]) {
     for (const [ref, outline] of entries) {
@@ -270,12 +275,37 @@ function liveOutline(outline: model.OutlineData): model.OutlineData | null {
     ),
   };
 }
+/** A known separate passage owner contributes children without inheriting the
+ * primary endpoint's containing-note suppression. */
+function childEndpoints(endpoint: string): readonly string[] {
+  const capability = insertionCapabilities.get(endpoint);
+  const owner = capability?.kind === "resource" && capability.ref !== endpoint ? capability.ref
+    : [...pendingOccurrences.values()].find(pending => pending.acknowledged &&
+      pending.originSourceRef === endpoint && pending.sourceRef !== endpoint)?.sourceRef ?? null;
+  return owner === null ? [endpoint] : [endpoint, owner];
+}
+function childExclusions({endpoint, branch, suppressedEdgeIds, embeddedInNoteRef}: {
+  endpoint: string;
+  branch: OutlineBranch;
+  suppressedEdgeIds: readonly string[];
+  embeddedInNoteRef: string | null;
+}): string[] {
+  const links = graph.get(endpoint)?.links ?? [];
+  const projectedLinks = childEndpoints(endpoint).flatMap(ref => graph.get(ref)?.links ?? []);
+  const removed = new Set(pendingRemovals.keys());
+  // A pending unlink is a command lock, not necessarily an omitted row.
+  for (const id of pendingUnlinks)
+    if (!projectedLinks.some(link => link.link_id === id)) removed.add(id);
+  return outlineChildExclusions({resourceRef: endpoint, branch, links,
+    suppressedEdgeIds, embeddedInNoteRef, removedEdgeIds: removed});
+}
 /** The retained graph outlives its panes, so its invalidation subscription does too. */
 function observeLinks() {
   if (observingLinks) return;
   observingLinks = true;
   subscribeLinkMutations((mutation) => {
     if (mutation.kind === "resource_deleted") {
+      invalidateResourceOutlines(new Set([mutation.ref]), "structure");
       store.setGone(mutation.ref);
       for (const [id, pending] of pendingOccurrences)
         if (pending.ref === mutation.ref || pending.sourceRef === mutation.ref)
@@ -301,8 +331,11 @@ function observeLinks() {
       historyDeletionOwners.delete(`link:${mutation.linkId}`);
       return;
     }
-    if (mutation.kind === "created" || mutation.kind === "context_detached")
+    if (mutation.kind === "created" || mutation.kind === "context_detached") {
+      invalidateResourceOutlines(new Set([mutation.sourceRef, mutation.targetRef]), "structure");
+      publish();
       return;
+    }
     assertNever(mutation);
   });
 }
@@ -360,20 +393,14 @@ function adoptBranch(
   }));
   const outline = { source, links, links_version: version, complete };
   if (!hasCarriedStructure(source.item.ref)) adopt(outline);
-  else latest.set(source.item.ref, outline);
+  else latest.set(source.item.ref, {...outline, generation});
   publish();
 }
 /** Hold each outline only while an unsettled structure write depends on its source. */
-function receive(outlines: readonly model.WireOutline[]) {
-  for (const wire of outlines) {
-    const outline = model.projectOutline(wire);
-    const live = liveOutline(outline);
-    if (live) latest.set(live.source.item.ref, live);
-    else latest.delete(outline.source.item.ref);
-  }
+function receive() {
   for (const [ref, outline] of latest) {
     if (hasCarriedStructure(ref)) continue;
-    adopt(outline);
+    if (isResourceOutlineReadCurrent(ref, outline.generation)) adopt(outline);
     latest.delete(ref);
   }
 }
@@ -426,6 +453,7 @@ function wireEdits(
   bodyBases: Map<string, number | null> = new Map(),
   removalBodies: ReadonlyMap<string, NoteBody> = new Map(),
   restores: ReadonlyMap<string, Restore> = new Map(),
+  sourceProofs: ReadonlyMap<string, CreatedLinkSource> = new Map(),
 ): WritingCommand[] {
   const position = (ref: string, captured: model.OutlinePosition | null): WritingPosition | null => {
     if (captured === null) return null;
@@ -485,7 +513,7 @@ function wireEdits(
         return {
           ...edit,
           position: position(edit.destination, edit.position),
-          expected_source_links_version: checked(edit.endpoint),
+          expected_source_links_version: sourceProofs.get(edit.link_id) ?? checked(edit.endpoint),
         };
       case "set_body": {
         const ref = model.noteRef(edit.note_id);
@@ -550,7 +578,9 @@ function sendEdits(
   removalBodies: ReadonlyMap<string, NoteBody> = new Map(),
   onAcknowledged: (reply: Reply) => void = () => undefined,
   restores: ReadonlyMap<string, Restore> = new Map(),
+  sourceProofs: ReadonlyMap<string, CreatedLinkSource> = new Map(),
 ): Admission | null {
+  invalidateResourceOutlines(refs, "structure");
   const lifetime = readWriting().generation;
   const serial = ++jobSerial;
   carried.set(serial, { texts, refs });
@@ -569,26 +599,28 @@ function sendEdits(
       if (base === null) throw new ApiError(409, "E_RESOURCE_CONFLICT", "the insertion position is no longer loaded");
       return captureLane(ref, "links", base);
     };
-    const commands = wireEdits(edits, checked, removed, bodyBases, removalBodies, restores);
+    const commands = wireEdits(edits, checked, removed, bodyBases, removalBodies, restores, sourceProofs);
     const admitted = admitWriting({ kind: "outline", commands }, [...texts].map(store.snapshotText));
     void admitted.settled.then(reply => {
       if (readWriting().generation !== lifetime) return;
       release();
       acknowledge(reply);
       onAcknowledged(reply);
-      receive([]);
+      receive();
       publish();
     }, error => {
       if (readWriting().generation !== lifetime) return;
       release();
       handleUnauthenticatedApiError(error);
       onRefused(error);
+      invalidateResourceOutlines(refs, "structure");
       publish({ kind: "refused", refs, texts });
     });
     return { write: admitted };
   } catch (error) {
     release();
     onRefused(error);
+    invalidateResourceOutlines(refs, "structure");
     publish({ kind: "refused", refs, texts });
     return null;
   }
@@ -873,6 +905,7 @@ type OccurrenceIntent = {
   key: string;
   item: ResourceItem;
   originSourceRef: string;
+  sourceProof: CreatedLinkSource | null;
   projection?: Pick<
     OutlineDestination,
     "occurrencePrefix" | "path" | "rootOccurrencePrefix"
@@ -988,7 +1021,7 @@ function dependsOnEdges(item: Item, edges: ReadonlySet<string>): boolean {
     )
   );
 }
-function sourceRef(source: InsertionSource): string {
+export function insertionSourceRef(source: InsertionSource): string {
   return source.kind === "resource"
     ? source.ref
     : source.kind === "daily_page"
@@ -1211,6 +1244,26 @@ export function useOutlineSession({
     void write.settled.then(() => { unsubscribe(); condition?.withdraw(); }, () => { unsubscribe(); condition?.withdraw(); });
     inspect();
   }
+  /** A pending edge or its history occurrence retains its exact producer. A
+   * newer explicit source observation wins; no receipt refreshes a position. */
+  function ownedLinkSource(edgeId: string, endpoint: string, observed: CapturedLinksVersion | undefined): CreatedLinkSource | null {
+    const pending = pendingOccurrences.get(edgeId);
+    const proof: CreatedLinkSource | null = pending?.proof && pending.sourceRef === endpoint
+      ? {kind: "created_link", write: pending.proof.write,
+        requested_link_id: pending.proof.requested_link_id, source_ref: endpoint}
+      : history.current.items.flatMap(item => item.kind === "text" ? [] : item.occurrences)
+        .find(occurrence => occurrence.edgeId === edgeId && occurrence.sourceProof !== null)?.sourceProof ?? null;
+    if (proof === null) return null;
+    const state = proof.write.read();
+    const version = typeof observed === "number" ? observed : observed?.version;
+    if (state.kind === "accepted") {
+      const insertion = state.ack.insertions.find(insertion => insertion.requested_link_id === proof.requested_link_id);
+      if (!insertion || insertion.source_ref !== endpoint || insertion.canonical_link_id !== edgeId) return null;
+      const lane = state.ack.lanes.find(lane => lane.ref === endpoint && lane.lane === "links");
+      if (lane && version !== undefined && version >= lane.version) return null;
+    }
+    return proof;
+  }
   /** Apply, send and (unless replaying history) record one structure batch. */
   function commit(
     edits: readonly model.Edit[],
@@ -1299,6 +1352,12 @@ export function useOutlineSession({
         (pending.authoredPosition?.linksVersion ?? 0) > observed
       )
         captured.set(edit.endpoint, proof);
+    }
+    const sourceProofs = new Map<string, CreatedLinkSource>();
+    for (const edit of edits) {
+      if (edit.kind !== "relink") continue;
+      const proof = ownedLinkSource(edit.link_id, edit.endpoint, captured.get(edit.endpoint));
+      if (proof !== null) sourceProofs.set(edit.link_id, proof);
     }
     const materialization = options.publication
       ? publicationEdits(options.publication)
@@ -1601,7 +1660,7 @@ export function useOutlineSession({
       removalBodies,
       (reply) => {
         adoptComposerPredecessor(reply);
-        invalidateResourceOutlines(refs);
+        invalidateResourceOutlines(refs, "structure");
         const generation = captureResourceOutlineRead();
         for (const removal of removals) {
           if (pendingRemovals.get(removal.edgeId) !== removal.marker) continue;
@@ -1681,6 +1740,7 @@ export function useOutlineSession({
                     edgeId: result.canonical_link_id,
                     key: actualKey ?? value.key,
                     item,
+                    sourceProof: value.sourceProof === null ? null : {...value.sourceProof, source_ref: owner},
                   }
                 : value,
             );
@@ -1734,6 +1794,7 @@ export function useOutlineSession({
         }
       },
       options.restores,
+      sourceProofs,
     );
     if (!admission) { releaseHistory(); history.current = previousHistory; return false; }
     observeSave(admission.write, texts);
@@ -1745,6 +1806,13 @@ export function useOutlineSession({
       if (version !== undefined) value.pending.proof = {
         ...admission, requested_link_id: value.edgeId, source_ref: value.pending.sourceRef, version,
       };
+      const sourceProof: CreatedLinkSource = {kind: "created_link", write: admission.write,
+        requested_link_id: value.edgeId, source_ref: value.pending.sourceRef};
+      for (const item of history.current.items) {
+        if (item.kind === "text") continue;
+        item.occurrences = item.occurrences.map(occurrence => occurrence.edgeId === value.edgeId
+          ? {...occurrence, sourceProof} : occurrence);
+      }
     }
     boundaryNext.current = true;
     publish();
@@ -1837,7 +1905,8 @@ export function useOutlineSession({
       ...command,
       expected: command.expected === null ? null : {
         endpoint: command.expected.endpoint,
-        links_version: captureLane(command.expected.endpoint, "links", command.expected.links_version),
+        links_version: ownedLinkSource(command.link_id, command.expected.endpoint, command.expected.links_version) ??
+          captureLane(command.expected.endpoint, "links", command.expected.links_version),
       },
     })) }, []);
     observeSave(admitted, endpoints);
@@ -1856,7 +1925,7 @@ export function useOutlineSession({
       releaseHistory();
       if (preserve) history.current = retainHistory(history.current, item => item !== preserve);
       if (!handleUnauthenticatedApiError(error)) reportRefusal(error);
-      invalidateResourceOutlines(endpoints);
+      invalidateResourceOutlines(endpoints, "structure");
       publish({ kind: "refused", refs: endpoints, texts: new Set() });
     }).finally(() => { if (currentLifetime()) { release(); publish(); } });
     boundaryNext.current = true;
@@ -1880,6 +1949,8 @@ export function useOutlineSession({
       item.refs = new Set([...item.refs].map(ref => refs.get(ref) ?? ref));
       item.occurrences = item.occurrences.map(value => ({ ...value,
         edgeId: edges.get(value.edgeId) ?? value.edgeId, key: remapKey(value.key, refs, edges), item: remapResource(value.item, refs), originSourceRef: refs.get(value.originSourceRef) ?? value.originSourceRef,
+        sourceProof: edges.has(value.edgeId) || value.sourceProof === null ? null
+          : {...value.sourceProof, source_ref: refs.get(value.sourceProof.source_ref) ?? value.sourceProof.source_ref},
         ...(value.projection ? { projection: { ...value.projection, path: value.projection.path.map(edge => edges.get(edge) ?? edge), occurrencePrefix: remapKey(value.projection.occurrencePrefix, refs, edges) } } : {}),
       }));
       if (item.kind === "structure") {
@@ -2216,7 +2287,9 @@ export function useOutlineSession({
     item: ResourceItem,
     reply: WritingAck,
     key: string,
+    write: WriteHandle,
   ) {
+    invalidateResourceOutlines(new Set([result.source_ref, item.ref]), "structure");
     adoptComposerPredecessor(reply);
     const source = result.source_ref;
     const fact = reply.lanes.find(value => value.ref === source && value.lane === "links");
@@ -2248,7 +2321,8 @@ export function useOutlineSession({
         items.push({
           kind: "creation",
           occurrences: [
-            { edgeId: result.canonical_link_id, key, item, originSourceRef: source },
+            { edgeId: result.canonical_link_id, key, item, originSourceRef: source,
+              sourceProof: {kind: "created_link", write, requested_link_id: result.requested_link_id, source_ref: source} },
           ],
           forward: [forward],
           inverse: [
@@ -2294,6 +2368,7 @@ export function useOutlineSession({
         graph.set(pageRef, { ...endpoint, links: [{ link_id: linkId, target: node(item.ref) ?? { item, content: { kind: "resource" } }, connection: null }] });
         const pending: PendingRecord = { key, ref: item.ref, edgeId: linkId, sourceRef: pageRef, item, body: null, position: { after: null, expected_links_version: 1 }, acknowledged: false, generation: null };
         pendingOccurrences.set(linkId, pending);
+        invalidateResourceOutlines(new Set([pageRef, item.ref]), "structure");
         const firstPage: Extract<Publication, { kind: "page" }> = { kind: "page", request: { ...request, title: typeof title === "string" && title.trim() ? title : "untitled", initial_item: { kind: "resource", link_id: linkId, target: action.target } } };
         const admitted = admitWriting(firstPage, [store.snapshotPageTitle(firstPage), ...(action.authored ?? [])]);
         observeSave(admitted, new Set([pageRef]));
@@ -2308,8 +2383,16 @@ export function useOutlineSession({
           const targetRef = insertionTarget(reply, result);
           const actual = item.ref === targetRef ? item : { ...item, ref: targetRef, activation: { ...item.activation, resource_ref: targetRef } };
           pendingOccurrences.delete(linkId);
-          rememberReference(result, actual, reply, createdKey(action.destination, targetRef, result.canonical_link_id));
-        }, error => { if (!currentLifetime()) return; action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
+          rememberReference(result, actual, reply, createdKey(action.destination, targetRef, result.canonical_link_id), admitted);
+        }, error => {
+          if (!currentLifetime()) return;
+          if (pendingOccurrences.get(linkId) === pending) pendingOccurrences.delete(linkId);
+          action.phase = "failed";
+          actions.set(prior => [...prior, action]);
+          invalidateResourceOutlines(new Set([pageRef, item.ref]), "structure");
+          reportRefusal(error);
+          publish();
+        });
         return { key, noteRef: item.ref, ref: item.ref, edgeId: linkId, sourceRef: pageRef };
       }
     }
@@ -2329,7 +2412,7 @@ export function useOutlineSession({
       void made.settled.catch(reportRefusal);
     }
     if (action.cancelled) return null;
-    const endpoint = sourceRef(action.destination.source);
+    const endpoint = insertionSourceRef(action.destination.source);
     const parentVersion = action.destination.position?.expected_links_version ?? graph.get(endpoint)?.links_version;
     const parentDependency: LaneDependency | null = parentAdmission && parentVersion !== undefined && parentVersion !== null
       ? { kind: "result", ...parentAdmission, ref: endpoint, lane: "links", version: parentVersion }
@@ -2348,6 +2431,7 @@ export function useOutlineSession({
         acknowledged: false, generation: null,
       };
       pendingOccurrences.set(action.linkId, pending);
+      invalidateResourceOutlines(new Set([endpoint, item.ref]), "structure");
       const admitted = queueReferenceInsertion({
         input: { kind: "insert_link", require_created: false, source: action.destination.source, target, position: action.destination.position, link_id: action.linkId },
         prelude: action.publication ? wireEdits(publicationEdits(action.publication), ref => ({ kind: "observed", ref, lane: "links", version: 1 })) : [],
@@ -2367,9 +2451,17 @@ export function useOutlineSession({
         const actual = item.ref === targetRef ? item : { ...item, ref: targetRef, action_ref: item.action_ref === item.ref ? targetRef : item.action_ref, activation: { ...item.activation, resource_ref: targetRef } };
         const actualKey = createdKey(action.destination, targetRef, result.canonical_link_id);
         pendingOccurrences.delete(action.linkId);
-        rememberReference(result, actual, reply, actualKey);
-        invalidateResourceOutlines(new Set([endpoint, result.source_ref]));
-      }, error => { if (!currentLifetime()) return; action.phase = "failed"; actions.set(prior => [...prior, action]); reportRefusal(error); });
+        rememberReference(result, actual, reply, actualKey, admitted);
+        invalidateResourceOutlines(new Set([endpoint, result.source_ref]), "structure");
+      }, error => {
+        if (!currentLifetime()) return;
+        if (pendingOccurrences.get(action.linkId) === pending) pendingOccurrences.delete(action.linkId);
+        action.phase = "failed";
+        actions.set(prior => [...prior, action]);
+        invalidateResourceOutlines(new Set([endpoint, item.ref]), "structure");
+        reportRefusal(error);
+        publish();
+      });
       if (canFocus && ownsSurface() && interaction.current === generation) focusRow(provisionalKey, "end", "reference");
       return { key: provisionalKey, noteRef: item.ref, ref: item.ref, edgeId: action.linkId, sourceRef: endpoint };
     }
@@ -2426,6 +2518,7 @@ export function useOutlineSession({
             key,
             item: newNode.item,
             originSourceRef: endpoint,
+            sourceProof: null,
             projection: occurrenceProjection(action.destination),
           },
         ],
@@ -2535,12 +2628,14 @@ export function useOutlineSession({
             originSourceRef:
               pendingOccurrences.get(source.link_id)?.originSourceRef ??
               source.endpoint,
+            sourceProof: null,
           },
           {
             edgeId: newLink,
             key,
             item: source.item,
             originSourceRef: destination.source.ref,
+            sourceProof: null,
             projection: occurrenceProjection(destination),
           },
         ],
@@ -2684,22 +2779,52 @@ export function useOutlineSession({
             pending.originSourceRef === endpoint),
       );
     },
+    childProjection(input: {
+      endpoint: string;
+      branch: OutlineBranch;
+      suppressedEdgeIds: readonly string[];
+      embeddedInNoteRef: string | null;
+    }) {
+      const excludedEdgeIds = childExclusions(input);
+      const excluded = new Set(excludedEdgeIds);
+      const endpoints = childEndpoints(input.endpoint);
+      // A still-drawn unlink remains a child until the projection retires its row.
+      const hasPendingChildren = endpoints.some(endpoint => (graph.get(endpoint)?.links ?? []).some(link =>
+        pendingUnlinks.has(link.link_id) && !excluded.has(link.link_id))) ||
+        [...pendingOccurrences.values()].some(pending => {
+          if (excluded.has(pending.edgeId)) return false;
+          return endpoints.some(endpoint => {
+            if (pending.sourceRef === endpoint || pending.originSourceRef === endpoint) return true;
+            if (pending.ref !== endpoint) return false;
+            return (graph.get(endpoint)?.links ?? []).some(link => link.link_id === pending.edgeId &&
+              (link.target.item.ref === pending.sourceRef || link.target.item.ref === pending.originSourceRef));
+          });
+        });
+      return {excludedEdgeIds, hasPendingChildren};
+    },
     projectChildren({
       endpoint,
       occurrencePrefix,
       path,
       branch,
+      suppressedEdgeIds = [],
+      embeddedInNoteRef = null,
+      separateOwner = null,
     }: {
       endpoint: string;
       occurrencePrefix: string;
       path: readonly string[];
       branch: OutlineBranch;
+      suppressedEdgeIds?: readonly string[];
+      embeddedInNoteRef?: string | null;
+      separateOwner?: string | null;
     }): model.Row[] {
+      const excluded = new Set(childExclusions({endpoint, branch, suppressedEdgeIds, embeddedInNoteRef}));
       const projection = new Map<string, Pick<model.OutlineData, "links">>(
         graph,
       );
       const links = [...(projection.get(endpoint)?.links ?? [])]
-        .filter((link) => !pendingRemovals.has(link.link_id))
+        .filter((link) => !excluded.has(link.link_id))
         .map((link) => {
           const pending = pendingOccurrences.get(link.link_id);
           return pending &&
@@ -2716,7 +2841,7 @@ export function useOutlineSession({
         });
       for (const pending of pendingOccurrences.values()) {
         if (
-          pendingRemovals.has(pending.edgeId) ||
+          excluded.has(pending.edgeId) ||
           (pending.sourceRef !== endpoint &&
             pending.originSourceRef !== endpoint) ||
           links.some((link) => link.link_id === pending.edgeId)
@@ -2746,7 +2871,9 @@ export function useOutlineSession({
               : links.findIndex((current) => current.link_id === after) + 1;
         links.splice(at, 0, link);
       }
-      projection.set(endpoint, { links });
+      projection.set(endpoint, { links: links.filter(link => !(separateOwner !== null &&
+        link.connection === null && [...pendingOccurrences.values()].some(pending =>
+          pending.acknowledged && pending.sourceRef === separateOwner && pending.edgeId === link.link_id))) });
       const inherited = branch.ancestors.has(endpoint)
         ? branch
         : enterOutlineOccurrence({
@@ -3132,7 +3259,7 @@ export function useOutlineSession({
         commit(joined.edits, { kind: "text", key: joined.earlier.key, ...at }, true, selection, {
           occurrences: rows.filter(candidate => joined.edits.some(edit => edit.kind === "consume_note" && edit.link_id === candidate.link.link_id)).map(candidate => ({
             edgeId: candidate.link.link_id, key: candidate.key,
-            item: candidate.link.target.item, originSourceRef: candidate.endpoint,
+            item: candidate.link.target.item, originSourceRef: candidate.endpoint, sourceProof: null,
           })),
         })
       )
@@ -3199,7 +3326,7 @@ export function useOutlineSession({
           selection,
           { occurrences: [{
             edgeId: row.link.link_id, key: row.key,
-            item: row.link.target.item, originSourceRef: row.endpoint,
+            item: row.link.target.item, originSourceRef: row.endpoint, sourceProof: null,
           }] },
         );
     },
@@ -3236,7 +3363,7 @@ export function useOutlineSession({
       const before = selection;
       const resolvedItems = await resources;
       if (!origin || !ownsSurface() || !items.length) return false;
-      const endpoint = sourceRef(destination.source);
+      const endpoint = insertionSourceRef(destination.source);
       const resolved = new Map(resolvedItems.map((item) => [item.ref, item]));
       if (
         items.some(
@@ -3282,6 +3409,7 @@ export function useOutlineSession({
           key,
           item: resource,
           originSourceRef: edit.endpoint,
+          sourceProof: null,
           projection: occurrenceProjection(parent),
         });
         contexts[index] = {
@@ -3373,7 +3501,7 @@ export function useOutlineSession({
         if (action) {
           // its failed write broke the position chain: it goes again at the reviewed position.
           const { position, source } = action.destination;
-          const version = graph.get(sourceRef(source))?.links_version;
+          const version = graph.get(insertionSourceRef(source))?.links_version;
           if (position !== null && version !== undefined)
             action.destination = {
               ...action.destination,

@@ -10,6 +10,8 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.notes import (
+    OutlineChildrenOut,
+    OutlineChildrenRequest,
     OutlineCommandsRequest,
     OutlineOut,
 )
@@ -54,6 +56,13 @@ def read_outline(
 @router.post("/resource-graph/commands")
 def commands(body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession) -> Data[WritingAck]:
     return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=body.commands))
+
+
+@router.post("/resource-graph/outline/children/query")
+def query_outline_children(
+    body: OutlineChildrenRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[OutlineChildrenOut]:
+    return Data(data=outline.query_children(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.post("/resource-graph/versions/query")
