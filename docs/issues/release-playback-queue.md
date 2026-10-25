@@ -3,8 +3,8 @@
 pending production delivery of the queue index; existing playback sessions and
 native player data must survive this upgrade.
 
-rehearse migration 0319 on the newest production backup before merge. it removes
-only saved `state.source` after strict preflight. keep a verified backup; provenance removal
+migration 0319 removes only saved `state.source` after strict preflight. take a
+verified production backup before applying it; provenance removal
 is irreversible without it. follow the once-between-releases wire revision rule
 and pair api/web/apk delivery. no old/new bridge compatibility period.
 
