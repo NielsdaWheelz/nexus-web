@@ -136,6 +136,10 @@ server components: callFastAPI ────────────────�
   `telemetry/client-defects` (a beacon: malformed json is 400; the bff adds
   `release` and names its own wire).
 
+the pinned next route-writer patch backports [upstream #98044](https://github.com/vercel/next.js/pull/98044):
+ordinary headers retain scalar values so existing compression can negotiate json.
+cookie splitting, declared multivalue headers and stream restrictions are unchanged.
+
 ## python (`python/nexus`)
 
 - `api/edge.py`: `WIRE_REVISION` and `EdgeMiddleware`, pure ASGI, outermost.
