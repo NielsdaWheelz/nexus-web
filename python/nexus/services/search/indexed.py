@@ -3,6 +3,9 @@
 One native lexical traversal supplies comparable owner winners. Semantic facts use
 the separately approved bounded windows; lexical occurrences take precedence.
 The returned facts belong to one read snapshot and are passed through composition.
+Named pieces retain private child winners from that same traversal, independent
+of ordinary passage ownership. Only selected-parent enrichment consumes them.
+Presentation distinguishes a canonical occurrence from its chosen reading context.
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +22,8 @@ from sqlalchemy.orm import Session
 
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.schemas.search import SearchMatchOut, SearchMatchRangeOut
+from nexus.services.content_indexing import reading_chunks_sql
+from nexus.services.media_text_scope import apparatus_scope_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.items import excerpt_window, resource_items_out
 from nexus.services.search.projection import ANALYZER, TABLE, TEXT_FIELDS
@@ -28,6 +33,7 @@ from nexus.services.search.sources import (
     Retrieval,
     discovery_browse,
     discovery_eligible,
+    discovery_semantic_children,
     discovery_semantic_hits,
 )
 
@@ -201,6 +207,36 @@ def statement(
             LIMIT :k)"""
     output = """SELECT 'selected'::text AS row_kind,doc_key,ref,owner_ref,family,name_tier,score,sort_label,reading_media_id
         FROM selected"""
+    if group_owners and "media" in families:
+        children = []
+        readings = "SELECT media_id FROM named_parts"
+        if "content_chunk" in families:
+            children.append(
+                f"SELECT 'content_chunk'::text AS family,chunk_id AS id,reading_media_id FROM ({reading_chunks_sql(readings)}) admitted"
+            )
+        if "reader_apparatus_item" in families:
+            children.append(
+                f"SELECT 'reader_apparatus_item'::text AS family,apparatus_item_id AS id,reading_media_id FROM ({apparatus_scope_rows_sql(readings)}) admitted"
+            )
+        if children:
+            sql += f""", named_parts AS MATERIALIZED (
+                SELECT DISTINCT part.media_id FROM facts named
+                JOIN media_parts part ON named.ref='media:' || part.media_id::text
+                WHERE named.family='media'
+            ), named_children AS MATERIALIZED ({" UNION ALL ".join(children)}),
+            child_facts AS (
+                SELECT p.doc_key,p.ref,'media:' || child.reading_media_id::text AS owner_ref,
+                    child.family,0 AS name_tier,h.score,''::text AS sort_label,child.reading_media_id
+                FROM named_children child
+                JOIN {TABLE} p ON p.doc_key=child.family || ':' || child.id::text
+                JOIN hits h ON h.search_id=p.search_id
+            ), child_winners AS (
+                SELECT DISTINCT ON (family,owner_ref) * FROM child_facts
+                ORDER BY family,owner_ref,score DESC,ref COLLATE "C"
+            )"""
+            output += """ UNION ALL SELECT 'child'::text AS row_kind,
+                doc_key,ref,owner_ref,family,name_tier,score,sort_label,reading_media_id
+                FROM child_winners"""
     return (
         sql
         + " SELECT * FROM ("
@@ -214,48 +250,73 @@ def statement(
 
 def select(
     db: Session, r: Retrieval, families: Sequence[str], *, group_owners: bool
-) -> tuple[list[DiscoveryHit], dict[str, str]]:
+) -> tuple[list[DiscoveryHit], dict[tuple[str, UUID | None], str], list[DiscoveryHit]]:
     """Consume complete owner facts or the individual occurrence prefix once."""
     sql, params = statement(db, r, families, group_owners=group_owners)
     rows = db.execute(text(sql), params).mappings().all()
-    hits = [
-        DiscoveryHit(
-            family=row["family"],
-            ref=assert_resource_ref(row["ref"]),
-            owner=assert_resource_ref(row["owner_ref"])
-            if row["family"] in GENERATED_FAMILIES
-            else None,
-            name_tier=row["name_tier"],
-            lexical=True,
-            relevance=float(row["score"]),
-            sort_label=row["sort_label"],
-            reading_media_id=row["reading_media_id"],
+    hits: list[DiscoveryHit] = []
+    children: list[DiscoveryHit] = []
+    for row in rows:
+        destination = children if row["row_kind"] == "child" else hits
+        destination.append(
+            DiscoveryHit(
+                family=row["family"],
+                ref=assert_resource_ref(row["ref"]),
+                owner=assert_resource_ref(row["owner_ref"])
+                if row["family"] in GENERATED_FAMILIES
+                else None,
+                name_tier=row["name_tier"],
+                lexical=True,
+                relevance=float(row["score"]),
+                sort_label=row["sort_label"],
+                reading_media_id=row["reading_media_id"],
+            )
         )
-        for row in rows
-    ]
-    return sorted(hits, key=lambda hit: hit.order), {row["ref"]: row["doc_key"] for row in rows}
+    return (
+        sorted(hits, key=lambda hit: hit.order),
+        {(row["ref"], row["reading_media_id"]): row["doc_key"] for row in rows},
+        children,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class IndexedRead:
+    """Preferred ordinary hits plus enrichment-only named-piece children.
+
+    Children participate only in an explicit parent lookup, never ordinary
+    resource/passage ranking. Their canonical refs and native doc keys are shared.
+    Document bindings and presentation are keyed by (canonical ref, reading id).
+    """
+
     hits: list[DiscoveryHit]
-    doc_keys: dict[str, str]
+    doc_keys: dict[tuple[str, UUID | None], str]
+    children: list[DiscoveryHit] = field(default_factory=list)
 
     def with_semantic(
         self, db: Session, r: Retrieval, neighbours: dict[str, list[tuple[UUID, float]]]
     ) -> IndexedRead:
-        """Merge approved windows into these same lexical facts; existing refs win."""
+        """Merge preferred ordinary refs; named children keep their own lexical facts."""
         if not neighbours:
             return self
         existing = {hit.ref for hit in self.hits}
         hits = list(self.hits)
+        children = list(self.children)
         for family, window in neighbours.items():
             hits.extend(
                 hit
                 for hit in discovery_semantic_hits(db, r, family, window)
                 if hit.ref not in existing
             )
-        return IndexedRead(sorted(hits, key=lambda hit: hit.order), self.doc_keys)
+        if neighbours.get("content_chunk"):
+            children.extend(
+                discovery_semantic_children(
+                    db,
+                    r,
+                    neighbours["content_chunk"],
+                    [hit.ref.id for hit in self.hits if hit.family == "media"],
+                )
+            )
+        return IndexedRead(sorted(hits, key=lambda hit: hit.order), self.doc_keys, children)
 
     def rank(
         self,
@@ -269,7 +330,7 @@ class IndexedRead:
     ) -> list[DiscoveryHit]:
         hits = [
             hit
-            for hit in self.hits
+            for hit in (self.hits + self.children if owners is not None else self.hits)
             if hit.family in families
             and (owners is None or (hit.owner is not None and hit.owner.id in owners))
             and (not excluded_owners or hit.owner is None or hit.owner.id not in excluded_owners)
@@ -298,8 +359,8 @@ def read(
         return IndexedRead([], {})
     if not r.terms:
         return IndexedRead(discovery_browse(db, r, families), {})
-    hits, doc_keys = select(db, r, families, group_owners=group_owners)
-    return IndexedRead(hits, doc_keys).with_semantic(db, r, neighbours)
+    hits, doc_keys, children = select(db, r, families, group_owners=group_owners)
+    return IndexedRead(hits, doc_keys, children).with_semantic(db, r, neighbours)
 
 
 def _literal_match(
@@ -357,24 +418,42 @@ def present(
     facts: IndexedRead,
     *,
     viewer_id: UUID,
-    refs: Sequence[ResourceRef],
+    refs: Sequence[tuple[ResourceRef, UUID | None]],
     hits: Sequence[DiscoveryHit],
     terms: str,
-) -> dict[str, tuple[ResourceItemOut, SearchMatchOut | None]]:
-    """annotate only selected keys in the caller's admitted snapshot."""
-    owners = {hit.ref: hit.reading_media_id for hit in hits}
-    items = []
-    for owner in dict.fromkeys(owners.get(ref) for ref in refs):
-        items.extend(
-            resource_items_out(
-                db,
-                viewer_id=viewer_id,
-                refs=list(dict.fromkeys(ref for ref in refs if owners.get(ref) == owner)),
-                reading_media_id=owner,
-            )
+) -> dict[tuple[str, UUID | None], tuple[ResourceItemOut, SearchMatchOut | None]]:
+    """Batch selected canonical refs; split only conflicting reading contexts.
+
+    Native annotations belong to the one document. Canonical item bodies and
+    activation belong to each requested reading, even when refs are identical.
+    """
+    pending = list(dict.fromkeys(refs))
+    items: dict[tuple[str, UUID | None], ResourceItemOut] = {}
+    while pending:
+        batch = []
+        deferred = []
+        seen = set()
+        for ref, owner in pending:
+            if ref.uri in seen:
+                deferred.append((ref, owner))
+            else:
+                seen.add(ref.uri)
+                batch.append((ref, owner))
+        projected = resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=[ref for ref, _ in batch],
+            reading_media_ids={ref.uri: owner for ref, owner in batch if owner is not None},
         )
+        for (ref, owner), item in zip(batch, projected, strict=True):
+            items[(ref.uri, owner)] = item
+        pending = deferred
     keys = list(
-        dict.fromkeys(facts.doc_keys[hit.ref.uri] for hit in hits if hit.ref.uri in facts.doc_keys)
+        dict.fromkeys(
+            facts.doc_keys[(hit.ref.uri, hit.reading_media_id)]
+            for hit in hits
+            if (hit.ref.uri, hit.reading_media_id) in facts.doc_keys
+        )
     )
     annotations: dict[str, RowMapping] = {}
     if keys:
@@ -401,17 +480,17 @@ def present(
         rows = db.execute(text(sql), params | {"selected_keys": keys}).mappings().all()
         annotations = {row["doc_key"]: row for row in rows}
         assert len(annotations) == len(rows) and annotations.keys() <= set(keys)
-    by_ref = {hit.ref.uri: hit for hit in hits}
-    presented: dict[str, tuple[ResourceItemOut, SearchMatchOut | None]] = {}
-    for item in items:
+    by_context = {(hit.ref.uri, hit.reading_media_id): hit for hit in hits}
+    presented: dict[tuple[str, UUID | None], tuple[ResourceItemOut, SearchMatchOut | None]] = {}
+    for context, item in items.items():
         if item.missing:
             raise RuntimeError("visible discovery resource missing from canonical item projection")
-        key = facts.doc_keys.get(item.ref)
+        key = facts.doc_keys.get(context)
         row = annotations.get(key) if key is not None else None
         match = (
-            _witness(row, by_ref[item.ref], terms)
-            if row is not None and item.ref in by_ref
+            _witness(row, by_context[context], terms)
+            if row is not None and context in by_context
             else None
         )
-        presented[item.ref] = item, match
+        presented[context] = item, match
     return presented

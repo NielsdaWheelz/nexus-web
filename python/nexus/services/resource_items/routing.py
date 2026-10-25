@@ -11,7 +11,7 @@ set query per scheme, never one per ref.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, assert_never, cast
 from urllib.parse import quote, urlencode
 from uuid import UUID
@@ -71,9 +71,13 @@ def resource_activations_for_refs(
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
     missing_ref_uris: set[str] | frozenset[str] = frozenset(),
-    reading_media_id: UUID | None = None,
+    reading_media_ids: Mapping[str, UUID] | None = None,
 ) -> dict[str, ResourceActivationOut]:
-    """One activation per distinct ref; a ref in ``missing_ref_uris`` gets ``none``."""
+    """One activation per ref; missing refs get ``none``.
+
+    A per-ref reading selects within current authority. Absent entries use the
+    authorized preferred reading; the map cannot authorize an otherwise hidden ref.
+    """
     unique = {ref.uri: ref for ref in refs}
     visible = [ref for uri, ref in unique.items() if uri not in missing_ref_uris]
     by_scheme: dict[str, list[ResourceRef]] = defaultdict(list)
@@ -86,7 +90,10 @@ def resource_activations_for_refs(
     }
     routes.update(_dynamic_routes(db, viewer_id=viewer_id, by_scheme=by_scheme))
     scoped = media_passages(
-        db, viewer_id=viewer_id, refs=visible, reading_media_id=reading_media_id
+        db,
+        viewer_id=viewer_id,
+        refs=visible,
+        reading_media_ids=reading_media_ids,
     )
     canonical_schemes = {
         "highlight",

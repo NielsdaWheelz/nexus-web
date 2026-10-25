@@ -112,17 +112,17 @@ def _targets(
         candidates = _refs(hits[: r.k])
         reading_owners = {_refs([hit])[0].uri: hit.reading_media_id for hit in hits[: r.k]}
     candidates = [ref for ref in candidates if ref.uri not in excluded]
-    items = {}
-    for owner in dict.fromkeys(reading_owners.get(ref.uri) for ref in candidates):
-        items.update(
-            (item.ref, item)
-            for item in resource_items_out(
-                db,
-                viewer_id=viewer_id,
-                refs=[ref for ref in candidates if reading_owners.get(ref.uri) == owner],
-                reading_media_id=owner,
-            )
+    items = {
+        item.ref: item
+        for item in resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=candidates,
+            reading_media_ids={
+                uri: owner for uri, owner in reading_owners.items() if owner is not None
+            },
         )
+    }
     admitted: dict[str, ResourceTargetOut] = {}
     for ref in candidates:
         passage = capability(ref.scheme).link_mode == "materialize_passage"

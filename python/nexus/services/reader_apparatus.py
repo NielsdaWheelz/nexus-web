@@ -600,7 +600,7 @@ def get_reader_apparatus_detail(
         db,
         viewer_id=viewer_id,
         refs=[ResourceRef("reader_apparatus_item", target.id) for target in targets],
-        reading_media_id=media_id,
+        reading_media_ids={f"reader_apparatus_item:{target.id}": media_id for target in targets},
     )
     fragment_indexes = {
         str(row.id): int(row.idx)

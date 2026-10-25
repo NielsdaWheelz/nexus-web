@@ -921,6 +921,51 @@ def discovery_semantic_hits(
     ]
 
 
+def discovery_semantic_children(
+    db: Session, r: Retrieval, neighbours: Sequence[tuple[UUID, float]], owners: Sequence[UUID]
+) -> list[DiscoveryHit]:
+    """An approved chunk window under matching named pieces; no new vector search."""
+    if not neighbours or not owners:
+        return []
+    predicate = _discovery_predicates(
+        r, "content_chunk", scope_predicate("content_chunk", r.scopes, None)
+    )
+    if predicate is None:
+        return []
+    ctes, bindings = _ctes(r)
+    params = predicate[1] | bindings
+    readings = """SELECT part.media_id FROM media_parts part
+        JOIN admitted_media admitted ON admitted.media_id=part.media_id
+        WHERE part.media_id=ANY(CAST(:named_parts AS uuid[]))"""
+    rows = db.execute(
+        text(f"""{ctes} SELECT reading.chunk_id,reading.reading_media_id,ann.cosine
+            FROM ({reading_chunks_sql(readings)}) reading
+            JOIN {_ANN} ON ann.id=reading.chunk_id
+            JOIN content_chunks cc ON cc.id=reading.chunk_id
+            JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id"""),
+        params
+        | {
+            "viewer_id": r.viewer_id,
+            "named_parts": list(owners),
+            "ann_ids": [identity for identity, _ in neighbours],
+            "ann_cos": [cosine for _, cosine in neighbours],
+        },
+    )
+    return [
+        DiscoveryHit(
+            "content_chunk",
+            ResourceRef("content_chunk", row.chunk_id),
+            ResourceRef("media", row.reading_media_id),
+            0,
+            False,
+            row.cosine,
+            "",
+            row.reading_media_id,
+        )
+        for row in rows
+    ]
+
+
 def discovery_browse(db: Session, r: Retrieval, families: Sequence[str]) -> list[DiscoveryHit]:
     """Canonical filter-only browse, restricted to listable works and people."""
     hits: list[DiscoveryHit] = []

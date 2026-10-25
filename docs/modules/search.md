@@ -67,13 +67,20 @@ meaningful names have exact/prefix/substring tiers. note, quote and passage pros
 has none. within a band, names precede remaining lexical matches, which precede
 semantic-only matches; relevance and canonical ref break ties. no passage-count
 summation or frontend score merging. filter-only listings retain label order.
-generated message/media hits group by their canonical source owner in sql before
+generated message/media hits group by conversation or permitted reading owner in sql before
 limiting. owner classification is independent of the direct result window.
 selected owners receive one best child from the same lexical scoring traversal,
 including children outside the global window. composition carries these proven
 facts; it performs no second ranking query. semantic-only facts use the approved
 neighbour windows and cannot displace lexical occurrences. each response owns its
 facts; phases do not share scores, snapshots, caches or cancellation ownership.
+
+matching named pieces retain private child winners from that same score stream,
+even when ordinary passage discovery prefers their visible source. these facts
+only enrich selected parents. selected presentation keys include canonical ref
+and reading identity, so one passage can explain source and piece without sharing
+the wrong activation. hydration batches distinct refs together and splits only
+conflicting contexts for the same ref; passage-view deduplication is unchanged.
 
 source-backed pieces are reading identities, not copied passage/vector owners.
 authorization chooses one permitted reading owner before ranking; source-owned

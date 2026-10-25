@@ -278,20 +278,24 @@ def _present(
     logger.info("search.presentation.begin", mono_ns=time.monotonic_ns())
     try:
         hits = {
-            hit.ref: hit for row in resources for hit in (row.own, row.passage) if hit is not None
+            (hit.ref, hit.reading_media_id): hit
+            for row in resources
+            for hit in (row.own, row.passage)
+            if hit is not None
         }
-        hits.update((hit.ref, hit) for hit in occurrences)
+        hits.update(((hit.ref, hit.reading_media_id), hit) for hit in occurrences)
         shown = present(
             db,
             facts,
             viewer_id=viewer_id,
-            refs=[row.ref for row in resources] + list(hits),
+            refs=[(row.ref, row.own.reading_media_id if row.own else None) for row in resources]
+            + list(hits),
             hits=list(hits.values()),
             terms=terms,
         )
 
         def occurrence(hit: DiscoveryHit) -> SearchOccurrenceOut:
-            item, match = shown[hit.ref.uri]
+            item, match = shown[(hit.ref.uri, hit.reading_media_id)]
             return SearchOccurrenceOut(
                 item=item, match=match, match_method="lexical" if hit.lexical else "semantic"
             )
@@ -299,13 +303,15 @@ def _present(
         return [
             SearchResourceOut(
                 section=row.section,
-                item=shown[row.ref.uri][0],
+                item=shown[(row.ref.uri, row.own.reading_media_id if row.own else None)][0],
                 name_match=cast(
                     NameMatch | None, (None, "substring", "prefix", "exact")[row.own.name_tier]
                 )
                 if row.own
                 else None,
-                match=shown[row.ref.uri][1] if row.own and terms else None,
+                match=shown[(row.ref.uri, row.own.reading_media_id if row.own else None)][1]
+                if row.own and terms
+                else None,
                 match_method=("lexical" if row.own.lexical else "semantic")
                 if row.own and terms
                 else None,

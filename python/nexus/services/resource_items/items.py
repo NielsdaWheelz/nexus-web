@@ -13,7 +13,7 @@ before routing, so neither its old title nor a live activation escapes.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, assert_never, cast
 from uuid import UUID
 
@@ -158,9 +158,13 @@ def resource_items_out(
     *,
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
-    reading_media_id: UUID | None = None,
+    reading_media_ids: Mapping[str, UUID] | None = None,
 ) -> list[ResourceItemOut]:
-    rows = _rows(db, viewer_id, refs, reading_media_id=reading_media_id)
+    """Batch one reading per canonical ref; absent entries use authorized preference.
+
+    A reading chooses presentation, never visibility or an additional audience.
+    """
+    rows = _rows(db, viewer_id, refs, reading_media_ids=reading_media_ids)
     summaries = media_summaries(
         db,
         viewer_id=viewer_id,
@@ -175,7 +179,7 @@ def resource_items_out(
         viewer_id=viewer_id,
         refs=refs,
         missing_ref_uris=missing,
-        reading_media_id=reading_media_id,
+        reading_media_ids=reading_media_ids,
     )
     owner_refs = [
         assert_resource_ref(uri)
@@ -209,7 +213,7 @@ def resource_items_out(
                 source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
                 annotation=annotations.get(ref.id),
                 activation=activations[ref.uri],
-                reading_media_id=reading_media_id,
+                reading_media_id=(reading_media_ids or {}).get(ref.uri),
             )
         )
     return out
@@ -271,7 +275,10 @@ def resource_item_out(
     db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
 ) -> ResourceItemOut:
     return resource_items_out(
-        db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+        db,
+        viewer_id=viewer_id,
+        refs=[ref],
+        reading_media_ids={ref.uri: reading_media_id} if reading_media_id is not None else None,
     )[0]
 
 
@@ -438,7 +445,7 @@ def _rows(
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
     *,
-    reading_media_id: UUID | None = None,
+    reading_media_ids: Mapping[str, UUID] | None = None,
 ) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
@@ -447,7 +454,9 @@ def _rows(
             text(_QUERIES[scheme]), {"ids": ids, "viewer_id": viewer_id}
         ).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
-    passages = media_passages(db, viewer_id=viewer_id, refs=refs, reading_media_id=reading_media_id)
+    passages = media_passages(
+        db, viewer_id=viewer_id, refs=refs, reading_media_ids=reading_media_ids
+    )
     canonical_schemes = {
         "highlight",
         "fragment",

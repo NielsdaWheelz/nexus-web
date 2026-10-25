@@ -39,9 +39,13 @@ from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.reader_document import read_reader_document
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.media import get_media_for_viewer, read_processing_snapshot
+from nexus.services import highlights, library_entries, library_members, libraries
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.services.media_parts import create_part
+from nexus.schemas.highlights import EnsureMediaHighlightRequest, TextHighlightAnchorIn
+from nexus.schemas.library import CreateLibraryRequest
+from nexus.schemas.library_members import CreateInvitationRequest
 from nexus.schemas.media_parts import PartCreate, PartPrepare, SectionSelection
 from nexus.services.search.query import build_discovery_query, scope_from_uri
 factory = get_session_factory()
@@ -91,9 +95,10 @@ def await_current_text(owner, *, witness):
     raise AssertionError("source lexical revision, witness or partition did not publish")
 
 if mode == "seed":
+    print("seed_stage=fixture_rows", file=sys.stderr, flush=True)
     viewer = UUID(context["seed"]["user_id"])
     other, a, b, hidden, left, right = [uuid4() for _ in range(6)]
-    source, part, stale = uuid4(), uuid4(), uuid4()
+    source, part, stale, crossing_highlight, shared_library = [uuid4() for _ in range(5)]
     inside, neighbour = "ochrepartneedle", "cobaltneighbourneedle"
     stale_term = "vermilionmargin"
     stale_quote = stale_term + " remembers an absent passage"
@@ -111,7 +116,7 @@ if mode == "seed":
         for media, owner, library, body in [(a,viewer,left,"\n\n".join(bodies)),(b,viewer,right,"labneedle second visible work"),(hidden,other,private,"labneedle secret forbidden evidence")]:
             db.execute(text("INSERT INTO media(id,kind,title,processing_status,created_by_user_id,plain_text) VALUES (:id,'web_article','fixture work','ready_for_reading',:owner,:body)"), {"id":media,"owner":owner,"body":body})
             db.execute(text("INSERT INTO fragments(media_id,idx,canonical_text,html_sanitized) VALUES (:id,0,:body,:html)"), {"id":media,"body":body,"html":"<p>"+body.replace("\n","<br>")+"</p>"})
-            db.execute(text("INSERT INTO library_entries(library_id,media_id) VALUES (:library,:id)"), {"library":library,"id":media})
+            assert library_entries.ensure_entry(db,library,library_entries.media_target(media))
             assert generate_canonical_text("<p>"+body.replace("\n","<br>")+"</p>")==body, "fixture HTML differs from canonical body"
             replace_media_apparatus(db,media_id=media,note_groups=[])
             advance_reader_publications(db,media_ids=[media])
@@ -123,7 +128,7 @@ if mode == "seed":
             publish(db,media,bodies if media==a else [body])
         db.execute(text("INSERT INTO media(id,kind,title,processing_status,created_by_user_id,plain_text) VALUES (:id,'web_article','fixture source','ready_for_reading',:owner,:body)"), {"id":source,"owner":viewer,"body":source_body})
         db.execute(text("INSERT INTO fragments(media_id,idx,canonical_text,html_sanitized) VALUES (:id,0,:body,:html)"), {"id":source,"body":source_body,"html":prepared.html_sanitized})
-        db.execute(text("INSERT INTO library_entries(library_id,media_id) VALUES (:library,:id)"), {"library":left,"id":source})
+        assert library_entries.ensure_entry(db,left,library_entries.media_target(source))
         replace_media_apparatus(db,media_id=source,note_groups=[])
         advance_reader_publications(db,media_ids=[source])
         assert read_reader_document(db,viewer,source).units[0].canonical_text==source_body
@@ -137,6 +142,7 @@ if mode == "seed":
         projection.refresh(db,"fragment",db.scalars(text("SELECT id FROM fragments WHERE media_id=ANY(:ids)"), {"ids":[a,b,hidden,source]}).all())
         projection.refresh(db,"highlight",[stale])
         db.commit()
+    print("seed_stage=section_choice", file=sys.stderr, flush=True)
     with factory() as db:
         generation=db.scalar(text("SELECT generation FROM reader_publications WHERE media_id=:id"), {"id":source})
         proof=read_media_navigation_proof(db,media_id=source,kind="web_article",generation=generation)
@@ -147,15 +153,41 @@ if mode == "seed":
         assert inside in chosen and neighbour not in chosen, "fixture section boundary is not isolated"
         section_id, navigation_key = choice.section_id, proof.key
         start, end = choice.start.offset, choice.end.offset
+        source_fragment=db.scalar(text("SELECT id FROM fragments WHERE media_id=:id"),{"id":source})
+        assert source_fragment is not None
+    print("seed_stage=source_highlight", file=sys.stderr, flush=True)
+    highlight_start=source_body.index("small section.",start,end)
+    highlight_end=highlight_start+len("small section.")
+    with factory() as db:
+        highlights.ensure_highlight(db,viewer,source,EnsureMediaHighlightRequest(
+            id=crossing_highlight,anchor=TextHighlightAnchorIn(kind="text",unit_id=source_fragment,start_offset=highlight_start,end_offset=highlight_end),
+            color="yellow",expected_reader_generation=generation,initial_note=None))
+    with factory() as db:
+        saved=highlights.get_highlight(db,viewer,crossing_highlight)
+        assert neighbour in saved.suffix and saved.exact=="small section.", "source highlight lacks crossing context"
+    print("seed_stage=prepare_parts", file=sys.stderr, flush=True)
     with factory() as db:
         preparation=prepare_media_parts(db,viewer_id=viewer,source_media_id=source,request=PartPrepare(id=uuid4(),expected_source_generation=generation))
         assert preparation.media_id==source
+    print("seed_stage=await_initial_text", file=sys.stderr, flush=True)
     await_current_text(source,witness=True)
+    print("seed_stage=create_part", file=sys.stderr, flush=True)
     with factory() as db:
-        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title="fixture piece",form=None))
+        receipt=create_part(db,viewer_id=viewer,source_media_id=source,request=PartCreate(id=part,selection=SectionSelection(source_generation=generation,navigation_key=navigation_key,section_ids=[section_id]),title=inside+" piece",form=None))
         assert receipt.media_id==part
+    print("seed_stage=await_partition_text", file=sys.stderr, flush=True)
     await_current_text(source,witness=True)
-    fixture={"viewer":str(viewer),"other":str(other),"a":str(a),"b":str(b),"hidden":str(hidden),"left":str(left),"right":str(right),"person":str(person.contributor_id),"handle":person.handle,"bodies":bodies,"fragment_id":fragment_id,"source":str(source),"part":str(part),"inside":inside,"neighbour":neighbour,"chosen":chosen,"part_start":start,"part_end":end,"stale":str(stale),"stale_quote":stale_quote,"stale_term":stale_term}
+    print("seed_stage=share_part", file=sys.stderr, flush=True)
+    with factory() as db:
+        removal_revision=str(db.scalar(text("SELECT removal_revision FROM users WHERE id=:id"),{"id":viewer}))
+    with factory() as db:
+        libraries.create_library(db,viewer,CreateLibraryRequest(id=shared_library,name="shared fixture piece",initial_items=["media:"+str(part)],expected_removal_revision=removal_revision))
+    invitation=uuid4()
+    with factory() as db:
+        library_members.create_invitation(db,viewer,shared_library,CreateInvitationRequest(id=invitation,invitee_user_id=other,invitee_email=None,role="member"))
+    with factory() as db:
+        library_members.respond_to_invitation(db,other,invitation,accept=True)
+    fixture={"viewer":str(viewer),"other":str(other),"a":str(a),"b":str(b),"hidden":str(hidden),"left":str(left),"right":str(right),"person":str(person.contributor_id),"handle":person.handle,"bodies":bodies,"fragment_id":fragment_id,"source":str(source),"part":str(part),"shared_library":str(shared_library),"crossing_highlight":str(crossing_highlight),"inside":inside,"neighbour":neighbour,"chosen":chosen,"part_start":start,"part_end":end,"stale":str(stale),"stale_quote":stale_quote,"stale_term":stale_term}
     fixture_file.write_text(json.dumps(fixture)); fixture_file.chmod(0o600)
 else:
     f=json.loads(fixture_file.read_text()); a,b=UUID(f["a"]),UUID(f["b"])
@@ -178,12 +210,27 @@ else:
             assert [r["item"]["ref"] for r in piece["results"]]==["media:"+f["part"]], "piece scope admitted the source"
             assert f["neighbour"] not in json.dumps(piece), "piece result leaked neighbouring text"
             assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["neighbour"]))["results"]==[], "piece scope admitted neighbouring text"
+            granted=await read(UUID(f["other"]),"media:"+f["part"],f["inside"])
+            assert [r["item"]["ref"] for r in granted["results"]]==["media:"+f["part"]], "part-only grantee cannot search the piece"
+            shared=(await read(UUID(f["other"]),"library:"+f["shared_library"],f["inside"]))["results"]
+            assert [r["item"]["ref"] for r in shared]==["media:"+f["part"]], "shared library search did not isolate the piece"
+            assert (await read(UUID(f["other"]),"media:"+f["part"],f["neighbour"]))["results"]==[], "part-only grantee found neighbouring text in the piece"
+            assert (await read(UUID(f["other"]),q=f["neighbour"]))["results"]==[], "part-only grantee found neighbouring text globally"
+            with factory() as db:
+                assert set(db.scalars(text("SELECT media_id FROM library_entries WHERE library_id=:id"),{"id":UUID(f["shared_library"])}))=={UUID(f["part"])}, "shared library filed the source"
+                assert get_media_for_viewer(db,UUID(f["other"]),UUID(f["part"])).id==UUID(f["part"]), "part-only grantee cannot read the piece"
+                try:
+                    get_media_for_viewer(db,UUID(f["other"]),UUID(f["source"]))
+                except NotFoundError:
+                    pass
+                else:
+                    raise AssertionError("part-only grantee can read the source")
             try:
-                await read(UUID(f["other"]),"media:"+f["part"],f["inside"])
+                await read(UUID(f["other"]),"media:"+f["source"],f["inside"])
             except NotFoundError:
                 pass
             else:
-                raise AssertionError("other viewer's piece scope was admitted")
+                raise AssertionError("part-only grantee can search the source")
         asyncio.run(scope_check())
     elif mode == "atomic":
         with factory() as old:
@@ -256,6 +303,16 @@ else:
             chunk=bounded["item"]["ref"].split(":",1)[1]
             activation=bounded["item"]["activation"]
             assert activation["resource_ref"]=="media:"+f["part"] and activation["href"]=="/media/"+f["part"]+"#chunk-"+chunk, "piece activation targets the source or an unproved location"
+            all_inside=(await read(UUID(f["viewer"]),q=f["inside"]))["results"]
+            roots=[r for r in all_inside if r["item"]["ref"]=="media:"+f["source"]]
+            assert len(roots)==1 and roots[0]["matching_passage"] is not None, "all-scope root lost its eligible body child"
+            root_activation=roots[0]["matching_passage"]["item"]["activation"]
+            root_href=root_activation["href"]
+            assert root_activation["kind"]=="route" and root_activation["resource_ref"]=="media:"+f["source"] and isinstance(root_href,str) and root_href.split("#",1)[0].split("?",1)[0]=="/media/"+f["source"], "all-scope root child activated another reading"
+            titled_parts=[r for r in all_inside if r["item"]["ref"]=="media:"+f["part"]]
+            assert len(titled_parts)==1 and titled_parts[0]["matching_passage"] is not None, "title-selected part lost its eligible body child"
+            titled_child=titled_parts[0]["matching_passage"]
+            assert titled_child["item"]["ref"]==bounded["item"]["ref"] and titled_child["item"]["activation"]["resource_ref"]=="media:"+f["part"] and titled_child["item"]["activation"]["href"]=="/media/"+f["part"]+"#chunk-"+chunk, "title-selected part used the root reading for its child"
             with factory() as db:
                 source_chunks=ids(db,UUID(f["source"]))
                 assert UUID(chunk) in source_chunks, "piece occurrence is not a current source chunk"
@@ -265,6 +322,16 @@ else:
                 detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
                 processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
                 assert state.status!="ready" and detail.text_search_ready and processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
+            root_context=(await read(UUID(f["viewer"]),"media:"+f["source"],f["neighbour"],kinds=("highlights",)))["results"]
+            assert [r["item"]["ref"] for r in root_context]==["highlight:"+f["crossing_highlight"]], "source highlight lost its stored neighbouring context"
+            piece_context=(await read(UUID(f["viewer"]),"media:"+f["part"],f["inside"],kinds=("highlights",)))["results"]
+            assert [r["item"]["ref"] for r in piece_context]==["highlight:"+f["crossing_highlight"]], "piece highlight lost its canonical identity or bounded context"
+            assert f["neighbour"] not in json.dumps(piece_context), "piece highlight leaked source context beyond its section"
+            piece_activation=piece_context[0]["item"]["activation"]
+            assert piece_activation["resource_ref"]=="media:"+f["part"] and piece_activation["href"]=="/media/"+f["part"]+"#highlight-"+f["crossing_highlight"], "piece highlight activates outside its reading"
+            granted_context=(await read(UUID(f["other"]),"media:"+f["part"],f["inside"],kinds=("highlights",)))["results"]
+            assert [r["item"]["ref"] for r in granted_context]==["highlight:"+f["crossing_highlight"]] and f["neighbour"] not in json.dumps(granted_context), "part-only grantee lost the bounded source highlight"
+            assert (await read(UUID(f["viewer"]),"media:"+f["part"],f["neighbour"],kinds=("highlights",)))["results"]==[], "piece highlight indexed source context beyond its section"
             stale=(await read(UUID(f["viewer"]),"media:"+f["source"],f["stale_term"],kinds=("highlights",)))["results"]
             assert len(stale)==1 and stale[0]["item"]["ref"]=="highlight:"+f["stale"], "stored unlocated quote is not searchable from its source"
             item=stale[0]["item"]
@@ -283,18 +350,30 @@ const execute = promisify(execFile);
 async function run(mode: string): Promise<void> {
   facts[mode] = { started: true };
   await saveFacts();
+  const started = Date.now();
   try {
     await execute(join(context.worktree, "python/.venv/bin/python"), ["-c", python, mode], {
-      cwd: context.worktree, env: process.env, timeout: mode === "seed" ? 120_000 : 60_000, maxBuffer: 1024 * 1024,
+      cwd: context.worktree, env: process.env, encoding: "utf8",
+      timeout: mode === "seed" ? 120_000 : 60_000, maxBuffer: 1024 * 1024,
     });
     facts[mode] = { python_complete: true };
     await saveFacts();
   } catch (error) {
-    const diagnostic = error instanceof Error && "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
-    const assertion = diagnostic.split("\n").find(line => line.startsWith("AssertionError:"));
-    facts[mode] = { python_complete: false, error_type: error instanceof Error ? error.name : "unknown" };
+    // justify-type-assertion: promisified execFile attaches these child facts to its error.
+    const child = error instanceof Error ? error as Error & { stdout?: unknown; stderr?: unknown;
+      code?: number | string | null; signal?: string | null; killed?: boolean } : null;
+    const diagnosticText = (value: unknown) => typeof value === "string" ? value
+      : value instanceof Uint8Array ? new TextDecoder().decode(value) : "";
+    const stdout = join(context.artifacts_dir, `search-${mode}.stdout.private.log`);
+    const stderr = join(context.artifacts_dir, `search-${mode}.stderr.private.log`);
+    await writeFile(stdout, diagnosticText(child?.stdout), { mode: 0o600, flag: "wx" });
+    await writeFile(stderr, diagnosticText(child?.stderr), { mode: 0o600, flag: "wx" });
+    facts[mode] = { python_complete: false, error_type: error instanceof Error ? error.name : "unknown",
+      child_code: child?.code ?? null, child_signal: child?.signal ?? null,
+      child_killed: child?.killed === true, elapsed_ms: Date.now() - started,
+      timeout_ms: mode === "seed" ? 120_000 : 60_000, stdout_file: stdout, stderr_file: stderr };
     await saveFacts();
-    throw new Error(`search ${mode} failed${assertion ? `: ${assertion}` : ""}`);
+    throw new Error(`search ${mode} failed; private child diagnostics retained`);
   }
 }
 // justify-type-assertion: the owned fixture emits exactly these public ids.

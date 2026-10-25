@@ -17,7 +17,8 @@ locator is unavailable; a piece audience still requires every canonical anchor.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -289,15 +290,20 @@ def media_passages(
     *,
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
-    reading_media_id: UUID | None = None,
+    reading_media_ids: Mapping[str, UUID] | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
 ) -> dict[str, ScopedMediaPassage]:
     """Current canonical media refs, with one authorized bounded reading owner each.
 
     A supplied audience limits owner choice before quote resolution; ``None``
     keeps ordinary visibility, while an empty sequence admits no media passage.
+    The per-ref reading map batches distinct occurrences with explicit contexts;
+    a canonical ref has only one context per invocation. An absent map entry uses
+    its authorized preferred owner. The map chooses within visibility and the
+    separate admitted audience; it never grants authority.
     """
     out: dict[str, ScopedMediaPassage] = {}
+    reading_owners = reading_media_ids or {}
     if admitted_reading_media_ids is not None and not admitted_reading_media_ids:
         return out
     ids = {
@@ -314,15 +320,15 @@ def media_passages(
                         OR (h.anchor_kind='fragment_offsets'
                             AND {highlight_in_reading_scope_sql("h.id", "reading.media_id")})
                     WHERE h.id=ANY(:ids) AND {highlight_visibility_sql("h")}
-                      AND (CAST(:reading_media_id AS uuid) IS NULL
-                        OR reading.media_id=CAST(:reading_media_id AS uuid))
+                      AND (CAST(:reading_owners AS jsonb)->>('highlight:' || h.id::text) IS NULL
+                        OR reading.media_id=CAST(CAST(:reading_owners AS jsonb)->>('highlight:' || h.id::text) AS uuid))
                       AND (CAST(:audience AS uuid[]) IS NULL
                         OR reading.media_id=ANY(CAST(:audience AS uuid[])))
                     GROUP BY h.id"""),
                 {
                     "ids": ids["highlight"],
                     "viewer_id": viewer_id,
-                    "reading_media_id": reading_media_id,
+                    "reading_owners": json.dumps(reading_owners, default=str),
                     "audience": list(admitted_reading_media_ids)
                     if admitted_reading_media_ids is not None
                     else None,
@@ -375,7 +381,7 @@ def media_passages(
             source_media_id=row.media_id,
             quote=quote,
             locator=locator,
-            reading_media_id=reading_media_id,
+            reading_media_id=reading_owners.get(f"highlight:{id}"),
             admitted_reading_media_ids=highlights[id],
         )
         if scoped is not None:
@@ -426,7 +432,7 @@ def media_passages(
             source_media_id=row.media_id,
             quote=quote,
             locator=locator,
-            reading_media_id=reading_media_id,
+            reading_media_id=reading_owners.get(f"fragment:{row.id}"),
             admitted_reading_media_ids=admitted_reading_media_ids,
         )
         if scoped is not None:
@@ -445,7 +451,7 @@ def media_passages(
                 exact=row.body_text or row.label or "", prefix=None, suffix=None, color=None
             ),
             locator=row.locator,
-            reading_media_id=reading_media_id,
+            reading_media_id=reading_owners.get(f"reader_apparatus_item:{row.id}"),
             apparatus_item_id=row.id,
             admitted_reading_media_ids=admitted_reading_media_ids,
         )
@@ -461,7 +467,8 @@ def media_passages(
         quote = CapturedQuote(
             exact=words["exact"], prefix=words.get("prefix"), suffix=words.get("suffix"), color=None
         )
-        owners = [ResourceRef("media", reading_media_id or row.owner_id)]
+        requested_reading = reading_owners.get(f"passage_anchor:{row.id}")
+        owners = [ResourceRef("media", requested_reading or row.owner_id)]
         if admitted_reading_media_ids is not None:
             source_id = (
                 db.scalar(
@@ -476,7 +483,7 @@ def media_passages(
                     db,
                     viewer_id=viewer_id,
                     source_media_id=source_id,
-                    reading_media_id=reading_media_id,
+                    reading_media_id=requested_reading,
                     admitted_reading_media_ids=admitted_reading_media_ids,
                 )
             ]
@@ -500,7 +507,7 @@ def media_passages(
                 locator=locator,
                 reading_media_id=owner.id
                 if admitted_reading_media_ids is not None
-                else reading_media_id,
+                else requested_reading,
                 admitted_reading_media_ids=admitted_reading_media_ids,
             )
             if scoped is not None:
@@ -522,7 +529,7 @@ def media_passages(
         db,
         viewer_id=viewer_id,
         refs=refs,
-        reading_media_id=reading_media_id,
+        reading_media_ids=reading_media_ids,
         admitted_reading_media_ids=admitted_reading_media_ids,
     ).items():
         if passage.owner.scheme == "media":
@@ -964,13 +971,18 @@ def current_passages(
     *,
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
-    reading_media_id: UUID | None = None,
+    reading_media_ids: Mapping[str, UUID] | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
 ) -> dict[str, CurrentPassage]:
     """The spans, chunks and oracle anchors among ``refs`` that exist, keyed by uri. A span
     lands where its selector resolves and its words still match; a chunk where its primary
     span lands, when their words are identical; an oracle anchor (resolved onto a span,
-    else a chunk) where its quote resolves uniquely, while that span or chunk lands."""
+    else a chunk) where its quote resolves uniquely, while that span or chunk lands.
+
+    Per-ref readings select within the separately admitted audience and visibility;
+    missing entries use the authorized preferred owner, never additional authority.
+    """
+    reading_owners = reading_media_ids or {}
     ids = {
         scheme: [ref.id for ref in refs if ref.scheme == scheme]
         for scheme in ("evidence_span", "content_chunk", "oracle_passage_anchor")
@@ -1106,7 +1118,7 @@ def current_passages(
             source_media_id=passage.owner.id,
             quote=passage.quote,
             locator=passage.locator,
-            reading_media_id=reading_media_id,
+            reading_media_id=reading_owners.get(uri),
             admitted_reading_media_ids=admitted_reading_media_ids,
         )
         if scoped is None:
