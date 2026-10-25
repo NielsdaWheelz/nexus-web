@@ -13,7 +13,9 @@ establish preservation of populated old downloads.
 first play of a newly downloaded, never-queued episode succeeded after force-stop
 and cold airplane startup. playback continued through home and screen lock.
 the recorded initial-connection failure did not occur; no reload workaround was
-used. final user-stop/resume and reconnect checks are being completed.
+used. ordinary resume after app-scoped user-stop preserved its durable checkpoint,
+then paused. the device-saved listening indicator cleared after reconnect.
+the queued download remained and original radio settings were restored.
 
 source refusal, storage failure and account retirement have isolated proof;
 these fault cases were not repeated on the personal production namespace.

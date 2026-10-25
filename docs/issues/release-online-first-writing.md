@@ -15,7 +15,7 @@ workspace. no app/origin reset occurred. #805 owns the qualification evidence.
 desktop ordinary-note autosave and full reload passed; only the consumption
 indexeddb remained and no writing branches were created. the signed firefox
 update completed a production capture. android ordinary-note autosave survived force-stop and cold reopen. cold offline
-catalog browsing passed; final episode playback remains separately recorded.
+catalog browsing and final episode playback passed; #805 records their exact limits.
 
 remaining acceptance: passage save/send, exit/sign-out failure branches and
 receive/performance limits retain their existing records, including
