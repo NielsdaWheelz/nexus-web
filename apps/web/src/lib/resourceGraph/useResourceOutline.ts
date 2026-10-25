@@ -15,18 +15,27 @@ import { announceResourceDeletion, subscribeLinkMutations } from "./links";
 const generations = new Map<string, number>();
 const invalidations = new Map<string, Set<() => void>>();
 const watches = new Map<string, Set<WritingWatch>>();
+type InvalidationCause = "structure" | "refresh";
+const scopeInvalidations = new Set<(cause: InvalidationCause, serial: number) => void>();
 let readSerial = 0;
 const PAGE_SIZE = 100;
 /** A read carries provenance; invalidation rejects its reply without remembering deleted ids. */
 export const captureResourceOutlineRead = () => readSerial;
 export const isResourceOutlineReadCurrent = (ref: string, started: number) =>
   (generations.get(ref) ?? 0) <= started;
-export function invalidateResourceOutlines(refs: ReadonlySet<string>): void {
+export function subscribeResourceOutlineInvalidations(
+  listener: (cause: InvalidationCause, serial: number) => void,
+): () => void {
+  scopeInvalidations.add(listener);
+  return () => { scopeInvalidations.delete(listener); };
+}
+export function invalidateResourceOutlines(refs: ReadonlySet<string>, cause: InvalidationCause): void {
   const generation = ++readSerial;
   for (const ref of refs) {
     generations.set(ref, generation);
     for (const listener of invalidations.get(ref) ?? []) listener();
   }
+  for (const listener of scopeInvalidations) listener(cause, generation);
 }
 
 export type ResourceOutline = Schema<"OutlineOut">;
@@ -103,7 +112,7 @@ export function useResourceOutline(
     },
   );
   const refetch = () => {
-    if (endpoint !== null) invalidateResourceOutlines(new Set([endpoint]));
+    if (endpoint !== null) invalidateResourceOutlines(new Set([endpoint]), "refresh");
   };
   useEffect(() => {
     if (endpoint === null) return;
@@ -113,7 +122,7 @@ export function useResourceOutline(
     listeners.add(invalidate);
     const current = accountId === null ? null : watchWritingResource({
       accountId, ref: endpoint, lanes: ["links_version"],
-      invalidate: () => invalidateResourceOutlines(new Set([endpoint])),
+      invalidate: () => invalidateResourceOutlines(new Set([endpoint]), "refresh"),
     });
     watch.current = current;
     const key = JSON.stringify([accountId, endpoint]);
@@ -138,7 +147,7 @@ export function useResourceOutline(
     if (endpoint === null) return;
     if ((change.kind === "resource_deleted" && change.ref === endpoint) ||
         (change.kind === "context_detached" && (change.sourceRef === endpoint || change.targetRef === endpoint)))
-      invalidateResourceOutlines(new Set([endpoint]));
+      invalidateResourceOutlines(new Set([endpoint]), "structure");
   }), [endpoint]);
   const loadedPages = prefix.status === "ready" ? prefix.data.pages : null;
   const candidates = useMemo<readonly Page[] | null>(

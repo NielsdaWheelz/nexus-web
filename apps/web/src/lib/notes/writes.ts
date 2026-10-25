@@ -39,7 +39,7 @@ export class WritingDecisionError extends Error {}
 export class WritingAbandonedError extends Error {}
 type Dispatch = { kind: "sealed"; method: "POST" | "PUT" | "PATCH" | "DELETE"; path: ApiPath; body_json: string | null; wire_revision: number };
 export type WritingAck = Schema<"WritingAck">;
-type CausalFacts = Pick<WritingAck, "identities" | "lanes" | "insertions" | "placements" | "deleted_refs"> & {
+type CausalFacts = Pick<WritingAck, "identities" | "lanes" | "links" | "insertions" | "placements" | "deleted_refs"> & {
   notes: { id: string; body_version: number; body_pm_json: BodyJson }[];
   absolute_versions: { kind: "desired" | "initial_title"; ref: string; lane: "body" | "title"; from_version: number; version: number }[];
   local_note_bindings: { requested_id: string; canonical_id: string; version: number; body_pm_json: BodyJson;
@@ -51,6 +51,13 @@ export type WritingLane = "body" | "title" | "links" | "annotations" | "context"
 export type LaneDependency =
   | { kind: "observed"; ref: string; lane: WritingLane; version: number }
   | { kind: "result"; write: WriteHandle; ref: string; lane: WritingLane; version: number };
+/** An exact owned edge's source fence, never authority over an earlier position. */
+export interface CreatedLinkSource {
+  kind: "created_link";
+  write: WriteHandle;
+  requested_link_id: string;
+  source_ref: string;
+}
 export type InsertionDependency = {
   kind: "insertion"; write: WriteHandle;
   requested_link_id: string; source_ref: string;
@@ -75,11 +82,11 @@ export type WritingCommand =
   | Omit<Schema<"InsertLink">, "position"> & { position: WritingPosition | null }
   | Omit<Schema<"Move">, "expected_links_version"> & { expected_links_version: LaneDependency }
   | Omit<Schema<"Relink">, "position" | "expected_source_links_version"> & {
-      position: WritingPosition | null; expected_source_links_version: LaneDependency;
+      position: WritingPosition | null; expected_source_links_version: LaneDependency | CreatedLinkSource;
     }
   | Omit<Schema<"Remove">, "expected_body_version" | "expected_links_version"> & { expected_body_version: LaneDependency | null; expected_links_version: LaneDependency | null }
   | Omit<Schema<"ConsumeNote">, "expected_body_version" | "expected_links_version"> & { expected_body_version: LaneDependency; expected_links_version: LaneDependency | null }
-  | Omit<Schema<"Unlink">, "expected"> & { expected: { endpoint: string; links_version: LaneDependency } | null }
+  | Omit<Schema<"Unlink">, "expected"> & { expected: { endpoint: string; links_version: LaneDependency | CreatedLinkSource } | null }
   | Extract<Command, { kind: "ensure_daily" }>;
 
 export type WritingIntent =
@@ -197,6 +204,9 @@ function sameAuthoredValue(a: AuthoredValue, b: AuthoredValue): boolean {
 function dependencies(intent: WritingIntent): { write: WriteHandle; ref?: string; lane?: WritingLane }[] {
   const found: { write: WriteHandle; ref?: string; lane?: WritingLane }[] = [];
   const lane = (value: LaneDependency) => { if (value.kind === "result") found.push(value); };
+  const source = (value: LaneDependency | CreatedLinkSource) => {
+    if (value.kind === "created_link") found.push(value); else lane(value);
+  };
   const position = (value: WritingPosition | null) => {
     if (value === null) return;
     if ("predecessor" in value) found.push(value.predecessor); else lane(value.expected_links_version);
@@ -211,9 +221,9 @@ function dependencies(intent: WritingIntent): { write: WriteHandle; ref?: string
       case "insert_link": position(command.position); break;
       case "restore_note": if (command.removed_by.kind === "pending") found.push(command.removed_by); position(command.position); break;
       case "move": lane(command.expected_links_version); break;
-      case "relink": lane(command.expected_source_links_version); position(command.position); break;
+      case "relink": source(command.expected_source_links_version); position(command.position); break;
       case "ensure_daily": break;
-      case "unlink": if (command.expected !== null) lane(command.expected.links_version); break;
+      case "unlink": if (command.expected !== null) source(command.expected.links_version); break;
       case "remove": if (command.expected_body_version !== null) lane(command.expected_body_version); if (command.expected_links_version !== null) lane(command.expected_links_version); break;
       case "consume_note": lane(command.expected_body_version); if (command.expected_links_version !== null) lane(command.expected_links_version); break;
     }
@@ -278,6 +288,22 @@ function resolveLane(value: LaneDependency, settled: string, ack: CausalFacts, c
   // from another write cannot turn that independent observation into causality.
   return { ...value, ref };
 }
+/** Only the named producer can acknowledge this exact live edge. The returned
+ * source version may fence its removal; it cannot validate a captured position. */
+function resolveLinkSource(value: LaneDependency | CreatedLinkSource, edgeId: string, endpoint: string,
+  settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null): LaneDependency | CreatedLinkSource {
+  if (value.kind !== "created_link") return resolveLane(value, settled, ack, causal);
+  if (value.write.id !== settled) return {...value, source_ref: canonicalRef(value.source_ref, ack)};
+  const insertion = ack.insertions.find(item => item.requested_link_id === value.requested_link_id);
+  const source = canonicalRef(value.source_ref, ack);
+  const edge = insertion && ack.links.find(link => link.link_id === insertion.canonical_link_id);
+  const lane = ack.lanes.find(item => item.ref === source && item.lane === "links");
+  if (!insertion?.created || insertion.source_ref !== source || canonicalRef(endpoint, ack) !== source ||
+      canonicalId("link", edgeId, ack) !== insertion.canonical_link_id || !edge ||
+      (edge.source_ref !== source && edge.target_ref !== source) || !lane)
+    throw new WritingDecisionError("the preceding change did not prove this live link source");
+  return {kind: "observed", ref: source, lane: "links", version: lane.version};
+}
 function resolvePosition(value: WritingPosition | null, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): WritingPosition | null {
   if (value === null) return null;
   if (!("predecessor" in value)) return { ...value, expected_links_version: resolveLane(value.expected_links_version, settled, ack, causal) };
@@ -330,8 +356,8 @@ function resolveCommand(command: WritingCommand, settled: string, ack: CausalFac
     case "insert_note": return { ...command, note_id: canonicalId("note_block", command.note_id, ack), link_id: canonicalId("link", command.link_id, ack), source: resolveSource(command.source, ack), position: resolvePosition(command.position, settled, ack, causal) };
     case "insert_link": return { ...command, link_id: canonicalId("link", command.link_id, ack), source: resolveSource(command.source, ack), target: command.target.kind === "resource" ? { ...command.target, ref: canonicalRef(command.target.ref, ack) } : command.target, position: resolvePosition(command.position, settled, ack, causal) };
     case "move": return { ...command, endpoint: canonicalRef(command.endpoint, ack), edge_id: canonicalId("link", command.edge_id, ack), after: command.after === null ? null : canonicalId("link", command.after, ack), expected_links_version: resolveLane(command.expected_links_version, settled, ack, causal) };
-    case "relink": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), destination: canonicalRef(command.destination, ack), new_link_id: canonicalId("link", command.new_link_id, ack), expected_source_links_version: resolveLane(command.expected_source_links_version, settled, ack, causal), position: resolvePosition(command.position, settled, ack, causal) };
-    case "unlink": return { ...command, link_id: canonicalId("link", command.link_id, ack), expected: command.expected === null ? null : { endpoint: canonicalRef(command.expected.endpoint, ack), links_version: resolveLane(command.expected.links_version, settled, ack, causal) } };
+    case "relink": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), destination: canonicalRef(command.destination, ack), new_link_id: canonicalId("link", command.new_link_id, ack), expected_source_links_version: resolveLinkSource(command.expected_source_links_version, command.link_id, command.endpoint, settled, ack, causal), position: resolvePosition(command.position, settled, ack, causal) };
+    case "unlink": return { ...command, link_id: canonicalId("link", command.link_id, ack), expected: command.expected === null ? null : { endpoint: canonicalRef(command.expected.endpoint, ack), links_version: resolveLinkSource(command.expected.links_version, command.link_id, command.expected.endpoint, settled, ack, causal) } };
     case "remove": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), expected_body_version: command.expected_body_version === null ? null : resolveLane(command.expected_body_version, settled, ack, causal), expected_links_version: command.expected_links_version === null ? null : resolveLane(command.expected_links_version, settled, ack, causal) };
     case "consume_note": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), expected_body_version: resolveLane(command.expected_body_version, settled, ack, causal), expected_links_version: command.expected_links_version === null ? null : resolveLane(command.expected_links_version, settled, ack, causal) };
   }
@@ -357,7 +383,7 @@ function resolveIntent(intent: WritingIntent, settled: string, ack: CausalFacts,
     case "resource_delete": return { ...intent, resource_id: canonicalId(intent.resource_kind, intent.resource_id, ack) };
   }
 }
-function version(value: LaneDependency): number {
+function version(value: LaneDependency | CreatedLinkSource): number {
   if (value.kind !== "observed") throw new WritingDecisionError("the preceding change still needs acknowledgement");
   return value.version;
 }

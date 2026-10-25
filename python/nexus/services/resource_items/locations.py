@@ -146,6 +146,53 @@ def _reading_candidates(
     )
 
 
+def _scope_source_reads(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    contexts: Sequence[tuple[UUID, UUID | None]],
+    admitted_reading_media_ids: Sequence[UUID] | None,
+) -> locator_resolver.PassageSourceReads:
+    """Read piece-owner texts once for this scope-resolution stage.
+
+    Existing audience selection supplies the dependencies; scoping still owns
+    admission and owner choice. A readable canonical root needs no piece texts.
+    Location validation and later anchor identity retain their separate reads.
+    """
+    media = (
+        {
+            row.id: row
+            for row in db.execute(
+                text("""
+                SELECT media.id,media.kind,COALESCE(part.source_media_id,media.id) AS source_id
+                FROM media LEFT JOIN media_parts part ON part.media_id=media.id
+                WHERE media.id=ANY(:ids)
+            """),
+                {"ids": list({source for source, _ in contexts})},
+            )
+        }
+        if contexts
+        else {}
+    )
+    owners: set[UUID] = set()
+    for source, reading in set(contexts):
+        row = media.get(source)
+        if row is None or row.kind not in ("epub", "web_article", "text_part"):
+            continue
+        if row.kind == "text_part" and reading is None and admitted_reading_media_ids is None:
+            reading = source
+        candidates = _reading_candidates(
+            db,
+            viewer_id=viewer_id,
+            source_media_id=row.source_id,
+            reading_media_id=reading,
+            admitted_reading_media_ids=admitted_reading_media_ids,
+        )
+        if row.source_id not in candidates:
+            owners.update(candidates)
+    return locator_resolver.read_passage_sources(db, [("media", id) for id in owners])
+
+
 def scoped_media_passage(
     db: Session,
     *,
@@ -156,12 +203,15 @@ def scoped_media_passage(
     reading_media_id: UUID | None = None,
     apparatus_item_id: UUID | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
+    source_reads: locator_resolver.PassageSourceReads | None = None,
 ) -> ScopedMediaPassage | None:
     """Choose an authorized reading owner and bound incidental context there.
 
     An explicit owner is authoritative. Shared passage ranges admit the body and
     exact permitted notes without changing the body interval or source owner.
     A supplied audience intersects visibility; an empty audience admits nothing.
+    Supplied source reads must cover this context's eligible piece owners in the
+    same snapshot; they are text dependencies and never authority.
     """
     if admitted_reading_media_ids is not None and not admitted_reading_media_ids:
         return None
@@ -188,7 +238,7 @@ def scoped_media_passage(
         admitted_reading_media_ids=admitted_reading_media_ids,
     )
     owner_id = None
-    sources: locator_resolver.PassageSourceReads | None = None
+    sources = source_reads
     words: str | None = None
     if apparatus_item_id is not None:
         permitted = (
@@ -220,9 +270,10 @@ def scoped_media_passage(
         if source_media_id in candidates:
             owner_id = source_media_id
         else:
-            sources = locator_resolver.read_passage_sources(
-                db, [("media", id) for id in candidates]
-            )
+            if sources is None:
+                sources = locator_resolver.read_passage_sources(
+                    db, [("media", id) for id in candidates]
+                )
             permitted = [
                 id
                 for id in candidates
@@ -292,6 +343,7 @@ def media_passages(
     refs: Sequence[ResourceRef],
     reading_media_ids: Mapping[str, UUID] | None = None,
     admitted_reading_media_ids: Sequence[UUID] | None = None,
+    current_passage_reads: Mapping[str, CurrentPassage] | None = None,
 ) -> dict[str, ScopedMediaPassage]:
     """Current canonical media refs, with one authorized bounded reading owner each.
 
@@ -301,6 +353,8 @@ def media_passages(
     a canonical ref has only one context per invocation. An absent map entry uses
     its authorized preferred owner. The map chooses within visibility and the
     separate admitted audience; it never grants authority.
+    A composing caller may supply current passage proofs already read in this
+    exact viewer, reading context and snapshot; those replace this stage's read.
     """
     out: dict[str, ScopedMediaPassage] = {}
     reading_owners = reading_media_ids or {}
@@ -398,12 +452,33 @@ def media_passages(
                     }
                 scoped = ScopedMediaPassage(scoped.owner, quote, locator)
             out[f"highlight:{id}"] = scoped
-    for row in db.execute(
-        text(
-            "SELECT f.id,f.media_id,f.canonical_text,f.t_start_ms,f.t_end_ms,m.kind FROM fragments f JOIN media m ON m.id=f.media_id WHERE f.id=ANY(:ids)"
-        ),
-        {"ids": ids["fragment"]},
-    ):
+    fragments = list(
+        db.execute(
+            text(
+                "SELECT f.id,f.media_id,f.canonical_text,f.t_start_ms,f.t_end_ms,m.kind FROM fragments f JOIN media m ON m.id=f.media_id WHERE f.id=ANY(:ids)"
+            ),
+            {"ids": ids["fragment"]},
+        )
+    )
+    apparatus = list(
+        db.execute(
+            text(
+                "SELECT item.id,item.media_id,item.body_text,item.label,item.locator FROM reader_apparatus_items item JOIN reader_apparatus_states state ON state.id=item.state_id WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')"
+            ),
+            {"ids": ids["reader_apparatus_item"]},
+        )
+    )
+    scope_sources = _scope_source_reads(
+        db,
+        viewer_id=viewer_id,
+        contexts=[(row.media_id, reading_owners.get(f"fragment:{row.id}")) for row in fragments]
+        + [
+            (row.media_id, reading_owners.get(f"reader_apparatus_item:{row.id}"))
+            for row in apparatus
+        ],
+        admitted_reading_media_ids=admitted_reading_media_ids,
+    )
+    for row in fragments:
         quote = CapturedQuote(exact=row.canonical_text, prefix=None, suffix=None, color=None)
         locator = None
         if (
@@ -434,15 +509,11 @@ def media_passages(
             locator=locator,
             reading_media_id=reading_owners.get(f"fragment:{row.id}"),
             admitted_reading_media_ids=admitted_reading_media_ids,
+            source_reads=scope_sources,
         )
         if scoped is not None:
             out[f"fragment:{row.id}"] = scoped
-    for row in db.execute(
-        text(
-            "SELECT item.id,item.media_id,item.body_text,item.label,item.locator FROM reader_apparatus_items item JOIN reader_apparatus_states state ON state.id=item.state_id WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')"
-        ),
-        {"ids": ids["reader_apparatus_item"]},
-    ):
+    for row in apparatus:
         scoped = scoped_media_passage(
             db,
             viewer_id=viewer_id,
@@ -454,6 +525,7 @@ def media_passages(
             reading_media_id=reading_owners.get(f"reader_apparatus_item:{row.id}"),
             apparatus_item_id=row.id,
             admitted_reading_media_ids=admitted_reading_media_ids,
+            source_reads=scope_sources,
         )
         if scoped is not None:
             out[f"reader_apparatus_item:{row.id}"] = scoped
@@ -525,13 +597,18 @@ def media_passages(
             )
             if chosen is not None:
                 out[f"passage_anchor:{row.id}"] = proved[chosen]
-    for uri, passage in current_passages(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        reading_media_ids=reading_media_ids,
-        admitted_reading_media_ids=admitted_reading_media_ids,
-    ).items():
+    current = (
+        current_passage_reads
+        if current_passage_reads is not None
+        else current_passages(
+            db,
+            viewer_id=viewer_id,
+            refs=refs,
+            reading_media_ids=reading_media_ids,
+            admitted_reading_media_ids=admitted_reading_media_ids,
+        )
+    )
+    for uri, passage in current.items():
         if passage.owner.scheme == "media":
             out[uri] = ScopedMediaPassage(passage.owner, passage.quote, passage.locator)
     return out
@@ -1109,6 +1186,16 @@ def current_passages(
         lands = current is not None and current.locator is not None
         locator = resolve_quote(db, owner, quote, None, sources) if lands else None
         out[f"oracle_passage_anchor:{anchor.id}"] = CurrentPassage(owner, quote, locator)
+    scope_sources = _scope_source_reads(
+        db,
+        viewer_id=viewer_id,
+        contexts=[
+            (passage.owner.id, reading_owners.get(uri))
+            for uri, passage in out.items()
+            if passage.owner.scheme == "media"
+        ],
+        admitted_reading_media_ids=admitted_reading_media_ids,
+    )
     for uri, passage in list(out.items()):
         if passage.owner.scheme != "media":
             continue
@@ -1120,6 +1207,7 @@ def current_passages(
             locator=passage.locator,
             reading_media_id=reading_owners.get(uri),
             admitted_reading_media_ids=admitted_reading_media_ids,
+            source_reads=scope_sources,
         )
         if scoped is None:
             del out[uri]

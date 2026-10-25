@@ -40,6 +40,12 @@
   text-decoration: none;
   font: inherit;
 }
+.spacer {
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--outline-control-inline-size);
+  height: var(--outline-control-block-size);
+}
 .control:hover {
   color: var(--ink);
   background: var(--surface-hover);

@@ -8,12 +8,15 @@ import {
   useContext,
   useRef,
   useEffect,
+  useState,
   type ReactNode,
 } from "react";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {hasActiveInteractionOwner, useInteractionOwner} from "@/lib/ui/overlay";
 import {usePaneIsActive} from "@/lib/panes/paneRuntime";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import {FeedbackNotice} from "@/components/feedback/Feedback";
+import {useOutlineChildren, type OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
 import type {
   OutlineBranch,
   OutlineTarget,
@@ -129,6 +132,8 @@ export const ResourceOutlineContext = createContext<{
   scope: string;
   view: { folds: ReadonlyMap<string, boolean> };
   viewLocked: boolean;
+  childAvailability: ReturnType<typeof useOutlineChildren>["items"];
+  registerChildren(key: string, descriptor: OutlineChildrenDescriptor): () => void;
   toggle(key: string, open: boolean): void;
   reveal(target: OutlineTarget): void;
 } | null>(null);
@@ -206,6 +211,18 @@ function SessionList({
   const inherited = useContext(ResourceBranch);
   const root = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLUListElement | null>(null);
+  const [descriptors, setDescriptors] = useState<ReadonlyMap<string, OutlineChildrenDescriptor>>(() => new Map());
+  const registerChildren = useCallback((key: string, descriptor: OutlineChildrenDescriptor) => {
+    const registration = {...descriptor};
+    setDescriptors(current => new Map(current).set(key, registration));
+    return () => setDescriptors(current => {
+      if (current.get(key) !== registration) return current;
+      const next = new Map(current);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+  const availability = useOutlineChildren(scope, descriptors);
   const reveal = useCallback((target: OutlineTarget) => {
     if (target.kind === "root") {
       if (onRevealRoot) onRevealRoot();
@@ -217,7 +234,7 @@ function SessionList({
     )?.focus();
   }, [onRevealRoot]);
   const context = {
-    scope, view: session.view, viewLocked,
+    scope, view: session.view, viewLocked, childAvailability: availability.items, registerChildren,
     toggle(key: string, open: boolean) {
       if (!viewLocked) session.toggle({key, open});
     },
@@ -230,6 +247,10 @@ function SessionList({
   return <ResourceOutlineContext value={context}>
     <ResourceBranch value={branch}>
       <div ref={root} className={styles.outline} data-pane-return-scope={scope} data-outline-scope={scope}>
+        {availability.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t load outline structure",
+          requestId: availability.error.requestId}} announcement="Polite"
+          actions={[{label: "retry", onClick: availability.retry}]}/>
+          : availability.loading ? <p role="status" className={styles.status}>loading outline structure…</p> : null}
         <ul ref={list} className={styles.list} aria-label={ariaLabel} aria-busy={busy} tabIndex={-1}>
           {children}
         </ul>

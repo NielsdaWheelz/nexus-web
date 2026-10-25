@@ -2982,6 +2982,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/resource-graph/outline/children/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Outline Children */
+        post: operations["query_outline_children_resource_graph_outline_children_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/resource-graph/outline/{ref}": {
         parameters: {
             query?: never;
@@ -5288,6 +5305,10 @@ export interface components {
         /** Data[OracleReadingOut] */
         Data_OracleReadingOut_: {
             data: components["schemas"]["OracleReadingOut"];
+        };
+        /** Data[OutlineChildrenOut] */
+        Data_OutlineChildrenOut_: {
+            data: components["schemas"]["OutlineChildrenOut"];
         };
         /** Data[OutlineOut] */
         Data_OutlineOut_: {
@@ -8699,6 +8720,25 @@ export interface components {
         /** @enum {string} */
         OracleSourceKind: "public_domain" | "user_media";
         OrderRevision: string;
+        /** OutlineChildrenOccurrenceRequest */
+        OutlineChildrenOccurrenceRequest: {
+            /** Embedded In Note Ref */
+            embedded_in_note_ref: string | null;
+            /** Excluded Edge Ids */
+            excluded_edge_ids: string[];
+            /** Resource Ref */
+            resource_ref: string;
+        };
+        /** OutlineChildrenOut */
+        OutlineChildrenOut: {
+            /** Items */
+            items: (boolean | null)[];
+        };
+        /** OutlineChildrenRequest */
+        OutlineChildrenRequest: {
+            /** Occurrences */
+            occurrences: components["schemas"]["OutlineChildrenOccurrenceRequest"][];
+        };
         /** OutlineCommandsRequest */
         OutlineCommandsRequest: {
             /** Commands */
@@ -19735,6 +19775,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConnectionPageOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_outline_children_resource_graph_outline_children_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OutlineChildrenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OutlineChildrenOut_"];
                 };
             };
             /** @description Validation Error */

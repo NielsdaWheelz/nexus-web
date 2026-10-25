@@ -40,19 +40,6 @@ export type OutlineData = {
   links_version: number;
   complete: boolean;
 };
-/** Pure projection of mixed occurrences. Content identity is always connection.other. */
-export function projectOutline(value: WireOutline): OutlineData {
-  return {
-    source: value.source,
-    links_version: value.links_version,
-    complete: value.next_cursor === null,
-    links: value.items.map(({ connection, content }) => ({
-      link_id: connection.edge_id,
-      target: { item: connection.other, content },
-      connection,
-    })),
-  };
-}
 export type Unlink = Schema<"Unlink">;
 /** A pending predecessor is an exact queued insertion; its version is supplied
  * only by that write's acknowledgement before a dependent request is sealed. */
@@ -133,7 +120,6 @@ export interface Row {
   readonly depth: number;
   readonly terminal: OutlineTarget | null;
   readonly open: boolean;
-  readonly loaded: boolean;
 }
 export interface View {
   readonly folds: ReadonlyMap<string, boolean>;
@@ -226,7 +212,6 @@ export function outlineRows({
       depth: path.length,
       terminal,
       open: terminal === null && (view.folds.get(key) ?? false),
-      loaded: graph.has(link.target.item.ref),
     });
   }
   return rows;
@@ -478,7 +463,7 @@ export function siblingsOf(rows: readonly Row[], row: Row): Row[] {
     (r) => r.depth === row.depth && parentKey(r) === parentKey(row),
   );
 }
-/** The nearest editable note above `row` among its siblings: where Tab indents it. */
+/** The nearest arrangable resource above `row` among its siblings: Tab's parent. */
 export function indentParent(rows: readonly Row[], row: Row): Row | null {
   const siblings = siblingsOf(rows, row);
   const at = siblings.findIndex((r) => r.key === row.key);

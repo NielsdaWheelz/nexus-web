@@ -14,6 +14,8 @@ import type {StructuralKeys} from "@/components/notes/NoteEditor";
 import {fetchNote} from "@/lib/notes/api";
 import {adoptText, useText} from "@/lib/notes/texts";
 import type {DailyPublication, OutlineDestination, OutlinePlacement, OutlineSession} from "@/lib/notes/useOutlineSession";
+import {occurrenceKey as outlineOccurrenceKey} from "@/lib/notes/outline";
+import type {OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
 import {usePaneFreeServerValue} from "@/lib/api/serverState";
 import MachineText from "@/components/ui/MachineText";
 import {isApiError} from "@/lib/api/client";
@@ -137,6 +139,11 @@ export default function ResourceOutlineRow(props: {
     if (typeof rowRef === "function") rowRef(node); else if (rowRef) rowRef.current = node;
   }, [rowRef]);
   const arrow = useRef<HTMLButtonElement | null>(null);
+  const lostArrowFocus = useRef(false);
+  const attachArrow = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null && arrow.current === document.activeElement) lostArrowFocus.current = true;
+    arrow.current = node;
+  }, []);
   const childrenId = useId();
   const effectiveIncoming = incoming;
   const mutation = incoming?.mutation ?? null;
@@ -148,6 +155,33 @@ export default function ResourceOutlineRow(props: {
   const removalLabel = mutation?.kind === "detach_context" ? "remove from future context"
     : `unlink from ${connection ? (connection.source.ref === item.ref ? connection.target.label : connection.source.label) : "parent"}`;
   const annotation = item.preview.annotation;
+  const childProjection = session?.childProjection({endpoint: item.ref, branch: childrenBranch,
+    suppressedEdgeIds: annotation ? [annotation.attachment_edge_id] : [], embeddedInNoteRef});
+  const occurrence = childProjection ? {resource_ref: item.ref, excluded_edge_ids: childProjection.excludedEdgeIds,
+    embedded_in_note_ref: embeddedInNoteRef} : null;
+  const descriptor: OutlineChildrenDescriptor | null = projection.kind === "resource" && !item.missing && occurrence && childProjection
+    ? {occurrence, localChildren: childProjection.hasPendingChildren,
+      identity: JSON.stringify([occurrence, childProjection.hasPendingChildren])} : null;
+  const latestDescriptor = useRef(descriptor);
+  latestDescriptor.current = descriptor;
+  const descriptorIdentity = descriptor?.identity ?? null;
+  const registerChildren = outline?.registerChildren;
+  useLayoutEffect(() => {
+    if (registerChildren && latestDescriptor.current !== null)
+      return registerChildren(occurrenceKey, latestDescriptor.current);
+  }, [registerChildren, occurrenceKey, descriptorIdentity]);
+  const proof = outline?.childAvailability.get(occurrenceKey);
+  const hasChildren = descriptor !== null && (descriptor.localChildren ||
+    (proof?.identity === descriptor.identity && proof.value === true));
+  const hasControl = terminal || hasChildren;
+  useLayoutEffect(() => {
+    if (!hasControl && lostArrowFocus.current) {
+      const row = element.current;
+      const bullet = row?.querySelector<HTMLElement>("[data-outline-bullet]");
+      (bullet && !bullet.matches(":disabled") ? bullet : row)?.focus({preventScroll: true});
+    }
+    lostArrowFocus.current = false;
+  }, [hasControl]);
   function toggle() {
     if (disclosureDisabled) return;
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
@@ -334,13 +368,14 @@ export default function ResourceOutlineRow(props: {
         }
       }}>
       <div className={styles.head}>
-        {projection.kind === "reference" ? <button ref={arrow} type="button" className={styles.control}
+        {projection.kind === "reference" ? <button ref={attachArrow} type="button" className={styles.control}
           disabled={disclosureDisabled} aria-label={`show earlier occurrence of ${item.label}`}
           onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><CornerLeftUp size={14}/></button>
-          : <button ref={arrow} type="button" className={styles.control}
-            aria-label={`expand linked resources for ${item.label}`} aria-expanded={open}
+          : hasChildren ? <button ref={attachArrow} type="button" className={styles.control}
+            aria-label={`${open ? "collapse" : "expand"} linked resources for ${item.label}`} aria-expanded={open}
             aria-controls={open ? childrenId : undefined} disabled={item.missing || disclosureDisabled}
-            onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button>}
+            onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button>
+            : <span aria-hidden="true" className={styles.spacer}/>}
         {commands.length ? <ContextualActionMenu title={item.label} subjectKey={`relationship:${occurrenceKey}`}
           sections={[{id: "Occurrence", actions: commands}]} commandDisabledReason={commandDisabledReason}
           label={`relationship actions for ${item.label}`} renderContextAnchor={bullet}/> : bullet({})}
@@ -376,9 +411,9 @@ export default function ResourceOutlineRow(props: {
         </div>
         <div className={styles.actions}><ContextualActionMenu {...menu} label={`more actions for ${item.label}`}/></div>
       </div>
-      {!open && session?.composer?.destination.occurrencePrefix === occurrenceKey && continuation &&
-        session.composer.destination.path.join("/") === continuation.path.join("/") ?
-          <OutlineInsertionLine session={session} destination={session.composer.destination}/> : null}
+      {!open && session?.composer && outlineOccurrenceKey(session.composer.destination.occurrencePrefix,
+        session.composer.destination.path) === occurrenceKey ? <div className={styles.children}>
+          <OutlineInsertionLine session={session} destination={session.composer.destination}/></div> : null}
       {nestedContent || open ? <div className={styles.children}>{nestedContent}{open ?
         <section id={childrenId} aria-label="linked resources">{placement?.children ?? <ResourceDisclosure
           resourceRef={item.ref} occurrencePrefix={occurrenceKey} readOnly={historical}

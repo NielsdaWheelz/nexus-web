@@ -6,6 +6,10 @@ checks; retired prerequisites refuse a mixed batch without a surviving subset.
 No create can remint a retired id. Absolute body/title writes are unique per lane.
 Structural consumption preserves complete retention/version guards.
 
+Child availability reads one caller-owned repeatable, read-only snapshot. Each
+occurrence tests its complete incident graph, with its exact exclusions; a passage
+also tests its resolved durable owner. No child hydration or pagination is involved.
+
 Shared graph/version owners collect compact effects, including embed far ends
 and cleanup. Checks use each lane's transaction baseline. Only a real check or
 an exclusively created endpoint supplies causal proof; retries and equal-value
@@ -23,7 +27,10 @@ from typing import assert_never, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import UUID as SqlUUID
+from sqlalchemy import Integer, String, all_, and_, column, func, or_, select, values
+from sqlalchemy import cast as sql_cast
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion, ResourceViewState
@@ -36,6 +43,8 @@ from nexus.schemas.notes import (
     InsertNote,
     Move,
     NoteContentOut,
+    OutlineChildrenOut,
+    OutlineChildrenRequest,
     OutlineCommand,
     OutlineNodeOut,
     OutlineOccurrenceOut,
@@ -57,14 +66,112 @@ from nexus.schemas.resource_items import (
 from nexus.schemas.writing import IdentityKind, WritingAck, WritingInsertion, WritingPlacement
 from nexus.services import authored_identities, note_bodies, notes, writing
 from nexus.services.resource_graph import connections, edges, links, order, retention
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, require_ref
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceScheme,
+    assert_resource_ref,
+    require_ref,
+)
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.items import resource_items_out, visible_refs
 from nexus.services.suggestion_changes import record_input_change
 
 _CURSOR = TypeAdapter(tuple[UUID, str, int, str | None, datetime, UUID])
+
+
+def query_children(
+    db: Session, *, viewer_id: UUID, request: OutlineChildrenRequest
+) -> OutlineChildrenOut:
+    refs = {
+        raw: require_ref(raw)
+        for raw in dict.fromkeys(
+            raw
+            for occurrence in request.occurrences
+            for raw in (occurrence.resource_ref, occurrence.embedded_in_note_ref)
+            if raw is not None
+        )
+    }
+    for occurrence in request.occurrences:
+        if (
+            occurrence.embedded_in_note_ref is not None
+            and refs[occurrence.embedded_in_note_ref].scheme != "note_block"
+        ):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Containing resource must be a note block"
+            )
+    endpoints = list({refs[item.resource_ref] for item in request.occurrences})
+    visible = visible_refs(db, viewer_id=viewer_id, refs=endpoints)
+    endpoints = [
+        ref for ref in endpoints if ref.uri in visible and capability(ref.scheme).adjacency_source
+    ]
+    sources = links.insertion_sources_for_refs(db, viewer_id=viewer_id, refs=endpoints)
+    available: list[bool | None] = [None] * len(request.occurrences)
+    probes: list[tuple[int, str, UUID, list[UUID], UUID | None]] = []
+    for index, occurrence in enumerate(request.occurrences):
+        ref = refs[occurrence.resource_ref]
+        if ref.uri not in sources:
+            continue
+        available[index] = False
+        containing = (
+            refs[occurrence.embedded_in_note_ref].id
+            if occurrence.embedded_in_note_ref is not None
+            else None
+        )
+        excluded = list(set(occurrence.excluded_edge_ids))
+        probes.append((index, ref.scheme, ref.id, excluded, containing))
+        source = sources[ref.uri]
+        if source is not None and source.kind == "resource" and source.ref != ref.uri:
+            owner = assert_resource_ref(source.ref)
+            probes.append((index, owner.scheme, owner.id, excluded, None))
+    if not probes:
+        return OutlineChildrenOut(items=available)
+    probe = (
+        values(
+            column("occurrence", Integer),
+            column("scheme", String),
+            column("id", SqlUUID),
+            column("excluded", ARRAY(SqlUUID)),
+            column("containing", SqlUUID),
+        )
+        .data(probes)
+        .cte("outline_children")
+    )
+    exists = (
+        select(ResourceEdge.id)
+        .where(
+            ResourceEdge.user_id == viewer_id,
+            or_(
+                and_(
+                    ResourceEdge.source_scheme == probe.c.scheme,
+                    ResourceEdge.source_id == probe.c.id,
+                ),
+                and_(
+                    ResourceEdge.target_scheme == probe.c.scheme,
+                    ResourceEdge.target_id == probe.c.id,
+                ),
+            ),
+            ResourceEdge.id != all_(probe.c.excluded),
+            ~and_(
+                probe.c.containing.is_not(None),
+                ResourceEdge.origin == "note_body",
+                ResourceEdge.kind == "context",
+                ResourceEdge.ordinal.is_(None),
+                ResourceEdge.source_scheme == "note_block",
+                ResourceEdge.source_id == sql_cast(probe.c.containing, SqlUUID),
+                ResourceEdge.target_scheme == probe.c.scheme,
+                ResourceEdge.target_id == probe.c.id,
+            ),
+        )
+        .correlate(probe)
+        .exists()
+    )
+    for index, found in db.execute(
+        select(probe.c.occurrence, func.bool_or(exists)).group_by(probe.c.occurrence)
+    ):
+        available[index] = found
+    return OutlineChildrenOut(items=available)
 
 
 def read(
