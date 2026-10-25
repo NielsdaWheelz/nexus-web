@@ -93,9 +93,17 @@ container owns adaptation at its explicit base text size: above `32em - 1px`,
 show up to three observed author names; at or below that boundary, show the first
 and a passive omitted count. the default 15px type gives a 479px boundary;
 enlarged text compacts earlier. compact media facts remain visible and do not
-shrink or ellipsize; bibliography yields through its existing truncation. each
-visible name retains at least an ellipsis-sized slot;
-year/count keep their own slots. hidden names leave the tab order; focused hidden
+shrink or ellipsize. `IndexBibliography` owns a compact, left-aligned author/year
+group: no level grows into spare width, and names prefer their natural text width
+or a `1em` minimum, whichever is larger. under pressure, names shrink
+proportionally toward that minimum and ellipsize individually; commas, omitted
+count, separator and year retain natural widths. those protected minima propagate
+through the group's allocation. spare width belongs outside the bibliography;
+`MediaIdentity` keeps facts trailing within its allocated region, including when
+separate context follows. missing facts never stretch the byline.
+provenance text grows within the remaining allocation and ellipsizes without raising
+the identity's protected minimum.
+hidden names leave the tab order; focused hidden
 links/shortcuts return to that row's surviving more/title. no surname inference or
 author-only control.
 source/evidence links own their ellipsizing boxes; bounded metadata/excerpt links

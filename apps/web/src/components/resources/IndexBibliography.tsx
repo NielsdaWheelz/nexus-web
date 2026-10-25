@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { Fragment, useRef } from "react";
 import { ContributorName } from "@/components/contributors/ContributorCredits";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
@@ -15,13 +15,12 @@ function IndexAuthors({ authors, returnFocus }: {
   useActionFocusRecovery(names, returnFocus);
   return <>
     <span ref={names} className={styles.names}>
-      {authors.slice(0, 3).map((credit, index) => <span
-        className={styles.credit}
+      {authors.slice(0, 3).map((credit, index) => <Fragment
         key={`${credit.contributor_handle ?? credit.credited_name}-${index}`}
       >
         {index > 0 ? <span className={styles.comma} aria-hidden="true">, </span> : null}
-        <ContributorName credit={credit} className={styles.name} />
-      </span>)}
+        <span className={styles.credit}><ContributorName credit={credit} className={styles.name} /></span>
+      </Fragment>)}
     </span>
     {authors.length > 3 ? <span className={styles.wideOverflow}>
       <span aria-hidden="true">, +{authors.length - 3}</span>
@@ -34,8 +33,9 @@ function IndexAuthors({ authors, returnFocus }: {
   </>;
 }
 
-/** Index-only author names and first-publication year. Container width hides
- * whole name links; complete credited spelling and calendar precision survive.
+/** Compact index-only authors/year; names shrink proportionally toward 1em,
+ * while punctuation and year stay whole. Container width hides whole name links;
+ * complete credited spelling and calendar precision survive.
  * The adapter supplies the same row's surviving more/title focus destination. */
 export default function IndexBibliography({ contributors, originalPublishedDate, returnFocus }: {
   readonly contributors: readonly ContributorCredit[];
