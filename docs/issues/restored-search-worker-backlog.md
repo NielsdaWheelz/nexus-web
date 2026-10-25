@@ -1,8 +1,18 @@
 # restored search worker backlog
 
-the owned full-runtime clone contains 129 due pending `media_content_reindex_job` jobs. read-only owner classification found all 129 have current `pending` index state, no active embedding identity, and media ready for reading. these are not completed replays or superseded work. qualification 06's off-window check confirms these owners have zero stored chunks; all 721,079 existing chunks have current lexical and semantic publication on the normalized configured embedding identity. ordinary workers could create new materializations, change publication state or call the provider before a browser baseline.
+the earlier0292 qualification clone contains 129 due pending
+`media_content_reindex_job` jobs. read-only owner classification found all 129
+have current `pending` index state, no active embedding identity, and media ready
+for reading. these are not completed replays or superseded work. qualification
+06's off-window check confirms these owners have zero stored chunks; all721,079
+existing chunks have current lexical and semantic publication on the normalized
+configured embedding identity. ordinary workers could create new materializations,
+change publication state or call the provider before a browser baseline. the
+separate verified0312 backup has zero live media-reindex jobs: 150 succeeded and
+three dead. recheck that live-job precondition before its0316 migration; the
+older clone's backlog does not transfer to that backup.
 
-the initial browser qualification therefore starts real postgres/api/web/auth/provider but no workers. it preserves the queue and must not claim ordinary-worker overlap, maintenance qualification or complete deployed-host fit. the existing one-job `settle_snapshot.py` authorization covers an unrelated historical metadata job and cannot settle this backlog.
+that clone's initial browser qualification therefore starts real postgres/api/web/auth/provider but no workers. it preserves the queue and must not claim ordinary-worker overlap, maintenance qualification or complete deployed-host fit. the existing one-job `settle_snapshot.py` authorization covers an unrelated historical metadata job and cannot settle this backlog.
 
 private evidence: approved devbox `full-runtime-qualification-04/{queue-inventory,queue-owner-classification}.json`. decide the backlog's legitimate disposition before ordinary-worker qualification; use actual queue/registered publication owners and protected-value comparisons. no blanket cancellation, parking or payload rewrite. a separate fresh-owner publication case does not resolve restored-backlog maintenance.
 

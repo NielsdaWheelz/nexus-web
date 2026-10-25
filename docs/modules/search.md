@@ -357,6 +357,12 @@ both commits are source-revision/exact-claim fenced. retries resume existing tex
 completed ready/no-text/ocr-required outcomes are no-ops, including effects and
 timestamps. note edits increment revisions and coalesce unclaimed work.
 
+the media text publisher takes the revision returned by its own state write and
+checks that the lexical update stored that same revision. it then projects only
+that owner's new chunks with the explicit owner and revision in the same
+transaction. the final insert does not reread unrelated index states; migration
+extraction still derives each row from canonical state.
+
 pieces use their source's current lexical publication and published partition.
 definition changes reconcile that partition in the same transaction. structural
 witness/text publication precedes embeddings, so missing embedding credentials

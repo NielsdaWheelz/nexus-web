@@ -28,11 +28,15 @@ daemon or production account. explicit provider endpoint overrides and additiona
 ca roots apply to generation and embeddings while preserving verified trust and
 request-owned cancellation/retry.
 
-local static checks, the three retained search checks, exact retention/edit
-integration, fake-provider composition, genuine embedding/cancellation and the
-request-identity/cache controls pass. owned runs retire normally. the bounded
-devbox publication/browser operation also passes; this does not qualify
-unrestricted workers or the pending deployed endpoint change.
+recorded desktop checks for exact retention/edit integration, fake-provider
+composition, genuine embedding/cancellation and request-identity/cache controls
+passed on their recorded source snapshots. owned runs retired normally. the
+bounded devbox publication/browser operation passed on the earlier search
+checkpoint.
+the integrated `a3e6b8ee2` populated combined operation failed; current
+`0a4098235` passes local static and all three retained checks, with its affected
+populated operation still pending. none of these checks qualifies unrestricted workers or
+the pending deployed endpoint change.
 
 canonical `worker_checkout_image.py` owns shared image acquisition/retention;
 normal teardown owns each run's processes, services, credentials and private

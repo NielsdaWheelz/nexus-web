@@ -60,10 +60,16 @@ retained checks and actual0312→0315→0316 populated preservation/native proof
 one rebuilt-index paraphrase retains all53 reference owners with identical
 first-page order and representatives; it is no new latency or recall campaign.
 the integrated combined operation fails: publication needs a serialization retry
-and active related search expires. see [publication coupling](search-publication-retries-during-unrelated-edits.md)
+and active related search expires. current `0a4098235` passes local static and the
+three retained checks, including source-backed piece boundaries and native
+publication equality. its controlled local publisher probe removes the late
+state-table read and commits once alongside an unrelated edit. these results do
+not replace the failed populated operation or establish a new latency result.
+see [publication coupling](search-publication-retries-during-unrelated-edits.md)
 and [related cutoff](search-related-timeout-during-publication.md).
-these proofs remain scoped to the earlier main baseline. complete the frozen
-[piece integration](release-search-contained-works-integration.md) before release.
+the older populated preservation and recall proofs retain their recorded scope.
+complete the [piece integration](release-search-contained-works-integration.md)
+with an affected populated0316→0317 conversion and combined operation before release.
 
 the owner accepts occasional restored-pane related failure during publication
 with verified honest failure, preserved useful results and retry. the integrated
