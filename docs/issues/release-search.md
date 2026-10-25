@@ -53,37 +53,43 @@ remains unattributed with selected-runtime measured stability accepted.
 
 warm visible-result p95 budgets remain500/2000/4000ms for direct/keyword/related;
 cold keyword3000/related4000ms has one accepted control, not a percentile.
-independent failure deadlines remain unchanged. earlier failed observations retain
-those verdicts. current `7776e45f6` passes static checks and the targeted semantic
-piece fixture; the three retained checks passed before the semantic-only change.
-the actual0312 restore through unchanged main0316 and search0317 preserves104
-canonical tables and3,396,985 rows, with exact agreement across all fifteen native
-families, vectors, readiness and clocks. one current-index semantic comparison
-retains52/53 qualifying owners (98.113%) and every reference semantic first-page
-owner without lexical masking. one representative is weaker but relevant, moving
-from position10 to18; this is accepted bounded recall, not latency acceptance.
+independent failure deadlines remain unchanged. current `b5234285` passes
+`./scripts/test`, the three retained checks, six same-snapshot presentation
+parity/count cases and the separate semantic piece/owner fixture. the actual0312 restore through unchanged
+main0316 and search0317 preserves104 canonical tables and3,396,985 rows, with exact
+agreement across all fifteen native families, vectors, readiness and clocks. one
+current-index semantic comparison retains52/53 qualifying owners (98.113%) and
+every reference semantic first-page owner without lexical masking. one weaker but
+relevant representative moves10→18; this is bounded recall, not latency acceptance.
 
-the current controlled populated operation proves single-attempt book publication
-without rollback or sqlstate error (initial31.04s, replacement35.34s). unrelated
-colour/note edits acknowledge200 in735/457ms, with six distinct request identities
-and durable rereads before and after publication. original source equality,
-owned native-row withdrawal and normal cleanup pass. this closes the publication-retry gate for
-that controlled case; it does not explain the historical40001 dependency cycle
-or qualify unrestricted conflicting writers.
+the strict-v6 populated operation remains unqualified. one confirmed changed input
+produces one fresh keyword200 and one fresh related504 over h2, with browser
+monotonic dispatch and request-id joins. keyword takes870.39ms at the api and paints
+in1332ms. related expires after3032.92ms during presentation, following provider
+803ms, indexed selection280ms and extra semantic retrieval1843.94ms. the deadline
+stage does not establish presentation as the sole cause. this active related
+failure is outside the restored-background waiver. the separate
+[note-search admission gap](search-publication-note-check-waits-for-admission.md)
+leaves updated-note searchability unproved; its admission holder is unattributed.
 
-the combined operation remains unqualified: keyword and active related return504
-while publication is in progress; note search also returns504. both focal requests
-expire inside indexed selection, before extra semantic retrieval or presentation.
-request overlap proves no native-merge cause. a later read-only native plan exposes
-repeated highlight admission against unrelated reading candidates, not physical
-reads. the source prefilter preserves full eligibility in a same-snapshot comparison
-and removes the measured cross-product; its native diagnostic improves. affected
-retained checks and actual bff/publication acceptance remain pending. retain the
-[active read failure](search-related-timeout-during-publication.md) and
-[highlight admission issue](search-highlight-admission-scans-unrelated-readings.md).
-complete the affected browser/search operation under unchanged limits before
-release; the populated conversion condition in
-[piece integration](release-search-contained-works-integration.md) is already met.
+the initial publication completes in36.69s; the held replacement commits in one
+audited attempt in40.75s. these elapsed intervals include setup, verification and
+control waits; they do not measure lock occupancy. initial publication was not
+attempt-audited. unrelated colour/note edits acknowledge200 in613.90/613.27ms and pass durable rereads before
+and after commit. source equality, owned native-row withdrawal, fixture restoration
+and normal runtime cleanup pass. these wins do not qualify the combined read gate
+or reconstruct the historical40001 dependency cycle.
+
+highlight eligibility equivalence, removed unrelated-reading work and the affected
+keyword delivery pass; presentation reuses authorized facts with exact local
+output parity and one resolution per reading context. retain the
+[active related gate](search-related-timeout-during-publication.md),
+[semantic integration](search-semantic-eligibility-count-resolves-readers.md) and
+[piece integration](release-search-contained-works-integration.md). earlier
+missing-dispatch and mixed-clock receipts retain their failures but do not prove
+after-input ordering or paint. publication-interval overlap is distinct from a
+native-merge subinterval; neither alone establishes timeout causality. the next
+repair decision needs completed timing; these observations establish no hardware or engine conclusion.
 
 the owner accepts occasional restored-pane related failure during publication
 with verified honest failure, preserved useful results and retry. the integrated

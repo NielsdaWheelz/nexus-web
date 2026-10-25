@@ -58,7 +58,11 @@ the current source adopts that candidate inline. the semantic reader's existing
 ready predicate owns current root lexical publication; `reading_chunks_sql` still
 owns complete canonical piece/index/bounds admission. each reading witness keeps
 its filters. preferred-owner hydration, ranking, readiness and caps stay fixed.
-small source/piece/frozen-ref/mixed-scope parity must pass again after this edit;
-then the actual new-source plan and affected active related journey, recall and
-combined operation remain pending. private candidate timing is not an api latency
-or acceptance claim.
+small source/piece/frozen-ref/mixed-scope, legal overlap, deterministic owner and
+stale-publication checks pass on current `b5234285`. the bounded count and one
+current-index recall comparison complete:52/53 qualifying owners and every
+reference semantic first-page owner survive without lexical masking. these
+mechanism and bounded quality conditions pass, but the issue's complete affected
+active related journey remains open: strict-v6 returns504 during presentation
+after extra semantic retrieval. see [the active gate](search-related-timeout-during-publication.md).
+private candidate timing is not an api latency or complete acceptance claim.

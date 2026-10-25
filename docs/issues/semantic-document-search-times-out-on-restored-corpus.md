@@ -115,3 +115,13 @@ fresh whole-corpus audit. the separate restored hybrid504 remains in
 and unrestricted ordinary-worker acceptance remain explicitly owner-deferred;
 scoped publication does not satisfy the latter. [release integration](release-search.md)
 remains separate.
+
+current integrated closeout on `b5234285`: static and retained/local boundary checks
+pass. initial publication completes and the held replacement commits in one
+audited attempt; unrelated edits persist through commit and restoration passes.
+strict-v6 proves fresh keyword200/paint but active related504 during presentation.
+notes persist, while the note-search request times out waiting for shared admission
+without an attributed holder. complete current read acceptance remains open in
+[the active gate](search-related-timeout-during-publication.md). older incomplete
+recorders do not establish after-input ordering; no new percentile or broader
+capacity claim follows from this operation.

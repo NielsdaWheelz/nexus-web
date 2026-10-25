@@ -8,6 +8,15 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+indexed search against frozen main `2b85ecb3d`: +3,309 authored runtime lines
+(6,172 added, 2,863 deleted). indexed occurrence retrieval and independent phases
+replace browser ranking and redundant route queries; canonical publication,
+authorized reading and shared admission retain their owners. static and local
+boundary checks pass; current populated keyword delivery and durable edits pass,
+while active related completion and updated-note searchability remain open in
+`docs/issues/release-search.md`. migrations, scripts, docs, generated files and
+locks are outside this runtime count. earlier area totals retain their stated bases.
+
 contained works against `9ca8d44e` adds 7,614 authored runtime lines
 (8,527 added, 913 deleted). source-backed definitions and one bounded
 text scope replace whole-source assumptions in reading, evidence, search and
@@ -345,7 +354,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | authors | 3,658 | reauthored #549 | #670 +8 · resource insertion +11 · #700 -7 · unsaved work -43 · collection loading -14 · media controls +20 · durable writing +0 · dropdown primitives -220 · native control cutover · author editing -932 · bounded indexes +3 · resource menu parity · contained works +21 | keep |
 | ingest source lifecycle, post room | 4,317 | reauthored #599 | #619 +62 · x threads +63 · #670 +514 · reader python ingest +25 · ingest follow-ups +13 · podcast details +4 · libraries retention +50 · contained works +19 | keep |
 | reader python: apparatus | 3,580 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +9 · contained works +193 | read-path functions with 13b |
-| nexus launcher | 3,867 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · persistent player +3 · notes re-slice (server) +1 · media controls +1 · durable writing +2 · dropdown primitives -23 · native control cutover · feedback activity | keep (no second pass) |
+| nexus launcher | 3,867 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · persistent player +3 · notes re-slice (server) +1 · media controls +1 · durable writing +2 · dropdown primitives -23 · native control cutover · feedback activity · indexed search (integrated read gate open) | keep (no second pass) |
 | add content | 3,415 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 · #670 +117 · shift-open +14 · #702 +10 · unsaved work -106 · collection loading +4 · libraries retention +32 · dropdown primitives +1 · native control cutover | re-slice: single-screen editor |
 | reader python: read model | 4,356 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 · #670 +34 · reader connections +24 · ingest follow-ups -3 · contained works +944 | reader python read (13b, deferred) |
 | consumption history and stats | 3,183 | reauthored #417 #595 | x threads +1 · shift-open -11 · collection loading -4 · podcast collection +7 · durable writing +0 · native control cutover · feedback activity | keep |
@@ -368,7 +377,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | android shell | 2,199 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 · durable writing +21 · native control cutover · playback queue -4 · offline catalog +55 · online-first writing · offline episodes +65 | android slice (late) |
 | api substrate, config, storage, wire schemas | 2,797 | reauthored #585 #586 #622 | x threads +3 · #670 +3 · resource-first search +4 · empty-resource lifecycle +19 · python auth -5 · podcast details +4 · durable writing +124 · libraries retention +1 · podcast libraries -4 · playback queue +123 · author editing -15 · offline catalog +2 · resource menu parity · quiet suggestions -14 · offline episodes +98 · contained works +502 | keep |
 | reader: document map, evidence | 2,038 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · #670 +5 · #679 +5 · shift-open +65 · resource metadata +1 · resource insertion +4 · reader connections -469 · shared outline +203 · durable writing +6 · native control cutover · contained works +109 | reader python read (13b, deferred) |
-| search retriever | 3,124 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 · media controls +2 · libraries retention +1 · contained works +451 | keep |
+| search retriever | 3,124 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 · media controls +2 · libraries retention +1 · contained works +451 · indexed search (integrated read gate open) | keep |
 | suggestions | 1,978 | reauthored #596, re-sliced (cleanup/libraries-ordering-reslice) | — · media controls -48 · durable writing +5 · native control cutover · podcast libraries -4 · quiet suggestions -22 · contained works +25 | keep |
 | consumption core (read state) | 1,976 | reauthored #417 #596 | #650 +170 · x threads +163 · media controls +1 · podcast collection +23 · libraries retention -4 · playback queue +24 · resource menu parity · offline episodes +498 · feedback activity · contained works +111 | keep; #650 with feedback admission recovery |
 | reader python: highlights | 2,105 | not yet | #645 +78 · #631 +75 · x threads +44 · #670 +28 · python auth -2 · db substrate -1 · durable writing +244 · podcast libraries +16 · contained works +155 | reader python read (13b, deferred) |
@@ -384,7 +393,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | reader python: document embeds | 1,451 | not yet | x threads +141 · #670 +233 · shift-open +22 · durable writing +0 · libraries retention +1 · contained works +15 | reader python read (13b, deferred) |
 | uploads | 1,330 | reauthored #600 | #650 -69 · #670 +224 · media controls +27 · libraries retention +48 | keep |
 | content index | 1,438 | reauthored #559 | x threads +46 · empty-resource lifecycle +4 · media controls +8 · contained works +435 | keep |
-| search pane | 892 | reauthored #592 | #646 -284 · #651 +50 · resource-first search +11 · #679 +1 · shift-open +1 · reference interaction -26 · unsaved work -1 · collection loading +5 · notes re-slice (server) +0 · media controls -8 · durable writing -1 · native control cutover · podcast action parity · bounded indexes +19 · resource menu parity | keep |
+| search pane | 892 | reauthored #592 | #646 -284 · #651 +50 · resource-first search +11 · #679 +1 · shift-open +1 · reference interaction -26 · unsaved work -1 · collection loading +5 · notes re-slice (server) +0 · media controls -8 · durable writing -1 · native control cutover · podcast action parity · bounded indexes +19 · resource menu parity · indexed search (integrated read gate open) | keep |
 | find in pane | 856 | reauthored #509 | #652 +76 · #578 +9 · resource insertion +1 · native control cutover · bounded indexes +1 | keep |
 | release and backup tooling | 833 | not yet | hosted backend publication +0 authored runtime · nightly backups +126 | last slice, after the end release |
 | reader: transcripts | 652 | partial: web #535 | shift-open +27 · media controls -40 · native control cutover | reader python read (13b, deferred) |

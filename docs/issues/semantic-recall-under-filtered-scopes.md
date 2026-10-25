@@ -52,9 +52,12 @@ six launcher lexical requests still return504; successful complete hybrid pages
 supply usable keyword delivery without proving lexical-request reliability.
 cold237's single control measures2191.5/3104.6ms within the owner-accepted
 keyword3000/related4000ms bounds, not a cold percentile. the static gate and three
-retained integration checks pass. representative publication/ordinary-edit fit
-remains pending in240 after230's48.531s publication and ordinary-edit55P03 failure;
-bounded canonical insert batching is the candidate, not measured acceptance.
+retained integration checks pass. the integrated `b5234285` comparison retains52/53 qualifying owners and all
+reference semantic first-page owners for one query, without lexical masking.
+its controlled replacement commits once with durable unrelated edits and
+restoration; initial publication is not attempt-audited. the strict active related
+request still returns504 during presentation. complete integration remains open
+in [the active read gate](search-related-timeout-during-publication.md).
 unrestricted worker and actual screen-reader qualification remain owner-deferred.
 historical failures above retain their original verdicts; no new recall campaign
 is implied by the remaining publication gate.

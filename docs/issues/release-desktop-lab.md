@@ -33,10 +33,12 @@ composition, genuine embedding/cancellation and request-identity/cache controls
 passed on their recorded source snapshots. owned runs retired normally. the
 bounded devbox publication/browser operation passed on the earlier search
 checkpoint.
-the integrated `a3e6b8ee2` populated combined operation failed; current
-`0a4098235` passes local static and all three retained checks, with its affected
-populated operation still pending. none of these checks qualifies unrestricted workers or
-the pending deployed endpoint change.
+current `b5234285` passes static checks, the three retained checks, temporary
+presentation parity and separate semantic piece/owner checks. the populated
+strict operation passes keyword delivery, an audited single-attempt replacement,
+durable edits and restoration; active related still returns504. no complete
+integrated read acceptance, unrestricted-worker qualification or deployed endpoint
+cutover is established. historical failures retain their original limits.
 
 canonical `worker_checkout_image.py` owns shared image acquisition/retention;
 normal teardown owns each run's processes, services, credentials and private

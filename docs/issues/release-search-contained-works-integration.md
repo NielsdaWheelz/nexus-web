@@ -6,15 +6,19 @@ canonical evidence and reader activation. renumbering search alone is insufficie
 
 the earlier0312→0315→search0316 preservation and single-paraphrase recall
 proofs retain their recorded scope. they do not qualify the newer product contract.
-the earlier integrated combined operation fails on publication retry and active
-related timeout; its raw receipts remain failed. no production release occurred.
+the earlier integrated combined operation fails on publication retry and related
+timeout; its raw receipts remain failed. no production release occurred.
 
-the owner selected this baseline once; do not import later unrelated main changes.
-retain its0316 unchanged and put search in0317. at `0a4098235`, static checks
-and the three retained local checks pass. the small owned source, restricted piece
-and neighbour fixture proves current text publication before vectors, source and
-piece isolation, bounded literal evidence, clipped highlight context and reader
-activation. it includes a grantee who can read the piece but not its source.
-0316 creates no pieces, so this local fixture supplies that missing proof; it is
-not a populated conversion or combined browser operation. resolve after the
-affected0316→0317 populated conversion and combined operation pass.
+the owner selected this baseline once; import no later unrelated main changes.
+retain its0316 unchanged and put search in0317. the actual populated conversion
+passes canonical preservation and all fifteen logical/native families. current
+`b5234285` passes static checks, the three retained checks, exact presentation
+parity and semantic piece/owner checks, including a grantee who can read the piece
+but not its source. literal evidence, bounded highlight context, current text
+before vectors and reading-qualified activation pass locally.
+
+the strict populated operation proves keyword delivery, one audited replacement,
+durable unrelated edits and restoration, but active related returns504. initial
+publication completed without an attempt audit. resolve after the complete
+[affected active read gate](search-related-timeout-during-publication.md) passes;
+the populated conversion and local piece boundaries need no new campaign.

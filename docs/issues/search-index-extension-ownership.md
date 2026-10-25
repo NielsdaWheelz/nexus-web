@@ -1,6 +1,6 @@
 # indexed search requires a reproducible database dependency
 
-status: open; conditional indexed-engine adoption requirement. the canonical
+status: open; coordinated extension provisioning and deployment steps remain. the canonical
 `docker/Dockerfile.postgres` now pins pg_search 0.26.2 packages for amd64/arm64
 on the existing pgvector base. local and deployment compose preload the extension.
 the arm64 disposable runtime builds this image, applies 0306 to a fresh database
@@ -32,15 +32,13 @@ stopped writers and the verified backup. ordinary candidate startup is too late.
 record binary/catalog version verification and restore-based rollback; do not
 infer whole-application license obligations from the extension's license.
 
-current closeout, 2026-10-23: both architecture builds, populated migration and
-fresh-runtime static/three retained integration checks have passed. complete
-browser225 passes revised500/2000/4000ms visible warm p95 gates, preserving six
-independent launcher lexical504s; hybrid supplies usable keyword results there.
-cold237's single2191.5/3104.6ms control passes owner-accepted3000/4000ms bounds.
-these supersede the outstanding read-qualification wording above, without proving
-independent lexical reliability or a cold percentile. publication240 remains
-pending after230's48.531s publication and ordinary-edit55P03 failure; bounded
-canonical insert batching has not yet proved operational fit. actual screen-reader
-and unrestricted ordinary-worker acceptance remain explicitly deferred. nothing
-has been deployed; the coordinated binary/preload, backup and migration steps
-remain with the release owner.
+current closeout: both architecture builds, populated migration and current
+static/three retained checks pass. historical warm/cold controls retain their
+recorded scope. the current controlled replacement commits in one audited attempt
+with prompt durable unrelated edits, native withdrawal and restoration. initial
+publication completes without an attempt audit. current keyword delivery passes;
+active related still returns504, so complete integrated read acceptance remains
+open. manual screen-reader and unrestricted-worker qualification remain deferred.
+nothing is deployed: binary/preload provisioning before migration, backup,
+stopped writers, exact versions/head and restore-based rollback remain release
+owner steps in [the coordinated release](release-search.md).
