@@ -35,3 +35,15 @@ after successful facts/detail reads. its trace lacks raw geometry at retirement;
 a later canonical-detail probe passed with stable public meaning and geometry.
 evidence: private lab `20261021-170451-47c3ed1be881`, failed acquisition case
 `trace.zip` and `desktop-subscribe-remaining-probe-trace.zip`. cause remains open.
+
+2026-10-25 installed android interface also retired an initial source-row menu
+before `play from here`. task emulator `emulator-5584`, android15/webview124,
+paired dirty source at `7aba511d9`, lab `20261025-120709-038a7a8f5b38`.
+cdp mouse clicks on newly seeded libraries' alpha/delta triggers returned, then
+no menu/dialog remained; a second explicit click opened the real action sheet.
+this establishes an installed-interface reproduction, not a physical-touch
+failure or the invalidating value. exact-list scoping did not remove every
+occurrence. private evidence: `artifacts/native-feedback/failure-dom.txt`,
+`failure.png`, and `.nexus-local/player-feedback-native/green-native*.log`.
+player-feedback qualification uses the existing inline playback control instead;
+this source-menu concern remains open outside that change.

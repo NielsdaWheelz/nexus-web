@@ -36,7 +36,7 @@ import * as Player from "@/lib/player/playerRuntime";
 import { useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useLatestWorkspace } from "@/lib/workspace/store";
-import QueuePanel, { QueueStatus } from "./QueuePanel";
+import QueuePanel, { QueueFailures } from "./QueuePanel";
 import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlaybackControls";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -115,6 +115,8 @@ function Transport({ compact = false }: { compact?: boolean }) {
   const commands = Player.usePlayerCommands();
   const { state, queue, pendingPlayback, playbackSubject } = Player.usePlayerSession();
   const loaded = state.kind === "Loaded" ? state : null;
+  const queueBusy = queue.phase === "Preparing" || queue.phase === "Saving";
+  const preparingPlayback = pendingPlayback?.kind === "Preview" || (pendingPlayback?.kind === "Episode" && !queueBusy);
   const offerPause = pendingPlayback !== null || loaded?.phase === "Playing" || loaded?.phase === "Buffering";
   const queueReady = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable";
   const header = queue.header;
@@ -129,8 +131,8 @@ function Transport({ compact = false }: { compact?: boolean }) {
       icon={<span className={styles.numberedSkip}><Icon.RotateCcw /><span>15</span></span>} />}
     <Button emphasis="strong" size="comfortable" iconOnly className={styles.playPause}
       onClick={offerPause ? commands.pause : commands.resume} disabled={!canPlay}
-      data-player-play="true" aria-busy={loaded?.phase === "Buffering" || undefined}
-      aria-description={loaded?.phase === "Buffering" ? "buffering" : undefined}
+      data-player-play="true" aria-busy={loaded?.phase === "Buffering" || preparingPlayback || undefined}
+      aria-description={preparingPlayback ? "preparing playback…" : loaded?.phase === "Buffering" ? "buffering" : undefined}
       aria-label={offerPause ? "pause media player" : "play media player"}
       icon={offerPause ? <Icon.Pause fill="currentColor" /> : <Icon.Play fill="currentColor" />} />
     {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds" disabled={!canSkip}
@@ -269,6 +271,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const [sheetOpen, setSheetOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const queueRef = useRef<HTMLButtonElement>(null);
+  const queueBusy = queue.phase === "Preparing" || queue.phase === "Saving";
   const retained = queue.known && queue.header !== null && queue.header.count > 0;
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const slotRef = useRef<HTMLDivElement>(null);
@@ -441,8 +444,10 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   }, [queue.phase, queue.error]);
   const openQueue = <Button ref={queueRef} size="comfortable" icon={<Icon.ListMusic />} aria-label="up next"
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
+    aria-busy={queueBusy || undefined}
+    aria-description={queue.phase === "Preparing" ? "preparing queue…" : queue.phase === "Saving" ? "saving queue…" : undefined}
     onClick={() => { sourceOpened.current = false; if (isMobile) setSheetOpen(true); else setQueueOpen(value => !value); }}>up next</Button>;
-  const absentCopy = pendingPlayback !== null ? "preparing playback…"
+  const absentCopy = pendingPlayback !== null ? "preparing…"
     : !queue.known ? queue.error === null ? "loading queue…" : "couldn’t load queue"
     : retained ? queue.header?.current_entry_id === null ? "queue finished" : "playback stopped" : "nothing queued";
   let desktopSource: ReactNode = <p className={styles.emptyIdentity}>{absentCopy}</p>;
@@ -718,8 +723,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         role="region" aria-label="media player">
         {contents}
         <div className={styles.feedback}>
-          {pendingPlayback !== null && loaded !== null && queue.phase !== "Preparing" ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "preparing playback…" }} /> : null}
-          {!queueOpen && !sheetShown ? <QueueStatus /> : null}
+          {!queueOpen && !sheetShown ? <QueueFailures /> : null}
         </div>
       </footer>
       {overlays}
