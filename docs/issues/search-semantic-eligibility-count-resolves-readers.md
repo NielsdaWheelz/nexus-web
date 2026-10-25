@@ -32,17 +32,33 @@ json before and after every sql statement; these are instrumented observations,
 not api phase costs. no recall, publication or browser acceptance ran.
 
 a separate exact count `explain analyze buffers timing false` completes with
-1,538ms server execution. the plan still scans 437 admitted readings on each of
-25,002 candidate loops because a candidate union mixes invariant admitted readings
+1,538ms server execution. the plan consumes an average 437 admitted readings on each of
+25,002 candidate loops (1,150 audience readings total), because a candidate union mixes invariant admitted readings
 with chunk-correlated exact frozen refs. private evidence is
 `membership-diagnostics/remote/count-plan.private.json` (sql digest `340952d2`),
 with the completed trace beside it. the runtime closed normally before this edit;
 the historical full preservation proof is reused, not rerun.
 
-the current candidate splits membership into parenthesized admitted-or-exact
-existence predicates, each retaining the canonical published reading bounds and
-reading filters. preferred-owner hydration, ranking, readiness and caps stay fixed.
-mechanism acceptance remains pending: the new actual plan must eliminate the
-437-reading rescan per candidate, small source/piece/frozen-ref/mixed-scope parity
-must pass, and the affected active related journey must qualify. source shape
-alone establishes no performance improvement.
+splitting admitted and exact existence predicates on frozen `4298cd25f` removes
+that correlated scan, but the actual count plan takes 3,753.115ms: it builds a
+hashed eligibility set of 720,473 chunk ids before the bounded 25,001-row count,
+reading 108,319 buffer pages. the split is not a performance acceptance.
+
+one private sql-only candidate on the same continuous postgres process and caps
+takes 522.361ms. it tests source reading membership through the chunk's existing
+owner id, and restricts canonical piece admission to piece reading ids for that
+source. the exact-ref arm is unchanged. the audience relation has 1,150 rows and
+three one-time scans; the plan does not build the full chunk-id eligibility set.
+this is mechanism evidence, not qualification of an actual application change.
+private evidence: `split-diagnostics/remote/` and the distinct direct-count plan;
+original and candidate sql digests are `1cb16a42` and `f0bf063f`. both runtime
+windows closed normally before their respective product edits.
+
+the current source adopts that candidate inline. the semantic reader's existing
+ready predicate owns current root lexical publication; `reading_chunks_sql` still
+owns complete canonical piece/index/bounds admission. each reading witness keeps
+its filters. preferred-owner hydration, ranking, readiness and caps stay fixed.
+small source/piece/frozen-ref/mixed-scope parity must pass again after this edit;
+then the actual new-source plan and affected active related journey, recall and
+combined operation remain pending. private candidate timing is not an api latency
+or acceptance claim.

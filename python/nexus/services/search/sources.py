@@ -197,10 +197,13 @@ _CHUNK_OWNER = _requested_owner(
 # Semantic eligibility needs an admitted reading, not its preferred presentation
 # owner. The same published chunk bounds admit both the count and vector reads;
 # the selected window resolves its reading through _CHUNK_OWNER afterward.
-_CHUNK_MEMBER = f"""(EXISTS (SELECT 1 FROM ({reading_chunks_sql(_ADMITTED)}) member
+# The semantic reader's _READY already proves cc's current lexical publication.
+# Match a source reading directly; only piece candidates need canonical bounds.
+_CHUNK_MEMBER = f"""(EXISTS (SELECT 1 FROM media m
+    WHERE m.id=cc.owner_id AND m.id IN ({_ADMITTED}) {{where}})
+    OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(f"SELECT candidate_part.media_id FROM media_parts candidate_part WHERE candidate_part.source_media_id=cc.owner_id AND candidate_part.media_id IN ({_ADMITTED})")}) member
     JOIN media m ON m.id=member.reading_media_id
-    WHERE member.chunk_id=cc.id {{where}})
-    OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
+    WHERE member.chunk_id=cc.id {{where}}) OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
     JOIN media m ON m.id=member.reading_media_id
     WHERE member.chunk_id=cc.id {{where}}))"""
 _HIGHLIGHT_OWNER = _requested_owner(
