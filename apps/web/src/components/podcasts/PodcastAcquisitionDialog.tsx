@@ -20,7 +20,7 @@ import PodcastDestinationChooser from "./PodcastDestinationChooser";
 import PodcastImportProgress from "./PodcastImportProgress";
 import styles from "./PodcastCommands.module.css";
 
-export interface AcquisitionProps {
+interface AcquisitionProps {
   readonly target: PodcastTarget;
   readonly title: string;
   readonly mode: "follow" | "current_episodes";
@@ -50,7 +50,7 @@ export default function PodcastAcquisitionDialog(props: AcquisitionProps) {
     </div>
   </Dialog>;
 }
-export function AcquisitionReview({ target, title, mode, libraryId, onAccepted, createdLibrary, onClose, onChangeDestination }: AcquisitionProps & { readonly onChangeDestination: () => void }) {
+function AcquisitionReview({ target, title, mode, libraryId, onAccepted, createdLibrary, onClose, onChangeDestination }: AcquisitionProps & { readonly onChangeDestination: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
   const live = useRef(false);

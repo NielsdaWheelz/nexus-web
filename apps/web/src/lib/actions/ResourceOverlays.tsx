@@ -7,7 +7,7 @@ import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import ResourceMetadataOverlay from "@/components/resources/ResourceMetadataOverlay";
 import CollectionConsumptionDialog from "@/components/collections/CollectionConsumptionDialog";
 import CollectionLecternDialog from "@/components/collections/CollectionLecternDialog";
-import PodcastLibrariesDialog from "@/components/podcasts/PodcastLibrariesDialog";
+import PodcastLibrariesOverlay from "@/components/podcasts/PodcastLibrariesOverlay";
 import PodcastTranscriptDialog from "@/components/podcasts/PodcastTranscriptDialog";
 import PodcastSettingsOverlay from "@/components/podcasts/PodcastSettingsOverlay";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
@@ -79,7 +79,7 @@ export function ResourceOverlays({
       ) : null}
       {overlay?.kind === "CollectionConsumption" ? <CollectionConsumptionDialog key={overlay.key} selection={overlay.selection} desiredState={overlay.desiredState} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "CollectionLectern" ? <CollectionLecternDialog key={overlay.key} target={overlay.target} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
-      {overlay?.kind === "PodcastLibraries" ? <PodcastLibrariesDialog key={overlay.key} target={overlay.target} title={overlay.title} successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "PodcastLibraries" ? <PodcastLibrariesOverlay key={overlay.key} target={overlay.target} title={overlay.title} successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "TranscribePodcastEpisodes" ? <PodcastTranscriptDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} state={overlay.state} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "LibrarySettings" ? (
         <LibrarySettingsDialog

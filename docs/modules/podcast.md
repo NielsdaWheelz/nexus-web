@@ -160,8 +160,18 @@ headers share subscription and libraries shortcuts with their complete menus.
 global subscribe uses the actual default library; global
 unsubscribe reviews every destination and keeps arrived episodes. libraries
 manages named subscriptions, including checked, locked read-only memberships.
-one choice opens the existing exact subscription or scoped removal review;
-cancel or acknowledgement closes the whole flow. finite import remains separate.
+the detail card is named `Library Subscriptions`; its icon control names the
+show, and an empty card has no instructional body. library choice uses the shared
+search/create picker: anchored and nonmodal on desktop, a sheet on phones. search
+stays mounted through loading and retry; retained checks remain visible during
+refresh, while unready or failed facts admit no new choice or creation. errors
+never claim an empty catalog. default/personal delivery is outside this picker.
+one choice replaces the picker with the complete exact subscription or scoped
+removal dialog; the departing picker does not restore focus during this handoff.
+cancel or acknowledgement closes the whole flow. cancellation restores its
+opener or logical fallback; acknowledged removal prefers its supplied surviving
+target even before stale rows disappear. scoped removal keeps arrived episodes
+and other libraries' subscriptions. finite import remains separate.
 
 `POST /podcasts/action-facts/resolve` is an authenticated, read-only snapshot of
 1–100 distinct canonical/sealed discovery targets, in input order. canonical
