@@ -12,6 +12,8 @@ next release share this bump.
 
 ship api/web and installed clients together under the existing release owner.
 there is no data migration, compatibility path or automatic deployment here.
+the existing wire fence rejects saved wire-16 catalogs after the paired upgrade;
+obtain a wire-17 catalog online before qualifying disconnected use.
 qualify installed catalog promotion, native consumption observations, trusted
 android touch fling/find/selection/drag and actual screen-reader announcements
 on the paired binaries. no attached android device or physical-input evidence

@@ -1,7 +1,7 @@
 "use client";
 
 import { installedApp, remoteReady } from "@/lib/native/admission";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isApiError, isSameSystemApiDefect, isStaleBuild, type ApiError, type ApiPath } from "@/lib/api/client";
 import { readSharedValue, useServerArrival, type ArrivalClaim } from "@/lib/api/serverState";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -502,12 +502,14 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     return runtime.current?.refresh(signal) ?? Promise.reject<RefreshOutcome>(new DOMException("Suggestions owner inactive", "AbortError"));
   }, []);
   const retryAdmission = useCallback(() => runtime.current?.retryAdmission(), []);
+  const rows = useMemo(() => {
+    const byRef = new Map(view.adopted?.publication.items.map((item) => [item.target.ref, item]) ?? []);
+    return view.adopted?.displayed.flatMap((ref) => {
+      const item = byRef.get(ref);
+      return item ? [item] : [];
+    }) ?? [];
+  }, [view.adopted]);
   if (defect) throw defect.error;
-  const byRef = new Map(view.adopted?.publication.items.map((item) => [item.target.ref, item]) ?? []);
-  const rows = view.adopted?.displayed.flatMap((ref) => {
-    const item = byRef.get(ref);
-    return item ? [item] : [];
-  }) ?? [];
   return { ...view, rows, active: isActive && visible, acknowledge, retry, refresh, retryAdmission };
 }
 

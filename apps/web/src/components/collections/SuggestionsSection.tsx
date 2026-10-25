@@ -1,7 +1,7 @@
 "use client";
 
 import { installedApp } from "@/lib/native/admission";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import CollectionView from "@/components/collections/CollectionView";
@@ -14,7 +14,7 @@ import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
 import { useLecternCommands } from "@/lib/lectern/lectern";
-import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
 
 /** The command owner retains uncertain work; only its receipt removes a row. */
@@ -41,11 +41,13 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
   const summaries = useMediaSummaries(suggestions.rows.flatMap((item) =>
     item.target.kind === "Media" ? [item.target.media_summary] : []));
-  const rows = suggestions.rows.flatMap<SuggestionItem>((item) => {
+  const publishedRows = suggestions.rows;
+  const rows = useMemo(() => publishedRows.flatMap<SuggestionItem>((item) => {
     if (item.target.kind !== "Media") return [item];
     const summary = summaries.resolve(item.target.media_summary);
     return summary === null ? [] : [{ ...item, target: { ...item.target, media_summary: summary } }];
-  });
+  }), [publishedRows, summaries]);
+  const presentedRows = useMemo(() => rows.map(presentSuggestionItem), [rows]);
   const { acknowledge } = suggestions;
   useEffect(() => {
     if (lectern) {
@@ -129,12 +131,17 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
     }
   }
 
+  const sectionVisible = !suggestions.withdrawn && suggestions.state?.capability !== "NotApplicable";
+  // Section visibility and notices can move the eye-line independently of rows.
+  const noticeGeometry = useMemo(() => sectionVisible ? { visible: sectionVisible, waiting, needsRepair, atCapacity, readFailure, readFailureText, readFailureError,
+    admissionError: suggestions.admissionError, notice, summaryError: summaries.error } : null,
+  [sectionVisible, waiting, needsRepair, atCapacity, readFailure, readFailureText, readFailureError, suggestions.admissionError, notice, summaries.error]);
   if (defect) throw defect.error;
-  if (suggestions.withdrawn || suggestions.state?.capability === "NotApplicable") return null;
   const title = lectern ? "suggestions" : "suggested for this library";
   const ariaLabel = lectern ? "suggestions" : `suggestions for ${destination.name}`;
   return (
-    <PaneSection
+    <PaneRefreshAnchor identity={`${returnScope}:notices`} value={noticeGeometry} ready={!sectionVisible || !waiting}>
+    {sectionVisible ? <PaneSection
       ref={rootRef}
       id={sectionId}
       aria-label={ariaLabel}
@@ -144,11 +151,10 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
       <span className="sr-only" aria-live={suggestions.active ? "polite" : "off"} aria-atomic="true">{announcement}</span>
       <CollectionView
         returnScope={returnScope}
-        rows={rows.map(presentSuggestionItem)}
+        rows={presentedRows}
         status={waiting ? "loading" : "ready"}
         ariaLabel={ariaLabel}
         surface={false}
-        anchorKey={rows.map((item) => item.target.ref).join(",")}
         notice={<>
           {needsRepair ? <FeedbackNotice content={{ tone: "Warning", title: "suggestions need repair." }} announcement="None" /> : null}
           {atCapacity ? <FeedbackStatus content={{ tone: "Neutral", title: "lectern is full. remove an item to add another." }} announcement="None" /> : null}
@@ -168,6 +174,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
             onClick={() => { if (!adding.has(item.target.ref)) void add(item); }}>add</Button>,
         ]]))}
       />
-    </PaneSection>
+    </PaneSection> : null}
+    </PaneRefreshAnchor>
   );
 }
