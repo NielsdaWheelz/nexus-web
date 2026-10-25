@@ -37,8 +37,7 @@ def patch_reader_profile(db: Session, user_id: UUID, patch: ReaderProfilePatch) 
             db.add(profile)
         for field_name in patch.model_fields_set:
             setattr(profile, field_name, getattr(patch, field_name))
-        db.commit()
-        db.refresh(profile)
+        db.flush()
         return ReaderProfileOut.model_validate(profile)
 
     return retry_serializable(db, "reader_profile_patch", attempt)

@@ -23,6 +23,7 @@ from nexus.services.content_indexing import (
     retract_media_content_index,
 )
 from nexus.services.media_processing_state import mark_ready_for_reading_by_id
+from nexus.services.search import projection
 from nexus.services.transcript_segments import TranscriptSegmentInput, insert_transcript_fragments
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.transcripts.state import (
@@ -78,6 +79,7 @@ def publish_source_transcript(
         is None
     ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    old_ids = list(db.scalars(text("SELECT id FROM fragments WHERE media_id=:media_id"), params))
     db.execute(text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"), params)
     db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), params)
     insert_transcript_fragments(db, media_id, transcript_segments, now=now)
@@ -116,3 +118,6 @@ def publish_source_transcript(
         now=now,
     )
     advance_transcript_content_revision(db, media_id=media_id)
+    db.flush()
+    new_ids = list(db.scalars(text("SELECT id FROM fragments WHERE media_id=:media_id"), params))
+    projection.refresh(db, "fragment", [*old_ids, *new_ids])

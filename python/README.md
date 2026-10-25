@@ -25,7 +25,7 @@ Manual run:
 
 ```bash
 cd apps/api
-PYTHONPATH=$PWD/../../python uv run --project ../../python uvicorn main:app --reload --port 8000
+PYTHONPATH=$PWD/../../python uv run --project ../../python uvicorn main:app --loop asyncio --reload --port 8000
 ```
 
 ## API Docs

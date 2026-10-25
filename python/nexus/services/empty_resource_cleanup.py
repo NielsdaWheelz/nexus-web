@@ -1,8 +1,8 @@
 """Weekly empty-page/note collection and reviewed, content-free operator inventories.
 
 The graph owns retention; this module owns discovery and transaction boundaries.
-Each job candidate locks the claim, then its root, then rechecks with a fresh
-READ COMMITTED snapshot. Its disposition and cursor commit together. Operator
+Each job candidate locks the claim, then its root, in a fresh serializable
+attempt. Its disposition and cursor commit together through the retry owner. Operator
 apply locks and validates the entire bounded inventory before deleting anything.
 Canonical teardown is flush-only. Absent resources have already landed on retry.
 """
@@ -17,7 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.jobs import queue
 from nexus.runtime_health import get_runtime_identity
@@ -253,15 +253,14 @@ def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
         for ref, owner_id in live:
             _delete(db, ref, owner_id)
         if live:
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=[ref.uri for ref, _ in live])
         return {
             "deleted": len(live),
             "already_absent": absent,
             "preview_truncated": inventory.truncated,
         }
 
-    return retry_read_committed(db, "apply_empty_resource_inventory", op)
+    return retry_serializable(db, "apply_empty_resource_inventory", op)
 
 
 def _checkpoint(db: Session, context: queue.JobExecutionContext, progress: _Progress) -> None:
@@ -281,7 +280,6 @@ def run_job(
         def initialize() -> _Progress | None:
             claim = queue.lock_running_job_claim(db, context=context)
             if claim is None:
-                db.rollback()
                 return None
             if "cutoff" in claim.payload:
                 progress = _Progress.model_validate(claim.payload)
@@ -289,24 +287,22 @@ def run_job(
                 request = _RunRequest.model_validate(claim.payload)
                 progress = _Progress(request_id=request.request_id, cutoff=_cutoff(db))
             _checkpoint(db, context, progress)
-            db.commit()
             return progress
 
         progress = retry_read_committed(db, "initialize_empty_resource_cleanup", initialize)
         if progress is None:
             return {"status": "claim_lost"}
         candidates = _candidates(db, progress.cursor, BATCH_SIZE)
-        db.commit()
+        db.rollback()  # close the materialized candidate read before write attempts
         for ref in candidates:
 
             def inspect(ref: ResourceRef = ref) -> _Progress | None:
                 claim = queue.lock_running_job_claim(db, context=context)
                 if claim is None:
-                    db.rollback()
                     return None
                 current = _Progress.model_validate(claim.payload)
                 _lock_root(db, ref)
-                # Separate statement: the lock may have waited for a committed writer.
+                # A conflicting locked row restarts the whole serializable attempt.
                 resource = _resource(db, ref)
                 reason = _reason(db, ref, resource, current.cutoff)
                 if reason == "eligible":
@@ -325,11 +321,10 @@ def run_job(
                 current.cursor = ref.uri
                 _checkpoint(db, context, current)
                 if reason == "eligible":
-                    record_input_change(db)
-                db.commit()
+                    record_input_change(db, owners=[ref.uri])
                 return current
 
-            progress = retry_read_committed(db, "inspect_empty_resource", inspect)
+            progress = retry_serializable(db, "inspect_empty_resource", inspect)
             if progress is None:
                 return {"status": "claim_lost"}
         if len(candidates) == BATCH_SIZE:

@@ -19,7 +19,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
     ConflictError,
@@ -37,6 +36,7 @@ from nexus.schemas.library_members import (
 )
 from nexus.services import libraries, resource_grants
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
 
 _NEWEST = (
@@ -101,39 +101,37 @@ def set_member_role(
     success; a role other than expected: 409 with `current_role`."""
 
     def attempt() -> None:
-        with transaction(db):
-            library = _managed(db, viewer_id, library_id)
-            if user_id == library.owner_user_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, "Transfer ownership first"
-                )
-            params = {"library_id": library_id, "user_id": user_id, "role": body.role}
-            current = db.scalar(
-                text(
-                    "SELECT role FROM memberships WHERE library_id = :library_id AND user_id = :user_id"
-                ),
-                params,
+        library = _managed(db, viewer_id, library_id)
+        if user_id == library.owner_user_id:
+            raise ForbiddenError(ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, "Transfer ownership first")
+        params = {"library_id": library_id, "user_id": user_id, "role": body.role}
+        current = db.scalar(
+            text(
+                "SELECT role FROM memberships WHERE library_id = :library_id AND user_id = :user_id"
+            ),
+            params,
+        )
+        if current is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
+        if current == body.role:
+            return
+        if current != body.expected_role:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The role was changed meanwhile",
+                details={"current_role": current},
             )
-            if current is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
-            if current == body.role:
-                return
-            if current != body.expected_role:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT,
-                    "The role was changed meanwhile",
-                    details={"current_role": current},
-                )
-            db.execute(
-                text("""
-                    UPDATE memberships SET role = :role
-                    WHERE library_id = :library_id AND user_id = :user_id
-                """),
-                params,
-            )
-            if body.role == "member":
-                delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
-            record_input_change(db)
+        db.execute(
+            text("""
+                UPDATE memberships SET role = :role
+                WHERE library_id = :library_id AND user_id = :user_id
+            """),
+            params,
+        )
+        if body.role == "member":
+            delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
+        projection.refresh_viewer_contributors(db, [user_id])
+        record_input_change(db, owners=(f"library:{library_id}",))
 
     retry_serializable(db, "set_member_role", attempt)
 
@@ -143,30 +141,28 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
     owner transfers first. Already gone, or a library the viewer cannot see: success."""
 
     def attempt() -> None:
-        with transaction(db):
-            try:
-                library = libraries.access(db, viewer_id, library_id, lock=False)
-            except NotFoundError:
-                return
-            library.require_mutable()
-            if user_id != viewer_id:
-                library.require_admin()
-            if user_id == library.owner_user_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, "Transfer ownership first"
-                )
-            projections = resource_grants.library_annotation_visibility(db, library_id)
-            removed = db.scalar(
-                text("""
-                    DELETE FROM memberships WHERE library_id = :library_id AND user_id = :user_id
-                    RETURNING user_id
-                """),
-                {"library_id": library_id, "user_id": user_id},
-            )
-            if removed is not None:
-                delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
-                resource_grants.invalidate_annotation_visibility(db, projections)
-                record_input_change(db)
+        try:
+            library = libraries.access(db, viewer_id, library_id, lock=False)
+        except NotFoundError:
+            return
+        library.require_mutable()
+        if user_id != viewer_id:
+            library.require_admin()
+        if user_id == library.owner_user_id:
+            raise ForbiddenError(ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, "Transfer ownership first")
+        projections = resource_grants.library_annotation_visibility(db, library_id)
+        removed = db.scalar(
+            text("""
+                DELETE FROM memberships WHERE library_id = :library_id AND user_id = :user_id
+                RETURNING user_id
+            """),
+            {"library_id": library_id, "user_id": user_id},
+        )
+        if removed is not None:
+            delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
+            resource_grants.invalidate_annotation_visibility(db, projections)
+            projection.refresh_viewer_contributors(db, [user_id])
+            record_input_change(db, owners=(f"library:{library_id}",))
 
     retry_serializable(db, "remove_member", attempt)
 
@@ -176,32 +172,32 @@ def transfer_ownership(db: Session, viewer_id: UUID, library_id: UUID, user_id: 
     stays an admin. Already that member's: success."""
 
     def attempt() -> None:
-        with transaction(db):
-            library = libraries.access(db, viewer_id, library_id, lock=False)
-            library.require_mutable()
-            if library.owner_user_id == user_id:
-                return
-            library.require_owner(viewer_id)
-            params = {"library_id": library_id, "user_id": user_id}
-            promoted = db.scalar(
-                text("""
-                    UPDATE memberships SET role = 'admin'
-                    WHERE library_id = :library_id AND user_id = :user_id RETURNING user_id
-                """),
-                params,
+        library = libraries.access(db, viewer_id, library_id, lock=False)
+        library.require_mutable()
+        if library.owner_user_id == user_id:
+            return
+        library.require_owner(viewer_id)
+        params = {"library_id": library_id, "user_id": user_id}
+        promoted = db.scalar(
+            text("""
+                UPDATE memberships SET role = 'admin'
+                WHERE library_id = :library_id AND user_id = :user_id RETURNING user_id
+            """),
+            params,
+        )
+        if promoted is None:
+            raise ConflictError(
+                ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID, "The new owner must be a member"
             )
-            if promoted is None:
-                raise ConflictError(
-                    ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID, "The new owner must be a member"
-                )
-            db.execute(
-                text("""
-                    UPDATE libraries SET owner_user_id = :user_id, updated_at = now()
-                    WHERE id = :library_id
-                """),
-                params,
-            )
-            record_input_change(db)
+        db.execute(
+            text("""
+                UPDATE libraries SET owner_user_id = :user_id, updated_at = now()
+                WHERE id = :library_id
+            """),
+            params,
+        )
+        projection.refresh(db, "library", [library_id])
+        record_input_change(db, owners=(f"library:{library_id}",))
 
     retry_serializable(db, "transfer_ownership", attempt)
 
@@ -216,56 +212,55 @@ def create_invitation(
     by_id = text(f"{_INVITATIONS} WHERE i.id = :id")
 
     def attempt() -> LibraryInvitationOut:
-        with transaction(db):
-            _managed(db, viewer_id, library_id)
-            existing = db.execute(by_id, {"id": body.id}).mappings().first()
-            if existing is not None:
-                if (existing["library_id"], existing["invitee_user_id"]) != (
-                    library_id,
-                    body.invitee_user_id,
-                ):
-                    raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Invitation id is taken")
-                return LibraryInvitationOut(**existing)
-            params = {
-                "library_id": library_id,
-                "user_id": body.invitee_user_id,
-                "email": body.invitee_email,
-            }
-            state = db.execute(
-                text("""
-                    SELECT
-                        lower(u.email) = lower(:email) AS typed,
-                        EXISTS (
-                            SELECT 1 FROM memberships
-                            WHERE library_id = :library_id AND user_id = :user_id
-                        ) AS member,
-                        EXISTS (
-                            SELECT 1 FROM library_invitations
-                            WHERE library_id = :library_id AND invitee_user_id = :user_id
-                              AND status = 'pending'
-                        ) AS pending
-                    FROM users u WHERE u.id = :user_id
-                """),
-                params,
-            ).first()
-            if state is None:
-                raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
-            if body.invitee_email is not None and not state.typed:
-                raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Not this user's email")
-            if state.member:
-                raise ConflictError(ApiErrorCode.E_INVITE_MEMBER_EXISTS, "Already a member")
-            if state.pending:
-                raise ConflictError(ApiErrorCode.E_INVITE_ALREADY_EXISTS, "Already invited")
-            db.execute(
-                text("""
-                    INSERT INTO library_invitations
-                        (id, library_id, inviter_user_id, invitee_user_id, invitee_email, role,
-                         status)
-                    VALUES (:id, :library_id, :viewer_id, :user_id, :email, :role, 'pending')
-                """),
-                {**params, "id": body.id, "viewer_id": viewer_id, "role": body.role},
-            )
-            return LibraryInvitationOut(**db.execute(by_id, {"id": body.id}).mappings().one())
+        _managed(db, viewer_id, library_id)
+        existing = db.execute(by_id, {"id": body.id}).mappings().first()
+        if existing is not None:
+            if (existing["library_id"], existing["invitee_user_id"]) != (
+                library_id,
+                body.invitee_user_id,
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Invitation id is taken")
+            return LibraryInvitationOut(**existing)
+        params = {
+            "library_id": library_id,
+            "user_id": body.invitee_user_id,
+            "email": body.invitee_email,
+        }
+        state = db.execute(
+            text("""
+                SELECT
+                    lower(u.email) = lower(:email) AS typed,
+                    EXISTS (
+                        SELECT 1 FROM memberships
+                        WHERE library_id = :library_id AND user_id = :user_id
+                    ) AS member,
+                    EXISTS (
+                        SELECT 1 FROM library_invitations
+                        WHERE library_id = :library_id AND invitee_user_id = :user_id
+                          AND status = 'pending'
+                    ) AS pending
+                FROM users u WHERE u.id = :user_id
+            """),
+            params,
+        ).first()
+        if state is None:
+            raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+        if body.invitee_email is not None and not state.typed:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Not this user's email")
+        if state.member:
+            raise ConflictError(ApiErrorCode.E_INVITE_MEMBER_EXISTS, "Already a member")
+        if state.pending:
+            raise ConflictError(ApiErrorCode.E_INVITE_ALREADY_EXISTS, "Already invited")
+        db.execute(
+            text("""
+                INSERT INTO library_invitations
+                    (id, library_id, inviter_user_id, invitee_user_id, invitee_email, role,
+                     status)
+                VALUES (:id, :library_id, :viewer_id, :user_id, :email, :role, 'pending')
+            """),
+            {**params, "id": body.id, "viewer_id": viewer_id, "role": body.role},
+        )
+        return LibraryInvitationOut(**db.execute(by_id, {"id": body.id}).mappings().one())
 
     return retry_serializable(db, "create_invitation", attempt)
 
@@ -331,33 +326,33 @@ def respond_to_invitation(
     status = "accepted" if accept else "declined"
 
     def attempt() -> None:
-        with transaction(db):
-            row = db.execute(
+        row = db.execute(
+            text("""
+                SELECT library_id, role, status FROM library_invitations
+                WHERE id = :id AND invitee_user_id = :viewer_id
+            """),
+            {"id": invitation_id, "viewer_id": viewer_id},
+        ).first()
+        if row is None:
+            raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
+        if row.status == status:
+            return
+        if row.status != "pending":
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+        db.execute(text(_ANSWER), {"id": invitation_id, "status": status})
+        if accept:
+            db.execute(
                 text("""
-                    SELECT library_id, role, status FROM library_invitations
-                    WHERE id = :id AND invitee_user_id = :viewer_id
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :viewer_id, :role) ON CONFLICT DO NOTHING
                 """),
-                {"id": invitation_id, "viewer_id": viewer_id},
-            ).first()
-            if row is None:
-                raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
-            if row.status == status:
-                return
-            if row.status != "pending":
-                raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
-            db.execute(text(_ANSWER), {"id": invitation_id, "status": status})
-            if accept:
-                db.execute(
-                    text("""
-                        INSERT INTO memberships (library_id, user_id, role)
-                        VALUES (:library_id, :viewer_id, :role) ON CONFLICT DO NOTHING
-                    """),
-                    {"library_id": row.library_id, "viewer_id": viewer_id, "role": row.role},
-                )
-                resource_grants.invalidate_annotation_visibility(
-                    db, resource_grants.library_annotation_visibility(db, row.library_id)
-                )
-                record_input_change(db)
+                {"library_id": row.library_id, "viewer_id": viewer_id, "role": row.role},
+            )
+            resource_grants.invalidate_annotation_visibility(
+                db, resource_grants.library_annotation_visibility(db, row.library_id)
+            )
+            projection.refresh_viewer_contributors(db, [viewer_id])
+            record_input_change(db, owners=(f"library:{row.library_id}",))
 
     retry_serializable(db, "respond_to_invitation", attempt)
 
@@ -367,20 +362,19 @@ def revoke_invitation(db: Session, viewer_id: UUID, invitation_id: UUID) -> None
     in a library the viewer cannot see: success."""
 
     def attempt() -> None:
-        with transaction(db):
-            row = db.execute(
-                text("SELECT library_id, status FROM library_invitations WHERE id = :id"),
-                {"id": invitation_id},
-            ).first()
-            if row is None or row.status == "revoked":
-                return
-            try:
-                library = libraries.access(db, viewer_id, row.library_id, lock=False)
-            except NotFoundError:
-                return
-            library.require_admin()
-            if row.status != "pending":
-                raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
-            db.execute(text(_ANSWER), {"id": invitation_id, "status": "revoked"})
+        row = db.execute(
+            text("SELECT library_id, status FROM library_invitations WHERE id = :id"),
+            {"id": invitation_id},
+        ).first()
+        if row is None or row.status == "revoked":
+            return
+        try:
+            library = libraries.access(db, viewer_id, row.library_id, lock=False)
+        except NotFoundError:
+            return
+        library.require_admin()
+        if row.status != "pending":
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+        db.execute(text(_ANSWER), {"id": invitation_id, "status": "revoked"})
 
     retry_serializable(db, "revoke_invitation", attempt)

@@ -1,11 +1,11 @@
-"""The content index: each owner's text as cited, embedded passages, published whole.
+"""The content index: each owner's citable text and embedded passages.
 
 An owner is a media (web article, epub, pdf, or a podcast episode or video through its
 transcript) or a note block. Its materialization is its evidence spans, content chunks
-and embeddings; ``publish_content_index`` replaces all of them and the owner's state in
-the caller's transaction, so readers see the old set or the new one, never a mix. The
-state (``content_index_states``) is the only thing readers trust: rows count only while
-it is ``ready`` on the active embedding identity.
+and embeddings. Text publication replaces chunks and spans atomically and sets
+``lexical_revision``. Embedding publication later fills vectors for those exact chunks.
+Lexical readers require the current revision; semantic readers also require the active
+provider and model. A pending replacement never admits stale rows.
 
 A media's index is fenced by a monotonic ``revision``. Only ``request_media_content_reindex``
 creates jobs, and each request raises the revision and leaves exactly one waiting job for
@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
+from provider_runtime.errors import CredentialMissing
 from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
@@ -74,8 +75,11 @@ from nexus.services.content_chunking import (
     Chunk,
     EnvelopeExceeded,
     IndexableBlock,
+    read_embeddings,
     read_spool,
     spool_chunks,
+    spool_embeddings,
+    spool_published_chunks,
 )
 from nexus.services.embeddings import (
     EMBEDDING_DIMENSIONS,
@@ -100,6 +104,7 @@ from nexus.services.reader_structure import NavigationProof
 from nexus.services.reader_text_slice import section_witness_key
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.web_article_structure import (
     add_heading_anchors,
@@ -128,7 +133,7 @@ class IndexOwner:
 @dataclass(frozen=True)
 class ContentIndexResult:
     owner: IndexOwner
-    status: str  # ready | no_text | ocr_required
+    status: str  # indexing | ready | no_text | ocr_required
     chunk_count: int
 
 
@@ -171,7 +176,7 @@ def _set_state(
 
 
 def _clear(db: Session, owner: IndexOwner) -> None:
-    """Delete the owner's spans, chunks and embeddings, children of foreign keys first."""
+    """Delete index children, then withdraw their known-deleted keyword identities."""
     params = {"kind": owner.kind, "id": owner.id}
     if owner.kind == "note_block":
         # Live derived-reference admission holds KEY SHARE on this owner. Exclude
@@ -206,9 +211,55 @@ def _clear(db: Session, owner: IndexOwner) -> None:
     )
     for table in ("content_chunks", "evidence_spans"):
         db.execute(text(f"DELETE FROM {table} WHERE owner_kind = :kind AND owner_id = :id"), params)
+    if owner.kind == "media":
+        projection.withdraw(
+            db, "content_chunk", [ref.id for ref in refs if ref.scheme == "content_chunk"]
+        )
 
 
-def publish_content_index(
+def _insert_chunk_batch(db: Session, owner: IndexOwner, source_kind: str, rows: list[str]) -> None:
+    """Insert paired spans/chunks from one bounded batch, without positional pairing."""
+    inserted = db.scalar(
+        text(
+            """
+            WITH input AS MATERIALIZED (
+                SELECT gen_random_uuid() AS span_id, item.*
+                FROM jsonb_to_recordset(CAST(:chunks AS jsonb)) AS item(
+                    chunk_idx integer, chunk_text text, heading_path jsonb,
+                    locator jsonb, citation_label text
+                )
+            ), spans AS (
+                INSERT INTO evidence_spans (
+                    id, owner_kind, owner_id, span_text, selector, citation_label, resolver_kind
+                )
+                SELECT span_id, :kind, :id, chunk_text, locator, citation_label, :resolver
+                FROM input
+                RETURNING id
+            ), chunks AS (
+                INSERT INTO content_chunks (
+                    owner_kind, owner_id, primary_evidence_span_id, chunk_idx,
+                    source_kind, chunk_text, heading_path, summary_locator
+                )
+                SELECT :kind, :id, input.span_id, input.chunk_idx, :source_kind,
+                    input.chunk_text, input.heading_path, input.locator
+                FROM input JOIN spans ON spans.id = input.span_id
+                RETURNING id
+            )
+            SELECT count(*) FROM chunks
+            """
+        ),
+        {
+            "kind": owner.kind,
+            "id": owner.id,
+            "source_kind": source_kind,
+            "resolver": "web" if source_kind == "web_article" else source_kind,
+            "chunks": "[" + ",".join(rows) + "]",
+        },
+    )
+    assert inserted == len(rows), "content chunk batch was not fully inserted"
+
+
+def publish_text_index(
     db: Session,
     *,
     owner: IndexOwner,
@@ -217,60 +268,58 @@ def publish_content_index(
     chunks: Iterable[Chunk],
     reason: str,
 ) -> ContentIndexResult:
-    """Replace the owner's materialization and state with ``chunks`` (embedded from ``blocks``).
+    """Replace spans/chunks atomically, without embeddings; publish lexical readiness.
 
-    No chunks: ``ocr_required`` for a pdf, else ``no_text``. A media's ``ready`` publish
-    also (re)builds its media unit, in this transaction.
+    No chunks completes as ``ocr_required`` for pdf, otherwise ``no_text``.
+    Media callers own serializable source reads and worker fences through commit.
+    Paired inserts stream in batches of 128 rows or 512 KiB; a single larger row
+    remains valid. Batching does not split the publication transaction.
     """
     _clear(db, owner)
     params: dict[str, Any] = {"kind": owner.kind, "id": owner.id}
-    resolver = "web" if source_kind == "web_article" else source_kind
-    model = embedding_model()
+    batch: list[str] = []
+    size = 2  # JSON array brackets.
     count = 0
     for count, chunk in enumerate(chunks, start=1):
         heading = blocks[chunk.block_idx].heading_path
-        row = params | {"text": chunk.text, "locator": json.dumps(chunk.locator)}
-        span_id = db.scalar(
-            text(
-                "INSERT INTO evidence_spans (owner_kind, owner_id, span_text, selector,"
-                " citation_label, resolver_kind) VALUES (:kind, :id, :text,"
-                " CAST(:locator AS jsonb), :label, :resolver) RETURNING id"
-            ),
-            row | {"label": heading[-1] if heading else "Source", "resolver": resolver},
-        )
-        chunk_id = db.scalar(
-            text(
-                "INSERT INTO content_chunks (owner_kind, owner_id, primary_evidence_span_id,"
-                " chunk_idx, source_kind, chunk_text, heading_path, summary_locator)"
-                " VALUES (:kind, :id, :span, :idx, :source_kind, :text,"
-                " CAST(:heading AS jsonb), CAST(:locator AS jsonb)) RETURNING id"
-            ),
-            row
-            | {
-                "span": span_id,
-                "idx": count - 1,
-                "source_kind": source_kind,
-                "heading": json.dumps(list(heading)),
-            },
-        )
-        vector = array("f")
-        vector.frombytes(chunk.embedding_f32)
-        db.execute(
-            text(
-                "INSERT INTO content_embeddings (chunk_id, embedding_provider, embedding_model,"
-                " embedding_dimensions, embedding_vector) VALUES (:chunk, :provider, :model,"
-                f" :dimensions, CAST(:vector AS vector({EMBEDDING_DIMENSIONS})))"
-            ),
+        encoded = json.dumps(
             {
-                "chunk": chunk_id,
-                "provider": EMBEDDING_PROVIDER,
-                "model": model,
-                "dimensions": EMBEDDING_DIMENSIONS,
-                "vector": pgvector_literal(vector),
-            },
+                "chunk_idx": count - 1,
+                "chunk_text": chunk.text,
+                "heading_path": list(heading),
+                "locator": chunk.locator,
+                "citation_label": heading[-1] if heading else "Source",
+            }
         )
-    status = "ready" if count else "ocr_required" if source_kind == "pdf" else "no_text"
-    _set_state(db, owner, status, reason if count else status)
+        row_bytes = len(encoded.encode("utf-8"))
+        if batch and (len(batch) == 128 or size + 1 + row_bytes > 512 * 1024):
+            _insert_chunk_batch(db, owner, source_kind, batch)
+            batch = []
+            size = 2
+        batch.append(encoded)
+        size += row_bytes + (1 if len(batch) > 1 else 0)
+    if batch:
+        _insert_chunk_batch(db, owner, source_kind, batch)
+    status = "indexing" if count else "ocr_required" if source_kind == "pdf" else "no_text"
+    state_revision = _set_state(db, owner, status, reason if count else status)
+    lexical_state = db.execute(
+        text(
+            "UPDATE content_index_states SET lexical_revision = CASE WHEN :has_text THEN revision ELSE NULL END"
+            " WHERE owner_kind = :kind AND owner_id = :id"
+            " RETURNING revision, lexical_revision"
+        ),
+        params | {"has_text": bool(count)},
+    ).one()
+    assert lexical_state.revision == state_revision
+    assert lexical_state.lexical_revision == (state_revision if count else None)
+    if owner.kind == "media":
+        projection.publish_content_chunks(db, owner_id=owner.id, revision=state_revision)
+    if not count:
+        _complete_media_effects(db, owner, count)
+    return ContentIndexResult(owner, status, count)
+
+
+def _complete_media_effects(db: Session, owner: IndexOwner, count: int) -> None:
     if owner.kind == "media":
         if count or db.scalar(
             text("SELECT 1 FROM x_thread_sources WHERE media_id = :id"), {"id": owner.id}
@@ -282,12 +331,89 @@ def publish_content_index(
             {"id": owner.id},
         ):
             media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=parent_id)
-    return ContentIndexResult(owner, status, count)
 
 
-def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
-    """Gate the owner out of search, keeping its rows until the next publish."""
-    _set_state(db, owner, "pending", reason)
+def completed_content_index(
+    db: Session, owner: IndexOwner, state: Row[Any]
+) -> ContentIndexResult | None:
+    """Completed current outcomes replay without changing ids, timestamps or effects."""
+    if state.status in ("no_text", "ocr_required") or (
+        state.lexical_revision == state.revision
+        and (state.status, state.provider, state.model)
+        == ("ready", EMBEDDING_PROVIDER, embedding_model())
+    ):
+        count = db.scalar(
+            text("SELECT count(*) FROM content_chunks WHERE owner_kind = :kind AND owner_id = :id"),
+            {"kind": owner.kind, "id": owner.id},
+        )
+        return ContentIndexResult(owner, state.status, count)
+    return None
+
+
+def snapshot_published_chunks(db: Session, owner: IndexOwner, path: Path) -> None:
+    """The fenced current publication as a bounded private spool; no provider work."""
+    rows = db.execute(
+        text(
+            "SELECT id, chunk_text FROM content_chunks WHERE owner_kind = :kind AND owner_id = :id ORDER BY chunk_idx, id"
+        ),
+        {"kind": owner.kind, "id": owner.id},
+        execution_options={"yield_per": 1},
+    )
+    spool_published_chunks(((row.id, row.chunk_text) for row in rows), path)
+
+
+def publish_embeddings(
+    db: Session, *, owner: IndexOwner, embeddings: Iterable[tuple[UUID, bytes]], reason: str
+) -> ContentIndexResult:
+    """Install complete vectors on existing ids; caller holds claim/revision/lexical fences."""
+    params = {"kind": owner.kind, "id": owner.id}
+    db.execute(
+        text(
+            "DELETE FROM content_embeddings ce USING content_chunks cc"
+            " WHERE ce.chunk_id = cc.id AND cc.owner_kind = :kind AND cc.owner_id = :id"
+        ),
+        params,
+    )
+    current_ids = db.scalars(
+        text(
+            "SELECT id FROM content_chunks WHERE owner_kind = :kind AND owner_id = :id ORDER BY chunk_idx, id"
+        ),
+        params,
+        execution_options={"stream_results": True},
+    )
+    model = embedding_model()
+    count = 0
+    for current_id, (chunk_id, embedding_f32) in zip(current_ids, embeddings, strict=True):
+        # justify-service-invariant-check: ordered exact ids prove coverage without an unbounded id set.
+        if chunk_id != current_id:
+            raise AssertionError("embedding spool differs from the current publication")
+        count += 1
+        vector = array("f")
+        vector.frombytes(embedding_f32)
+        db.execute(
+            text(
+                "INSERT INTO content_embeddings (chunk_id, embedding_provider, embedding_model, embedding_dimensions, embedding_vector)"
+                f" VALUES (:chunk, :provider, :model, :dimensions, CAST(:vector AS vector({EMBEDDING_DIMENSIONS})))"
+            ),
+            {
+                "chunk": chunk_id,
+                "provider": EMBEDDING_PROVIDER,
+                "model": model,
+                "dimensions": EMBEDDING_DIMENSIONS,
+                "vector": pgvector_literal(vector),
+            },
+        )
+    # justify-service-invariant-check: a ready publication must cover every current chunk exactly once.
+    if not count:
+        raise AssertionError("embedding spool does not cover the current publication")
+    _set_state(db, owner, "ready", reason)
+    _complete_media_effects(db, owner, count)
+    return ContentIndexResult(owner, "ready", count)
+
+
+def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> int:
+    """Raise revision and withdraw capability, retaining rows until text replacement."""
+    return _set_state(db, owner, "pending", reason, bump=1)
 
 
 def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
@@ -371,11 +497,11 @@ def _partitioned(
 
 
 def reading_chunks_sql(reading_ids_sql: str) -> str:
-    """``(reading_media_id, chunk_id)``: the ready canonical chunks each reading identity
+    """``(reading_media_id, chunk_id)``: current lexical chunks each reading identity
     admits; the one chunk admission for search, reads and similarity.
 
     ``reading_ids_sql`` yields ``media_id`` and already carries its audience. A media
-    admits its own ready index whole. A piece admits the chunks of its source's ready,
+    admits its own current text index whole. A piece admits the chunks of its source's
     partitioned index lying wholly inside its frozen range, so text beyond its bounds
     never enters; exact partition currency is the reconcile protocol's invariant above.
     Embedding identity (provider/model) stays with vector consumers.
@@ -387,13 +513,14 @@ def reading_chunks_sql(reading_ids_sql: str) -> str:
             AND admitted_chunk.owner_id = chunk_reader.media_id
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = admitted_chunk.owner_id
-            AND admitted_state.status = 'ready'
+            AND admitted_state.lexical_revision = admitted_state.revision
         UNION ALL
         SELECT bounded.reading_media_id, admitted_chunk.id
         FROM ({text_scope_rows_sql(reading_ids_sql)}) bounded
         JOIN content_index_states admitted_state ON admitted_state.owner_kind = 'media'
             AND admitted_state.owner_id = bounded.source_media_id
-            AND admitted_state.status = 'ready' AND admitted_state.section_bounds_key IS NOT NULL
+            AND admitted_state.lexical_revision = admitted_state.revision
+            AND admitted_state.section_bounds_key IS NOT NULL
         JOIN content_chunks admitted_chunk ON admitted_chunk.owner_kind = 'media'
             AND admitted_chunk.owner_id = bounded.source_media_id
             AND admitted_chunk.summary_locator ->> 'fragment_id' = CAST(bounded.fragment_id AS text)
@@ -578,7 +705,7 @@ def _lock_media_and_summary_parents(db: Session, media_id: UUID) -> bool:
 
 
 def _lock(db: Session, media_id: UUID) -> Row[Any] | None:
-    """Lock the media row, then its state row: ``(revision, status, provider, model,
+    """Lock the media row, then its state row: ``(revision, lexical_revision, status, provider, model,
     section_witness_key, section_bounds_key)``.
 
     None when either row is missing.
@@ -586,7 +713,7 @@ def _lock(db: Session, media_id: UUID) -> Row[Any] | None:
     if _lock_media_and_summary_parents(db, media_id):
         return db.execute(
             text(
-                "SELECT revision, status, active_embedding_provider AS provider,"
+                "SELECT revision, lexical_revision, status, active_embedding_provider AS provider,"
                 " active_embedding_model AS model, section_witness_key, section_bounds_key"
                 " FROM content_index_states"
                 " WHERE owner_kind = 'media' AND owner_id = :id FOR UPDATE"
@@ -684,9 +811,15 @@ def request_stale_media_content_reindex(
     """
     state = _lock(db, media_id)
     if state is not None:
-        if state.status in ("no_text", "ocr_required") or (
-            (state.status, state.provider, state.model)
-            == ("ready", EMBEDDING_PROVIDER, embedding_model())
+        sections = _read_sections(db, media_id)
+        current_bounds = None if sections is None else sections.bounds_key
+        if state.section_bounds_key == current_bounds and (
+            state.status in ("no_text", "ocr_required")
+            or (
+                state.lexical_revision == state.revision
+                and (state.status, state.provider, state.model)
+                == ("ready", EMBEDDING_PROVIDER, embedding_model())
+            )
         ):
             return False
         job = _current_job(db, media_id, state.revision)
@@ -750,7 +883,6 @@ def prepare_media_parts(
                 raise ConflictError(
                     ApiErrorCode.E_RESOURCE_CONFLICT, "The job id belongs to another request."
                 )
-            db.commit()
             return SearchRepairAdmission(
                 media_id=source_media_id, revision=known.payload["revision"], job_id=known.id
             )
@@ -771,12 +903,10 @@ def prepare_media_parts(
                     and job.payload["section_witness_key"] == sections.witness_key
                 )
             ):
-                db.commit()
                 return SearchRepairAdmission(
                     media_id=source_media_id, revision=state.revision, job_id=job.id
                 )
         revision = _request(db, source_media_id, "section_preparation", client)
-        db.commit()
         return SearchRepairAdmission(media_id=source_media_id, revision=revision, job_id=request.id)
 
     return retry_serializable(db, "prepare_media_parts", admit)
@@ -816,6 +946,7 @@ class _Work:
     blocks: list[IndexableBlock]
     sections: _Sections | None
     package: _EpubPackage | None
+    lexical_ready: bool
 
 
 def _capture_epub_package(db: Session, media_id: UUID) -> _EpubPackage:
@@ -909,7 +1040,9 @@ def run_media_reindex_job(
         if keys(_read_sections(db, media_id)) != frozen:
             raise AssertionError("section structure changed without a new index revision")
 
-    def prepare(db: Session) -> _Work | None:
+    owner = IndexOwner("media", media_id)
+
+    def prepare(db: Session) -> _Work | ContentIndexResult | None:
         state = fence(db)
         if state is None:
             return None
@@ -928,24 +1061,35 @@ def run_media_reindex_job(
             record(db, IndexSuperseded)
             _request(db, media_id, reason, None)
             return None
+        if state.section_bounds_key == frozen[1]:
+            completed = completed_content_index(db, owner, state)
+            if completed is not None:
+                return completed
         record(db, IndexExecutionStarted)
-        _set_state(db, IndexOwner("media", media_id), "indexing", reason)
+        _set_state(db, owner, "indexing", reason)
         package = None
         if sections is not None and state.section_witness_key != sections.witness_key:
             if kind == "epub":
                 package = _capture_epub_package(db, media_id)
             else:
                 _record_prepared_sections(db, media_id, sections)
-        blocks = _media_blocks(
-            db, media_id, kind, plain_text or "", [] if sections is None else sections.points
+        lexical_ready = state.lexical_revision == revision and state.section_bounds_key == frozen[1]
+        blocks = (
+            []
+            if lexical_ready
+            else _media_blocks(
+                db, media_id, kind, plain_text or "", [] if sections is None else sections.points
+            )
         )
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{media_id}",))
         source_kind = "transcript" if kind in _TRANSCRIPT_KINDS else kind
-        return _Work(source_kind, blocks, sections, package)
+        return _Work(source_kind, blocks, sections, package, lexical_ready)
 
-    work = _phase("prepare_media_content_reindex", prepare)
+    work = index_phase("prepare_media_content_reindex", prepare)
     if work is None:
         return result
+    if isinstance(work, ContentIndexResult):
+        return result | {"status": work.status, "chunk_count": work.chunk_count}
     with parser_attempt_directory(context.job_id) as directory:
         if work.package is not None:
             assert work.sections is not None
@@ -972,15 +1116,81 @@ def run_media_reindex_job(
                     # admission freezes a new partition; no old blocks are embedded.
                     record(db, IndexSuperseded)
                     _request(db, media_id, reason, None)
-                record_input_change(db)
+                record_input_change(db, owners=(f"media:{media_id}",))
                 db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
                 return not changed
 
-            if not _phase("attach_media_section_witnesses", attach):
+            if not index_phase("attach_media_section_witnesses", attach):
                 return result
-        spool = directory / "content-index.jsonl"
+        text_spool = directory / "text.jsonl"
+        chunks_spool = directory / "published-chunks.jsonl"
+        embedding_spool = directory / "embeddings.jsonl"
         try:
-            spool_chunks(work.blocks, spool)
+            if not work.lexical_ready:
+                spool_chunks(work.blocks, text_spool)
+
+                def publish_text(db: Session) -> ContentIndexResult | None:
+                    state = fence(db)
+                    if state is None:
+                        return None
+                    check_sections(db)
+                    if state.lexical_revision == revision and state.section_bounds_key == frozen[1]:
+                        count = db.scalar(
+                            text(
+                                "SELECT count(*) FROM content_chunks"
+                                " WHERE owner_kind='media' AND owner_id=:id"
+                            ),
+                            {"id": media_id},
+                        )
+                        return ContentIndexResult(owner, "indexing", count)
+                    published = publish_text_index(
+                        db,
+                        owner=owner,
+                        source_kind=work.source_kind,
+                        blocks=work.blocks,
+                        chunks=read_spool(text_spool),
+                        reason=reason,
+                    )
+                    db.execute(
+                        text(
+                            "UPDATE content_index_states SET section_bounds_key = :key"
+                            " WHERE owner_kind = 'media' AND owner_id = :id RETURNING id"
+                        ),
+                        {"key": frozen[1], "id": media_id},
+                    ).one()
+                    if published.status != "indexing":
+                        record(db, IndexSucceeded)
+                    record_input_change(db, owners=(f"media:{media_id}",))
+                    return published
+
+                published = index_phase("publish_media_text", publish_text)
+                if published is None:
+                    return result
+                if published.status != "indexing":
+                    return result | {
+                        "status": published.status,
+                        "chunk_count": published.chunk_count,
+                    }
+
+            def snapshot(db: Session) -> bool:
+                state = fence(db)
+                if state is None:
+                    return False
+                check_sections(db)
+                if state.lexical_revision != revision or state.section_bounds_key != frozen[1]:
+                    return False
+                snapshot_published_chunks(db, owner, chunks_spool)
+                return True
+
+            if not index_phase("snapshot_media_chunks", snapshot):
+                return result
+            spool_embeddings(chunks_spool, embedding_spool)
+        except CredentialMissing:
+            return queue.TerminalJobFailure(
+                result_payload=result | {"status": "embedding_not_configured"},
+                error_code=ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
+                error_message="No embedding provider credential is configured.",
+            )
         except EnvelopeExceeded:
             return queue.TerminalJobFailure(
                 result_payload=result | {"status": "too_large"},
@@ -989,50 +1199,31 @@ def run_media_reindex_job(
             )
 
         def publish(db: Session) -> ContentIndexResult | None:
-            if fence(db) is None:
+            state = fence(db)
+            if state is None:
                 return None
             check_sections(db)
-            published = publish_content_index(
+            if state.lexical_revision != revision or state.section_bounds_key != frozen[1]:
+                return None
+            published = publish_embeddings(
                 db,
-                owner=IndexOwner("media", media_id),
-                source_kind=work.source_kind,
-                blocks=work.blocks,
-                chunks=read_spool(spool),
+                owner=owner,
+                embeddings=read_embeddings(embedding_spool),
                 reason=reason,
             )
-            db.execute(
-                text(
-                    "UPDATE content_index_states SET section_bounds_key = :key"
-                    " WHERE owner_kind = 'media' AND owner_id = :id RETURNING id"
-                ),
-                {
-                    "key": None if work.sections is None else work.sections.bounds_key,
-                    "id": media_id,
-                },
-            ).one()
             record(db, IndexSucceeded)
-            record_input_change(db)
             return published
 
-        published = _phase("publish_media_content_reindex", publish)
+        published = index_phase("publish_media_embeddings", publish)
     if published is None:
         return result
     return result | {"status": published.status, "chunk_count": published.chunk_count}
 
 
-def _phase[T](label: str, operation: Callable[[Session], T]) -> T:
+def index_phase[T](label: str, operation: Callable[[Session], T]) -> T:
     """One serializable transaction on a fresh session, retried on conflict."""
-    db = get_session_factory()()
-    try:
-
-        def attempt() -> T:
-            value = operation(db)
-            db.commit()
-            return value
-
-        return retry_serializable(db, label, attempt)
-    finally:
-        db.close()
+    with get_session_factory()() as db:
+        return retry_serializable(db, label, lambda: operation(db))
 
 
 # Recovery of a dead reindex execution.
@@ -1090,7 +1281,6 @@ def repair_dead_media_reindex(
         if job.status == "dead":
             queue.requeue_dead_job(db, job_id=job.id)
             _event(db, media_id, IndexRecoveryAccepted(revision=state.revision))
-        db.commit()
         return SearchRepairAdmission(media_id=media_id, revision=state.revision, job_id=job.id)
 
     return retry_serializable(db, "repair_dead_media_reindex", admit)

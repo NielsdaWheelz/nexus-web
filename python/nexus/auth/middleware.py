@@ -11,6 +11,7 @@ email in this process mirrors them (``services.bootstrap``); a failure there is 
 
 import hmac
 import re
+import time
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.verifier import TokenVerifier
+from nexus.db.retries import DatabaseBusyError
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -56,11 +58,17 @@ class AuthMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
             return await self.app(scope, receive, send)
+        search_read = scope["path"] in {"/search", "/search/preview"}
+        if search_read:
+            logger.info("search.auth.begin", mono_ns=time.monotonic_ns())
         try:
             viewer = await self._viewer(scope)
         except ApiError as error:
             body = error_response(error.code, error.message)
             return await JSONResponse(body, status_code=error.status_code)(scope, receive, send)
+        finally:
+            if search_read:
+                logger.info("search.auth.end", mono_ns=time.monotonic_ns())
         if viewer is not None:
             scope.setdefault("state", {})["viewer"] = viewer
         await self.app(scope, receive, send)
@@ -78,14 +86,28 @@ class AuthMiddleware:
         if token is None:
             logger.warning("auth_failure", reason="missing_bearer")
             raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Authentication required")
-        user_id, email = await self.verifier.verify(token)
+        search_read = scope["path"] in {"/search", "/search/preview"}
+        if search_read:
+            logger.info("search.auth.verify.begin", mono_ns=time.monotonic_ns())
+        try:
+            user_id, email = await self.verifier.verify(token)
+        finally:
+            if search_read:
+                logger.info("search.auth.verify.end", mono_ns=time.monotonic_ns())
         if (user_id, email) not in self._seen:
             try:
+                if search_read:
+                    logger.info("search.auth.bootstrap.begin", mono_ns=time.monotonic_ns())
                 await run_in_threadpool(_bootstrap, user_id, email)
+            except DatabaseBusyError:
+                raise
             # justify-ignore-error: logged once per request; the request answers a generic 500.
             except Exception:
                 logger.exception("bootstrap_failed", user_id=str(user_id))
                 raise ApiError(ApiErrorCode.E_INTERNAL, "Internal server error") from None
+            finally:
+                if search_read:
+                    logger.info("search.auth.bootstrap.end", mono_ns=time.monotonic_ns())
             self._seen.add((user_id, email))
         return Viewer(user_id=user_id, email=email)
 

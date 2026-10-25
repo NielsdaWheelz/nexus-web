@@ -6,7 +6,13 @@ name: nexus-local
 
 services:
   postgres:
-    image: pgvector/pgvector:pg15@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9
+    image: localnexus-postgres:15-search-0.26.2
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.postgres
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search"]
+    # /dev/shm capacity; allocated pages still count toward container memory limits.
+    shm_size: 128m
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}

@@ -16,6 +16,7 @@ from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.permissions import can_read_media
+from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import podcast as wire
@@ -85,7 +86,7 @@ def request_transcript(
     with transaction(db):
         response = _admit(db, viewer_id, media_id, reason)
         if response.request_enqueued:
-            record_input_change(db)
+            record_input_change(db, owners=(f"media:{media_id}",))
         return response
 
 
@@ -114,13 +115,15 @@ def request_batch(
             raise ConflictError(
                 ApiErrorCode.E_SELECTION_CHANGED, "Episode selection changed before the request"
             )
-        queued = sum(
-            _admit(db, viewer_id, media_id, target.reason).request_enqueued for media_id in ids
-        )
-        if queued:
-            record_input_change(db)
+        queued_ids = [
+            media_id
+            for media_id in ids
+            if _admit(db, viewer_id, media_id, target.reason).request_enqueued
+        ]
+        if queued_ids:
+            record_input_change(db, owners=(f"media:{media_id}" for media_id in queued_ids))
         return wire.PodcastEpisodeQueryTranscriptRequestOut(
-            matched_count=len(ids), queued_count=queued
+            matched_count=len(ids), queued_count=len(queued_ids)
         )
 
 
@@ -263,7 +266,7 @@ def run_podcast_transcription_now(
             """),
             {"id": media_id, "diagnostic": diagnostic, "publisher": origin == "Publisher"},
         )
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{media_id}",))
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -302,7 +305,17 @@ def _import_youtube_captions(
     segments = normalize_transcript_segments(captions.get("segments"))
     if captions.get("status") != "completed" or not segments:
         raise ApiError(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE, "YouTube captions are unavailable")
-    with transaction(db):
+
+    def publish() -> TranscriptRequestOut:
+        current = db.execute(
+            text("SELECT provider, provider_id FROM media WHERE id = :id FOR NO KEY UPDATE"),
+            {"id": media_id},
+        ).one_or_none()
+        if current is None or (current.provider, current.provider_id) != (
+            media.provider,
+            media.provider_id,
+        ):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Video source changed.")
         write_current_transcript(
             db,
             media_id=media_id,
@@ -312,5 +325,7 @@ def _import_youtube_captions(
             transcript_origin="Imported",
             now=datetime.now(UTC),
         )
-        record_input_change(db)
-    return _out(media_id, "ready_for_reading", "ready", "full", reason)
+        record_input_change(db, owners=(f"media:{media_id}",))
+        return _out(media_id, "ready_for_reading", "ready", "full", reason)
+
+    return retry_serializable(db, "youtube.import_captions", publish)

@@ -8,6 +8,7 @@ request it
 - refuses, before routing, a client built for another wire: ``X-Nexus-Wire`` missing or
   other than ``WIRE_REVISION`` answers 426 ``E_WIRE_MISMATCH`` (I10). ``PUBLIC_PATHS``
   (operational, schema, the email webhook) carry no client build and are exempt;
+- returns 409 ``E_RESOURCE_CONFLICT`` for an owned database busy transaction;
 - renders an exception nothing claimed before the response started as the 500
   ``E_INTERNAL`` envelope with its request id (a client disconnect as 499), and logs one
   access line when the request ends: a stream when it closes or its client leaves.
@@ -26,11 +27,12 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nexus.auth.middleware import PUBLIC_PATHS
 from nexus.db.engine import get_engine
+from nexus.db.retries import DatabaseBusyError
 from nexus.errors import ApiErrorCode
 from nexus.logging import bind_request, get_logger
 from nexus.responses import error_response
 
-WIRE_REVISION = 15
+WIRE_REVISION = 16
 """The client contract. It moves at most once between releases: the first change merged
 after a release that breaks that release's clients bumps it; later breaking changes before
 the next release ride that bump. ``gen:wire`` carries it to the web build, the extension
@@ -57,11 +59,18 @@ class EdgeMiddleware:
         bind_request(request_id, path=scope["path"], method=scope["method"])
         started = time.monotonic()
         status = 0
+        search_read = scope["path"] in {"/search", "/search/preview"}
+        if search_read:
+            logger.info("search.api.begin", mono_ns=time.monotonic_ns())
 
         async def stamped(message: Message) -> None:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
+                if search_read:
+                    logger.info(
+                        "search.api.response_start", status_code=status, mono_ns=time.monotonic_ns()
+                    )
                 message["headers"] = [
                     *message.get("headers", []),
                     (b"x-request-id", request_id.encode()),
@@ -82,6 +91,13 @@ class EdgeMiddleware:
                 await _envelope(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected")(
                     scope, receive, stamped
                 )
+        except DatabaseBusyError:
+            logger.warning("db.resource_busy", exc_info=True)
+            if status != 0:
+                raise
+            await _envelope(ApiErrorCode.E_RESOURCE_CONFLICT, "Resource is busy; try again")(
+                scope, receive, stamped
+            )
         except Exception as exc:
             pool = get_engine().pool if isinstance(exc, PoolTimeout) else None
             if isinstance(pool, QueuePool):
@@ -99,6 +115,8 @@ class EdgeMiddleware:
                 scope, receive, stamped
             )
         finally:
+            if search_read:
+                logger.info("search.api.end", status_code=status, mono_ns=time.monotonic_ns())
             # not on the final body message: a stream whose client left never sends one.
             viewer = scope.get("state", {}).get("viewer")
             logger.info(

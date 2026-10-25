@@ -35,6 +35,7 @@ from nexus.services.reader_publication import (
     read_publication_generation,
     replace_reader_document_title,
 )
+from nexus.services.search import projection
 from nexus.services.transcripts.state import read_transcript_content_revision
 
 _ENRICHMENT_SYSTEM_PROMPT = """\
@@ -325,4 +326,6 @@ def merge_findings(db: Session, media: Media, findings: MetadataFindings) -> lis
         if value is not None and value != getattr(media, name):
             setattr(media, name, value)
             changed.append(name)
+    db.flush()
+    projection.refresh(db, "media", [media.id])
     return changed

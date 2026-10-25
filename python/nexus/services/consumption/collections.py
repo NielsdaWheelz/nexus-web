@@ -92,8 +92,9 @@ def apply(
             db, viewer_id=viewer_id, items=body.items, desired_state=body.desired_state
         )
         if undo is not None:
-            record_input_change(db)
-        db.commit()
+            record_input_change(
+                db, owners=(f"consumption:{viewer_id}:{item.media_id}" for item in body.items)
+            )
         return wire.CollectionConsumptionOut(
             matched_count=len(media_ids), changed_count=len(undo.items) if undo else 0, undo=undo
         )
@@ -106,8 +107,9 @@ def undo(
 ) -> wire.CollectionConsumptionUndoOut:
     def run(db: Session) -> wire.CollectionConsumptionUndoOut:
         if state.undo_states_in_txn(db, viewer_id=viewer_id, receipt=receipt):
-            record_input_change(db)
-        db.commit()
+            record_input_change(
+                db, owners=(f"consumption:{viewer_id}:{item.media_id}" for item in receipt.items)
+            )
         return wire.CollectionConsumptionUndoOut(restored_count=len(receipt.items))
 
     return viewer_txn("undo_collection_consumption", viewer_id, run)

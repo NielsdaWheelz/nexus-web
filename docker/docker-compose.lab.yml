@@ -4,8 +4,11 @@ services:
     volumes: !reset []
     tmpfs:
       - /var/lib/postgresql/data
+    shm_size: 128m
     command:
       - postgres
+      - -c
+      - shared_preload_libraries=pg_search
       - -c
       - fsync=off
       - -c

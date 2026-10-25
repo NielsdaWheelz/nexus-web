@@ -3,9 +3,10 @@
 A read answers only for URIs the frozen scope admits, directly or as a read pointer
 into an admitted parent; its domain owner decides visibility. Every success carries
 an evidence receipt, and stages the citations the chat numbers for the model. Read
-and inspect assemble one read-only snapshot and release it before durable completion.
-A passage a piece answers for is followed up through the piece (``media:<piece>``),
-never through its source chunk or fragment, whose pointer belongs to the whole source.
+and inspect assemble one read-only snapshot; search metadata and relations are also
+read-only. Each owner releases its reads before durable retrieval publication; the
+captured evidence receipt remains the immutable fact of what the model received.
+A piece passage is followed through its reading identity, never its source pointer.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
-from nexus.db.session import get_repeatable_read_db, open_async_session
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
 from nexus.schemas.reader_document import ReaderTextBodyOut
@@ -54,6 +55,7 @@ from nexus.services.resource_graph.resolve import (
     parent_media_id_for_read_pointer,
 )
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.search import projection
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.query import (
     KIND_TO_RESULT_TYPES,
@@ -331,10 +333,12 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         limit=value.limit or SEARCH_LIMIT,
     )
     try:
-        async with open_async_session() as search_db:
-            response = await search_scopes_async(
-                search_db, call.principal, replace(query, frozen_context_refs=frozen), scopes
-            )
+        response = await search_scopes_async(
+            call.principal,
+            replace(query, frozen_context_refs=frozen),
+            scopes,
+            deadline=call.deadline,
+        )
     except ApiError as exc:
         _collapse(exc, ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_CONVERSATION_NOT_FOUND)
 
@@ -360,11 +364,17 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         ]
         return NexusSearchSuccess(matches=matches, has_more=response.page.has_more)
 
-    return await call.database.run_sync(finish)
+    try:
+        return await call.database.run_sync(finish)
+    finally:
+        await call.database.rollback()
 
 
 async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSearchSuccess:
-    await call.database.run_sync(lambda _: _visible(call, value.uri))
+    try:
+        await call.database.run_sync(lambda _: _visible(call, value.uri))
+    finally:
+        await call.database.rollback()
     query = build_search_query(
         text=value.query,
         raw_kinds=["documents"],
@@ -376,8 +386,9 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         limit=value.limit or 8,
     )
     try:
-        async with open_async_session() as search_db:
-            response = await search_scopes_async(search_db, call.principal, query, (query.scope,))
+        response = await search_scopes_async(
+            call.principal, query, (query.scope,), deadline=call.deadline
+        )
     except ApiError as exc:
         _collapse(exc, ApiErrorCode.E_NOT_FOUND)
 
@@ -400,7 +411,10 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         ]
         return DocumentSearchSuccess(matches=matches, uri=value.uri)
 
-    return await call.database.run_sync(finish)
+    try:
+        return await call.database.run_sync(finish)
+    finally:
+        await call.database.rollback()
 
 
 def read(value: ResourceReadInput, call: Call) -> ResourceReadSuccess:
@@ -554,42 +568,47 @@ def _inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
 
 
 def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
-    ref = _visible(call, value.uri)
-    page = query_connections(
-        call.db,
-        viewer_id=call.principal,
-        query=ConnectionQueryRequest(
-            refs=[ref.uri],
-            direction=value.direction,
-            filters=ConnectionFiltersRequest(kinds=value.kinds),
-            limit=value.limit or 100,
-        ),
-    )
-    authors = assistant_writes.edge_authorships(
-        call.db, call.principal, [item.edge_id for item in page.items]
-    )
-    found = [
-        RelationMatch(
-            direction=item.direction,
-            edge_id=item.edge_id,
-            kind=item.kind,
-            machine_authorship=authors.get(item.edge_id),
-            rationale=item.snapshot.rationale[:150]
-            if item.snapshot and item.snapshot.rationale
-            else None,
-            source_label=item.source.label[:150] if item.source.label else None,
-            source_uri=item.source.ref,
-            target_label=item.target.label[:150] if item.target.label else None,
-            target_uri=item.target.ref,
+    try:
+        ref = _visible(call, value.uri)
+        page = query_connections(
+            call.db,
+            viewer_id=call.principal,
+            query=ConnectionQueryRequest(
+                refs=[ref.uri],
+                direction=value.direction,
+                filters=ConnectionFiltersRequest(kinds=value.kinds),
+                limit=value.limit or 100,
+            ),
         )
-        for item in page.items
-    ]
-    citation = _cite(call, capability(ref.scheme).citable_result_type, str(ref.id), value.uri)
-    return RelationsListSuccess(
-        evidence=_evidence(call, value.uri, [r.model_dump(mode="json") for r in found], citation),
-        relations=found,
-        uri=value.uri,
-    )
+        authors = assistant_writes.edge_authorships(
+            call.db, call.principal, [item.edge_id for item in page.items]
+        )
+        found = [
+            RelationMatch(
+                direction=item.direction,
+                edge_id=item.edge_id,
+                kind=item.kind,
+                machine_authorship=authors.get(item.edge_id),
+                rationale=item.snapshot.rationale[:150]
+                if item.snapshot and item.snapshot.rationale
+                else None,
+                source_label=item.source.label[:150] if item.source.label else None,
+                source_uri=item.source.ref,
+                target_label=item.target.label[:150] if item.target.label else None,
+                target_uri=item.target.ref,
+            )
+            for item in page.items
+        ]
+        citation = _cite(call, capability(ref.scheme).citable_result_type, str(ref.id), value.uri)
+        return RelationsListSuccess(
+            evidence=_evidence(
+                call, value.uri, [r.model_dump(mode="json") for r in found], citation
+            ),
+            relations=found,
+            uri=value.uri,
+        )
+    finally:
+        call.db.rollback()
 
 
 def web_citations(call: Call, value: dict[str, Any]) -> None:
@@ -599,6 +618,7 @@ def web_citations(call: Call, value: dict[str, Any]) -> None:
     count = _budgeted(
         hits, WEB_SELECTED, WEB_SELECTED_CHARS, lambda hit: len(canonical_json_bytes(hit).decode())
     )
+    snapshot_ids: list[UUID] = []
     for index, hit in enumerate(hits):
         snapshot_id = new_uuid7()
         call.db.add(
@@ -611,11 +631,13 @@ def web_citations(call: Call, value: dict[str, Any]) -> None:
                 snippet=hit["snippet"],
             )
         )
+        snapshot_ids.append(snapshot_id)
         citation = web_citation(hit, snapshot_id=snapshot_id, selected=index < count)
         call.retrieved.append(citation)
         if index < count:
             call.selected.append(citation)
     call.db.flush()  # the retrieval rows reference the snapshots
+    projection.refresh(call.db, "web_result", snapshot_ids)
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {

@@ -438,9 +438,8 @@ def evidence_resolution(
 ) -> dict[str, Any]:
     """Resolve one read, authorized evidence span into its resolver status and geometry.
 
-    The status is a predicate on the selector alone: ``publish_content_index``, the only
-    writer, inserts each span with ``span_text`` equal to ``selector.text_quote.exact``, and
-    nothing updates it.
+    The status is a predicate on the selector alone: text publication inserts each span
+    with ``span_text`` equal to ``selector.text_quote.exact``, and nothing updates it.
     """
     raw_quote = selector.get("text_quote")
     stored_quote: dict[str, Any] = raw_quote if isinstance(raw_quote, dict) else {}

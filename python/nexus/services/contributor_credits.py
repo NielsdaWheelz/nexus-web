@@ -3,6 +3,8 @@
 A fragment that scopes visibility binds ``:viewer_id`` and composes the CTEs owned by
 ``auth/permissions``; one without a visibility rule says so and needs a visible outer
 relation. Credit DML lives in ``contributor_writes``.
+Search aggregates keep stable name and credit order so phrase boundaries and text
+publication do not depend on the query plan's input order.
 """
 
 from __future__ import annotations
@@ -69,7 +71,7 @@ def contributor_fts_text_sql() -> str:
                     WHERE ca.contributor_id = c.id
                 ),
                 (
-                    SELECT string_agg(DISTINCT vcc.credited_name, ' ')
+                    SELECT string_agg(DISTINCT vcc.credited_name, ' ' ORDER BY vcc.credited_name)
                     FROM ({visible_content_credit_rows_sql()}) vcc
                     WHERE vcc.contributor_id = c.id
                 )
@@ -101,12 +103,12 @@ def contributor_credits_rollup_cte_sql(owner_column: _Owner) -> str:
             ) AS contributor_credits,
             string_agg(
                 concat_ws(' ', cc.credited_name, c.display_name, COALESCE(alias_text.aliases, '')),
-                ' '
+                ' ' ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
             ) AS contributor_search_text
         FROM contributor_credits cc
         JOIN contributors c ON c.id = cc.contributor_id
         LEFT JOIN (
-            SELECT contributor_id, string_agg(alias, ' ') AS aliases
+            SELECT contributor_id, string_agg(alias, ' ' ORDER BY alias) AS aliases
             FROM contributor_aliases
             GROUP BY contributor_id
         ) alias_text ON alias_text.contributor_id = c.id

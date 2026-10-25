@@ -3,7 +3,8 @@
 The identity is a triple: ``EMBEDDING_PROVIDER``, ``embedding_model()`` and
 ``EMBEDDING_DIMENSIONS``. A row is comparable with a query only when all three match;
 search, atlas, suggestions and the oracle filter on it, and the index stamps it on every
-``content_embeddings`` row and on every ``ready`` state.
+``content_embeddings`` row and on every ``ready`` state. Configured APIs prepare
+local SDK imports during lifespan startup; provider calls remain request-owned.
 """
 
 from __future__ import annotations
@@ -13,13 +14,30 @@ import math
 import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from importlib import import_module
+
+from provider_runtime.retry import DEFAULT_RETRY
+from provider_runtime.types import RetryPolicy
 
 from nexus.config import TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS, get_settings
-from nexus.errors import ApiError, ApiErrorCode
 
 EMBEDDING_PROVIDER = "openai"
 # The pgvector column is vector(256); config refuses any other configured width.
 EMBEDDING_DIMENSIONS = TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS
+
+
+def prepare_embeddings() -> None:
+    """Load configured embedding SDK code before API readiness; no network or clients.
+
+    The SDK facade leaves its resource/type graph lazy; load the public embedding
+    resource before readiness so first use does not consume request deadlines. Resolve
+    the runtime's public class here too. Unconfigured APIs retain lazy imports.
+    """
+    if get_settings().openai_api_key is None:
+        return
+    import_module("openai.resources.embeddings")
+    # The public facade resolves ProviderRuntime lazily, without loading generation SDKs.
+    _ = import_module("provider_runtime").ProviderRuntime
 
 
 def embedding_model() -> str:
@@ -34,13 +52,23 @@ def pgvector_literal(vector: Sequence[float]) -> str:
 
 
 def embed_texts(texts: Sequence[str]) -> list[list[float]]:
-    """One provider request for at most 64 stripped inputs, from synchronous code.
+    """Synchronous adapter retaining the provider's default background retry policy."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
+    # Existing synchronous consumers may themselves be called on an event-loop thread.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(
+            lambda: asyncio.run(embed_texts_async(texts, retry=DEFAULT_RETRY))
+        ).result()
 
-    Every returned vector is complete, finite and ``EMBEDDING_DIMENSIONS`` wide, else
-    ``ApiError(E_APP_SEARCH_FAILED)``. ``NonGenerationCallFailed`` (transient-exhausted or
-    oversize input) and ``CredentialMissing`` propagate unwrapped: search catches both
-    for its lexical result mode; indexing names a transient-exhausted one
-    ``E_EMBEDDING_PROVIDER_UNAVAILABLE`` (``content_chunking.plan_chunks``).
+
+async def embed_texts_async(texts: Sequence[str], *, retry: RetryPolicy) -> list[list[float]]:
+    """Native cancellable provider request; the caller owns the retry policy.
+
+    Every vector is complete, finite and ``EMBEDDING_DIMENSIONS`` wide. Credential and
+    expected provider failures propagate; malformed responses remain defects.
     """
     import httpx
     from provider_runtime import (
@@ -67,30 +95,21 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
         dimensions=Present(EMBEDDING_DIMENSIONS),
     )
 
-    async def embed() -> list[list[float]]:
-        async with httpx.AsyncClient(
-            trust_env=False, verify=provider_ssl_context(settings.provider_ca_pem)
-        ) as client:
-            runtime = ProviderRuntime(
-                Credentials(openai=credential.key),
-                http_client=client,
-                endpoint_overrides=settings.provider_endpoint_overrides,
-            )
-            response = await runtime.embed(call, credential=credential)
-        vectors = [[float(value) for value in vector] for vector in response.embeddings]
-        if len(vectors) != len(inputs) or any(
-            len(vector) != EMBEDDING_DIMENSIONS or not all(map(math.isfinite, vector))
-            for vector in vectors
-        ):
-            raise ApiError(
-                ApiErrorCode.E_APP_SEARCH_FAILED, "Embedding provider returned an invalid response."
-            )
-        return vectors
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(embed())
-    # Called from a thread that already owns a loop: run the call on a thread of its own.
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(lambda: asyncio.run(embed())).result()
+    async with httpx.AsyncClient(
+        trust_env=False, verify=provider_ssl_context(settings.provider_ca_pem)
+    ) as client:
+        runtime = ProviderRuntime(
+            Credentials(openai=credential.key),
+            http_client=client,
+            retry=retry,
+            endpoint_overrides=settings.provider_endpoint_overrides,
+        )
+        response = await runtime.embed(call, credential=credential)
+    vectors = [[float(value) for value in vector] for vector in response.embeddings]
+    if len(vectors) != len(inputs) or any(
+        len(vector) != EMBEDDING_DIMENSIONS or not all(map(math.isfinite, vector))
+        for vector in vectors
+    ):
+        # justify-defect: the provider response violates the embedding adapter's shape contract.
+        raise RuntimeError("Embedding provider returned an invalid response")
+    return vectors

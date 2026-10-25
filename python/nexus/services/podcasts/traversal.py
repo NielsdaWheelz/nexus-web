@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import (
@@ -121,7 +122,8 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
         if isinstance(page, BlockedFeedPage)
         else [alias for item in page.episodes for alias in aliases_of(item)]
     )
-    with transaction(db):
+
+    def publish() -> JobResult:
         if lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         lock_aliases(db, f"{head['provider']}:{head['provider_podcast_id']}", aliases)
@@ -194,8 +196,10 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
         else:
             imports.finish_run(db, run_id=run_id)
             sync.settle_recurring(db, run_id=run_id)
-        record_input_change(db)
+        record_input_change(db, owners=(f"podcast:{row['podcast_id']}",))
         return {"status": "Applied", "has_more": bool(pending)}
+
+    return retry_serializable(db, "podcast.feed_page", publish)
 
 
 def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
