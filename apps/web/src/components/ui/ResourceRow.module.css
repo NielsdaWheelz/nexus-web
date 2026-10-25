@@ -56,13 +56,6 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.titleLine {
-  min-width: 0;
-  block-size: 1lh;
-  font-size: var(--text-base);
-  line-height: var(--leading-snug);
-}
-
 .primary {
   display: block;
   min-width: 0;
@@ -74,6 +67,13 @@
   font: inherit;
   text-align: start;
   text-decoration: none;
+}
+
+.titleLine {
+  min-width: 0;
+  block-size: 1lh;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
 }
 
 button.primary { cursor: pointer; width: 100%; }

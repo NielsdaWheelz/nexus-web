@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef } from "react";
+import { Fragment, useId, useRef } from "react";
 import Button from "@/components/ui/Button";
 import type { ActionButtonSpec } from "@/lib/actions/inlineActions";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
@@ -20,8 +20,8 @@ export default function ActionButtons({ actions, density, returnFocus, afterRemo
     {actions.map(action => {
       const reasonId = `${id}-${action.controlKey}`;
       const label = action.accessibleLabel;
-      return <span key={action.controlKey} className={styles.control} data-action-control-key={action.controlKey}>
-        <Button iconOnly icon={action.icon} className={styles.button}
+      return <Fragment key={action.controlKey}>
+        <Button iconOnly icon={action.icon} className={styles.button} data-action-control-key={action.controlKey}
           aria-label={label} aria-disabled={action.disabled || undefined} aria-busy={action.busy || undefined}
           aria-describedby={action.disabledReason ? reasonId : undefined}
           aria-haspopup={action.hasPopup ?? undefined}
@@ -33,8 +33,8 @@ export default function ActionButtons({ actions, density, returnFocus, afterRemo
             event.stopPropagation();
             if (!action.disabled) action.invoke({ trigger: event.currentTarget, returnFocus, afterRemoval });
           }} />
-        {action.disabledReason ? <span className="sr-only" id={reasonId}>{action.disabledReason}</span> : null}
-      </span>;
+        {action.disabledReason ? <span className="sr-only" id={reasonId} data-action-control-key={action.controlKey}>{action.disabledReason}</span> : null}
+      </Fragment>;
     })}
   </div>;
 }

@@ -83,19 +83,19 @@ export default function CollectionRow({
     subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
     actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     label={menuLabel}
-    renderTrigger={(props) => <span className={styles.attentionTrigger}>
+    renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
       {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
-    </span>}
+    </>}
   /> : menuAvailable ? <ContextualActionMenu
     title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
     resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
     displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
     label={menuLabel} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
-    renderTrigger={(props) => <span className={styles.attentionTrigger}>
+    renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
       {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
-    </span>}
+    </>}
   /> : null;
   const metadata = <span className={styles.supportLine}>
     {attention && !menuAvailable ? <span className={styles.reason}>{attention.split(";", 1)[0]}</span> : null}
