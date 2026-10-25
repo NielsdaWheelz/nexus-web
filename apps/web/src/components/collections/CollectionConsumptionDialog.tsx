@@ -50,7 +50,11 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
           {source.data.items.length === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no items in this selection." }} announcement="Polite" /> : null}
           {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "review selection again", onClick: source.refetch }]} /> : null}
         </>}
-      {pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: pending.phase === "Sending" ? "changing selected items…" : "change not confirmed", message: pending.phase === "Sending" ? "this request remains available in workspace feedback." : "the request may have succeeded. recovery remains available in workspace feedback." }} announcement="Polite" /> : null}
+      {pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: pending.phase === "Sending" ? "changing selected items…" : "change not confirmed", message: pending.phase === "Sending" ? "this selection is already changing." : "the request may have succeeded. retry sends the same request." }} announcement="Polite"
+        actions={pending.phase === "Sending" ? undefined : [
+          { label: "retry same request", disabledReason: connectionRequired ? "requires a connection" : undefined, onClick: () => ctx.consumption.retry(pending.commandKey) },
+          { label: "stop tracking", onClick: () => ctx.consumption.forget(pending.commandKey) },
+        ]} /> : null}
       {connectionRequired ? <FeedbackNotice content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
       <div className={styles.actions}>
         <Button emphasis="strong" disabled={connectionRequired || source.status !== "ready" || source.error !== null || source.refreshing || source.data.items.length === 0 || pending !== null} onClick={submit}>mark {verb}</Button>

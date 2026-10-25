@@ -1,6 +1,7 @@
 """The resource_grants table: a creator and one audience (a grantee user, or any holder of the
-row's raw share token) may read one media or one owned highlight. Rows are authorization paths
-and teardown references; each mutation invalidates audience visibility for the users it affects.
+row's raw share token) may read one media or one owned live highlight. Rows are authorization
+paths and teardown references; each mutation invalidates audience visibility for the users it
+affects, bumping their media ``annotations`` lane and waking their writing stream.
 Grants are addressed by their plain id; a create takes the client's id.
 """
 
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, ColumnExpressionArgument, delete, exists, func, or_, select
+from sqlalchemy import ColumnElement, ColumnExpressionArgument, delete, exists, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Highlight, ResourceGrant, User
@@ -22,7 +23,8 @@ from nexus.services.suggestion_changes import record_input_change
 def media_grant_path_exists_expr(
     viewer_user_id: UUID, media_id_expr: UUID | ColumnExpressionArgument[UUID | None]
 ) -> ColumnElement[bool]:
-    """A grant on the media, or on one of its highlights, that the viewer created or received."""
+    """A grant on the media, or on one of its live highlights, that the viewer created or
+    received. A deleted highlight's grant confers nothing until the highlight revives."""
     g = ResourceGrant.__table__.alias("media_grant_path_g")
     h = Highlight.__table__.alias("media_grant_path_h")
     viewer = or_(g.c.grantee_user_id == viewer_user_id, g.c.created_by_user_id == viewer_user_id)
@@ -30,6 +32,7 @@ def media_grant_path_exists_expr(
     child = exists().where(
         g.c.subject_scheme == "highlight",
         h.c.id == g.c.subject_id,
+        h.c.authored_visible,
         h.c.anchor_media_id == media_id_expr,
         viewer,
     )
@@ -43,6 +46,7 @@ def media_grant_path_exists_sql(media_expr: str, viewer_param: str = ":viewer_id
         LEFT JOIN highlights media_grant_path_h
           ON media_grant_path_g.subject_scheme = 'highlight'
          AND media_grant_path_h.id = media_grant_path_g.subject_id
+         AND media_grant_path_h.authored_visible
         WHERE ((media_grant_path_g.subject_scheme = 'media'
                 AND media_grant_path_g.subject_id = {media_expr})
                OR media_grant_path_h.anchor_media_id = {media_expr})
@@ -107,18 +111,20 @@ def annotation_visibility(
 
 
 def invalidate_annotation_visibility(db: Session, projections: set[tuple[UUID, UUID]]) -> None:
+    """Bump each ``(viewer, media)`` annotations lane in one sorted order, then wake each viewer's
+    writing stream; flush-only, the notification publishes with the caller's commit."""
     from nexus.services.resource_items.versions import bump_version
 
     for user_id, media_id in sorted(projections):
         bump_version(db, viewer_id=user_id, ref=ResourceRef("media", media_id), lane="annotations")
+    for user_id in sorted({user_id for user_id, _ in projections}):
+        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(user_id)})
 
 
 def library_annotation_visibility(
     db: Session, library_id: UUID, *, media_ids: set[UUID] | None = None
 ) -> set[tuple[UUID, UUID]]:
     """Only media with highlights filed in this library can change annotation visibility."""
-    from sqlalchemy import text
-
     users = set(
         db.scalars(text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id})
     )
@@ -230,7 +236,7 @@ def repoint_media_subjects(db: Session, *, loser_media_id: UUID, winner_media_id
 
 
 def lock_subject(db: Session, subject: ResourceRef) -> UUID | None:
-    """Lock the complete media family in uuid order, then the highlight; None if gone."""
+    """Lock the complete media family in uuid order and check a highlight is live; None if gone."""
     from nexus.services.library_entries import lock_media_rows_in_order
 
     media_id = subject.id
@@ -240,9 +246,13 @@ def lock_subject(db: Session, subject: ResourceRef) -> UUID | None:
         return None
     if subject.scheme == "highlight":
         same = select(Highlight.id).where(
-            Highlight.id == subject.id, Highlight.anchor_media_id == media_id
+            Highlight.id == subject.id,
+            Highlight.anchor_media_id == media_id,
+            Highlight.authored_visible,
         )
-        if db.scalar(same.with_for_update()) is None:
+        # No projection row lock: a concurrent deletion only hides the highlight, and every
+        # grant path requires it live, so a grant made meanwhile confers nothing until revival.
+        if db.scalar(same) is None:
             return None
     return media_id
 

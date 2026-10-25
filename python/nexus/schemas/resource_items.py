@@ -16,7 +16,6 @@ from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
-from nexus.schemas.note_bodies import Body
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
@@ -138,19 +137,9 @@ class SourceAttributionOut(_Out):
     activation: ResourceActivationOut | None
 
 
-class ResourceAnnotationOut(_Out):
-    attachment_edge_id: UUID
-    note_ref: str
-    body_pm_json: Body
-    body_text: str
-    body_version: int
-    activation: ResourceActivationOut
-
-
 class ResourcePreviewOut(_Out):
     body: ResourceBodyOut
     source: SourceAttributionOut | None
-    annotation: ResourceAnnotationOut | None
 
 
 class ResourceItemOut(_Out):
@@ -231,6 +220,7 @@ SimpleActionKind = Literal[
     "RegenerateMessage",
     "DeleteMessage",
     "EditHighlight",
+    "HighlightNote",
     "EditHighlightBounds",
     "DeleteHighlight",
     "EditPageTitle",
@@ -311,11 +301,6 @@ class LecternMembershipAction(_Action):
     lectern_item_id: UUID | None
 
 
-class HighlightNoteAction(_Action):
-    kind: Literal["HighlightNote"] = "HighlightNote"
-    note_block_id: UUID | None
-
-
 ResourceActionOut = Annotated[
     SimpleAction
     | RefreshSourceAction
@@ -328,8 +313,7 @@ ResourceActionOut = Annotated[
     | PlaybackAction
     | ConsumptionAction
     | TranscriptAction
-    | LecternMembershipAction
-    | HighlightNoteAction,
+    | LecternMembershipAction,
     Field(discriminator="kind"),
 ]
 

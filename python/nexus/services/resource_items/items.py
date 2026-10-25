@@ -1,13 +1,14 @@
-"""Batched resource previews, complete primary annotations and the one viewer gate.
+"""Batched resource previews and the one viewer gate.
 
 ``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
 actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
-admits; I2). SQL bounds previews before they leave the database. Annotations deliberately
-carry full canonical bodies and their body-lane version from one statement. Live media
-uses one canonical summary batch; narrow source attribution keeps its own projection.
-One query per scheme, plus summary, source-credit and annotation batches, avoids
-recursive reads. A media that disappears during summary hydration becomes unavailable
-before routing, so neither its old title nor a live activation escapes.
+admits; I2). Authored pages, notes and highlights admit only ``authored_visible`` rows,
+a note's chunks and spans live with its body, and a passage outlives its note. SQL bounds previews before
+they leave the database. Live media uses one canonical summary batch; narrow source
+attribution keeps its own projection. One query per scheme, plus summary and
+source-credit batches, avoids recursive reads. A media that disappears during summary
+hydration becomes unavailable before routing, so neither its old title nor a live
+activation escapes.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from nexus.schemas.resource_items import (
     ProseResourceBodyOut,
     ReferenceResourceBodyOut,
     ResourceActivationOut,
-    ResourceAnnotationOut,
     ResourceBodyOut,
     ResourceItemOut,
     ResourcePreviewOut,
@@ -44,6 +44,8 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
 )
 from nexus.services.media import media_summaries
+from nexus.services.notes import page_title_sql
+from nexus.services.resource_graph.liveness import ref_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.locations import media_passages
 from nexus.services.resource_items.routing import resource_activations_for_refs
@@ -129,11 +131,6 @@ def resource_items_out(
     credits = _credits(
         db, [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
     )
-    annotations = _annotations(
-        db,
-        viewer_id,
-        [ref.id for ref in refs if ref.scheme == "highlight" and ref.uri not in missing],
-    )
     out: list[ResourceItemOut] = []
     for ref in refs:
         row = rows.get(ref.uri)
@@ -144,7 +141,6 @@ def resource_items_out(
                 credits=credits.get(ref.uri),
                 media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
                 source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
-                annotation=annotations.get(ref.id),
                 activation=activations[ref.uri],
                 reading_media_id=reading_media_id,
             )
@@ -159,7 +155,6 @@ def _resource_item_out(
     credits: list[ContributorCreditOut] | None,
     media_summary: MediaSummaryOut | None,
     source: SourceAttributionOut | None,
-    annotation: ResourceAnnotationOut | None,
     activation: ResourceActivationOut,
     reading_media_id: UUID | None,
 ) -> ResourceItemOut:
@@ -198,7 +193,7 @@ def _resource_item_out(
         ref=ref.uri,
         action_ref=action_ref,
         label=label,
-        preview=ResourcePreviewOut(body=body, source=source, annotation=annotation),
+        preview=ResourcePreviewOut(body=body, source=source),
         activation=activation,
         missing=row is None,
     )
@@ -269,7 +264,7 @@ def _body(
             limit=limit,
         )
     if kind == "note":
-        if row["note_kind"] == "object_embed":
+        if row["embed_ref"] is not None:
             return ReferenceResourceBodyOut(
                 target_ref=row["embed_ref"],
                 label=excerpt(row["embed_label"], limit) if row.get("embed_label") else None,
@@ -287,7 +282,7 @@ def _body(
         return ProseResourceBodyOut(
             excerpt=excerpt(prose, limit),
             role=None,
-            format="code" if row["note_kind"] == "code_block" else "plain",
+            format="code" if row["presentation"] == "code" else "plain",
             image_count=images,
         )
     if kind == "prose":
@@ -321,44 +316,6 @@ def _body_label(body: ResourceBodyOut) -> str:
             return body.label.text if body.label else "Embedded resource"
         case _ as unreachable:
             assert_never(unreachable)
-
-
-def _annotations(
-    db: Session, viewer_id: UUID, ids: list[UUID]
-) -> dict[UUID, ResourceAnnotationOut]:
-    if not ids:
-        return {}
-    rows = (
-        db.execute(
-            text("""
-        SELECT DISTINCT ON (e.source_id) e.source_id, e.id AS attachment_edge_id,
-               n.id AS note_id, n.body_pm_json, n.body_text, COALESCE(v.version, 1) AS body_version
-        FROM resource_edges e JOIN note_blocks n ON n.id = e.target_id AND n.user_id = :viewer_id
-        LEFT JOIN resource_versions v ON v.user_id = :viewer_id
-          AND v.resource_scheme = 'note_block' AND v.resource_id = n.id AND v.lane = 'body'
-        WHERE e.user_id = :viewer_id AND e.source_scheme = 'highlight'
-          AND e.source_id = ANY(:ids) AND e.target_scheme = 'note_block' AND e.origin = 'highlight_note'
-        ORDER BY e.source_id, e.created_at, e.id, n.id
-    """),
-            {"viewer_id": viewer_id, "ids": ids},
-        )
-        .mappings()
-        .all()
-    )
-    activations = resource_activations_for_refs(
-        db, viewer_id=viewer_id, refs=[ResourceRef("note_block", row["note_id"]) for row in rows]
-    )
-    return {
-        row["source_id"]: ResourceAnnotationOut(
-            attachment_edge_id=row["attachment_edge_id"],
-            note_ref=f"note_block:{row['note_id']}",
-            body_pm_json=row["body_pm_json"],
-            body_text=row["body_text"],
-            body_version=row["body_version"],
-            activation=activations[f"note_block:{row['note_id']}"],
-        )
-        for row in rows
-    }
 
 
 def _rows(
@@ -410,7 +367,9 @@ def _rows(
 
 
 _NOTE_PARTS_SQL = """
-    SELECT string_agg(CASE child->>'type' WHEN 'text' THEN child->>'text' WHEN 'hard_break' THEN E'\\n' ELSE '' END, '' ORDER BY ordinal) AS prose,
+    SELECT string_agg(CASE child->>'type' WHEN 'text' THEN child->>'text' WHEN 'hard_break' THEN E'\\n'
+               WHEN 'resource_embed' THEN COALESCE(child #>> '{attrs,label}', child #>> '{attrs,resource_ref}')
+               ELSE '' END, '' ORDER BY ordinal) AS prose,
            count(*) FILTER (WHERE child->>'type' = 'image') AS image_count,
            (array_agg(left(child #>> '{attrs,alt}', 601) ORDER BY ordinal) FILTER (WHERE child->>'type' = 'image'))[1:3] AS image_alts
     FROM jsonb_array_elements(COALESCE(n.body_pm_json->'content', '[]'::jsonb)) WITH ORDINALITY t(child, ordinal)
@@ -427,26 +386,31 @@ def note_display_texts(
         id_: words
         for id_, words in db.execute(
             text(
-                f"SELECT n.id, COALESCE(parts.prose, '') FROM note_blocks n LEFT JOIN LATERAL ({_NOTE_PARTS_SQL}) parts ON TRUE WHERE n.id=ANY(:ids) AND n.user_id=:viewer_id"
+                f"SELECT n.id, COALESCE(parts.prose, '') FROM note_blocks n LEFT JOIN LATERAL ({_NOTE_PARTS_SQL}) parts ON TRUE WHERE n.id=ANY(:ids) AND n.user_id=:viewer_id AND n.authored_visible"
             ),
             {"ids": list(note_ids), "viewer_id": viewer_id},
         )
     }
 
 
+_PASSAGE_LIVE = ref_live_sql("'passage_anchor'", "pa.id")
+# A body consisting of exactly one resource embed presents that resource standalone.
+_SOLE_EMBED = """jsonb_array_length(COALESCE(n.body_pm_json->'content', '[]'::jsonb)) = 1
+    AND n.body_pm_json #>> '{content,0,type}' = 'resource_embed'"""
 _NOTE_SQL = f"""
-SELECT n.id, 'note' AS body_kind, n.body_pm_json->>'type' AS note_kind,
+SELECT n.id, 'note' AS body_kind, n.body_pm_json #>> '{{attrs,presentation}}' AS presentation,
        left(COALESCE(parts.prose, ''), 601) AS prose, COALESCE(parts.image_count, 0) AS image_count,
        parts.image_alts,
-       concat(n.body_pm_json #>> '{{attrs,objectType}}', ':', n.body_pm_json #>> '{{attrs,objectId}}') AS embed_ref,
-       left(n.body_pm_json #>> '{{attrs,label}}', 601) AS embed_label
-FROM note_blocks n LEFT JOIN LATERAL ({_NOTE_PARTS_SQL}) parts ON TRUE WHERE n.id = ANY(:ids) AND n.user_id = :viewer_id
+       CASE WHEN {_SOLE_EMBED} THEN n.body_pm_json #>> '{{content,0,attrs,resource_ref}}' END AS embed_ref,
+       CASE WHEN {_SOLE_EMBED} THEN left(n.body_pm_json #>> '{{content,0,attrs,label}}', 601) END AS embed_label
+FROM note_blocks n LEFT JOIN LATERAL ({_NOTE_PARTS_SQL}) parts ON TRUE
+WHERE n.id = ANY(:ids) AND n.user_id = :viewer_id AND n.authored_visible
 """
 
 _QUERIES = {
     "media": f"SELECT id, title, kind AS media_kind FROM media WHERE id = ANY(:ids) AND id IN {_VISIBLE}",
     "library": "SELECT l.id, CASE WHEN l.is_default THEN 'All' ELSE l.name END AS title FROM libraries l WHERE l.id = ANY(:ids) AND EXISTS (SELECT 1 FROM memberships ms WHERE ms.library_id = l.id AND ms.user_id = :viewer_id)",
-    "page": "SELECT id, title FROM pages WHERE id = ANY(:ids) AND user_id = :viewer_id",
+    "page": f"SELECT p.id, {page_title_sql('p')} AS title FROM pages p WHERE p.id = ANY(:ids) AND p.user_id = :viewer_id AND p.authored_visible",
     "note_block": _NOTE_SQL,
     "conversation": "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled conversation') AS title FROM conversations WHERE id = ANY(:ids) AND owner_user_id = :viewer_id",
     "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role, 'conversation:' || c.id AS owner_ref FROM messages m JOIN conversations c ON c.id = m.conversation_id AND c.owner_user_id = :viewer_id WHERE m.id = ANY(:ids) AND m.status != 'pending'",
@@ -456,7 +420,7 @@ _QUERIES = {
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
     "fragment": f"SELECT id, 'passage' AS body_kind, left(canonical_text,601) AS exact, 'media:' || media_id AS owner_ref FROM fragments WHERE id = ANY(:ids) AND media_id IN {_VISIBLE}",
-    "passage_anchor": "SELECT id, 'passage' AS body_kind, left(selector #>> '{quote,exact}',601) AS exact, right(selector #>> '{quote,prefix}',49) AS prefix, left(selector #>> '{quote,suffix}',49) AS suffix, owner_scheme || ':' || owner_id AS owner_ref FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id",
+    "passage_anchor": f"SELECT pa.id, 'passage' AS body_kind, left(pa.selector #>> '{{quote,exact}}',601) AS exact, right(pa.selector #>> '{{quote,prefix}}',49) AS prefix, left(pa.selector #>> '{{quote,suffix}}',49) AS suffix, pa.owner_scheme || ':' || pa.owner_id AS owner_ref FROM passage_anchors pa WHERE pa.id = ANY(:ids) AND pa.user_id = :viewer_id AND {_PASSAGE_LIVE}",
     "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,t.label,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
     "oracle_passage_anchor": "SELECT a.id, 'passage' AS body_kind, left(a.quote,601) AS exact, a.display_label AS location_label, 'media:' || s.media_id AS owner_ref FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id WHERE a.id = ANY(:ids)",
 }
@@ -470,7 +434,7 @@ for _scheme, _table, _body_column in (
         t.owner_kind || ':' || t.owner_id AS owner_ref
         FROM {_table} t LEFT JOIN note_blocks nb ON nb.id = t.owner_id AND t.owner_kind = 'note_block'
         WHERE t.id = ANY(:ids) AND ((t.owner_kind = 'media' AND t.owner_id IN {_VISIBLE})
-          OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id))"""
+          OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id AND nb.authored_visible))"""
 
 
 def preview_text(item: ResourceItemOut) -> str:

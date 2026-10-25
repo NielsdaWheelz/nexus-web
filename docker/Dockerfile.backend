@@ -77,9 +77,11 @@ WORKDIR /app
 COPY --from=python-builder /app/.venv /app/.venv
 COPY python/nexus ./nexus
 COPY migrations ./migrations
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY node/authored/helper.mjs ./node/authored/helper.mjs
 COPY --from=release-metadata --chown=0:0 --chmod=0444 /app/runtime-identity.json /app/runtime-identity.json
 
-RUN chmod -R u=rwX,go=rX /app/nexus /app/migrations
+RUN chmod -R u=rwX,go=rX /app/nexus /app/migrations /app/node/authored
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"

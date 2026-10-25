@@ -8,6 +8,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { forecastEpisodeTranscripts, type EpisodeState } from "@/lib/podcasts/api";
 import { installedApp } from "@/lib/native/admission";
+import { UNCONFIRMED_TRANSCRIPTS, viewImportsAction } from "@/lib/podcasts/episodeCommands";
 import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "./PodcastCommands.module.css";
@@ -44,7 +45,10 @@ export default function PodcastTranscriptDialog({ podcastId, title, state, retur
           {source.data.eligible_count === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no eligible episodes to transcribe." }} announcement="Polite" /> : null}
           {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh transcript eligibility.")} announcement="Polite" /> : null}
         </>}
-      {pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: "resolve the pending episode action first." }} announcement="Polite" /> : null}
+      {pending?.phase === "unconfirmed" ? <FeedbackNotice content={UNCONFIRMED_TRANSCRIPTS} announcement="Polite" actions={[
+        viewImportsAction(ctx.workspace, () => ctx.podcastEpisodes.inspect(pending.commandKey)),
+        { label: "stop tracking", onClick: () => ctx.podcastEpisodes.forget(pending.commandKey) },
+      ]} /> : pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: "resolve the pending episode action first." }} announcement="Polite" /> : null}
       {connectionRequired ? <FeedbackNotice content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
       <div className={styles.actions}><Button emphasis="strong" disabled={connectionRequired || source.status !== "ready" || source.error !== null || source.refreshing || source.data.eligible_count === 0 || pending !== null} onClick={submit}>transcribe episodes</Button><Button onClick={onClose}>cancel</Button></div>
     </div>

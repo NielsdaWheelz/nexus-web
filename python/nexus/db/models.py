@@ -119,15 +119,15 @@ class User(Base):
 
 
 class Page(Base):
-    """Title-only page resource."""
+    """Projection of one authored page; kept while deleted, hidden by ``authored_visible``."""
 
     __tablename__ = "pages"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     user_id: Mapped[UUID]
     title: Mapped[str]
+    authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    last_activity_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
 class DailyPageBinding(Base):
@@ -142,30 +142,16 @@ class DailyPageBinding(Base):
 
 
 class NoteBlock(Base):
-    """Body-only note resource."""
+    """Projection of one authored note; kept while deleted, hidden by ``authored_visible``."""
 
     __tablename__ = "note_blocks"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     user_id: Mapped[UUID]
     body_pm_json: Mapped[dict[str, object]] = mapped_column(JSONB)
     body_text: Mapped[str]
+    authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    last_activity_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-
-
-class AuthoredIdentity(Base):
-    """Account-lifetime identities; aliases point directly to their canonical row."""
-
-    __tablename__ = "authored_identities"
-    id: Mapped[UUID] = mapped_column(primary_key=True)
-    user_id: Mapped[UUID]
-    kind: Mapped[str]
-    resource_id: Mapped[UUID]
-    canonical_identity_id: Mapped[UUID | None]
-    source_ref: Mapped[str | None]
-    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    retired_at: Mapped[datetime | None]
 
 
 class ResourceVersion(Base):
@@ -202,7 +188,7 @@ class ResourceViewState(Base):
 
 
 class ResourceEdge(Base):
-    """A provenance edge or undirected user link retaining its insertion endpoints."""
+    """A machine provenance fact, or the projection of one authored undirected link."""
 
     __tablename__ = "resource_edges"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
@@ -216,6 +202,7 @@ class ResourceEdge(Base):
     source_order_key: Mapped[str | None]
     ordinal: Mapped[int | None]
     snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
@@ -780,8 +767,8 @@ class PodcastPlaybackSettings(Base):
 
 
 class Highlight(Base):
-    """A user-owned selection anchored to media content: ``fragment_offsets`` (half-open over
-    canonical_text) or ``pdf_page_geometry``.
+    """Projection of one authored highlight's selection: ``fragment_offsets`` (half-open over
+    canonical_text) or ``pdf_page_geometry``. Kept while deleted, hidden by ``authored_visible``.
     """
 
     __tablename__ = "highlights"
@@ -793,6 +780,7 @@ class Highlight(Base):
     exact: Mapped[str]
     prefix: Mapped[str]
     suffix: Mapped[str]
+    authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship()

@@ -6,7 +6,7 @@
 // command; reads never settle or rebase it. Creation and initial filing are atomic.
 
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
-import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { ChooserError, ChooserRow } from "@/components/libraries/LibraryChooser";
 import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
 import Dialog from "@/components/ui/Dialog";
@@ -361,7 +361,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       if (failed.length === 0 && !creation) return null;
       const scope = [...new Set([...failed, ...(creation?.targets ?? [])])];
       return { content: { tone: "Warning" as const, title: "library changes need attention", message: "review the current libraries and any unconfirmed changes." },
-        targets: scope.map(row => row.target), busy: false, commandKey: "library-review", retry: null };
+        targets: scope.map(row => row.target) };
     },
   };
 }
@@ -383,6 +383,8 @@ interface LibraryPlacementController {
   }, options: LibraryPlacementOpenOptions) => void;
   readonly retargetLibraryPlacement: (sessionKey: number, target: LibraryPlacementTarget) => void;
   readonly hasPendingExternalCreation: (target: string) => boolean;
+  /** A failed creation still pending for this item; its editor holds the retry. */
+  readonly hasFailedExternalCreation: (target: string) => boolean;
 }
 const Context = createContext<{ owner: Owner; controller: LibraryPlacementController } | null>(null);
 function useContextValue() {
@@ -406,12 +408,17 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
     subscribe: destinationCreation.subscribe,
     read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
   }), [workGuard, destinationCreation]);
-  useWorkspaceCondition("external-library-creation", external !== null || (!creation.status && creation.error === null) ? null : {
-    needsAttention: creation.error !== null, priority: "Write", announcement: "Polite",
-    content: creation.error?.content ?? { tone: "Neutral", title: creation.status ?? "creating library…" },
-    actions: creation.error?.retry ? [{ label: "retry library creation", onClick: creation.error.retry,
-      busy: creation.error.busy, commandKey: creation.error.commandKey }] : undefined,
-  });
+  // A creation that fails after its editor closed reports once; the item's "manage
+  // libraries" reopens the editor with the same retry.
+  const feedback = useFeedback();
+  const creationFailure = external === null ? creation.error : null;
+  const creationFailureKey = creationFailure === null ? null : JSON.stringify(creationFailure.content);
+  useEffect(() => {
+    if (creationFailure === null) return;
+    const retry = creationFailure.retry;
+    return feedback.receipt(creationFailure.content, retry ? { label: "retry library creation", onClick: retry } : undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the failure's content alone
+  }, [creationFailureKey]);
   const [reviewTargets, setReviewTargets] = useState<readonly LibraryPlacementTarget[] | null>(null);
   const workspace = useLatestWorkspace();
   useMobileChromeHold(reviewTargets !== null || session !== null || external !== null);
@@ -426,6 +433,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
     },
     addToLibrary: owner.addToLibrary,
     hasPendingExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target),
+    hasFailedExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target && attempt.failure !== null && !attempt.sending),
     openExternalLibraryPlacement(input, options) {
       lastKey.current += 1;
       setReviewTargets(null);
@@ -454,17 +462,21 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const changed = useChangeStamp("Libraries", "Entries");
   useLayoutEffect(() => { owner.start(); return owner.stop; }, [owner]);
   useEffect(() => { owner.invalidate(); }, [owner, changed]);
+  // Failures for closed editors stay on their rows; reopening "manage libraries" shows
+  // them. Each newly affected scope reports once with a review of exactly that scope.
   const attention = owner.attention();
-  const review = { label: "review", onClick: () => {
-    setSession(null);
-    externalRef.current = null;
-    setExternal(null);
-    setReviewTargets(attention?.targets ?? null);
-  } };
-  useWorkspaceCondition("library-placement", attention === null ? null : {
-    needsAttention: true, priority: "Write", announcement: "Polite", content: attention.content,
-    actions: attention.retry === null ? [review] : [{ label: "retry", onClick: attention.retry, busy: attention.busy, commandKey: attention.commandKey }, review],
-  });
+  const attentionKey = attention === null ? null : attention.targets.map(keyOf).sort().join(",");
+  useEffect(() => {
+    if (attention === null) return;
+    const targets = attention.targets;
+    return feedback.receipt(attention.content, { label: "review", onClick: () => {
+      setSession(null);
+      externalRef.current = null;
+      setExternal(null);
+      setReviewTargets(targets);
+    } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the affected scope alone
+  }, [attentionKey]);
   const defect = owner.defect();
   if (defect !== null) throw defect.error;
   return <Context.Provider value={{ owner, controller }}>

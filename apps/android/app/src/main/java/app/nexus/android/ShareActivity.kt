@@ -26,7 +26,7 @@ internal fun isHandledShareCallback(uri: Uri): Boolean =
     uri.scheme == "nexus-share" && uri.host in setOf("open", "done", "dismiss")
 
 /**
- * Hosted capture after native admission. The cached document belongs to one
+ * Packaged capture after local account admission. The cached document belongs to one
  * local binding and survives transport/auth changes within that binding. Entry
  * checks never replay capture commands, renew browser documents or own Main's
  * foreground renewal flag; fixed credential effects belong to DeviceSession.
@@ -37,6 +37,7 @@ class ShareActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
     private lateinit var shareUrl: Uri
     private var webView: WebView? = null
+    private var authored: app.nexus.android.authored.AuthoredBridge? = null
     private var documentAccount: UUID? = null
     private var resumeGeneration = 0L
     private var releaseDevice: (() -> Unit)? = null
@@ -62,6 +63,7 @@ class ShareActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!::root.isInitialized) return
+        authored?.setForeground(true)
         webView?.visibility = View.INVISIBLE
         admit()
     }
@@ -78,27 +80,18 @@ class ShareActivity : AppCompatActivity() {
                     finish()
                     return@launch
                 }
-                if (webView != null) showDocument()
-                val admission = device.checkSession()
-                if (generation != resumeGeneration || isFinishing || isDestroyed) return@launch
-                if (webView != null) {
-                    if (documentAccount != device.accountId()) {
-                        discardDocument()
-                        finish()
-                    }
-                    return@launch
-                }
                 val account = device.accountId()
-                if (admission == "Ready" && account != null) {
+                if (account == null) { showAdmission("SignInRequired"); return@launch }
+                if (webView == null) {
                     documentAccount = account
-                    val view = createWebView()
-                    webView = view
-                    showDocument()
-                    view.loadUrl(shareUrl.toString())
-                } else showAdmission(admission)
+                    val view = createWebView(); webView = view
+                    showDocument(); view.loadUrl(shareUrl.toString())
+                } else showDocument()
+                // Credential refresh may suspend remote work, never local capture.
+                device.checkSession()
             } catch (error: IOException) {
                 if (generation != resumeGeneration || isFinishing || isDestroyed) return@launch
-                if (webView != null) { discardDocument(); finish(); return@launch }
+                if (webView != null) return@launch
                 val cleanup = error !is LocalStateError || error.code == "E_LOCAL_CLEANUP"
                 showStatus(if (cleanup) "sign out not completed" else "saved workspace couldn’t be opened", error.message ?: "try again")
             }
@@ -109,6 +102,7 @@ class ShareActivity : AppCompatActivity() {
 
     private fun createWebView(): WebView = WebView(this).apply {
         NexusWebView.configure(this)
+        authored = app.nexus.android.authored.AuthoredBridge(this, device).also { check(it.install()); it.setForeground(true) }
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 if (view !== webView || request?.isForMainFrame != true) return false
@@ -127,11 +121,13 @@ class ShareActivity : AppCompatActivity() {
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                if (request?.isForMainFrame != true || request.method == "GET" && isCapture(request.url)) return null
-                return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", mapOf("Cache-Control" to "no-store"), ByteArrayInputStream(ByteArray(0)))
+                if (request == null) return null
+                if (request.isForMainFrame && !(request.method == "GET" && isCapture(request.url))) return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", mapOf("Cache-Control" to "no-store"), ByteArrayInputStream(ByteArray(0)))
+                return router.intercept(request)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                authored?.onPageStarted()
                 if (view !== webView || url == null || isCapture(Uri.parse(url))) return
                 view?.stopLoading()
                 openMain(Uri.parse(url))
@@ -161,6 +157,7 @@ class ShareActivity : AppCompatActivity() {
     }
 
     private fun discardDocument() {
+        authored?.close(); authored = null
         webView?.let { view ->
             view.stopLoading()
             (view.parent as? ViewGroup)?.removeView(view)
@@ -202,6 +199,7 @@ class ShareActivity : AppCompatActivity() {
 
     override fun onPause() {
         resumeGeneration += 1
+        authored?.setForeground(false)
         webView?.let { it.onPause(); it.pauseTimers() }
         super.onPause()
     }

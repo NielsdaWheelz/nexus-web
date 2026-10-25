@@ -1,11 +1,11 @@
-"""Passage-anchor identity and materialization.
+"""Passage-anchor quote normalization and server materialization.
 
-Sole owner of user-owned durable passage identity
-(universal-link-authoring-hard-cutover.md, Passage Anchor). An anchor's owner,
-normalized quote and ``anchor_key`` are immutable; only the
-selector's ``locator_hint`` is replaceable. There is no persisted resolution
-status, daemon, or current-row pointer — current locators are resolved LIVE
-against owner text through the shared ``locator_resolver``.
+A passage is authored state: its permanent semantic binding and literal capture live
+in ``authored_passages`` and ``passage_anchors`` is their projection. An anchor's
+owner, normalized quote and ``anchor_key`` are immutable and survive their owner's
+deletion. There is no persisted resolution status, daemon, or current-row pointer —
+current locators are resolved LIVE against owner text through the shared
+``locator_resolver``.
 
 Quote normalization (identity space): Unicode NFC; CRLF/CR -> LF; every Unicode
 whitespace run -> one U+0020; trimmed ends. ``anchor_key`` is sha256 over the
@@ -21,16 +21,15 @@ import hashlib
 import json
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import PassageAnchor, XPostSource
+from nexus.db.models import XPostSource
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.services import library_entries, locator_resolver, text_quote
-from nexus.services.resource_graph import cleanup
+from nexus.services import authored, library_entries, locator_resolver, text_quote
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
@@ -126,15 +125,15 @@ def materialize_or_reuse(
     prefix: str | None = None,
     suffix: str | None = None,
     locator_hint: dict[str, Any] | None = None,
-) -> PassageAnchor:
-    """Create or reuse the passage anchor for a quote within one owner.
+) -> ResourceRef:
+    """Capture or reuse the authored passage for a quote within one owner.
 
     The normalized quote must resolve uniquely within its owner via the shared
-    resolver before create/reuse; empty, ambiguous, or unmatched quotes are a
-    typed refusal, and locator geometry never disambiguates identity. Reuse
-    refreshes only the replaceable ``locator_hint``. Flush-only: composes
-    inside the caller-owned (retryable) transaction, whose retry allowlist
-    covers the ``uq_passage_anchors_identity`` first-insert race.
+    resolver; empty, ambiguous, or unmatched quotes are a typed refusal, and locator
+    geometry never disambiguates identity. The semantic owner resolves the permanent
+    binding or mints its identity and stamps the literal quote capture; its projection
+    writes the ``passage_anchors`` row. Flush-only inside the caller's transaction,
+    after the caller's conversation and media locks.
     """
     if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
         raise AssertionError(  # justify-defect: callers pass the closed media|note_block set
@@ -150,102 +149,37 @@ def materialize_or_reuse(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     quote_exact = normalize_quote_text(exact)
-    quote_prefix = normalize_quote_text(prefix or "")
-    quote_suffix = normalize_quote_text(suffix or "")
-    hint = canonical_locator_hint(locator_hint)
-
     resolution = locator_resolver.resolve_passage_selector(
         db,
         owner_scheme=owner_scheme,
         owner_id=owner_id,
         exact=quote_exact,
-        prefix=quote_prefix,
-        suffix=quote_suffix,
-        locator_hint=hint,
+        prefix=normalize_quote_text(prefix or ""),
+        suffix=normalize_quote_text(suffix or ""),
+        locator_hint=canonical_locator_hint(locator_hint),
     )
     if resolution.status is not QuoteStatus.unique:
         raise ApiError(
             ApiErrorCode.E_LINK_TARGET_AMBIGUOUS,
             _REFUSAL_MESSAGES[resolution.status],
         )
-
-    anchor_key = compute_anchor_key(
-        exact=quote_exact, prefix=resolution.prefix, suffix=resolution.suffix
-    )
-    existing = db.execute(
-        select(PassageAnchor).where(
-            PassageAnchor.user_id == user_id,
-            PassageAnchor.owner_scheme == owner_scheme,
-            PassageAnchor.owner_id == owner_id,
-            PassageAnchor.anchor_key == anchor_key,
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        if existing.selector.get("locator_hint") != resolution.locator:
-            existing.selector = {**existing.selector, "locator_hint": resolution.locator}
-            db.flush()
-        return existing
-
-    anchor = PassageAnchor(
-        id=uuid4(),
-        user_id=user_id,
-        owner_scheme=owner_scheme,
-        owner_id=owner_id,
-        anchor_key=anchor_key,
-        selector={
-            "quote": {
-                "exact": quote_exact,
-                "prefix": resolution.prefix,
-                "suffix": resolution.suffix,
-            },
-            "locator_hint": resolution.locator,
-        },
-    )
-    db.add(anchor)
-    db.flush()
-    return anchor
-
-
-def delete_for_owner(
-    db: Session,
-    *,
-    owner_scheme: str,
-    owner_id: UUID,
-    user_id: UUID | None = None,
-) -> None:
-    """Explicitly delete every passage anchor owned by a dying owner.
-
-    True owner deletion only — media hard-delete, viewer-scoped media removal
-    (pass ``user_id``), and note-block deletion. Refresh/reindex never calls
-    this (invariant 9: anchors survive content replacement). Child-first, the
-    ``media_deletion.py`` order: graph edges + their view states touching each
-    anchor, then each anchor's protocol state, then the anchor rows.
-    Flush-only: composes inside the caller's transaction.
-    """
-    if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
-        raise AssertionError(  # justify-defect: callers pass the closed media|note_block set
-            f"Invalid passage-anchor owner scheme: {owner_scheme!r}"
-        )
-    query = select(PassageAnchor).where(
-        PassageAnchor.owner_scheme == owner_scheme,
-        PassageAnchor.owner_id == owner_id,
-    )
-    if user_id is not None:
-        query = query.where(PassageAnchor.user_id == user_id)
-    anchors = db.scalars(query).all()
-    if not anchors:
-        return
-    cleanup.delete_edges_for_deleted_resources(
+    result = authored.server_command(
         db,
-        refs=[ResourceRef(scheme="passage_anchor", id=anchor.id) for anchor in anchors],
+        user_id,
+        command={
+            "kind": "capture_passage",
+            "anchor_id": None,
+            "source_ref": f"{owner_scheme}:{owner_id}",
+            "exact": quote_exact,
+            "prefix": resolution.prefix,
+            "suffix": resolution.suffix,
+            "capture": {"quote_exact": exact, "publication": None, "locator": None},
+        },
+        resource_refs=[],
+        link_ids=[],
     )
-    for anchor in anchors:
-        cleanup.delete_resource_protocol_state(
-            db,
-            viewer_id=anchor.user_id,
-            ref=ResourceRef(scheme="passage_anchor", id=anchor.id),
-        )
-    db.execute(delete(PassageAnchor).where(PassageAnchor.id.in_([anchor.id for anchor in anchors])))
+    (passage,) = result.passages
+    return ResourceRef(scheme="passage_anchor", id=passage.anchor_id)
 
 
 _REFUSAL_MESSAGES = {

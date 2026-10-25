@@ -1,12 +1,14 @@
-"""Edge cleanup when resources die; ``resource_edges`` has no cascades.
+"""Machine-fact cleanup when a server-owned resource dies; ``resource_edges`` has no cascades.
 
 1. A cited (ordinal) edge dies only with its source unless the dying resource's owner
-   requests removal of inbound citations too (note deletion).
-2. Every other edge dies with either endpoint; independent links at survivors stay.
+   requests removal of inbound citations too.
+2. Every other machine fact dies with either endpoint.
+3. An authored link never dies here: it is canonical state with its own observed-remove
+   liveness, and its projection row and endpoint positions stay. A gone endpoint is a
+   source stub to devices and unreadable to every server reader.
 
-View states go before their edges, surviving link and annotation ends get a ``links`` version, and
-external snapshots no longer cited by anything go too. Flush-only; death is global, so
-nothing here filters by viewer except the per-viewer protocol state.
+View states go before their edges, and external snapshots no longer cited by anything
+go too. Flush-only; death is global, so nothing here filters by viewer.
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ from sqlalchemy import (
     literal,
     or_,
     select,
-    tuple_,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -35,14 +36,11 @@ from nexus.db.models import (
     MessageRetrieval,
     ResourceEdge,
     ResourceExternalSnapshot,
-    ResourceVersion,
     ResourceViewState,
     XPostSource,
 )
-from nexus.services import authored_identities, writing
-from nexus.services.resource_graph import retention
-from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items import versions
+from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS
+from nexus.services.resource_graph.refs import ResourceRef
 
 
 def delete_edges_for_deleted_resource(
@@ -77,12 +75,13 @@ def delete_edges_for_deleted_resources(
     at_source = at(ResourceEdge.source_scheme, ResourceEdge.source_id)
     at_target = at(ResourceEdge.target_scheme, ResourceEdge.target_id)
     dying = select(ResourceEdge.id).where(
+        ResourceEdge.origin.not_in(AUTHORED_LINK_ORIGINS),
         or_(
             at_source,
             at_target
             if remove_inbound_citations
             else and_(ResourceEdge.ordinal.is_(None), at_target),
-        )
+        ),
     )
     from nexus.services.library_entries import lock_media_rows_in_order
 
@@ -105,40 +104,12 @@ def delete_edges_for_deleted_resources(
             )
         ),
     )
-    rows = list(db.scalars(select(ResourceEdge).where(ResourceEdge.id.in_(dying))))
-    from nexus.services.resource_graph.edges import retire_edge
-
-    for row in rows:
-        retire_edge(db, row)
-        if row.origin == "highlight_note":
-            from nexus.db.models import Highlight
-            from nexus.services.highlights import annotations_changed
-
-            highlight = db.get(Highlight, row.source_id)
-            if highlight is not None:
-                annotations_changed(db, highlight)
-    retention.pin_owners(db, retention.edge_endpoints(rows))
-    activity = retention.retaining_owners(db, rows)
-    for user_id, *ends in db.execute(
-        select(
-            ResourceEdge.user_id,
-            ResourceEdge.source_scheme,
-            ResourceEdge.source_id,
-            ResourceEdge.target_scheme,
-            ResourceEdge.target_id,
-        ).where(ResourceEdge.id.in_(dying))
-    ):
-        for scheme, id_ in (ends[:2], ends[2:]):
-            if id_ not in dead.get(scheme, ()):
-                ref = assert_resource_ref(f"{scheme}:{id_}")
-                versions.bump_version(db, viewer_id=user_id, ref=ref, lane="links")
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(dying)))
     deleted = db.execute(
         delete(ResourceEdge)
         .where(ResourceEdge.id.in_(dying))
         .returning(ResourceEdge.ordinal, ResourceEdge.target_scheme, ResourceEdge.target_id)
     ).all()
-    retention.touch_owners(db, activity)
     if retained_media:
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
@@ -169,37 +140,6 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
             ~exists().where(
                 MessageRetrieval.result_type == "web_result",
                 MessageRetrieval.source_id == cast(ResourceExternalSnapshot.id, String),
-            ),
-        )
-    )
-
-
-def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
-    """The viewer's versions and view states for a resource that died."""
-    pair = (ref.scheme, ref.id)
-    if ref.scheme in ("page", "note_block", "highlight"):
-        from typing import cast
-
-        from nexus.schemas.writing import IdentityKind
-
-        binding = authored_identities.retire(
-            db, viewer_id=viewer_id, kind=cast(IdentityKind, ref.scheme), id=ref.id
-        )
-        writing.identity(db, binding.out())
-        writing.changed(db, viewer_id)
-    db.execute(
-        delete(ResourceVersion).where(
-            ResourceVersion.user_id == viewer_id,
-            ResourceVersion.resource_scheme == ref.scheme,
-            ResourceVersion.resource_id == ref.id,
-        )
-    )
-    db.execute(
-        delete(ResourceViewState).where(
-            ResourceViewState.user_id == viewer_id,
-            or_(
-                tuple_(ResourceViewState.surface_scheme, ResourceViewState.surface_id) == pair,
-                tuple_(ResourceViewState.target_scheme, ResourceViewState.target_id) == pair,
             ),
         )
     )

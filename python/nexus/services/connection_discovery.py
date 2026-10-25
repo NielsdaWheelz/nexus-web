@@ -329,7 +329,7 @@ def _source_context(
         kin = frozenset(expand_owned_child_refs(db, viewer_id=user_id, ref=ref))
         bodies = db.scalars(
             select(NoteBlock.body_text)
-            .where(NoteBlock.id.in_([block.id for block in kin]))
+            .where(NoteBlock.id.in_([block.id for block in kin]), NoteBlock.authored_visible)
             .order_by(NoteBlock.created_at, NoteBlock.id)
         )
         source_text = "\n\n".join([resolved.label, *bodies])

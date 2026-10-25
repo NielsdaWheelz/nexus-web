@@ -638,7 +638,8 @@ export function GlobalPlayerProvider({
   const report = useCallback((error: unknown) => {
     if (handleUnauthenticatedApiError(error)) return;
     if (!(error instanceof QueueCommandError) && (!isApiError(error) || isSameSystemApiDefect(error))) { fail({ error }); return; }
-    if (isApiError(error)) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "player-command", announcement: "Polite", content: actionFailure("Playback", "play", error) });
+    // The queue surface keeps the failure below; the receipt reports this command once.
+    if (isApiError(error)) feedback.receipt(actionFailure("Playback", "play", error));
     if (queueViewRef.current.failure !== null && queueViewRef.current.error !== null) return;
     publishQueue({ ...queueViewRef.current, phase: browser.current?.uncertain() || engineRef.current?.queue?.uncertain() ? "Uncertain" : "Ready", error: error instanceof Error ? error.message : "couldn’t change playback", failure: { kind: browser.current?.uncertain() || engineRef.current?.queue?.uncertain() ? "Save" : "Coordination" } });
   }, [fail, feedback, publishQueue]);

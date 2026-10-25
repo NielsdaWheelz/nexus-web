@@ -20,17 +20,14 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
-import { readWriting, subscribeWriting } from "@/lib/notes/writes";
-import type { TextEditBase } from "@/lib/notes/texts";
+import type { WritingDocument } from "@/lib/notes/runtime";
+import { InlineBinding } from "@/lib/notes/editorBinding";
+import type { TextEditBase } from "@/lib/notes/editorTypes";
 import { createPortal } from "react-dom";
-import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { resourceDraftOwnerId, useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useEditorDraft, useNoteEditorHost, useOptionalNoteEditorHost, WorkspaceNoteEditorHost } from "@/lib/notes/editorHost";
+import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
-import { usePaneVisitRetained, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import {
   useReferenceInput,
@@ -78,18 +75,16 @@ import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
-import { usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import {
   bodyFromNode,
   docFromBody,
   hrefFromInput,
   noteBodySchema as schema,
-  inspectionDecorations,
   sameBody,
   type NoteBody,
-} from "@/lib/notes/noteBody";
-import type { FocusSelection, NoteEdit } from "@/lib/notes/useOutlineSession";
-import type {OutlineSession, OutlineEditorCommands} from "@/lib/notes/useOutlineSession";
+} from "@nexus/authored/body";
+import type { FocusSelection, NoteEdit } from "@/lib/notes/editorTypes";
+import { inspectionDecorations } from "@/lib/notes/inspection";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteEditor.module.css";
 
@@ -114,7 +109,8 @@ export interface StructuralKeys {
 
 export interface NoteEditorProps {
   reference?: ReferenceInputHost | null;
-  outlineSession?: OutlineSession;
+  writingDocument?: WritingDocument;
+  writingOrigin?: unknown;
   editorKey: string;
   occurrenceKey?: string;
   /** The acknowledged note identity; drafts supply null. */
@@ -176,11 +172,17 @@ export const noteEditorAttachmentOwnerId = (visitId: string, editorKey: string) 
   resourceDraftOwnerId(visitId, `Notes.Attachment:${editorKey}`);
 
 export default function NoteEditor(props: NoteEditorProps) {
-  const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
+  const supplied = useOptionalNoteEditorHost();
+  return supplied ? <NoteEditorContent {...props} /> : <WorkspaceNoteEditorHost><NoteEditorContent {...props} /></WorkspaceNoteEditorHost>;
+}
+function NoteEditorContent(props: NoteEditorProps) {
+  const editorHost = useNoteEditorHost();
+  const paused = false;
+  const bindingRef = useRef<InlineBinding | null>(null);
   const inheritedBranch = useContext(ResourceBranch);
   const outline = useContext(ResourceOutlineContext);
   const occurrenceKey = props.occurrenceKey ?? props.editorKey;
-  const visitId = usePaneVisitIdentity();
+  const visitId = editorHost.identity;
   // The empty root occurrence changes resource when zooming. Child occurrences
   // keep their view when a provisional note binds to its retained canonical note.
   const bodyViewKey = props.occurrenceKey || props.editorKey;
@@ -204,14 +206,10 @@ export default function NoteEditor(props: NoteEditorProps) {
   latest.current = { ...props, editable: props.editable && !paused };
   const busy = useRef(false);
   const guard = useWorkGuard();
-  const { ctx } = useActionRuntime();
-  const workspace = useLatestWorkspace();
-  const subscribeWorkspace = useSubscribeWorkspace();
-  const visitScope = usePaneVisitWorkScope();
-  const retainedInput = usePaneVisitRetained();
-  const linkDraft = useResourceDraft<LinkDialog | null>(`Notes.LinkInput:${props.editorKey}`, () => null,
+  const retainedInput = editorHost.retained_input;
+  const linkDraft = useEditorDraft<LinkDialog | null>(`Notes.LinkInput:${props.editorKey}`, () => null,
     value => ({ changed: value !== null && value.query !== value.baseline, unconfirmed: false, stopsBrowserWork: false }));
-  const attachment = useResourceDraft<{
+  const attachment = useEditorDraft<{
     controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
     body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null;
   } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
@@ -288,7 +286,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       TextSelection.create(tr.doc, selection.anchor, selection.head),
     );
     view.dispatch(tr);
-    latest.current.onEdit({
+    reportEdit({
       before: intent.base,
       after,
       selectionBefore: { anchor: 1, head: 1 },
@@ -311,6 +309,12 @@ export default function NoteEditor(props: NoteEditorProps) {
     [feedback],
   );
 
+  const reportEdit = (edit: NoteEdit) => {
+    try {
+      bindingRef.current?.handoff(edit.before, edit.after);
+      latest.current.onEdit(edit);
+    } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); }
+  };
   const refreshMarks = useCallback((state: EditorState) => {
     const stored = state.storedMarks ?? state.selection.$from.marks();
     const { from, to, empty } = state.selection;
@@ -334,7 +338,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       return false;
     syncNativeSelection(view);
     const { from, to, empty, $from } = view.state.selection;
-    if ($from.parent.type.spec.code) return false;
+    if ($from.parent.attrs.presentation === "code") return false;
     latest.current.history?.boundary();
     const type = schema.marks[name]!;
     const tr = view.state.tr.setMeta(SOURCE, "format");
@@ -436,13 +440,14 @@ export default function NoteEditor(props: NoteEditorProps) {
       const refuse = (message: string) => setAttachmentFeedback({
         tone: "Danger", title: message,
       });
-      if (!latest.current.editable || readWriting().paused || referenceRef.current.getState() !== null)
+      if (!latest.current.editable || false || referenceRef.current.getState() !== null)
         return;
       setAttachmentFeedback(null);
       if (!replaceable(view))
         return refuse(
           "Select the note body or empty it before attaching a file.",
         );
+      if (editorHost.uploads === null) return refuse("new uploads aren’t available in this reader.");
       if (!navigator.onLine) return refuse("connect to add this attachment.");
       if (files.length > 1) return refuse("Attach one file at a time here.");
       const problem = getFileUploadError(files[0]!);
@@ -452,13 +457,11 @@ export default function NoteEditor(props: NoteEditorProps) {
       if (prior && prior.file !== files[0] && !guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) return;
       const retained = prior?.file === files[0] ? prior : null;
       const controller = new AbortController();
-      const signal = ctx.sessionSignal();
+      const uploadHost = editorHost.uploads;
+      const signal = uploadHost.signal();
       const abort = () => controller.abort();
       signal.addEventListener("abort", abort, { once: true });
-      const owned = () => workspace().state.panes.some(pane =>
-        [pane.current_visit, ...pane.history.back, ...pane.history.forward].some(visit =>
-          visit.id === visitScope.visitId && resolvePaneRouteModel(visit.href).routeKey === visitScope.routeKey));
-      const unsubscribe = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
+      const unsubscribe = uploadHost.subscribe(() => { if (!uploadHost.is_owned()) controller.abort(); });
       const task = { controller, base: retained?.base ?? latest.current.body, selection: retained?.selection ?? {
         anchor: view.state.selection.anchor, head: view.state.selection.head,
       }, body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: null };
@@ -472,8 +475,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "this item was saved, then removed" } });
           return;
         }
-        const embed = schema.nodes.object_embed!.create({ objectType: "media", objectId: upload.mediaId,
-          label: files[0]!.name, relationType: "embeds", displayMode: "compact" });
+        const embed = schema.nodes.body!.create(null, schema.nodes.resource_embed!.create({ resource_ref: `media:${upload.mediaId}`, label: files[0]!.name }));
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
         if (controller.signal.aborted || signal.aborted) return;
@@ -491,13 +493,13 @@ export default function NoteEditor(props: NoteEditorProps) {
         if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable });
       }
     },
-    [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, ctx, subscribeWorkspace, visitScope.visitId, visitScope.routeKey, workspace],
+    [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, editorHost],
   );
 
   useEffect(() => {
     const task = attachmentValue;
     if (!task?.body || !props.editable || paused || !referenceReady || viewRef.current?.composing || !sameBody(props.body, task.base)) return;
-    props.onEdit({ before: props.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
+    reportEdit({ before: props.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
     setAttachment(null);
   }, [attachmentValue, setAttachment, props, paused, referenceReady]);
 
@@ -533,59 +535,17 @@ export default function NoteEditor(props: NoteEditorProps) {
       dispatch?: (tr: Transaction) => void,
     ) => {
       if (!latest.current.editable || busy.current) return false;
-      const code = state.selection.$from.parent.type.spec.code;
+      const code = state.selection.$from.parent.attrs.presentation === "code";
       const tr = code
         ? state.tr.insertText("\n")
         : state.tr.replaceSelectionWith(schema.nodes.hard_break!.create());
       dispatch?.(tr.scrollIntoView());
       return true;
     };
-    const undoCommand: Command = (state, dispatch, current) =>
-      run(() => latest.current.outlineSession
-        ? latest.current.outlineSession.executeCommand("undo")
-        : latest.current.history ? latest.current.history.undo() : ownUndo(state, dispatch, current))(state, dispatch, current);
-    const redoCommand: Command = (state, dispatch, current) =>
-      run(() => latest.current.outlineSession
-        ? latest.current.outlineSession.executeCommand("redo")
-        : latest.current.history ? latest.current.history.redo() : ownRedo(state, dispatch, current))(state, dispatch, current);
-    const commands: OutlineEditorCommands = {
-      key: latest.current.occurrenceKey ?? "",
-      insertLabel: latest.current.occurrenceKey?.startsWith("insertion:") ? "insert item" : "split note at caret",
-      commandState(command) {
-        const current = viewRef.current;
-        if (!current || !latest.current.editable || busy.current || current.composing)
-          return {enabled: false, reason: "finish the current text operation first"};
-        const query = referenceRef.current.getState();
-        if (query) {
-          if (command === "undo" || command === "redo")
-            return {enabled: (command === "undo" ? ownUndo : ownRedo)(current.state), reason: null};
-          return {enabled: false, reason: "finish linking or return to prose first"};
-        }
-        if (command === "undo" || command === "redo") return latest.current.history
-          ? latest.current.outlineSession!.historyState(command)
-          : {enabled: (command === "undo" ? ownUndo : ownRedo)(current.state), reason: null};
-        if (command === "insert") return {enabled: !!latest.current.keys?.split && current.state.selection.$from.parent.type === schema.nodes.paragraph,
-          reason: "insert requires an editable paragraph"};
-        return latest.current.outlineSession!.occurrenceCommandState(commands.key, command);
-      },
-      executeCommand(command) {
-        if (!commands.commandState(command).enabled) return;
-        const current = viewRef.current!;
-        const query = referenceRef.current.getState();
-        if (command === "undo" || command === "redo") {
-          if (query || !latest.current.history) (command === "undo" ? ownUndo : ownRedo)(current.state, current.dispatch, current);
-          else (command === "undo" ? latest.current.history?.undo : latest.current.history?.redo)?.();
-          return;
-        }
-        if (command === "insert") {
-          syncNativeSelection(current);
-          const state = current.state.selection.empty ? current.state : current.state.apply(current.state.tr.deleteSelection());
-          const body = state.doc.firstChild!;
-          const offset = state.selection.$from.parentOffset;
-          latest.current.keys!.split!(bodyFromNode(body.copy(body.content.cut(0, offset))), bodyFromNode(body.copy(body.content.cut(offset))));
-        } else latest.current.outlineSession!.executeOccurrenceCommand(commands.key, command);
-      },
-    };
+    const undoCommand: Command = (state, dispatch, current) => run(() => latest.current.history ? latest.current.history.undo() : ownUndo(state, dispatch, current))(state, dispatch, current);
+    const redoCommand: Command = (state, dispatch, current) => run(() => latest.current.history ? latest.current.history.redo() : ownRedo(state, dispatch, current))(state, dispatch, current);
+    const binding = latest.current.writingDocument ? new InlineBinding(latest.current.writingDocument, latest.current.writingOrigin) : null;
+    bindingRef.current = binding;
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
       state: EditorState.create({
@@ -593,12 +553,12 @@ export default function NoteEditor(props: NoteEditorProps) {
           restoredReference
             ? {
                 body_pm_json: {
-                  type: "paragraph",
+                  type: "body",
                   content: [{ type: "text", text: restoredReference.raw }],
                 },
                 body_text: restoredReference.raw,
               }
-            : latest.current.body,
+            : bindingRef.current?.body() ?? latest.current.body,
         ),
         plugins: [
           inspectionPlugin(),
@@ -646,17 +606,19 @@ export default function NoteEditor(props: NoteEditorProps) {
           latest.current.placeholder ??
           (latest.current.reference ? "write a note, or @ link something" : ""),
         "data-empty": String(
-          state.doc.firstChild?.type === schema.nodes.paragraph &&
+          state.doc.firstChild?.type === schema.nodes.body &&
             state.doc.firstChild?.content.size === 0,
         ),
       }),
       nodeViews: {
-        object_embed(node) {
-          const dom = document.createElement("div");
+        resource_embed(node) {
+          const standalone = viewRef.current?.state.doc.firstChild?.childCount === 1 || latest.current.body.body_pm_json.content?.length === 1;
+          const dom = document.createElement(standalone ? "div" : "span");
           dom.contentEditable = "false";
           dom.className = "note-object-embed";
-          const ref = `${node.attrs.objectType}:${node.attrs.objectId}`;
-          setEmbed({ dom, ref });
+          const ref = node.attrs.resource_ref;
+          if (standalone && editorHost.embedded_preview === "workspace") setEmbed({ dom, ref });
+          else dom.textContent = node.attrs.label ?? ref;
           return {
             dom,
             stopEvent: () => true,
@@ -669,7 +631,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       editable: () =>
         latest.current.editable && !busy.current,
       transformPasted: (slice, current) =>
-        current.state.selection.$from.parent.type.spec.code
+        current.state.selection.$from.parent.attrs.presentation === "code"
           ? slice
           : (oneBlock(slice) ?? slice),
       handleTextInput(current, _from, _to, text) {
@@ -680,7 +642,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           literalSuppressed.current ||
           !latest.current.reference ||
           referenceRef.current.getState() !== null ||
-          body?.type !== schema.nodes.paragraph ||
+          body?.type !== schema.nodes.body ||
           body.content.size !== 0
         )
           return false;
@@ -692,7 +654,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       handlePaste(current, _event, slice) {
         const lone =
           slice.content.childCount === 1 &&
-          slice.content.firstChild?.type === schema.nodes.object_embed;
+          slice.content.firstChild?.type === schema.nodes.resource_embed;
         if (lone && !replaceable(current)) {
           warn(
             "Paste not applied",
@@ -740,8 +702,7 @@ export default function NoteEditor(props: NoteEditorProps) {
             event.key.toLowerCase() === "z"
           ) {
             event.preventDefault();
-            if (latest.current.outlineSession) latest.current.outlineSession.executeCommand(event.shiftKey ? "redo" : "undo");
-            else (event.shiftKey ? ownRedo : ownUndo)(current.state, current.dispatch, current);
+            (event.shiftKey ? ownRedo : ownUndo)(current.state, current.dispatch, current);
             return true;
           }
           // Without an outline command, Escape belongs to the containing overlay.
@@ -758,7 +719,6 @@ export default function NoteEditor(props: NoteEditorProps) {
             return true;
           const intent = referenceRef.current.getState();
           if (intent !== null) {
-            if (latest.current.outlineSession) {latest.current.outlineSession.executeCommand(redo ? "redo" : "undo"); return true;}
             return (redo ? ownRedo : ownUndo)(current.state, current.dispatch, current);
           }
           return (redo ? redoCommand : undoCommand)(
@@ -769,7 +729,6 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
         focus(current) {
           suspended.current = false;
-          latest.current.outlineSession?.bindEditor(commands);
           latest.current.onSelectionChange?.({anchor: current.state.selection.anchor, head: current.state.selection.head});
           setReferenceFocused(true);
           setReferenceVisible(true);
@@ -789,7 +748,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               body: bodyFromNode(block),
               editBase: latest.current.editBase ?? null,
               reference: Boolean(latest.current.reference) && !literalSuppressed.current &&
-                referenceRef.current.getState() === null && block.type === schema.nodes.paragraph && block.content.size === 0,
+                referenceRef.current.getState() === null && block.type === schema.nodes.body && block.content.size === 0,
               selection: {
                 anchor: current.state.selection.anchor,
                 head: current.state.selection.head,
@@ -804,7 +763,7 @@ export default function NoteEditor(props: NoteEditorProps) {
             if (current.isDestroyed || current.composing) return;
             const original = compositionBase.current;
             compositionBase.current = null;
-            if (!latest.current.editable || readWriting().paused) return;
+            if (!latest.current.editable || false) return;
             if (original) {
               const block = current.state.doc.firstChild!;
               const committed = bodyFromNode(block);
@@ -816,14 +775,14 @@ export default function NoteEditor(props: NoteEditorProps) {
               }
               if (
                 original.reference &&
-                block.type === schema.nodes.paragraph &&
+                block.type === schema.nodes.body &&
                 block.textContent === "@" &&
                 block.childCount === 1 &&
                 block.firstChild?.isText
               )
                 referenceRef.current.begin(original.body);
               else if (!sameBody(original.body, committed))
-                latest.current.onEdit({
+                reportEdit({
                   before: original.body,
                   after: committed,
                   source: "composition",
@@ -914,7 +873,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           const { selection } = current.state;
           if (
             selection.empty &&
-            selection.$from.parent.type === schema.nodes.paragraph &&
+            selection.$from.parent.type === schema.nodes.body &&
             selection.$from.parent.content.size === 0 &&
             selection.$from.parentOffset === 0
           )
@@ -926,7 +885,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           !event.ctrlKey &&
           !event.metaKey &&
           !event.shiftKey &&
-          current.state.doc.firstChild?.type === schema.nodes.object_embed &&
+          current.state.doc.firstChild?.type === schema.nodes.resource_embed &&
           !current.state.selection.empty
         )
           return act(() =>
@@ -945,15 +904,12 @@ export default function NoteEditor(props: NoteEditorProps) {
         const { selection } = current.state;
         const at = { anchor: selection.anchor, head: selection.head };
         if (event.key === "Tab") {
-          const command = event.shiftKey ? "outdent" : "indent";
-          if (latest.current.outlineSession) return latest.current.outlineSession.commandState(command).enabled
-            ? act(() => latest.current.outlineSession!.executeCommand(command)) : false;
           const arrange = event.shiftKey ? keys.outdent : keys.indent;
           return arrange ? act(() => arrange(at)) : false;
         }
         if (event.shiftKey) return false;
         const { $from } = selection;
-        const paragraph = $from.parent.type === schema.nodes.paragraph;
+        const paragraph = $from.parent.type === schema.nodes.body && $from.parent.attrs.presentation !== "code";
         if (allowBoundaryDeletion && selection.empty && paragraph) {
           const size = $from.parent.content.size;
           if (
@@ -977,7 +933,6 @@ export default function NoteEditor(props: NoteEditorProps) {
           event.preventDefault();
           return true;
         }
-        if (latest.current.outlineSession) return act(() => latest.current.outlineSession!.executeCommand("insert"));
         const state = selection.empty
           ? current.state
           : current.state.apply(current.state.tr.deleteSelection());
@@ -988,7 +943,11 @@ export default function NoteEditor(props: NoteEditorProps) {
         return act(() => keys.split!(left, right));
       },
       dispatchTransaction(tr) {
-        if (tr.docChanged && tr.getMeta(SOURCE) !== "external" && readWriting().paused) return;
+        if (tr.docChanged && tr.getMeta(SOURCE) !== "external" && false) return;
+        if (binding && tr.docChanged && tr.getMeta(SOURCE) !== "external" && referenceRef.current.getState() === null) {
+          try { binding.apply(tr); }
+          catch (error) { warn("edit couldn’t be applied", error instanceof Error ? error.message : "your existing writing is kept."); return; }
+        }
         const before = view.state;
         const after = before.apply(tr);
         view.updateState(after);
@@ -1013,7 +972,7 @@ export default function NoteEditor(props: NoteEditorProps) {
             if (!raw.startsWith("@"))
               literal(view);
           } else if (compositionBase.current === null)
-            latest.current.onEdit({
+            reportEdit({
               before: bodyFromNode(before.doc.firstChild!),
               after: bodyFromNode(after.doc.firstChild!),
               selectionBefore: {
@@ -1027,7 +986,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               source,
             });
           if (
-            after.doc.firstChild?.type === schema.nodes.paragraph &&
+            after.doc.firstChild?.type === schema.nodes.body &&
             after.doc.firstChild.content.size === 0
           )
             literalSuppressed.current = false;
@@ -1040,12 +999,13 @@ export default function NoteEditor(props: NoteEditorProps) {
           });
         refreshMarks(after);
         if (view.hasFocus()) setToolbar(!after.selection.empty);
-        latest.current.outlineSession?.refreshCommands();
+        if (binding && tr.getMeta(SOURCE) !== "external") queueMicrotask(() => binding.refresh());
       },
     });
     viewRef.current = view;
+    binding?.attach(view, () => compositionBase.current !== null || referenceRef.current.getState() !== null);
     return () => {
-      latest.current.outlineSession?.releaseEditor(commands);
+      binding?.close(); bindingRef.current = null;
       viewRef.current = null;
       view.destroy();
     };
@@ -1056,7 +1016,7 @@ export default function NoteEditor(props: NoteEditorProps) {
 
   useLayoutEffect(() => {
     const view = viewRef.current;
-    if (!view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
+    if (props.writingDocument || !view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
       return;
     replaceDoc(view, docFromBody(props.body));
   }, [props.body, props.revision]);
@@ -1065,7 +1025,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     const raw = reference.state?.raw;
     const view = viewRef.current;
     if (raw === undefined || !view || view.composing) return;
-    const paragraph = schema.nodes.paragraph!.create(null, raw ? schema.text(raw) : null);
+    const paragraph = schema.nodes.body!.create(null, raw ? schema.text(raw) : null);
     replaceDoc(view, schema.topNodeType.create(null, paragraph));
   }, [reference.state?.raw]);
 
@@ -1087,7 +1047,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     // Accepted query history is not prose history. Keep the preserved body's identity.
     view.updateState(
       EditorState.create({
-        doc: docFromBody(latest.current.body),
+        doc: docFromBody(bindingRef.current?.body() ?? latest.current.body),
         plugins: view.state.plugins,
       }),
     );
@@ -1195,11 +1155,11 @@ export default function NoteEditor(props: NoteEditorProps) {
         label: "insert attachment", onClick: () => {
           const task = readAttachment(), view = viewRef.current;
           if (!task?.body || !view || !replaceable(view) || !latest.current.editable) return;
-          latest.current.onEdit({ before: latest.current.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
+          reportEdit({ before: bindingRef.current?.body() ?? latest.current.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
           setAttachment(null);
         },
       }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
-      {embed
+      {embed && editorHost.embedded_preview === "workspace"
         ? createPortal(
             <EmbeddedResource
               resourceRef={embed.ref}
@@ -1234,6 +1194,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               icon={<Icon size={16} aria-hidden="true" />}
               aria-label={label}
               aria-pressed={active.has(name)}
+              disabled={props.body.body_pm_json.attrs?.presentation === "code"}
               tooltip={{text: `${label} (${shortcut(key)})`}}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => format(name)}
@@ -1242,6 +1203,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           <Button
             iconOnly
             icon={<Link2 size={16} aria-hidden="true" />}
+            disabled={props.body.body_pm_json.attrs?.presentation === "code"}
             aria-label="Link"
             tooltip={{text: "Link (⌘/Ctrl+K)"}}
             onMouseDown={(event) => event.preventDefault()}
@@ -1343,36 +1305,18 @@ function syncNativeSelection(view: EditorView) {
   );
 }
 
-/** A paste as one block: blocks join with hard breaks; a lone embed stays an embed. */
+/** Paste joins body blocks with hard breaks and retains every inline atom/mark. */
 function oneBlock(slice: Slice): Slice | null {
-  const first = slice.content.firstChild;
-  if (
-    slice.content.childCount === 1 &&
-    first?.type === schema.nodes.object_embed
-  )
-    return slice;
   const inline: PMNode[] = [];
   let blocks = 0;
   let foreign = false;
-  slice.content.forEach((node) => {
-    if (node.isInline) return void inline.push(node);
-    if (
-      node.type !== schema.nodes.paragraph &&
-      node.type !== schema.nodes.code_block
-    ) {
-      foreign = true;
-      return;
-    }
+  slice.content.forEach(node => {
+    if (node.isInline) { inline.push(node); return; }
+    if (node.type !== schema.nodes.body) { foreign = true; return; }
     if (blocks++) inline.push(schema.nodes.hard_break!.create());
-    if (node.type === schema.nodes.paragraph)
-      return void node.content.forEach((child) => void inline.push(child));
-    node.textContent.split("\n").forEach((line, index) => {
-      if (index) inline.push(schema.nodes.hard_break!.create());
-      if (line) inline.push(schema.text(line));
-    });
+    node.content.forEach(child => inline.push(child));
   });
-  if (foreign) return null;
-  return blocks ? new Slice(Fragment.fromArray(inline), 0, 0) : slice;
+  return foreign ? null : new Slice(Fragment.fromArray(inline), 0, 0);
 }
 
 /** An attachment or embed may replace the body only when it is empty or wholly selected. */
@@ -1464,7 +1408,6 @@ function EmbeddedResource({
         incoming={null}
         item={item}
         occurrenceKey={scope}
-        embeddedInNoteRef={containingNoteRef}
       />
     </ResourceOutlineList>
   ) : (

@@ -788,6 +788,7 @@ function createWorkspaceStore(
 }
 
 const StoreContext = createContext<WorkspaceStore | null>(null);
+const SessionNoticeContext = createContext<ReactNode>(null);
 
 export function WorkspaceStoreProvider(props: {
   initialState: WorkspaceState;
@@ -809,14 +810,21 @@ export function WorkspaceStoreProvider(props: {
   );
   // After every child's layout effect (the nexus url ingress runs first).
   useLayoutEffect(() => store.mount(), [store]);
-  useWorkspaceSession(store);
+  const sessionNotice = useWorkspaceSession(store);
   return (
     <StoreContext value={store}>
       <PaneReturnMementoContext value={memento}>
-        {props.children}
+        <SessionNoticeContext value={sessionNotice}>
+          {props.children}
+        </SessionNoticeContext>
       </PaneReturnMementoContext>
     </StoreContext>
   );
+}
+
+/** The session owner's own failure, placed by the workspace chrome. */
+export function WorkspaceSessionNotice() {
+  return useContext(SessionNoticeContext);
 }
 
 export function useWorkspaceStore(): WorkspaceStoreValue {

@@ -5,7 +5,7 @@ import Button from "@/components/ui/Button";
 // The pane shell owns placement; this accessory renders the published commands.
 import { ArrowDown, ArrowUp, Check, IndentDecrease, IndentIncrease, Plus, Redo2, Undo2, type LucideIcon } from "lucide-react";
 import type { PaneOutlineCommands } from "@/lib/panes/paneChrome";
-import type { OutlineCommand } from "@/lib/notes/useOutlineSession";
+import type { OutlineCommand } from "@/lib/notes/editorTypes";
 import styles from "./OutlineCommands.module.css";
 
 const commands: readonly [OutlineCommand, string, LucideIcon][] = [

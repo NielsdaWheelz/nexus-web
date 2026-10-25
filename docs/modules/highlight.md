@@ -1,350 +1,79 @@
-# Highlight Module
+# highlights
 
-## Scope
+highlights are independently identified authored selections. the shared authored
+kernel owns their state and merge; device sqlite owns durable local commands;
+python `services/authored` owns replication and relational projection. existing
+`highlights.py`, `pdf_highlights.py`, location resolution and schemas expose the
+server read/tool contracts. reader surfaces own paint, hit-testing and selection
+presentation. chat owns quotation context and run assembly.
 
-The highlight module owns durable user selections for readable media. It owns
-highlight rows, typed anchors, the stored `exact`/`prefix`/`suffix` quote
-triple, highlight CRUD, highlight-note attachment commands, and the public
-read contracts other modules consume.
+## identity and capture
 
-Backend owners are `python/nexus/services/highlights.py`,
-`python/nexus/services/pdf_highlights.py`,
-`python/nexus/services/pdf_highlight_geometry.py`,
-`python/nexus/api/routes/highlights.py`, and the highlight schemas under
-`python/nexus/schemas/highlights.py`.
+create mints one random client uuid and retries retain it. independently created
+overlapping or identical extents remain distinct highlights, each with independent
+notes and links. no extent singleton, duplicate alias or resize collision exists.
+editing and deleting always address one exact id.
 
-Frontend owners are the hosted media pane's `annotations.ts` (reads and
-writes), `useSelectionComposer.ts` and `selectionDrafts.ts` (explicit commands
-and visit drafts), and `useAnnotationVerbs.ts` and `SelectionDock.tsx` (verbs and
-presentation; `useAnnotationVerbs` also serves highlight pane entries).
-Paint and hit-testing live in the reader module, and chat run assembly lives in
-the chat module.
+a highlight has immutable source ref, observed-delete liveness, a selection
+register and a separate color register. the greatest `(lamport,replica_id)` wins
+each scalar register. selection publication, typed locator, literal quote and
+prefix/suffix travel together; concurrent resizing selects one coherent capture.
+resizing preserves the highlight id and every attached-note link.
 
-The highlight module does not own Resource Inspector chrome, Document
-Map aggregation, reader projection state, chat citations, source-authored
-apparatus, or the resource graph table.
+a reusable passage binding is separate from a highlight. passage identity is
+source plus normalized exact/prefix/suffix; literal captures are not rewritten by
+matching normalization. same-key captures merge their hint register and retain
+known ids. differing publication/locator evidence is not another identity.
+a geometric pdf selection may have no textual passage ref and an empty quote.
 
-## Durable Model And Resource Identity
+## local interaction
 
-Every highlight is a `highlight:<id>` resource. The `highlights` row carries
-the viewer/user, media, color, typed anchor kind, and canonical quote fields.
-Typed anchor rows hold the locator payload:
+an unsubmitted selection composer is ephemeral. its existing explicit save commits
+the highlight, optional independent note and links in one durable local command.
+attached-note editing subsequently autosaves through the ordinary note owner.
+multiple notes remain independent; unlinking or deleting an annotation does not
+consume them. canceling a creation dialog commits nothing.
 
-- `highlight_fragment_anchors` stores reflowable fragment codepoint ranges.
-- `highlight_pdf_anchors` stores the PDF page, sort position and rect count.
-- `highlight_pdf_quads` stores canonical page-space geometry for PDF
-  highlights.
+hosted and downloaded readers share the annotation controller. local authored
+queries own annotation reads online as well as offline. sources already on the
+device remain annotatable without a network publication lookup. retained source
+stubs/quotes/labels do not grant access to unavailable bytes. direct native source
+mainframes and subframes receive no authored bridge authority.
 
-`exact`, `prefix`, and `suffix` are persisted with the highlight because they
-are the durable quote contract. Fragment highlights derive them from canonical
-fragment text using codepoint offsets. PDF highlights derive them from the text
-layer when a unique text match exists. A PDF highlight may have an empty
-`exact`; that is a first-class geometry-only highlight state, not a failed row.
+## locations and source generations
 
-Visibility follows the same media/library visibility predicate used by the
-media owner. Authors can mutate their own highlights; readable shared
-highlights can be listed and opened according to the canonical permissions
-path.
+reflowable locations use canonical codepoint offsets. dom provenance maps source
+spans to canonical codepoints for selection and paint; normalization can compose
+or expand source characters. mixed-atom note locations use the shared canonical
+text projection, never an independent editor-text approximation.
 
-a fresh reader selection is local until an explicit command needs a highlight.
-new highlights default to yellow; reuse preserves the existing colour and note.
-for **Link** (see [connections](connections.md)), the Link service creates the
-Highlight, canonicalizes the endpoints, and creates or reuses the Link in one
-transaction, so cancelling the Link dialog writes nothing. an existing Highlight
-is reused as a Link source or target and
-is never deleted by Link creation or Undo — Undo removes only the Link row.
-Highlights remain first-class resources outside of Link: a highlight is also
-the durable identity `reader_selection`/quote-to-chat binds to, independent of
-whether it is ever linked.
+pdf locations use canonical page-space quads. viewport transforms are derived
+presentation; geometry normalization belongs to the shared semantic owner and
+retains the existing precision rules. every overlap remains selectable even when
+its paint coincides with another annotation.
 
-## Anchor Contracts
+store the mounted publication identity with the original literal quote and typed
+locator. a source change before upload does not reject the already committed
+capture. exact valid relocation may update a derived location. absent or changed
+publication provenance requires unique quote resolution; ambiguity remains beside
+the saved quotation. unknown provenance never permits blind offset reuse.
 
-Reflowable anchors use canonical codepoint offsets, not DOM ranges. The browser
-maps selections to offsets with the highlight cursor helpers, and the backend
-validates offsets against the stored fragment text before writing.
+reader projection and relocation caches are rebuildable. source teardown retains
+authored highlights, geometry, quotes, passage identities and independent notes.
+source foreign keys cannot cascade or reject an accepted offline capture merely
+because original bytes/generation no longer exist. current reading permission
+still belongs to the source owner.
 
-`domTextCursor.ts` records the source spans for each canonical codepoint;
-`domTextRanges.ts` owns both directions of the mapping. selection, hosted and
-public painting, find marks, and margin geometry use that provenance. unicode
-normalization can compose or expand source characters: selection takes the
-smallest contiguous canonical interval covering the touched source spans.
-highlights sharing a source character share its paint, with all ids retained
-and the newest highlight on top.
+## server and migration
 
-PDF anchors use page-space coordinates. Geometry
-is canonical; rendered viewport coordinates are derived presentation state.
-pdf writes retain the media-row write fence so duplicate decisions are made
-against current anchor rows, including when a serializable caller must retry.
+server tools create captures through the same semantic owner and feed, inside
+their existing permission/fencing boundary. no direct highlight projection writer
+or whole-body annotation-note endpoint remains. server reads honor semantic
+liveness and keep captured writing available independently of source access.
 
-Reader projection is not persisted. The reader may derive visible row anchors
-from rendered DOM segments or PDF viewport transforms, but that state belongs to
-the reader surface and is recalculated from durable highlight anchors.
-
-`highlight_fragment_anchors.fragment_id` is a disposable locator cache, not a
-foreign key: the FK constraint is dropped, and media-wide reads use a LEFT
-JOIN so a missing cache row is detected and repaired by re-resolving the
-stored quote rather than cascading the highlight away. `highlight_pdf_anchors`
-and `highlight_pdf_quads` are non-cascading by the same rule. The destructive
-`trg_highlight_fragment_anchor_delete_core` trigger and
-`delete_fragment_highlight_after_anchor_delete()` are removed; nothing in the
-database deletes a Highlight as a side effect of deleting something else.
-
-Passage identity for a non-Highlight Link endpoint (a search-derived passage
-candidate, or an existing apparatus/index row) is a separate table,
-`passage_anchors` — user-owned, keyed by owner (`media`/`note_block`) plus an
-immutable `anchor_key` hash of the normalized quote, with a replaceable
-`locator_hint`. It shares the highlight module's quote-matching primitives
-(`services/text_quote.py` and the shared
-`services/locator_resolver.py` that both Highlights and passage anchors call)
-but is not a highlight row and never becomes a visible Highlight on its own —
-a search-derived PDF passage in particular is a passage anchor, never a
-geometry-only Highlight.
-
-native x highlights belong to canonical post sources. threads and quotations
-render those sources through the reader's occurrence map; an article card owns
-no text and cannot move the post's selectors. canonical post generation checks,
-quote resolution and explicit adoption of unresolved positions remain the
-reader/source owners' contracts. article import does not add an aggregate
-fragment-remapping or annotation-replacement protocol.
-
-## Read Paths
-
-The browser reader reads every highlight of a media the viewer can see (theirs
-and library-mates') once, through `GET /media/{id}/document-map`, whose
-aggregate response is owned by the reader Document Map service; each highlight
-item carries `is_owner`. That endpoint is a read model only. It must not become
-the mutation API. `GET /highlights/{id}` reads one highlight; there are no
-per-fragment or per-page list routes.
-
-the document-map route first authorises and repairs missing fragment locators
-under the parent-media lock, commits and expires its orm state, then assembles
-the map in a fresh read-only repeatable-read snapshot. repair never commits
-inside map assembly. source replacement between phases may leave an unresolved
-anchor for a later refresh. single-highlight reads also use one coherent snapshot.
-
-The pane's `AnnotationStore` projects the map into marks, topmost (newest)
-first. A write paints at once from its acknowledgement through a pending ledger
-until a map read issued after it settles; a failed read keeps the last map
-painted. Before creating, the store looks for the viewer's own highlight of the
-exact extent and reuses it (one highlight per user per span); a library-mate's
-highlight there never blocks the viewer's own.
-
-highlight responses are generated wire types (`TypedHighlightOut`), including the
-viewer's note attachment `links_version`. `POST /media/{id}/highlights` takes
-`{id, anchor, color, expected_reader_generation, initial_note}` and returns the
-writing owner's acknowledgement. recognized ids resolve current canonical state
-without repeating initialization; an exact extent can alias an existing highlight.
-creation and its initial note commit together. the map's twin lookup is only an
-optimization. published documents require their exact positive generation;
-transcripts require a null generation and their current immutable unit id. the
-media lock prevents transcript replacement from crossing that unit check.
-
-## Mutations And Notes
-
-Highlight creation, update, delete, color changes, and note attachment flow
-through the highlight routes and service owners. Fragment offset updates
-recompute the quote triple. PDF geometry updates go through the PDF highlight
-owner and require the selection's `exact` quote.
-
-every `PATCH /highlights/{id}` carries the observed `expected_version` and
-absolute desired fields. fragment-offset updates also carry their `unit_id`;
-an unresolved quote may relocate to matching current text; transcripts use null
-and current immutable fragment membership, while published text requires its
-positive reader generation. other cross-section updates are rejected before
-no-op handling. the
-opaque `version` returned by highlight and document-map reads is a deterministic
-digest of the id, raw stored anchor (ordered canonical pdf quads), colour and
-quote triple. timestamps, notes and links do not change it; unresolved reader
-geometry does not define it. clients forward the observed token, never derive
-one or fetch a newer token to bless an old command.
-
-updates lock media before highlight and re-read cached state. creation takes
-the same parent lock before its fragment write fence; locator repair reads
-sources and candidates only after taking that parent lock. the existing text
-fragment and pdf media write fences remain. if requested fields already equal
-current state, retry succeeds without changing the highlight even with an old
-version. otherwise a stale version returns `E_HIGHLIGHT_CONFLICT` with
-`details.reason="version_mismatch"`; an incompatible unit uses
-`details.reason="unit_mismatch"`. duplicate-range conflicts remain distinct.
-refusals change no highlight state. acknowledgements, including their version,
-are materialised under the write locks before commit. the digest tracks state,
-not intervening history; concurrent colour and bounds edits share one version.
-
-Attached notes are note blocks linked to highlights through `resource_edges`
-with `origin='highlight_note'`. There is no separate highlight-note table.
-`PUT /highlights/{highlight_id}/note` takes `{note_id, body_pm_json, expected}`.
-`expected: {kind: "absent", version: highlight.links_version}` creates in the
-observed empty viewer slot; the same id already attached is unchanged, and a
-changed slot conflicts. `{kind: "version", version: note.body_version}` updates
-the exact current viewer attachment through the canonical note-body writer,
-including an empty save. readable shared highlights permit the viewer's own
-note; colour, bounds and highlight deletion remain owner-only.
-
-`DELETE /highlights/{highlight_id}/note/{note_id}` still detaches and keeps the
-note. `POST /highlights/{highlight_id}/note/delete` instead takes
-`{note_id, expected_version}` and returns `{deleted_note_id}`: while present, the
-note must be owned, attached there and at that body version. it deletes the note
-globally, every association including historical citations, and their view state;
-the highlight, connected resources and old chat text remain. an already absent
-note remains absent. the [notes](notes.md) teardown owns this transaction;
-acknowledgement announces `resource_deleted`, settles note panes through
-`settleDeletedResourcePanes`, and invalidates loaded projections and older reads.
-Ordinary highlight deletion is explicit and child-first: graph/view-state
-attachments (including user links naming the highlight), then PDF quads,
-then the PDF/fragment anchor, then the highlight
-row itself — never a DB cascade. True media/note owner deletion runs the same
-explicit cleanup before removing highlight children/root, and always
-preserves detached note prose rather than deleting it.
-
-Reindex and source refresh (web, EPUB, transcript-current, podcast
-transcription) never delete Highlights or their anchors; only the refreshed
-web/EPUB/transcript-current lifecycles used to call explicit highlight-root
-deletion on refresh, and that call is removed. An unresolved Highlight after
-content changes stays visible in Evidence or Connections rather than
-disappearing or silently repointing to the wrong location.
-
-the reader composer keeps unsubmitted rich input in account-scoped memory and
-submits explicit commands through `notes/writes`; chat admission uses the shared
-chat command owner. fixed identities, captured sources and absolute versioned
-updates survive retries. acknowledgement adopts saved identity/base facts without
-replacing newer prose or reopening an editor. dismissal abandons unsubmitted
-input; attachment loss keeps its existing guard. submitted work settles in its
-owner after dismissal and offers recovery/navigation when needed.
-
-mobile observation creates no draft, write or source-chat lookup. explicit note
-or ask opens the same rich composer used on desktop; initial ask never sends.
-commands submit the frozen passage, never a later selection. an empty paragraph
-without a note saves only its highlight; saving an existing empty note keeps it.
-chat conversion uses the rich grammar, independently of note emptiness. sending
-ensures the highlight and submits the question without saving its annotation.
-
-routine saving/saved/sent receipts have no state or renderer. operation/write/chat
-owners supply pending control availability. failures, conflicts, uncertain saves
-and sends retain visible recovery, exact retry requests and actionable late
-result navigation. later edits or departure revoke automatic handoff authority.
-
-## Reader Presentation
-
-Marks are css custom highlights over the untouched reader dom (pdf: overlay
-rects under the text layer); overlapping marks paint as disjoint segments in the
-topmost colour. See
-[reader-implementation](reader-implementation.md#paint-css-custom-highlights).
-A click resolves the marks under the pointer, topmost first. Focus is an
-underline and moves no viewport; bounds editing accepts a new extent only in
-the same text section, with the observed highlight version.
-
-Evidence is the Media Resource Inspector's cross-document reader
-surface for highlights. It remains a Document Map body: it renders the stored `exact` quote
-when available, shows an explicit placeholder for geometry-only PDF highlights,
-mounts the canonical resource menu, and shows linked note/chat summaries from
-the aggregate read model. Highlight does not publish the Inspector group or its
-inspector action.
-
-Evidence follows the reading position (the group there stays in view; groups
-in the visible band are marked), and the document-map rail shows marker
-locations across the document. Evidence owns neither highlight persistence nor
-mutation behavior.
-
-desktop selection opens an anchored, focused rich composer: primary icon row,
-then a one-line input that grows to its bounded editor scrollport. mobile retains
-native selection and its passive highlight/note/ask/more bar; explicit composition
-uses a sheet whose guarded custom header is highlight/save/ask/more. desktop adds
-colour and existing-chat split controls. shortcuts appear only in tooltips.
-
-copy, share, canonical resource actions, clamped source preview, colours on mobile,
-empty-note deletion and close live in overflow. copy and close do not wait for
-remote resource actions or pending writes. existing-chat actions use the newest
-updated chat linked to this source; an explicit choice replaces it without a
-send. `ConversationDestinationOverlay` composes `PickerSurface` and the existing
-search owner; the reader restores its caret after selection or dismissal.
-
-opening a saved mark loads its viewer note before editing; overlapping marks
-first offer `choose highlight`. the desktop highlighter's disclosure retains
-five-colour selection without remounting the editor. mobile observation retains
-its 250 ms source-activity settle period and never opens the keyboard.
-
-mobile bounds and draft reselection require `apply selection`. invalid or
-collapsed proposals keep cancel; no old valid range substitutes. apply freezes
-the confirmed capture before button focus and validates its owned session once.
-bounds submission shows `applying…` without cancellation and retains exact-quote
-relocation. only confirmed reselection carries body/history; cancel, dismissal,
-navigation, source replacement, deactivation, disposal, hiding, blur or viewport
-policy change retires it. desktop bounds admission remains immediate.
-
-enter saves; shift-enter inserts a line; cmd/ctrl-enter uses new chat and adding
-shift uses the selected existing chat. a fresh unmodified, nonrepeating backspace
-at the collapsed start of an already empty paragraph deletes its saved note
-globally. composition, selected content, last-character deletion, whitespace,
-breaks, code and embeds do not trigger deletion. overflow's
-`delete empty note (keep highlight)` invokes the same operation. unresolved chat
-admission blocks fresh sends across the visit until its command owner settles.
-
-outer dismissal discards unsubmitted input; child dismissal keeps it. passage
-geometry and native selection remain reader-owned; shared overlay placement,
-keyboard containment, dismissal and focus policy remain in
-[overlays](overlays.md#reader-action-placement).
-
-The canonical passage/document scope and typed highlight association contract
-is
-`docs/cutovers/reader-evidence-scope-associations-hard-cutover.md` at `ebd648197`.
-
-## Quote-To-Chat
-
-reader quote-to-chat is highlight-first. `new chat` sends a nonblank note-field
-prompt through existing atomic chat admission, with the canonical quote and the
-model selection frozen at invocation; annotation edits remain unsaved. blank
-text opens the quoted new-chat composer without a run. the existing-chat action follows the same blank-open/nonblank-send contract
-for the selected source chat. [chat](chat.md#reader-quote-to-chat-immutable-snapshot)
-owns exact send retries and quote snapshots.
-
-On send the server row-locks the Highlight, derives the canonical `exact`,
-`prefix`, `suffix`, source label, and `locator` from the stored anchor/quote
-fields, and captures them once as an immutable `ReaderSelectionSnapshot` on the
-user message (`messages.reader_selection_snapshot`). The request carries only
-`reader_selection: { key: {media_id, highlight_id}, revision }`; client-supplied
-quote text is rejected. A later edit, move, or deletion of the Highlight cannot
-change a sent quote — every read derives from the snapshot, not the live row.
-Under the same row lock the server derives the `highlight:<id>` subject and
-`media:<id>` companion as `ResourceEdge(kind="context")` rows.
-
-The snapshot is not a durable conversation context ref that gets cited and never
-receives a citation ordinal. Citation chips point at the attached
-`highlight:<id>` resource or later `nexus.resource.read` evidence.
-
-Quote actions require nonblank `exact` text. A geometry-only PDF Highlight (blank
-`exact`) is explicitly non-sendable as a quote; it can still exist and be shown.
-
-## Graph Connections And Citations
-
-The resource graph owns durable connections. Highlight-linked notes, linked
-conversations, neutral user links, librarian links and chat citations all live in
-`resource_edges` under their origin-specific contracts. A `highlight:<id>` is
-an ordinary Link source or target — same-document Highlight-to-Highlight Links
-are admissible, self-link is not — and Link creation, note attachment, and
-removal are owned entirely by `services/resource_graph/links.py`, not
-by this module. the flush-only pair writer is `services/resource_graph/edges.py`;
-selection authoring composes it inside the existing graph command transaction.
-the highlight module may ask graph services for linked
-summaries, but it does not write bespoke connection tables.
-
-`message_retrievals` remains chat telemetry. Citable highlight evidence is
-resolved through the `highlight:<id>` resource and graph citation path.
-
-## Composition Rules
-
-- Do not duplicate highlight mutation logic in Evidence or chat code.
-- Do not persist rendered DOM geometry as highlight truth.
-- Do not infer citations from `reader_selection`; cite the durable
-  `highlight:<id>` resource or resolved evidence.
-- Do not introduce another highlight-note store. Use note blocks plus
-  `resource_edges`.
-- Do not make Evidence the owner of highlight CRUD. It is an
-  aggregate read and presentation surface.
-- Do not delete a Highlight or its anchors from reindex/refresh code, and do
-  not add a DB cascade between highlight-family rows; deletion is always
-  explicit and child-first.
-
-## verification
-
-manually validate persisted highlight provenance, authorization, and
-reader-to-chat behavior when those boundaries change.
+revision 0317 freezes old grammar conversion and preserves current highlight,
+note, link and passage ids. old annotations without proved publication provenance
+seed `publication:null`; their literal quotes and locators survive. unsupported
+records and conflicting live semantic bindings refuse the transaction. paired
+release, backup and device qualification belong to the
+[release issue](../issues/release-local-first-writing.md).

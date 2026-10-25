@@ -2,6 +2,9 @@
 
 // Target admission owns ten-row pages. Results are selectable only for the exact
 // settled query; active identity belongs to the input, never to presentation.
+import { useOptionalNoteEditorHost } from "@/lib/notes/editorHost";
+import { useAuthoredPages } from "@/lib/notes/hooks";
+import { authoredItem } from "@/lib/notes/presentation";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
 import { useSettled } from "@/lib/api/serverState";
@@ -20,6 +23,7 @@ export function useLinkTargets(
   active: boolean,
   excludeRef: string | null = sourceRef,
 ) {
+  const host = useOptionalNoteEditorHost();
   const query = raw.slice(1).trim();
   const settled = useSettled(raw, 200);
   const settledQuery = settled.slice(1).trim();
@@ -27,7 +31,7 @@ export function useLinkTargets(
   const admitted = enabled && query.length >= 2;
   const list = usePaneFreeServerList<LinkTargetResult>({
     key:
-      admitted && settledQuery.length >= 2
+      admitted && settledQuery.length >= 2 && host?.references !== "local"
         ? `/resource-items/targets/search?${new URLSearchParams({ q: settledQuery, source_ref: JSON.stringify(sourceRef), exclude_refs: JSON.stringify(excludeRef ? [excludeRef] : []) })}`
         : null,
     stale,
@@ -51,12 +55,21 @@ export function useLinkTargets(
       return { items: data.targets, next_cursor: data.next_cursor };
     },
   });
-  const current = admitted && raw === settled && list.current;
+  const local = useAuthoredPages({ kind: "search", text: admitted && settledQuery.length >= 2 ? settledQuery : "", cursor: null, limit: 100 });
+  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource), existing_link_id: null }));
+  const current = admitted && raw === settled && local.data !== null;
+  const remoteTargets = list.current ? list.items.filter(target => !/^(note_block|page|highlight):/u.test(target.item.ref)) : [];
+  const seen = new Set<string>();
+  const items = [...localTargets, ...remoteTargets].filter(target => { const key = targetKey(target); if (seen.has(key)) return false; seen.add(key); return true; });
   return {
-    items: current ? list.items : EMPTY,
+    items: current ? items : EMPTY,
+    current,
     querySettled: raw === settled,
     minimum: query.length < 2,
-    loading: admitted && (raw !== settled || (!list.current && list.failure === null)),
+    loading: admitted && (raw !== settled || local.data === null && local.error === null),
+    localError: local.error,
+    localComplete: local.data?.next_cursor === null,
+    moreLocal: local.more,
     error: admitted && raw === settled && list.failure?.op !== "More" ? (list.failure?.error ?? null) : null,
     list,
     retry: list.retry,

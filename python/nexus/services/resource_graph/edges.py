@@ -1,11 +1,11 @@
-"""The only writer of ``resource_edges``, and the reads that guard a write.
+"""The only writer of machine ``resource_edges`` facts, and the chat's authored link writer.
 
-Every mutator flushes inside the caller's transaction and never commits. A fact
-(``create_edge``, ``replace_edges_for_origin``) obeys the shape law in ``_validate``;
-a user link (``create_link``) retains its original insertion source and target, is
-unique per unordered pair, and ranks itself at each endpoint that orders its links.
-Sorted endpoints order locks only; direction remains undirected to graph readers. By that
-law ``origin = 'user'`` alone identifies a link everywhere.
+Every mutator flushes inside the caller's transaction and never commits. A machine fact
+(``create_edge``, ``replace_edges_for_origin``) obeys the shape law in ``_validate`` and
+may be deleted physically. A user link is authored state: ``create_link`` adds it
+through the semantic owner (``services.authored``), whose projection writes its row and
+endpoint positions; nothing here writes, moves or deletes an authored link's row. By that
+law ``origin = 'user'`` (with seeded attachment origins) identifies an authored link.
 """
 
 from __future__ import annotations
@@ -16,18 +16,18 @@ from datetime import datetime
 from typing import NoReturn, cast
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Conversation, ResourceEdge, ResourceViewState, XPostSource
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
-from nexus.services import authored_identities, writing
-from nexus.services.resource_graph import order, retention
+from nexus.services import authored
+from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
-from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import resource_items_out
 
 Pair = tuple[str, UUID]
 CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -38,12 +38,10 @@ CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
 )
 _ASSISTANT_ENDPOINTS = ("media", "page", "note_block", "highlight")
 # Every fact origin -> (source schemes, target schemes); None admits any visible resource.
-# ``user`` is absent: links are written by ``create_link`` only.
+# Authored origins are absent: links are written through ``create_link`` only.
 _ENDPOINTS: dict[str, tuple[tuple[str, ...] | None, tuple[str, ...] | None]] = {
     "citation": (None, None),
     "system": (("conversation",), None),
-    "note_body": (("note_block",), None),
-    "highlight_note": (("highlight",), ("note_block",)),
     "document_embed": (("media",), ("media",)),
     "discovery": (CONNECTION_DISCOVERY_SOURCE_SCHEMES, ("media", "note_block", "evidence_span")),
     "assistant": (_ASSISTANT_ENDPOINTS, _ASSISTANT_ENDPOINTS),
@@ -133,8 +131,6 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Insert one fact; a bare fact is unique per origin and directed pair (400)."""
     _lock_citation_media(db, [input])
     row = _row(viewer_id, input)
-    retention.pin_owners(db, retention.edge_endpoints([row]))
-    activity = retention.retaining_owners(db, [row])
     _validate(db, viewer_id, input)
     if input.ordinal is None and db.scalar(
         select(ResourceEdge.id).where(
@@ -148,14 +144,6 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         _invalid("Edge already exists")
     db.add(row)
     db.flush()
-    if row.origin == "highlight_note":
-        binding = authored_identities.register(
-            db, viewer_id=viewer_id, kind="link", id=row.id, source_ref=input.source.uri
-        )
-        writing.identity(db, binding.out())
-    writing.effects(db).link_ids.add(row.id)
-    _bump_endpoints(db, viewer_id, edge_out(row))
-    retention.touch_owners(db, activity)
     return edge_out(row)
 
 
@@ -195,67 +183,42 @@ def replace_edges_for_origin(
         )
     )
     retained_media = _lock_citation_media(db, [*members, *(edge_out(row) for row in old)])
-    proposed = [_row(viewer_id, member) for member in members]
-    retention.pin_owners(db, retention.edge_endpoints([*old, *proposed]))
-    changed = {_semantic_key(row) for row in old} ^ {_semantic_key(row) for row in proposed}
-    activity = retention.retaining_owners(
-        db, [row for row in [*old, *proposed] if _semantic_key(row) in changed]
-    )
     for edge in members:
         _validate(db, viewer_id, edge)
     rows: list[ResourceEdge] = []
     removed = list(old)
-    added: list[EdgeCreate] = []
     for member in members:
         same = next((row for row in removed if _same_fact(row, member)), None)
         if same is not None:
             removed.remove(same)
             rows.append(same)
         else:
-            row = _row(viewer_id, member)
-            rows.append(row)
-            added.append(member)
+            rows.append(_row(viewer_id, member))
     if removed:
         ids = [row.id for row in removed]
         db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
         for row in removed:
-            _bump_endpoints(db, viewer_id, edge_out(row))
-            retire_edge(db, row)
             db.delete(row)
         db.flush()
     db.add_all(rows)
     db.flush()
-    writing.effects(db).link_ids.update(row.id for row in rows if row not in old)
-    for member in added:
-        _bump_endpoints(db, viewer_id, member)
     if retained_media:
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
         for media_id in retained_media:
             claim_document_teardown_if_unreferenced_locked(db, media_id)
-    retention.touch_owners(db, activity)
     return [edge_out(row) for row in rows]
 
 
 def create_link(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source: ResourceRef,
-    target: ResourceRef,
-    link_id: UUID | None = None,
+    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
 ) -> EdgeWrite:
-    """Create or reuse the viewer's one link between two directly linkable resources; a
-    new link takes ``link_id`` when given (an outline's client-minted id)."""
-    if link_id is not None:
-        binding = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
-        if binding is not None:
-            writing.identity(db, binding.out())
-            authored_identities.require_live(binding)
-            held = db.get(ResourceEdge, binding.canonical.resource_id)
-            if held is None:
-                raise RuntimeError("Live authored link has no edge")
-            return EdgeWrite(edge_out(held), binding.row.canonical_identity_id is None)
+    """Add the viewer's one authored link between two directly linkable visible resources
+    through the semantic owner, appended last at each endpoint; a live link is reused.
+
+    Flush-only inside the caller's transaction, which takes its conversation locks here,
+    before the account head. Non-authored endpoints carry a literal label capture so
+    devices can name them; the projection's conversation hook ranks a chat endpoint."""
     if source == target:
         _invalid("An edge cannot relate a resource to itself")
     if (
@@ -265,69 +228,66 @@ def create_link(
         _invalid("Resource cannot be linked")
     a, b = sorted((source, target), key=lambda ref: ref.uri)
     lock_conversation_endpoints(db, [a, b])
-    retention.pin_owners(db, [a, b])
     assert_ref_visible(db, viewer_id=viewer_id, ref=target)
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
     existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
-        if link_id is not None:
-            binding = authored_identities.register(
-                db,
-                viewer_id=viewer_id,
-                kind="link",
-                id=link_id,
-                canonical_id=existing.id,
-                source_ref=source.uri,
-            )
-            writing.identity(db, binding.out())
         return EdgeWrite(edge_out(existing), created=False)
-    row = ResourceEdge(
-        user_id=viewer_id,
-        kind="context",
-        origin="user",
-        source_scheme=source.scheme,
-        source_id=source.id,
-        target_scheme=target.scheme,
-        target_id=target.id,
+    labels = {
+        item.ref: item.label
+        for item in resource_items_out(db, viewer_id=viewer_id, refs=[a, b])
+        if not item.missing
+    }
+    intents: list[dict[str, object]] = [
+        {
+            "kind": "capture_source",
+            "source_ref": ref.uri,
+            "capture": {"kind": ref.scheme, "label": labels[ref.uri], "publication": None},
+        }
+        for ref in (a, b)
+        if ref.scheme not in ("note_block", "page", "highlight")
+    ]
+    intents.append(
+        {
+            "kind": "add_link",
+            "link_id": None,
+            "endpoint_a": a.uri,
+            "endpoint_b": b.uri,
+            "position_a": None,
+            "position_b": None,
+        }
     )
-    if link_id is not None:
-        row.id = link_id
-    db.add(row)
-    db.flush()
-    binding = authored_identities.register(
-        db, viewer_id=viewer_id, kind="link", id=row.id, source_ref=source.uri
+    authored_refs = [ref.uri for ref in (a, b) if ref.scheme in ("note_block", "page", "highlight")]
+    result = authored.server_command(
+        db,
+        viewer_id,
+        command={"kind": "batch", "intents": intents},
+        resource_refs=authored_refs,
+        link_ids=[],
     )
-    writing.identity(db, binding.out())
-    for endpoint, other in ((a, b), (b, a)):
-        versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
-        if endpoint.scheme == "conversation":
-            versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="context")
-            key = conversation_rank(
-                db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
-            )
-            db.add(
-                ResourceViewState(
-                    user_id=viewer_id,
-                    surface_scheme=endpoint.scheme,
-                    surface_id=endpoint.id,
-                    edge_id=row.id,
-                    target_scheme=other.scheme,
-                    target_id=other.id,
-                    context_order_key=key,
-                )
-            )
-            db.flush()
-        order.append(db, viewer_id, endpoint, row.id)
-    retention.touch_owners(db, retention.retaining_owners(db, [row]))
+    (link,) = result.links
+    row = db.get(ResourceEdge, link.link_id)
+    if row is None or not row.authored_visible:
+        raise RuntimeError("Added authored link has no live projection")
     return EdgeWrite(edge_out(row), created=True)
 
 
 def conversation_rank(
     db: Session, *, viewer_id: UUID, conversation_id: UUID, target: ResourceRef
 ) -> str:
-    """The target's earliest rank in the chat, else one past every rank of its links and
-    automatic facts. Locks the chat row; the caller inserts in this transaction."""
+    """Lock the chat row, then its next rank for ``target``; the caller inserts it."""
     db.execute(select(Conversation.id).where(Conversation.id == conversation_id).with_for_update())
+    return next_context_rank(
+        db, viewer_id=viewer_id, conversation_id=conversation_id, target=target
+    )
+
+
+def next_context_rank(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, target: ResourceRef
+) -> str:
+    """The target's earliest rank in the chat, else one past every rank of its links and
+    automatic facts. Takes no lock: under the account head a concurrent chat edit may
+    tie, and ties order by creation then edge id."""
     ranks = db.execute(
         select(
             ResourceViewState.context_order_key,
@@ -365,37 +325,20 @@ def get_owned_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> EdgeOut | 
 
 
 def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
-    """Delete one owned edge and retire its identity, preserving every other edge."""
+    """Delete one owned machine fact, preserving every other edge and both endpoints.
+
+    An authored link is refused: only an observed unlink command removes it."""
     row = db.get(ResourceEdge, edge_id)
     if row is None or row.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
+    if row.origin in AUTHORED_LINK_ORIGINS:
+        raise AssertionError("authored links are removed by the semantic owner")
     retained_media = _lock_citation_media(db, [edge_out(row)])
-    if row.origin == "user":
-        admission_owners = [
-            assert_resource_ref(f"{row.source_scheme}:{row.source_id}"),
-            assert_resource_ref(f"{row.target_scheme}:{row.target_id}"),
-        ]
-    elif (
-        row.origin in ("citation", "system")
-        and row.ordinal is None
-        and row.source_scheme == "conversation"
-    ):
-        admission_owners = [ResourceRef("conversation", row.source_id)]
-    else:
-        admission_owners = []
-    lock_conversation_endpoints(db, admission_owners)
-    retention.pin_owners(db, retention.edge_endpoints([row]))
-    activity = retention.retaining_owners(db, [row])
-    if row.origin == "user":
-        for ref in admission_owners:
-            if ref.scheme == "conversation":
-                versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="context")
-    _bump_endpoints(db, viewer_id, edge_out(row))
-    retire_edge(db, row)
+    if row.origin in ("citation", "system") and row.ordinal is None:
+        lock_conversation_endpoints(db, [ResourceRef("conversation", row.source_id)])
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
-    retention.touch_owners(db, activity)
     if retained_media:
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
@@ -406,11 +349,13 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
 def existing_link_pair(
     db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
 ) -> ResourceEdge | None:
+    """The viewer's live authored link joining ``a`` and ``b`` either way round."""
     return db.scalar(
         select(ResourceEdge).where(
             ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "user",
+            ResourceEdge.origin.in_(AUTHORED_LINK_ORIGINS),
             or_(and_(source_is(a), target_is(b)), and_(source_is(b), target_is(a))),
+            text(edge_live_sql("resource_edges")),
         )
     )
 
@@ -458,20 +403,6 @@ def _lock_citation_media(db: Session, edges: Sequence[EdgeCreate | EdgeOut]) -> 
     return post_ids
 
 
-def _semantic_key(row: ResourceEdge) -> tuple[object, ...]:
-    return (
-        row.source_scheme,
-        row.source_id,
-        row.target_scheme,
-        row.target_id,
-        retention.captured_owner(row),
-        row.origin,
-        row.kind,
-        row.ordinal,
-        row.source_order_key,
-    )
-
-
 def _same_fact(row: ResourceEdge, edge: EdgeCreate) -> bool:
     return (
         (row.source_scheme, row.source_id) == (edge.source.scheme, edge.source.id)
@@ -483,18 +414,6 @@ def _same_fact(row: ResourceEdge, edge: EdgeCreate) -> bool:
         and row.snapshot
         == (edge.snapshot.model_dump(mode="json") if edge.snapshot is not None else None)
     )
-
-
-def _bump_endpoints(db: Session, viewer_id: UUID, edge: EdgeCreate | EdgeOut) -> None:
-    for ref in (edge.source, edge.target):
-        versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="links")
-    if edge.origin == "highlight_note":
-        from nexus.db.models import Highlight
-        from nexus.services.highlights import annotations_changed
-
-        highlight = db.get(Highlight, edge.source.id)
-        if highlight is not None:
-            annotations_changed(db, highlight)
 
 
 def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
@@ -513,20 +432,6 @@ def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
     if edge.id is not None:
         row.id = edge.id
     return row
-
-
-def retire_edge(db: Session, row: ResourceEdge) -> None:
-    """Every physical edge teardown keeps any authored identity retired."""
-    writing.effects(db).removed.add(row.id)
-    if row.origin in ("user", "highlight_note"):
-        binding = authored_identities.retire(
-            db,
-            viewer_id=row.user_id,
-            kind="link",
-            id=row.id,
-            source_ref=f"{row.source_scheme}:{row.source_id}",
-        )
-        writing.identity(db, binding.out())
 
 
 def edge_out(row: ResourceEdge) -> EdgeOut:

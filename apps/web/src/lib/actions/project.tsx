@@ -43,6 +43,7 @@ import {
   submitMetadataResultReview,
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
+import { getWritingRuntime } from "@/lib/notes/runtime";
 import { localMutation, type LocalItem } from "@/lib/offline/localContent";
 import type { PlaybackSource } from "./playbackSource";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
@@ -663,15 +664,7 @@ export function projectResourceActions(
     }, "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: [deleteChat, { confirmation: null }],
-    DeletePage: deleted(async () => {
-      const admitted = await deletePage(id);
-      void admitted.settled.catch(error => {
-        if (handleUnauthenticatedApiError(error)) return;
-        ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `page-delete:${id}`, announcement: "Polite", content: {
-          tone: "Warning", title: "page deletion needs review", message: "the queued deletion is kept in writing status.",
-        } });
-      });
-    }, "/notes"),
+    DeletePage: deleted(() => deletePage(getWritingRuntime(ctx.accountId), id), "/notes"),
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
     EditNoteBody: entry({ kind: "EditNoteBody", noteBlockId: id }),
     EditHighlight: entry({ kind: "EditHighlight", highlightId: id }),

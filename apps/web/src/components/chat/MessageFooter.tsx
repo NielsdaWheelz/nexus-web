@@ -41,10 +41,9 @@ export default function MessageFooter({ message, latest, engaged, details = null
   const copy = async () => {
     try {
       await copyText(message.content);
-      feedback.receipt({ tone: "Success", title: "message copied" });
     } catch (error) {
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
-      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
+      feedback.receipt({ tone: "Warning", title: "couldn’t copy message", message: "select the message text and copy it." });
     }
   };
   const regenerate = (event: TargetActivationEvent) => {
@@ -79,7 +78,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
       )}
     </div>
     {adding ? (
-      <ResourceComposer source={{ kind: "resource", ref: `message:${message.id}` }} occurrenceKey={`message:${message.id}`} label="add item" />
+      <ResourceComposer destinationRef={`message:${message.id}`} occurrenceKey={`message:${message.id}`} label="add item" />
     ) : null}
     </>
   );

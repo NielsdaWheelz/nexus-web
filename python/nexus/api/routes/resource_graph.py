@@ -1,5 +1,5 @@
-"""Resource-graph routes: connection reads, outline commands and the detach of a
-chat's automatic context fact."""
+"""Resource-graph routes: connection reads, machine-fact removal and the detach of a
+chat's context. Authored links have no route: devices replicate them as authored changes."""
 
 from typing import Annotated
 from uuid import UUID
@@ -7,22 +7,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession, RepeatableReadDbSession
+from nexus.db.session import DbSession
 from nexus.responses import Data
-from nexus.schemas.notes import (
-    OutlineCommandsRequest,
-    OutlineOut,
-)
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     ContextOut,
 )
-from nexus.schemas.writing import ResourceVersionsOut, ResourceVersionsRequest, WritingAck
-from nexus.services import outline
-from nexus.services.resource_graph import connections, context
+from nexus.services.resource_graph import connections, context, links
 from nexus.services.resource_graph.refs import require_ref
-from nexus.services.resource_items import versions
+from nexus.services.suggestion_changes import record_input_change
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
@@ -36,31 +30,13 @@ def query_connections(
     return Data(data=connections.query_connections(db, viewer_id=viewer.user_id, query=body))
 
 
-@router.get("/resource-graph/outline/{ref}")
-def read_outline(
-    ref: str,
-    viewer: ViewerDep,
-    db: RepeatableReadDbSession,
-    limit: Annotated[int, Query(ge=1, le=100)] = 100,
-    cursor: str | None = None,
-) -> Data[OutlineOut]:
-    return Data(
-        data=outline.read(
-            db, viewer_id=viewer.user_id, ref=require_ref(ref), limit=limit, cursor=cursor
-        )
-    )
-
-
-@router.post("/resource-graph/commands")
-def commands(body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession) -> Data[WritingAck]:
-    return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=body.commands))
-
-
-@router.post("/resource-graph/versions/query")
-def query_versions(
-    body: ResourceVersionsRequest, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[ResourceVersionsOut]:
-    return Data(data=versions.query(db, viewer_id=viewer.user_id, refs=body.refs))
+@router.delete("/resource-graph/facts/{edge_id}", status_code=204)
+def remove_fact(edge_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    """Idempotent: an absent fact is 204 again. Only discovery and assistant facts."""
+    if links.remove_machine_fact(db, viewer_id=viewer.user_id, edge_id=edge_id):
+        record_input_change(db)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/conversations/{conversation_id}/context")

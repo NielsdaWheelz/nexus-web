@@ -1,23 +1,30 @@
-"""A chat's context: its incident user links plus its automatic citation/system facts,
-ranked by first attachment. ``context_facts_sql`` is the single membership law, shared
-with search scope; membership is direct and never traverses another chat. Mutations
-only flush.
+"""A chat's context: its incident live authored links plus its automatic citation/system
+facts, ranked by first attachment. ``context_facts_sql`` is the single membership law,
+shared with search scope; membership is direct and never traverses another chat.
+
+An authored link with a chat endpoint changes only through the semantic owner, from a
+device upload or a chat command alike; ``project_conversation_links`` applies its rank
+and ``context`` version inside that head-locked projection and takes no chat lock.
+Chat commands lock the chat before the account head. Mutations only flush.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation
+from nexus.db.models import Conversation, ResourceEdge, ResourceViewState
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import ContextItemOut, ContextOut, DetachContextMutation
 from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.services import authored
 from nexus.services.resource_graph.edges import (
     EdgeCreate,
     conversation_rank,
@@ -25,7 +32,9 @@ from nexus.services.resource_graph.edges import (
     delete_edge,
     get_owned_edge,
     lock_conversation_endpoints,
+    next_context_rank,
 )
+from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_refs
 from nexus.services.resource_items import versions
@@ -61,7 +70,7 @@ def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
         LEFT JOIN resource_view_states v
           ON v.edge_id = e.id AND v.user_id = e.user_id
          AND v.surface_scheme = 'conversation' AND v.surface_id = {conversation_id_sql}
-        WHERE e.user_id = :viewer_id AND e.origin = 'user'
+        WHERE e.user_id = :viewer_id AND e.origin = 'user' AND {edge_live_sql("e")}
           AND (({chat})
             OR (e.target_scheme = 'conversation' AND e.target_id = {conversation_id_sql}))
         UNION ALL
@@ -69,7 +78,7 @@ def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
                e.source_order_key AS order_key
         FROM resource_edges e
         WHERE e.user_id = :viewer_id AND e.origin IN ('citation', 'system')
-          AND e.ordinal IS NULL AND {chat}
+          AND e.ordinal IS NULL AND {chat} AND {edge_live_sql("e")}
     """
 
 
@@ -183,6 +192,8 @@ def detach_context_target(
     """Remove every current admission fact atomically; absence succeeds before version check.
 
     A stale retry may not remove a later reattachment. Historical message evidence stays.
+    An authored link is unlinked through the semantic owner, observing its current adds;
+    its projection hook bumps the version. Machine facts go here and bump it once.
     """
     chat_ref = ResourceRef("conversation", conversation_id)
     lock_conversation_endpoints(db, [chat_ref, target])
@@ -207,16 +218,79 @@ def detach_context_target(
         != expected_context_version
     ):
         raise ConflictError(ApiErrorCode.E_CONTEXT_CHANGED, "Conversation context changed")
-    user_link = False
+    machine = False
     for edge_id in ids:
         edge = get_owned_edge(db, viewer_id=viewer_id, edge_id=edge_id)
         assert edge is not None
-        if edge.origin == "user":
-            user_link = True
-        delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
-    if not user_link:
+        if edge.origin in AUTHORED_LINK_ORIGINS:
+            (link,) = authored.read_states(
+                db, viewer_id, resource_refs=[], link_ids=[str(edge_id)]
+            ).links
+            authored.server_command(
+                db,
+                viewer_id,
+                command={"kind": "unlink", "link_id": str(edge_id), "observed_add": link.add_vv},
+                resource_refs=[],
+                link_ids=[str(edge_id)],
+            )
+        else:
+            machine = True
+            delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+    if machine:
         versions.bump_version(db, viewer_id=viewer_id, ref=chat_ref, lane="context")
     record_input_change(db)
+
+
+def project_conversation_links(
+    db: Session, *, viewer_id: UUID, links: Sequence[tuple[UUID, bool | None, bool]]
+) -> None:
+    """Apply chat context effects of projected authored links with a chat endpoint.
+
+    ``links`` holds ``(link_id, visible_before, visible_after)``; ``visible_before`` is
+    None for a new projection row. Called by the authored projection after its edge and
+    view-state upserts, under the account head lock: it takes no chat, run or media lock.
+    A newly visible link takes the target's earliest rank in the chat, else the next one;
+    every visibility change bumps that chat's ``context`` version once.
+    """
+    changed: set[UUID] = set()
+    for link_id, before, after in links:
+        row = db.get(ResourceEdge, link_id)
+        if row is None:
+            raise AssertionError("projected authored link has no row")
+        source = assert_resource_ref(f"{row.source_scheme}:{row.source_id}")
+        target = assert_resource_ref(f"{row.target_scheme}:{row.target_id}")
+        for chat, other in ((source, target), (target, source)):
+            if chat.scheme != "conversation" or bool(before) == after:
+                continue
+            changed.add(chat.id)
+            if not after:
+                continue
+            rank = next_context_rank(db, viewer_id=viewer_id, conversation_id=chat.id, target=other)
+            db.execute(
+                insert(ResourceViewState)
+                .values(
+                    user_id=viewer_id,
+                    surface_scheme="conversation",
+                    surface_id=chat.id,
+                    edge_id=row.id,
+                    target_scheme=other.scheme,
+                    target_id=other.id,
+                    context_order_key=rank,
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id", "surface_scheme", "surface_id", "edge_id"],
+                    index_where=ResourceViewState.edge_id.is_not(None),
+                    set_={
+                        "target_scheme": other.scheme,
+                        "target_id": other.id,
+                        "context_order_key": rank,
+                    },
+                )
+            )
+    for chat_id in sorted(changed):
+        versions.bump_version(
+            db, viewer_id=viewer_id, ref=ResourceRef("conversation", chat_id), lane="context"
+        )
 
 
 def admits_resource_for_conversation_read(

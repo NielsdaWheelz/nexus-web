@@ -45,6 +45,7 @@ from nexus.schemas.resource_items import (
     WholeSourceLocationOut,
 )
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
+from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_items.items import (
     passage_body,
@@ -111,7 +112,7 @@ def _capture(
         else None
     )
     before = source_identities(db, [media]).get(media) if media else None
-    from nexus.services.note_bodies import read_note
+    from nexus.services.note_bodies import read_notes
 
     quote: CapturedQuote | None = None
     locator: dict[str, Any] | None = None
@@ -142,7 +143,9 @@ def _capture(
         )
         locator = resolve_quote(db, owner, quote, row.selector.get("locator_hint"))
     elif ref.scheme == "note_block":
-        note = read_note(db, viewer_id=viewer_id, note_id=ref.id)
+        note = read_notes(db, viewer_id=viewer_id, note_ids=[ref.id]).get(ref.id)
+        if note is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
         quote = CapturedQuote(exact=note.body_text, prefix=None, suffix=None, color=None)
         if note.body_text:
             locator = {
@@ -150,7 +153,7 @@ def _capture(
                 "block_id": str(ref.id),
                 "start_offset": 0,
                 "end_offset": len(note.body_text),
-                "body_version": note.body_version,
+                "body_version": None,
                 "text_quote_selector": {"exact": note.body_text},
             }
     elif ref.scheme == "message":
@@ -330,7 +333,6 @@ def evidence_items(
                                 contributors=None,
                             ),
                             source=None,
-                            annotation=None,
                         ),
                         "activation": ResourceActivationOut(
                             resource_ref=ref.uri,
@@ -379,7 +381,7 @@ def evidence_items(
             current[ref.uri].model_copy(
                 update={
                     "label": quote.exact[:120] if quote else frozen.title or "Source",
-                    "preview": ResourcePreviewOut(body=body, source=attribution, annotation=None),
+                    "preview": ResourcePreviewOut(body=body, source=attribution),
                     "activation": activation,
                 }
             )
@@ -485,6 +487,7 @@ def resolve_source_target(
                     "SELECT snapshot, source_scheme || ':' || source_id AS source"
                     " FROM resource_edges"
                     " WHERE id = :id AND origin = 'citation' AND ordinal IS NOT NULL"
+                    f" AND {edge_live_sql('resource_edges')}"
                 ),
                 {"id": target.edge_id},
             ).first()

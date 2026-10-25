@@ -14,7 +14,7 @@ import {
   useSyncExternalStore,
   type FocusEvent,
 } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { SourcePieces, PieceDetails } from "@/components/media/containedWorks/Pieces";
 import { useShareController } from "@/lib/sharing/controller";
@@ -85,7 +85,10 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useReaderActivity } from "./activity";
-import { createAnnotationStore } from "./annotations";
+import { createMediaAnnotations } from "./annotations";
+import { createReaderAnnotations, type ReaderAnnotation } from "@/lib/documentReader/annotations";
+import { AnnotationList, LocalWritingError, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import { useAuthoredStore } from "@/lib/authored/provider";
 import { useReaderChrome } from "./chrome";
 import EmbedCard, { PostActions } from "./Embeds";
 import EvidencePane from "./evidence/EvidencePane";
@@ -214,13 +217,34 @@ function MediaRoute({ id }: { readonly id: string }) {
   if (localContentAvailable && saved.kind === "Failed") return <FeedbackState content={{ tone: "Warning", title: saved.message,
     message: "downloaded content needs repair. this does not remove saved files or listening history." }} announcement="Polite"
     actions={[{ label: "retry downloaded copy", onClick: saved.retry }, { label: "manage downloads", href: "/downloads" }]} />;
-  if (failure !== null && [403, 404, 410, 426].includes(failure.status)) return <FeedbackState
-    content={{ tone: "Warning", title: failure.status === 426 ? "update nexus to open this item" : "this item is no longer available" }} announcement="Polite" />;
+  if (failure !== null && [403, 404, 410, 426].includes(failure.status)) return <>
+    <FeedbackState content={{ tone: "Warning", title: failure.status === 426 ? "update nexus to open this item" : "this item is no longer available" }} announcement="Polite" />
+    <LocalAnnotations mediaId={id} />
+  </>;
   const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
-  if (summary !== null) return <SavedMedia summary={summary} record={record} />;
-  if (!admitted && !catalog.loading) return <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />;
-  return record.status === "failed" ? <FeedbackState content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
-    : <PaneLoadingState label="loading item…" announcement="Polite" />;
+  if (summary !== null) return <><SavedMedia summary={summary} record={record} /><LocalAnnotations mediaId={id} /></>;
+  if (!admitted && !catalog.loading) return <>
+    <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />
+    <LocalAnnotations mediaId={id} />
+  </>;
+  return record.status === "failed" ? <>
+    <FeedbackState content={{ tone: "Warning", title: "couldn’t load this item" }} announcement="Polite" actions={[{ label: "retry", onClick: record.refetch, busy: record.retrying }]} />
+    <LocalAnnotations mediaId={id} />
+  </> : <PaneLoadingState label="loading item…" announcement="Polite" />;
+}
+
+/** Writing about a source this device can't open: its quotes and notes stay local and editable. */
+function LocalAnnotations({ mediaId }: { readonly mediaId: string }) {
+  const authored = useAuthoredStore();
+  const [annotations] = useState(() => createReaderAnnotations(authored, mediaId));
+  useEffect(() => { annotations.bind(null); }, [annotations]);
+  const state = useSyncExternalStore(annotations.subscribe, annotations.getState, annotations.getState);
+  if (!state.annotations.length) return null;
+  return <div className={styles.state}>
+    <LocalWritingError />
+    <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unavailable }} announcement="None" />
+    <AnnotationList annotations={state.annotations} />
+  </div>;
 }
 
 function UnavailableSavedMedia({ error }: { readonly error: { readonly code: string } }) {
@@ -349,10 +373,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
     : [];
   const [embedFailure, setEmbedFailure] = useState<ApiError | null>(null);
-  useWorkspaceCondition(`media-embed-updates:${runtime.paneId}`, embedFailure === null ? null : {
-    priority: "Status", announcement: "Polite", needsAttention: true,
-    content: { tone: "Warning", title: "article updates paused", requestId: embedFailure.requestId },
-  });
   const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
     embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
   useEffect(() => {
@@ -431,16 +451,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   }, [id, media, readable, reader, stamp, titleJob, transcript]);
 
   // ---- annotations ----
-  const [store] = useState(() => createAnnotationStore(id, ctx.accountId));
-  useEffect(() => { if (doc) store.bind(doc); }, [doc, store]);
-  const subscribeAnnotations = useCallback(
-    (listener: () => void) => readable ? store.subscribe(listener) : () => {},
-    [readable, store],
-  );
-  const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
-  useEffect(() => {
-    if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
-  }, [annotations.decorations.identity, doc, readable, store]);
+  const authored = useAuthoredStore();
+  const [store] = useState(() => createMediaAnnotations(authored, id));
+  const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
+  useEffect(() => { if (doc) store.bind(doc); else if (documentFailed || !readable) store.bind(null); }, [doc, documentFailed, readable, store]);
+  const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);
   const pendingEvidenceArrival = useRef<AbortSignal | null>(null);
@@ -501,18 +516,25 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     latestOpenRequest.current?.onResolved(null);
     pendingEvidenceArrival.current = context.signal;
     try {
-      const map = await new Promise<ReturnType<typeof store.getState>["map"] | null>((resolve) => {
+      // local items are complete once read; remote evidence may still be arriving.
+      const found = await new Promise<boolean | null>((resolve) => {
         let unsubscribe = () => {};
-        const settle = (value: ReturnType<typeof store.getState>["map"] | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
+        const settle = (value: boolean | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
         const abort = () => settle(null);
-        const check = () => { const map = store.getState().map; if (map.status !== "loading") settle(map); };
+        const check = () => {
+          const current = store.getState();
+          if (current.local.status === "loading") return;
+          if (current.local.annotations.some(annotation => annotation.id === itemId || annotation.ref === itemId)) return settle(true);
+          if (current.remote.status === "loading") return;
+          settle(current.remote.status === "ready" && current.remote.data.identity === identity &&
+            current.remote.data.evidence.roots.some((root) => matchesEvidence(root, itemId)));
+        };
         unsubscribe = store.subscribe(check);
         context.signal.addEventListener("abort", abort, { once: true });
         if (context.signal.aborted) abort(); else check();
       });
-      if (context.signal.aborted) return "Cancelled";
-      if (!map || map.status !== "ready" || map.data.identity !== identity) return "Unavailable";
-      if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return "Unavailable";
+      if (context.signal.aborted || found === null) return "Cancelled";
+      if (!found) return "Unavailable";
       const delivered = requestEvidence(itemId, context);
       requestSecondarySurface("resource-connections");
       const applied = await delivered;
@@ -520,6 +542,38 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     } finally {
       if (pendingEvidenceArrival.current === context.signal) pendingEvidenceArrival.current = null;
     }
+  }
+  /** A highlight arrives from local authored state: its placed passage, else its evidence row. */
+  async function deliverHighlight(highlightId: string, context: SourceArrivalContext): Promise<SourceArrivalOutcome> {
+    if (context.restored) return "Applied";
+    const annotation = await new Promise<ReaderAnnotation | null | undefined>((resolve) => {
+      let unsubscribe = () => {};
+      const settle = (value: ReaderAnnotation | null | undefined) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
+      const abort = () => settle(undefined);
+      const check = () => { if (store.getState().local.status !== "loading") settle(store.annotation(highlightId)); };
+      unsubscribe = store.subscribe(check);
+      context.signal.addEventListener("abort", abort, { once: true });
+      if (context.signal.aborted) abort(); else check();
+    });
+    if (annotation === undefined || context.signal.aborted) return "Cancelled";
+    if (!annotation || !doc) return "Unavailable";
+    if (annotation.placement.kind !== "placed") return deliverEvidence(annotation.id, doc.identity, context);
+    const anchor = annotation.placement.anchor;
+    const outcome = await reader.inspect({ signal: context.signal, target: anchor.kind === "text"
+      ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end } : { kind: "quads", page: anchor.page, quads: anchor.quads } });
+    switch (outcome.kind) {
+      case "Unavailable": return "FailureHandled";
+      case "Cancelled": return "Cancelled";
+      case "Arrived":
+      case "Unchanged": break;
+      default: assertNever(outcome);
+    }
+    setInspection({ identity: doc.identity, anchors: [anchor], pages: [], precision: "exact", activationId: context.activationId });
+    context.signal.addEventListener("abort", () => {
+      setInspection((current) => current?.activationId === context.activationId ? null : current);
+    }, { once: true });
+    if (context.mayFocus()) reader.focusSource();
+    return "Applied";
   }
   const arrival = useSourceArrival({
     ready: restored || (media !== null && !readable),
@@ -538,6 +592,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     apply: async (result, context) => {
       if (context.signal.aborted) return "Cancelled";
       if (result.kind === "chat_destination") return "Unavailable";
+      if (result.kind === "highlight") return deliverHighlight(result.highlight_id, context);
       if (result.kind === "reader_destination") {
         if (!doc) return "Unavailable";
         const { destination } = result;
@@ -648,8 +703,13 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     requestSecondarySurface("resource-connections");
   }, [clearArrival, requestEvidence, requestSecondarySurface, runtime.visitId]);
   const canQuote = media?.capabilities?.can_quote === true;
-  const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
-  const verbs = useAnnotationVerbs({ reader, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
+  const marks = annotations.local.status === "ready" ? annotations.decorations.marks : null;
+  // the host knows its own title and a part's source title; other owners keep their stubs.
+  const sourceLabel = useCallback((sourceRef: string) => !media ? null
+    : sourceRef === `media:${id}` ? { kind: media.kind, label: media.title }
+    : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
+    : null, [doc, id, media]);
+  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
   verbsRef.current = { isMobile, verbs };
 
   const decorations = useMemo<Decorations>(
@@ -658,8 +718,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
   );
 
   // ---- find ----
-  const source = useReaderState(reader, (s) => s.restored ? s.find : null);
-  const find = useFind({ ownerKey: paneSourceKey(runtime), source,
+  const findSource = useReaderState(reader, (s) => s.restored ? s.find : null);
+  const find = useFind({ ownerKey: paneSourceKey(runtime), source: findSource,
     onSearchIntent: () => arrival.supersede({ preserveSignal: null, retireFailure: true }),
   });
   findRef.current = find;
@@ -670,9 +730,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     () => ({
       verbs: { noteEdit, hovered, hover, closeNoteEdit, relocate },
       sourceContext: media?.kind !== "text_part",
+      mediaLabel: media?.title ?? "this document",
       refresh: store.refresh,
     }),
-    [closeNoteEdit, hover, hovered, media?.kind, noteEdit, relocate, store],
+    [closeNoteEdit, hover, hovered, media?.kind, media?.title, noteEdit, relocate, store],
   );
   const evidence = useMemo(
     () => (
@@ -710,16 +771,16 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
     else void reader.inspect({ target });
   }, [markerTarget, openEvidence, reader]);
   const apparatusDestination = useCallback((key: string): ReaderDestination | null => {
-    const map = annotations.map;
-    if (!doc || map.status !== "ready" || map.data.identity !== doc.identity) return null;
-    const root = map.data.evidence.roots.find((root) => matchesEvidence(root, key));
+    const remote = annotations.remote;
+    if (!doc || remote.status !== "ready" || remote.data.identity !== doc.identity) return null;
+    const root = remote.data.evidence.roots.find((root) => matchesEvidence(root, key));
     return root ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: key } } : null;
-  }, [annotations.map, doc]);
+  }, [annotations.remote, doc]);
   const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds && !verbs.composer.reselection ? null : <>
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}
     {verbs.bounds ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
       title: verbs.bounds.phase === "Submitting" ? (isMobile ? "applying…" : "updating highlighted passage…")
-        : verbs.bounds.issue ?? (verbs.bounds.unit === null
+        : verbs.bounds.issue ?? (verbs.bounds.scope.kind === "quote"
           ? isMobile ? "select text matching the original quote to relocate it." : "select text matching the original quote to relocate it. escape cancels."
           : isMobile ? "select the new passage in this text section." : "select the new passage in this text section. escape cancels.") }}
       actions={verbs.bounds.phase === "Selecting" ? [{ label: "cancel", onClick: verbs.cancelBounds }] : undefined}
@@ -868,6 +929,13 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
         }}
         before={
           <>
+            <LocalWritingError />
+            {documentFailed && annotations.local.annotations.length ? <>
+              <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unavailable }} announcement={paneActive ? "Polite" : "None"} />
+              <AnnotationList annotations={annotations.local.annotations} />
+            </> : null}
+            {embedFailure ? <FeedbackNotice content={{ tone: "Warning", title: "article updates paused", requestId: embedFailure.requestId }}
+              announcement={paneActive ? "Polite" : "None"} /> : null}
             {forkFailure ? <FeedbackNotice
               content={{ tone: "Warning", title: forkFailure.title }}
               occurrence={forkFailure}

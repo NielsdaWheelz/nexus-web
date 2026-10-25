@@ -15,7 +15,8 @@ import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
-/** One complete, fixed-order append enters the existing account lectern lane. */
+/** One complete, fixed-order append enters the existing account lectern lane. An
+ * unconfirmed append stays here with its check; the lane blocks other changes meanwhile. */
 export default function CollectionLecternDialog({ target, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly target: CollectionTarget;
   readonly title: string;
@@ -44,8 +45,7 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
     setSending(true);
     try {
       const outcome = await ctx.lectern.addCollection({ title: prepared.label, onAcknowledged: () => flushSync(onClose), request: { target, media_ids: prepared.media_ids, expected_order_revision: prepared.expected_order_revision } });
-      if (outcome === "Unconfirmed") onClose();
-      else if (outcome === "Superseded") setRefused(true);
+      if (outcome === "Superseded") setRefused(true);
     } catch (error) {
       const modeled = modeledApiError(error, fail);
       if (modeled !== null) setRefused(true);
@@ -73,7 +73,9 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
       {accountBusy ? <PaneLoadingState label="checking lectern…" announcement="Polite" /> : null}
       {accountError !== null ? <FeedbackNotice content={podcastErrorMessage(accountError, "couldn’t load lectern.")} announcement="Polite"
         actions={[{ label: "retry loading lectern", onClick: lectern.refetch, busy: accountBusy, disabledReason: accountBusy ? "checking lectern…" : undefined }]} /> : null}
-      {pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: pending.phase === "Unconfirmed" ? "change not confirmed" : "updating lectern…", message: pending.phase === "Unconfirmed" ? "the request may have succeeded. recovery remains available in workspace feedback." : "resolve this lectern request before adding another selection." }} announcement="Polite" /> : null}
+      {pending !== null ? <FeedbackNotice content={{ tone: "Warning", title: pending.phase === "Unconfirmed" ? "change not confirmed" : "updating lectern…", message: pending.phase === "Unconfirmed" ? "the request may have succeeded. checking retains the same reviewed order and items." : "resolve this lectern request before adding another selection." }} announcement="Polite"
+        actions={pending.phase === "Sending" ? undefined : [{ label: "check lectern change", busy: pending.phase === "Checking",
+          onClick: () => void pending.check().then(outcome => { if (outcome === "Superseded") setRefused(true); }, error => fail({ error })) }]} /> : null}
       {refused ? <FeedbackNotice content={{ tone: "Warning", title: "this selection needs another review", message: "the lectern or selected items changed. this confirmation is disarmed." }} announcement="Polite" actions={[{ label: "review selection again", onClick: reviewAgain, busy: reviewing, disabledReason: reviewing ? "checking lectern and selected items…" : sending || pending !== null ? "resolve the pending lectern change first." : undefined }]} /> : null}
       {connectionRequired ? <FeedbackNotice content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
       <div className={styles.actions}>

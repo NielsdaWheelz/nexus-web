@@ -24,6 +24,14 @@ from pydantic.fields import FieldInfo
 
 from nexus.api.edge import WIRE_REVISION
 from nexus.api.routes import create_api_router
+from nexus.schemas.authored import (
+    SnapshotFooter,
+    SnapshotHeader,
+    SnapshotLink,
+    SnapshotPassage,
+    SnapshotResource,
+    SnapshotSourceStub,
+)
 from nexus.schemas.conversation import (
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunContextRefAddedEventPayload,
@@ -43,6 +51,12 @@ from nexus.services.search.query import DiscoveryKind
 # Tool events use their public projections;
 # stored audit models never describe the wire.
 SSE_PAYLOADS = (
+    SnapshotHeader,
+    SnapshotResource,
+    SnapshotLink,
+    SnapshotPassage,
+    SnapshotSourceStub,
+    SnapshotFooter,
     WritingState,
     MediaProcessingSnapshotOut,
     MetadataEnrichmentView,

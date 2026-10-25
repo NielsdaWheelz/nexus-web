@@ -34,11 +34,12 @@ progress stay. exact already-restored replay is inert and proves a postcondition
 not which request caused it. revision rows and old epochs are never restored.
 
 the existing account consumption owner retains exact request bytes and received
-inverse receipts across pane navigation. the eight-second shortcut is separate
-from retained activity and collection-menu availability. each inverse has its own
+inverse receipts across pane navigation. an inverse is offered only by its
+subject's collection menu, never by a toast or global list. each inverse has its own
 `${applyKey}:undo` identity, named verb, acknowledged count and frozen scope;
-disjoint inverses remain distinct. discard removes only an available inverse.
-busy same-command offer/condition handoff preserves the action node and clock.
+disjoint inverses remain distinct; overlapping changes retire them. an
+unconfirmed apply stays on the subject's mark dialog with its exact retry and stop
+tracking; each failed attempt reports once.
 account teardown/reload ends them. `withProgressFence` flushes and pauses all
 matching holders before apply/undo; failed preparation sends nothing. successful
 prepared pairs reconcile afterward. conflicts require another review; no recapture
@@ -82,6 +83,6 @@ retains bytes/revision and blocks the lane. a newer read may supersede the inten
 it cannot establish acknowledgement. no second lane or automatic rebase exists.
 accepted membership intent records one durable suggestion input change, including
 a nonempty no-op; acknowledgement publishes lectern. the originating review closes
-synchronously through its identity-gated acknowledgement callback before the
-account owner settles its feedback condition with the exact added count. unrelated
-work remains in activity; another modal suppresses the peripheral receipt.
+synchronously through its identity-gated acknowledgement callback; the added items
+speak for the result. an unconfirmed append keeps the review dialog open with its
+check; the lane blocks other lectern changes until it settles.

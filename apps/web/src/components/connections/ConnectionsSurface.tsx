@@ -1,39 +1,33 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+// User links, mentions and embeds are local authored facts and render from the
+// device store online and offline. Server facts render in their own section,
+// which may fail without hiding local writing.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import LocalOutline from "@/components/notes/LocalOutline";
 import Button from "@/components/ui/Button";
-import ResourceOutlineList, {OutlineSessionScope, ResourceBranch} from "@/components/resources/ResourceOutlineList";
-import OutlineInsertionLine from "@/components/notes/OutlineInsertionLine";
-import {useOutlineSession} from "@/lib/notes/useOutlineSession";
-import {useResourceOutline} from "@/lib/resourceGraph/useResourceOutline";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  queryConnections,
-  subscribeLinkMutations,
-  type ConnectionOut,
-} from "@/lib/resourceGraph/links";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
+import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
-import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import RemoteConnections, { useRemoteConnections } from "./RemoteConnections";
 import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
 
-type ConnectionOperation = "Load" | "ScanStatus" | "StartScan";
-
-function connectionErrorMessage(error: unknown, operation: ConnectionOperation): FeedbackContent {
+function scanErrorMessage(error: unknown, operation: "ScanStatus" | "StartScan"): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = operation === "Load" ? "couldn’t refresh connections" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
+  const title = operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
   const transport = apiTransportFeedback(error, title);
   if (transport !== null) return transport;
   if (!["E_NOT_FOUND", "E_FORBIDDEN", "E_INVALID_REQUEST"].includes(error.code)) throw error;
@@ -46,32 +40,25 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
 }) {
   const selfRef = formatResourceRef(resourceRef);
   const section = useRef<HTMLElement>(null);
-  const active = usePaneIsActive();
   const attachments = useConnectionAttachments(selfRef);
-  const metadata = useChangeStamp("Notes", "NoteBodies", "Metadata");
+  const metadata = useChangeStamp("Metadata");
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
-  useEffect(() => subscribeLinkMutations(reload), [reload]);
-  const list = usePaneFreeServerList<ConnectionOut>({
-    key: `connections:both:owner:${selfRef}`,
-    stale: `${refreshKey}:${refreshTick}:${metadata}`,
-    pageSize: 100,
-    active,
-    id: (connection) => connection.edge_id,
-    fetchPage: async (cursor, limit, signal) => {
-      const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: Math.min(limit, 100), cursor }, signal);
-      return { items: page.items, next_cursor: page.next_cursor };
-    },
-  });
-  const loading = list.running === "Load" || list.running === "Refetch";
-  const loadError = list.failure?.op === "More" ? null : list.failure?.error ?? null;
+  const remote = useRemoteConnections(selfRef, `${refreshKey}:${refreshTick}:${metadata}`);
   const readFeedback = useCollectionReadFeedback({
-    list, unit: { singular: "connection", plural: "connections" }, waiting: false, outcome: null,
+    list: remote, unit: { singular: "connection", plural: "connections" }, waiting: false, outcome: null,
     returnFocus: () => section.current,
   });
+  const self = useAuthoredQuery({ kind: "resource", ref: selfRef });
+  const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
+  const mentions = useAuthoredPages({ kind: "backlinks", ref: selfRef, cursor: null, limit: 100 });
+  const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
+  const localError = self.error ?? linked.error ?? mentions.error;
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
+  const empty = linked.data?.rows.length === 0 && mentions.data?.rows.length === 0 && self.data !== null &&
+    embedded.length === 0 && remote.complete && remote.running === null && remote.items.length === 0;
 
   if (scan.defectState) throw scan.defectState.error;
   return (
@@ -89,36 +76,29 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
       {scanning && scan.feedback === null ? <FeedbackStatus content={{ tone: "Neutral", title: "finding connections…" }} announcement="Polite" /> : null}
       {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
-      {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
-      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
-      {list.complete && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
-      <ConnectionsItems selfRef={selfRef} items={list.items} reload={reload}/>
+      {localError ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t read connections on this device" }} announcement="Polite"
+        actions={[{ label: "retry", onClick: () => { self.retry(); linked.retry(); mentions.retry(); } }]} /> : null}
+      {empty ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None" /> : null}
+      <LocalOutline rootRef={selfRef} ancestors={[selfRef]} occurrencePrefix={`connections:${selfRef}`} />
+      {mentions.data?.rows.length ? <section aria-label="mentioned in">
+        <h3 className={styles.subtitle}>mentioned in</h3>
+        <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>
+          {mentions.data.rows.map(({ resource }) => <ResourceOutlineRow key={resource.ref} resourceRef={resource.ref}
+            occurrenceKey={`connections:${selfRef}/mention:${resource.ref}`} incoming={null} />)}
+        </ResourceOutlineList>
+        {mentions.data.next_cursor !== null ? <Button type="button" onClick={mentions.more}>show more</Button> : null}
+      </section> : null}
+      {embedded.length ? <section aria-label="embedded in this note">
+        <h3 className={styles.subtitle}>embedded in this note</h3>
+        <ResourceOutlineList scope={`embeds:${selfRef}`} ariaLabel="embedded in this note" ancestorRef={selfRef}>
+          {embedded.map((ref) => <ResourceOutlineRow key={ref} resourceRef={ref} occurrenceKey={`connections:${selfRef}/embed:${ref}`} incoming={null} />)}
+        </ResourceOutlineList>
+      </section> : null}
+      <RemoteConnections ownerRef={selfRef} occurrencePrefix={`connections:${selfRef}`} list={remote} onChanged={reload} />
       {readFeedback.notice}
       {readFeedback.announcement}
     </section>
   );
-}
-
-function ConnectionsItems({selfRef, items, reload}: {selfRef: string; items: readonly ConnectionOut[]; reload(): void}) {
-  const branch = useContext(ResourceBranch);
-  const scope = `connections:${selfRef}`;
-  const session = useOutlineSession({scope, inheritedBranch: branch});
-  const read = useResourceOutline(selfRef);
-  const {source, items: outlineItems, insertionSource, version, generation, complete, status} = read;
-  const adopt = session.adoptOutline;
-  useEffect(() => {adopt({source, items: outlineItems, insertionSource, version, generation, complete, status});},
-    [adopt, source, outlineItems, insertionSource, version, generation, complete, status]);
-  return <OutlineSessionScope session={session}>
-    <ResourceOutlineList scope={scope} ariaLabel="connections" ancestorRef={selfRef}
-      after={insertionSource ? <OutlineInsertionLine session={session} destination={{source: insertionSource,
-        position: null, occurrencePrefix: scope, path: []}}/> : null}>
-      {items.map(connection => <ResourceOutlineRow key={connection.edge_id} item={connection.other}
-        occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection}
-        incoming={{kind: "edge", edge_id: connection.edge_id, origin: connection.origin,
-          mutation: connection.mutation, creation: connection.creation}}
-        historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={reload}/>)}
-    </ResourceOutlineList>
-  </OutlineSessionScope>;
 }
 
 const DISCOVERY_SCAN_POLL_MS = 2000;
@@ -152,7 +132,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     setPhase("idle");
     if (handleUnauthenticatedApiError(error)) return;
     try {
-      setFeedback(connectionErrorMessage(error, operation));
+      setFeedback(scanErrorMessage(error, operation));
       setFailureOperation(isApiError(error) && ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"].includes(error.code) ? operation : null);
     }
     catch (error) { setDefectState({ error }); }

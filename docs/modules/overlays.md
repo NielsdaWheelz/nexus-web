@@ -190,8 +190,7 @@ which is on top. transients and tooltips render in their containing modal's pane
 (`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
 chrome (`--z-overlay`), below every modal. workspace receipts use a passive portal
 above chrome and below popovers; they own no overlay interaction and retire when
-a menu, picker or modal opens. explicit activity uses the existing dialog/sheet
-frames. the quick-note handoff input
+a menu, picker or modal opens. the quick-note handoff input
 (`--z-nexus`) stays above every frame. a page's own fixed shell (the `/share` card) takes no z-index, or it
 buries them. the app's body never scrolls (panes do); where a bundle lets it
 scroll (the android shelf), css locks it while any frame is open

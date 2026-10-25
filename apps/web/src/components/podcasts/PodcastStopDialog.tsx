@@ -8,6 +8,7 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Select from "@/components/ui/Select";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { podcastPendingNotice } from "@/lib/podcasts/commands";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -93,6 +94,7 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }:
   });
   const subject = `stop:${podcastId}`;
   const pending = ctx.podcasts.pending(subject);
+  const notice = pending === null ? null : podcastPendingNotice(pending);
   if (source.status !== "ready") return <>
     {source.status === "loading" ? <PaneLoadingState label="checking affected libraries and episodes…" announcement="Polite" />
       : <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t check affected libraries.")} announcement="Polite" actions={[{ label: "retry preview", onClick: source.refetch }]} />}
@@ -125,7 +127,9 @@ function StopReview({ podcastId, title, libraryId, episodes, onClose, onSaved }:
     </>}
     {preview.blocked.length > 0 ? <FeedbackNotice content={{ tone: "Warning", title: "this change needs a library admin.", message: preview.blocked.map(item => item.name).join(", ") }} announcement="Polite" /> : null}
     {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh this preview.")} announcement="Polite" /> : null}
-    {stale || pending !== null && pending.phase !== "Sending" ? <FeedbackNotice content={{ tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "the affected libraries changed. review them before confirming.", message: pending?.phase === "Unknown" ? "the request may have succeeded. recovery remains available in workspace feedback." : "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review this scope", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }] : undefined} /> : null}
+    {pending?.phase === "Unknown" && notice !== null ? <FeedbackNotice content={notice} announcement="Polite"
+      actions={[{ label: "check change", onClick: () => { void ctx.podcasts.check(pending.key); } }, { label: "stop tracking", onClick: () => ctx.podcasts.review(pending.key) }]} />
+      : stale || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "the affected libraries changed. review them before confirming.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review this scope", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }] : undefined} /> : null}
     <div className={styles.actions}>
       <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
         {episodes === "remove" ? `remove podcast and ${count} episodes${all ? " everywhere" : ""}` : all ? "unsubscribe" : "remove from library"}

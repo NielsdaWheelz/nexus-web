@@ -13,13 +13,9 @@ import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import {
-  apiFetch,
-  apiTransportFeedback,
   isApiError,
   isUnauthenticatedApiError,
 } from "@/lib/api/client";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import type { ApiJson } from "@/lib/api/wire";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
@@ -27,12 +23,13 @@ import { addMediaFromUrl } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
-import { canRetryWriting } from "@/lib/notes/writes";
+import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
+import { AuthoredProvider } from "@/lib/authored/provider";
+import { readBrowserBinding } from "@/lib/authored/binding";
+import { readDeviceStartup } from "@/lib/native/client";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
-import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
-import { WritingStatus } from "@/components/notes/NoteNotices";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
-import { WorkProvider } from "@/lib/unsavedWork";
+import { WorkProvider, useWorkGuard } from "@/lib/unsavedWork";
 import styles from "./share.module.css";
 
 type Result =
@@ -60,21 +57,35 @@ function failed(
   return { label, ok: false, retryable: true, review: isApiError(error) && ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), feedback };
 }
 
-/** Account reads and plain-text append retain ordinary transport/admission failures. */
-function captureTransportFeedback(error: unknown): FeedbackContent | null {
-  return isApiError(error) ? apiTransportFeedback(error, "Couldn’t save") : null;
-}
-
+type ShareAccount = { user_id: string; calendar_time_zone: string };
 export default function ShareCapture(props: { text: string; isShell: boolean }) {
-  return <WorkProvider><ShareCaptureContent {...props} /></WorkProvider>;
+  const plain = props.text.trim() !== "" && extractUrls(props.text).length === 0;
+  const [account, setAccount] = useState<ShareAccount | null>(null);
+  const [failure, setFailure] = useState<unknown | null>(null);
+  const [attempt, retry] = useState(0);
+  useEffect(() => {
+    if (!plain) return;
+    let active = true;
+    void (async () => {
+      const binding = "nexusAuthored" in window ? (await readDeviceStartup())?.binding ?? null : await readBrowserBinding();
+      if (!binding) throw new Error("open nexus once to prepare your notes on this device, then share again.");
+      if (active) { setAccount({user_id:binding.account.account_id,calendar_time_zone:binding.account.calendar_time_zone});setFailure(null); }
+    })().catch(error => {if(active)setFailure(error);});
+    return () => {active=false;};
+  },[plain,attempt]);
+  if (plain && failure) return <FeedbackState content={{tone:"Warning",title:"couldn’t open notes on this device",message:failure instanceof Error?failure.message:"open nexus and try again."}} announcement="Polite" actions={[{label:"retry",onClick:()=>retry(value=>value+1)}]} />;
+  if (plain && !account) return <FeedbackState content={{tone:"Neutral",title:"opening your notes…"}} announcement="None" />;
+  return <WorkProvider>{plain && account ? <AuthoredProvider accountId={account.user_id} host="share"><ShareCaptureContent {...props} account={account} /></AuthoredProvider> : <ShareCaptureContent {...props} account={null} />}</WorkProvider>;
 }
 
 function ShareCaptureContent({
   text,
   isShell,
+  account,
 }: {
   text: string;
   isShell: boolean;
+  account: ShareAccount | null;
 }) {
   const trimmed = text.trim();
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
@@ -91,56 +102,43 @@ function ShareCaptureContent({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard }>());
   const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
-  const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: ReturnType<typeof captureToday> } | null>(null);
+  const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: Promise<string>; failure: LocalCommitError | null } | null>(null);
   const sentAttempt = useRef<number | null>(null);
   const plainText = trimmed !== "" && urls.length === 0;
-  const account = usePaneFreeServerValue({
-    key: plainText ? "/me" : null,
-    stale: "",
-    load: (signal) =>
-      apiFetch<ApiJson<"/me", "get">>("/api/me", { signal }).then(
-        (body) => body.data,
-      ),
-  });
-  const timeZone =
-    account.status === "ready" ? account.data.calendar_time_zone : null;
-  const accountId = account.status === "ready" ? account.data.user_id : null;
-  useWritingRuntime(accountId);
+  const timeZone = account?.calendar_time_zone ?? null;
+  const accountId = account?.user_id ?? null;
+  const guard = useWorkGuard();
+  useEffect(() => {
+    if (!accountId) return;
+    const runtime = getWritingRuntime(accountId);
+    return guard.register({id:`share-writing:${accountId}`,scope:{kind:"account"},subscribe:runtime.subscribe,read:()=>({changed:runtime.snapshot().saving||runtime.snapshot().error!==null,unconfirmed:false,stopsBrowserWork:false})});
+  },[accountId,guard]);
 
   // One live attempt freezes its date, ids and text. Retries use its handle;
   // admission is never reported as a successful capture.
   useEffect(() => {
     if (!plainText || accountId === null || timeZone === null) return;
     let active = true;
+    const runtime = getWritingRuntime(accountId);
     if (note.current === null || note.current.accountId !== accountId) {
       const localDate = formatLocalDateInTimeZone(new Date(), timeZone);
       const noteId = crypto.randomUUID();
-      note.current = { accountId, localDate, noteId, capture: captureToday(localDate, noteId, trimmed) };
-    } else if (sentAttempt.current !== attempt) note.current.capture.write.retry();
+      note.current = {accountId,localDate,noteId,capture:captureToday(runtime,localDate,noteId,trimmed),failure:null};
+    } else if (sentAttempt.current !== attempt && note.current.failure) {
+      note.current.capture = note.current.failure.retry().then(() => "");
+      note.current.failure = null;
+    }
     sentAttempt.current = attempt;
-    const { localDate, capture } = note.current;
+    const current = note.current;
     setSaving(true);
-    const inspect = () => {
-      const state = capture.write.read();
-      if (!active || state.kind !== "unconfirmed") return;
-      setSaving(false);
-      const irreducible = !canRetryWriting(capture.write);
-      setResults([{ label: trimmed, ok: false, retryable: !irreducible, review: false,
-        feedback: { tone: "Warning", title: "save not confirmed", message: irreducible
-          ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded. retry sends the same capture." } }]);
-
-    };
-    const stop = capture.write.subscribe(inspect);
-    inspect();
-    void capture.settled.then(() => {
-      if (active) setResults([{ label: trimmed, ok: true, available: true, status: `saved to ${localDate}`, path: `/daily/${localDate}` }]);
-    }, (error: unknown) => {
-      if (!active) return;
-      try { setResults([{ ...failed(trimmed, error, () => captureTransportFeedback(error)), retryable: false }]); }
-      catch (thrown) { setDefect({ error: thrown }); }
-    }).finally(() => { if (active) setSaving(false); });
-    return () => { active = false; stop(); };
-  }, [plainText, accountId, timeZone, attempt, trimmed]);
+    void current.capture.then(() => {
+      if(active)setResults([{label:trimmed,ok:true,available:true,status:`saved to ${current.localDate}`,path:`/daily/${current.localDate}`}]);
+    }, (error:unknown) => {
+      if(error instanceof LocalCommitError)current.failure=error;
+      if(active)setResults([{label:trimmed,ok:false,retryable:error instanceof LocalCommitError,review:false,feedback:{tone:"Warning",title:"couldn’t save on this device",message:"keep this page open. retry saving."}}]);
+    }).finally(()=>{if(active)setSaving(false);});
+    return()=>{active=false;};
+  },[plainText,accountId,timeZone,attempt,trimmed]);
 
   if (defect !== null) throw defect.error;
 
@@ -271,10 +269,7 @@ function ShareCaptureContent({
   }
 
   const shown =
-    results ??
-    (account.status === "failed"
-      ? [failed(trimmed, account.error, () => captureTransportFeedback(account.error))]
-      : null);
+    results;
   if (shown === null) {
     return (
       <>
@@ -293,7 +288,6 @@ function ShareCaptureContent({
         setReviewUrls([result.label]);
       }, error => setDefect({ error })).finally(() => setSaving(false));
     } else if (urls.length > 0) void save([result.label]);
-    else if (account.status === "failed") account.refetch();
     else {
       setSaving(true);
       setAttempt((n) => n + 1);
@@ -301,7 +295,7 @@ function ShareCaptureContent({
   };
   const anySaved = shown.some((result) => result.ok && result.available);
   const signedOut = shown.some((result) => !result.ok && result.feedback.title === "Sign in to save this");
-  const captureState = note.current?.capture.write.read();
+  const captureFailed = note.current?.failure !== null;
   const copyCapture = () => {
     void copyText(trimmed).catch((error: unknown) => {
       if (!(error instanceof ClipboardWriteUnavailableError)) { setDefect({ error }); return; }
@@ -335,15 +329,14 @@ function ShareCaptureContent({
               <FeedbackNotice
                 content={result.feedback}
                 announcement="Assertive"
-                actions={result.retryable ? [{ label: result.review ? "review and save" : "retry same save", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }]
-                  : plainText && captureState?.kind === "unconfirmed" ? [{ label: "copy text", onClick: copyCapture }, { label: "reload", onClick: () => window.location.reload() }] : undefined}
+                actions={result.retryable ? [{ label: result.review ? "review and save" : "retry same save", onClick: () => retry(result), busy: saving }]
+                  : plainText && captureFailed ? [{ label: "copy text", onClick: copyCapture }] : undefined}
                 returnFocus={() => resultArea.current}
               />
             )}
           </div>
         ))}
       </div>
-      {plainText ? <WritingStatus /> : null}
       <div className={styles.actions}>
         <a
           className={anySaved ? styles.actionPrimary : styles.action}

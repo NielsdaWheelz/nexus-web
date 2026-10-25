@@ -45,7 +45,7 @@ from nexus.services.media_text_scope import (
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 if TYPE_CHECKING:
-    from nexus.services.note_bodies import NoteSource
+    from nexus.services.note_bodies import NoteRead
 
 TIMED_KINDS = ("transcript_time_range", "audio_time_range", "video_time_range")
 # Locator kinds whose offsets name their own words; the others borrow the captured quote.
@@ -535,7 +535,7 @@ class LocationReads:
     fragments: list[Any]
     pdfs: dict[UUID, Any]
     pages: list[Any]
-    notes: dict[UUID, NoteSource]
+    notes: dict[UUID, NoteRead]
     messages: dict[UUID, Any]
     passages: locator_resolver.PassageSourceReads
 
@@ -633,9 +633,9 @@ def location_reads(
         if pdf_ids
         else []
     )
-    from nexus.services.note_bodies import read_note_sources
+    from nexus.services.note_bodies import read_notes
 
-    notes = read_note_sources(db, viewer_id=viewer_id, note_ids=note_ids) if note_ids else {}
+    notes = read_notes(db, viewer_id=viewer_id, note_ids=note_ids)
     messages = (
         {
             row.id: row
@@ -676,8 +676,8 @@ def current_locator(
     target: CapturedPassageTarget, quote: CapturedQuote | None, reads: LocationReads
 ) -> dict[str, Any] | None:
     """The target's locator if it still names the same normalized words now (I7): text
-    offsets by their words (an X post by a unique requote); a note also by
-    ``body_version``, else a unique requote; a message whole only; pdf boxes by
+    offsets by their words (an X post by a unique requote); a note only by a unique
+    requote, since merged edits move its offsets; a message whole only; pdf boxes by
     publication identity, else a unique quote recovers the page; a time range by identity
     or exact unit bounds and words. ``None`` otherwise."""
     raw = target.locator.model_dump(mode="json")
@@ -761,17 +761,7 @@ def current_locator(
         return _with_words(raw, words)
     if kind == "note_block_offsets":
         note = reads.notes.get(owner.id)
-        if note is None:
-            return None
-        start, end = raw["start_offset"], raw["end_offset"]
-        words = note.body_text[start:end]
-        if (
-            raw.get("body_version") == note.body_version
-            and 0 <= start < end <= len(note.body_text)
-            and (exact is None or _normal(words) == _normal(exact))
-        ):
-            return _with_words(raw, words)
-        if exact is None:
+        if note is None or exact is None:
             return None
         match = text_quote.match_quote_in_sources(
             [
@@ -790,7 +780,7 @@ def current_locator(
             **raw,
             "start_offset": match.raw_start,
             "end_offset": match.raw_end,
-            "body_version": note.body_version,
+            "body_version": None,
         }
         return _with_words(located, note.body_text[match.raw_start : match.raw_end])
     if kind == "message_offsets":

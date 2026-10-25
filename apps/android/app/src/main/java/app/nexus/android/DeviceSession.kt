@@ -424,7 +424,8 @@ internal class DeviceSession private constructor(private val context: Context) {
     }
 
     /** Tombstone first; a crash repeats cleanup. Revocation is captured once and never retried. */
-    suspend fun signOut() = withContext(NonCancellable + Dispatchers.IO) {
+    suspend fun signOut(discardAuthored: Boolean = false) = withContext(NonCancellable + Dispatchers.IO) {
+        if (!discardAuthored) account?.let { app.nexus.android.authored.AuthoredBridge.requireDrained(context, it) }
         val running = synchronized(this@DeviceSession) {
             signOutJob?.takeIf { !it.isCompleted } ?: run {
                 signingOut = true
@@ -461,6 +462,7 @@ internal class DeviceSession private constructor(private val context: Context) {
 
     private suspend fun cleanup(stopJobs: Boolean) = withContext(NonCancellable) {
         account = null
+        app.nexus.android.authored.AuthoredBridge.purge(context)
         catalog.purge()
         if (stopJobs) OfflineJobService.stopForSignOut(context)
         OfflineStore.get(context).purge()

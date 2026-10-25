@@ -47,6 +47,7 @@ x-worker: &worker
     - ../apps/codex_agent:/app/apps/codex_agent:ro
     - ../node/ingest/ingest.mjs:/app/node/ingest/ingest.mjs:ro
     - ../node/ingest/article_extraction.mjs:/app/node/ingest/article_extraction.mjs:ro
+    - ../node/authored/helper.mjs:/app/node/authored/helper.mjs:ro
   init: true
   stop_grace_period: 30s
 

@@ -154,6 +154,7 @@ def build_reader_document(
         return ReaderPdfDocumentOut(
             kind="pdf",
             identity=f"g{generation}",
+            publication_generation=generation,
             title=title,
             page_count=media.page_count,
             file=pdf_file(),
@@ -166,6 +167,7 @@ def build_reader_document(
         return ReaderTextDocumentOut(
             kind=kind,
             identity=f"g{generation}",
+            publication_generation=None,
             title=title,
             units=units,
             sections=[
@@ -223,6 +225,7 @@ def build_reader_document(
     return ReaderTextDocumentOut(
         kind=kind,
         identity=f"g{generation}",
+        publication_generation=generation,
         title=title,
         units=units,
         sections=[

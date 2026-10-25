@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     private val nexusBaseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
     private val deviceSession by lazy { DeviceSession.get(this) }
     private val appRouter by lazy { AppRouter(this, deviceSession) }
+    private lateinit var authoredBridge: app.nexus.android.authored.AuthoredBridge
     private lateinit var appBridge: AppBridge
     private var authAttempt: DeviceSession.Attempt? = null
     private var browserWasPaused = false
@@ -120,7 +121,8 @@ class MainActivity : AppCompatActivity() {
         webView = WebView(this)
         NexusWebView.configure(webView)
         appBridge = AppBridge(webView, deviceSession, ::signIn, ::flushAppLink)
-        val bridgeAvailable = appBridge.install()
+        authoredBridge = app.nexus.android.authored.AuthoredBridge(webView, deviceSession)
+        val bridgeAvailable = appBridge.install() && authoredBridge.install()
         if (Build.VERSION.SDK_INT >= 34) {
             val store = OfflineStore.get(this)
             shelfRouter = ShelfRouter(this, store)
@@ -165,6 +167,7 @@ class MainActivity : AppCompatActivity() {
                 if (!request.isForMainFrame) {
                     return false
                 }
+                if (uri.host == SHELF_HOST && uri.path?.startsWith("/shelf/copies/") == true) return true
                 if (shelfActive) {
                     if (uri.host == SHELF_HOST) return false
                     openFromShelf(uri, Intent(Intent.ACTION_VIEW, uri))
@@ -184,6 +187,7 @@ class MainActivity : AppCompatActivity() {
                 appDocumentGeneration += 1
                 shelfActive = url?.let { Uri.parse(it).host } == SHELF_HOST
                 appBridge.onPageStarted()
+                authoredBridge.onPageStarted()
                 offline?.onPageStarted()
                 playerBridge.onPageStarted()
                 if (url?.let { appRouter.isAppRoute(Uri.parse(it)) } == true) {
@@ -472,6 +476,7 @@ class MainActivity : AppCompatActivity() {
         uri.scheme == "nexus" && uri.host == "auth"
 
     override fun onPause() {
+        authoredBridge.setForeground(false)
         if (authAttempt != null) browserWasPaused = true
         CookieManager.getInstance().flush()
         webView.onPause()
@@ -483,10 +488,12 @@ class MainActivity : AppCompatActivity() {
         super.onStart()
         connectPlayerController()
         playerBridge.setForeground(true)
+        authoredBridge.setForeground(true)
     }
 
     override fun onStop() {
         playerBridge.setForeground(false)
+        authoredBridge.setForeground(false)
         deviceSession.setForeground(false)
         // leaving the app: a sync pass adopts what was read online here as the
         // copies' baseline before the device can go offline (A2)
@@ -505,7 +512,7 @@ class MainActivity : AppCompatActivity() {
         }
         webView.onResume()
         webView.resumeTimers()
-        if (::appBridge.isInitialized) deviceSession.setForeground(true)
+        if (::appBridge.isInitialized) { deviceSession.setForeground(true); authoredBridge.setForeground(true) }
         if (browserWasPaused) {
             browserWasPaused = false
             // onNewIntent runs before onResume for an actual handoff; it retires authAttempt.
@@ -525,6 +532,7 @@ class MainActivity : AppCompatActivity() {
         authAttempt?.let(deviceSession::cancelAttempt)
         authAttempt = null
         appBridge.close()
+        authoredBridge.close()
         playerBridge.close()
         playerController?.release()
         playerController = null

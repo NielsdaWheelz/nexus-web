@@ -4,7 +4,8 @@
 // intent before claiming its delivery, so mobile unmount cannot consume it.
 // Acknowledgement retires replay, never the mounted inspection's signal. Failure
 // occurrences stay out of the visit; current status separates waiting work from
-// a settled refusal that reading input must preserve.
+// a settled refusal that reading input must preserve. A highlight is local authored
+// state: a media destination resolves it from the device, never the server.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
@@ -39,6 +40,7 @@ export interface SourceArrivalContext {
 
 export type SourceArrivalApplyTarget =
   | { readonly kind: "source"; readonly source: SourceTarget }
+  | { readonly kind: "highlight"; readonly highlight_id: string }
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
   | { readonly kind: "chat_destination"; readonly destination: ChatFindDestination; readonly leaf_id: string };
 
@@ -230,7 +232,10 @@ export function useSourceArrival(input: {
     const run = async () => {
       try {
         let target: SourceArrivalApplyTarget | null;
+        const local = intent.target.kind === "resource" && latest.current.runtime.routeId === "media" &&
+          intent.target.resource_ref.startsWith("highlight:") ? intent.target.resource_ref.slice("highlight:".length) : null;
         if (intent.target.kind === "reader_destination" || intent.target.kind === "chat_destination") target = intent.target;
+        else if (local !== null) target = { kind: "highlight", highlight_id: local };
         else {
           const destination = latest.current.runtime;
           const readingMediaId = destination.routeId === "media" && destination.resourceRef?.startsWith("media:")

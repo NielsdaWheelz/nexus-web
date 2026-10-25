@@ -1,0 +1,66 @@
+"use client";
+/** Elective signout freezes new local commands, drains its accepted prefix or
+ * obtains explicit discard, then retires before purge. Cancel resumes deferred
+ * preparation unchanged. A durable retirement marker owns interrupted cleanup. */
+import { FORMAT_REVISION } from "@nexus/authored/types";
+import { openAuthoredStore } from "./client";
+import { markBrowserRetiring, readBrowserRetiring, clearBrowserRetiring } from "./binding";
+import { closeWritingRuntime, discardWritingRuntime, hasUncommittedWriting } from "@/lib/notes/runtime";
+async function control(accountId: string, op: "pause_commands" | "retire", paused = false): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const worker = new SharedWorker("/_nexus/authored/worker.js", { type: "module", name: `nexus-authored-${accountId}-format-${FORMAT_REVISION}` });
+    const close = () => { clearTimeout(timer); worker.port.postMessage({ id: 3, op: "close" }); worker.port.close(); };
+    const timer = setTimeout(() => { close(); reject(new Error("couldn’t close local writing owners. close other nexus tabs and retry sign out.")); }, 30_000);
+    worker.port.onmessage = ({ data }) => {
+      if (data.kind === "retired" || data.id === 2 && data.ok) { close(); resolve(); }
+      else if (data.id === 1 && data.ok) worker.port.postMessage({ id: 2, op, paused });
+      else if (data.ok === false) { close(); reject(new Error(data.error)); }
+    };
+    worker.port.start(); worker.port.postMessage({ id: 1, op: "hello", account_id: accountId, format_revision: FORMAT_REVISION });
+  });
+}
+async function purgeBrowser(accountId: string): Promise<void> {
+  await control(accountId, "retire");
+  await discardWritingRuntime(accountId);
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(`nexus-authored-${accountId}`);
+    request.onsuccess = () => resolve(); request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("close other nexus tabs and retry sign out to finish removing local notes."));
+  });
+  await clearBrowserRetiring();
+}
+export async function finishBrowserRetirement(): Promise<boolean> {
+  const account = await readBrowserRetiring();
+  if (account === null) return false;
+  await purgeBrowser(account); return true;
+}
+export async function prepareAuthoredSignOut(accountId: string): Promise<boolean> {
+  const store = await openAuthoredStore(accountId);
+  const browser = !("nexusAuthored" in window);
+  let retiring = false;
+  if (browser) await control(accountId, "pause_commands", true);
+  try {
+    const replica = await store.readReplica();
+    let accepted = replica.command_seq === "0";
+    if (!accepted) {
+      try { await store.whenUploaded(replica.command_seq, AbortSignal.timeout(3000)); accepted = true; }
+      catch (error) { if (!(error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))) throw error; }
+    }
+    const unfinished = !accepted || hasUncommittedWriting();
+    if (browser || unfinished) {
+      const message = unfinished
+        ? "some changes are saved only on this device or are still saving. signing out removes them from this device and closes your notes in all nexus tabs.\n\ndiscard these changes and sign out?"
+        : "sign out on this device? this closes your notes in all nexus tabs. unfinished changes in those tabs will be discarded.";
+      if (!window.confirm(message)) return false;
+    }
+    if (browser) {
+      await markBrowserRetiring(accountId); retiring = true;
+      await purgeBrowser(accountId);
+    } else if (unfinished) await discardWritingRuntime(accountId);
+    else await closeWritingRuntime(accountId);
+    return true;
+  } finally {
+    if (browser && !retiring) await control(accountId, "pause_commands", false);
+    await store.close();
+  }
+}

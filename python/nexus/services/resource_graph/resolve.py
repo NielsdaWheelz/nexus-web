@@ -24,6 +24,7 @@ from nexus.services.contributor_credits import (
     media_author_names_agg_sql,
 )
 from nexus.services.media_read_map import load_media_document_summary
+from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.items import visible_refs
@@ -236,7 +237,7 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
             prefix=passage.quote.prefix or "",
             suffix=passage.quote.suffix or "",
             source_label=source,
-            note="\n\n".join(b.body_text for b in notes.get(id_, []) if b.body_text) or None,
+            note="\n\n".join(b.body_text for _, b in notes.get(id_, []) if b.body_text) or None,
         )
         out.append(
             ResolvedResource(
@@ -346,7 +347,7 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
     ),
     "content_chunk": (_owned_text_sql("content_chunks", "chunk_text", "NULL"), _owned_text),
     "page": (
-        "SELECT id, title FROM pages WHERE id = ANY(:ids)",
+        f"SELECT p.id, {page_title_sql('p')} AS title FROM pages p WHERE p.id = ANY(:ids)",
         _page,
     ),
     "note_block": (

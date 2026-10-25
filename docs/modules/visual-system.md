@@ -66,52 +66,36 @@ diagnostics and a second action expand on demand. navigation remains a link.
 inline disclosure pushes layout; the reader opts into the existing anchored
 surface. native menu and player controls retain their widget semantics.
 
-workspace feedback has two presentations. one passive floating receipt acknowledges
-an action without allocating layout space. activity lists current conditions and
-optional offers; it is not notification history. `FeedbackProvider` owns both
-above the document's writing owner and workspace failure containment. `workspaceSignals.ts`
-retains token-fenced publications; domain owners retain commands, exact receipts,
-validity, settlement and recovery.
+workspace feedback has one shared presentation: a passive transient card for one
+discrete action's outcome. it is not a list, inbox, undo inventory or history, and
+it owns no state. `FeedbackProvider` owns it above the document's writing owner and
+workspace failure containment; `transient.ts` holds the visible card and at most one
+pending outcome. durable failure and uncertainty stay with their command owner and
+render on the subject's own surface (its dialog, row, menu action or pane) with
+`FeedbackNotice`/`FeedbackStatus` and their recovery actions; the onset of such a
+failure may also report once through `receipt`. ordinary success is not announced:
+the resulting state speaks. the account's sync status is the account menu's first
+row, never a pane header.
 
-an actionless receipt lasts five visible seconds. an initial exact-undo shortcut
-or new intervention heads-up lasts eight. clocks start after eligible placement,
-use monotonic time and pause while hovered, focused, pressed, busy or hidden.
-there is one slot and no queue. engagement protects the exact command from later
-events. popup close/expiry never discard undo. menus, pickers, modals, phone text
-entry and insufficient geometry retire peripheral presentation without replay;
-retained activity survives. hidden documents pause an existing receipt and admit
-no new one. other retained offers do not suppress routine acknowledgments.
-
-owners explicitly project `needsAttention`; tone and priority cannot infer it.
-independent recovery tasks use separate condition keys; one task's admission
-change disables another task's retained action without replacing its node.
-a new key or false-to-true transition requests one heads-up; retry retains the
-same episode. `offer` requires an explicit undo invitation/retention classification
-and nullable discard callback. exact command keys preserve the action and remaining
-clock across offer/condition promotion. updates and owner withdrawal do not invoke
-discard. activity dismissal checks the current token and busy state before removing
-an optional offer and calling its discard callback. an inverse's visible control
-says `remove undo`; popup close never invokes it. required conditions have no
-generic dismissal. react owners use `useWorkspaceCondition`; live command owners
-use `retainCondition` and update/withdraw its exact handle. in activity, an
-unconfirmed write retains attention and its focused, busy retry through sending.
-only owner settlement removes required recovery.
-
-`ActivityControl` reserves rail/header space even when empty. its fixed badge
-shows attention count, otherwise an available-undo dot; the accessible name gives
-all current counts. `ActivityList` groups attention, other conditions, available
-undo and other offers under one flat keyed parent. engagement freezes order;
-command nodes survive classification changes. desktop activity uses `Dialog`,
-phone activity uses `MobileSheet`, and nexus renders the same list inside its
-existing host. opening activity clears the popup. navigation closes its host;
-row removal keeps focus within the list. close returns to a visible opener,
-visible activity control or the workspace destination, never hidden reader chrome.
+`receipt(content, action?)` takes full content and at most one action. an actionless
+card lasts five visible seconds, one with an action eight. clocks start after
+eligible placement, use monotonic time and pause while hovered, focused, pressed or
+hidden. a newer outcome replaces the visible one and any waiting one. a card larger
+than its area scrolls inside it; only a missing area retires it. a non-success outcome that cannot show yet (hidden tab, open
+menu/picker/modal, phone text entry, held card), or that one of those blockers
+displaces, waits as the single pending outcome and shows when the workspace is
+unblocked; a success that cannot show is skipped. `receipt` returns a retraction:
+an owner withdraws its report, waiting or shown, once that state retries or resolves,
+so a deferred card never shows stale. a returning card does not announce again. activating the
+card's action closes it; the action's owner reports what follows. `commandKey` on
+any action names its exact command, so a held control never silently changes
+meaning.
 
 `WorkspaceFeedback.tsx` owns passive placement: desktop upper-right inside the
 active pane content/workspace/visual-viewport intersection; phone below the
 stationary header/control endpoints at `--mobile-feedback-top`. it never registers
-as chrome or an interaction-owning overlay. the complete wrapping card must fit;
-otherwise presentation retires. it uses shared surface, edge, shadow, radius and
+as chrome or an interaction-owning overlay. the card is bounded by that area and
+scrolls within it; with no area it retires. it uses shared surface, edge, shadow, radius and
 control tokens, with no severity ornament or countdown. it sits above chrome and
 below popovers. escape closes only from within the card.
 

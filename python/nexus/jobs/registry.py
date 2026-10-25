@@ -167,12 +167,6 @@ def registry() -> dict[str, JobDefinition]:
             retry_delays=(120, 600, 1800),
             periodic_seconds=s.atlas_project_schedule_seconds or None,
         ),
-        "empty_resource_cleanup": JobDefinition(
-            "background",
-            "nexus.services.empty_resource_cleanup:run_job",
-            periodic_seconds=7 * 86400,
-            keep_dead=True,
-        ),
         "storage_orphan_sweep": JobDefinition(
             "background",
             "nexus.tasks.storage_orphan_sweep:storage_orphan_sweep",

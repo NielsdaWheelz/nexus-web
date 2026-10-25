@@ -892,10 +892,10 @@ export default function StatsPaneBody() {
   const initialLoading = data === null && stats.status === "loading";
   usePaneReturnReady(!initialLoading);
 
+  // The refreshed timeline shows a landed correction; only a failure reports.
   const correct = async (
     send: () => Promise<void>,
     confirmation: string,
-    success: string,
   ) => {
     if (!mounted.current || correcting || !window.confirm(confirmation)) return;
     setCorrecting(true);
@@ -903,13 +903,12 @@ export default function StatsPaneBody() {
       await send();
       if (!mounted.current) return;
       publishChange("Consumption");
-      feedback.receipt({ tone: "Success", title: success });
     } catch (error) {
       if (!mounted.current) return;
       if (handleUnauthenticatedApiError(error)) return;
       const failure = correctionFailure(error);
       if (failure === null) return fail({ error });
-      feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: "consumption-activity-correction", announcement: "Polite", content: { tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined } });
+      feedback.receipt({ tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined });
       if (failure === STALE) publishChange("Consumption");
     } finally {
       if (mounted.current) setCorrecting(false);
@@ -937,7 +936,6 @@ export default function StatsPaneBody() {
     void correct(
       send,
       `Don’t count this ${duration(row.active_ms)} session?`,
-      "Session excluded",
     );
   };
   const restore = (row: Exclusion) =>
@@ -947,7 +945,6 @@ export default function StatsPaneBody() {
           method: "DELETE",
         }),
       `Count this ${duration(row.excluded_active_ms)} session again?`,
-      "Session restored",
     );
 
   const yearView = view.view === "year";

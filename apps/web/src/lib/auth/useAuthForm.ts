@@ -29,7 +29,7 @@ export function useAuthForm<Kind extends string>(
   async function submit(
     event: FormEvent<HTMLFormElement>,
     success: string,
-    options: { replace?: boolean; validate?: () => boolean } = {},
+    options: { replace?: boolean; validate?: () => boolean; beforeSubmit?: () => Promise<void> } = {},
   ) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -43,6 +43,7 @@ export function useAuthForm<Kind extends string>(
       if (options.validate && !options.validate()) return;
       inFlight.current = true;
       setPending(true);
+      await options.beforeSubmit?.();
       let response: Response;
       try {
         response = await fetch(form.action, {

@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session
 from nexus.errors import NotFoundError
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import FragmentAnchorOut, TypedHighlightOut
-from nexus.schemas.notes import Position
 from nexus.schemas.reader_document_map import (
+    Position,
     ReaderAuthoredPlacementOut,
     ReaderChildContinuationOut,
     ReaderDirectFactOut,
@@ -142,7 +142,6 @@ def build_reader_evidence(
             content=ReaderEvidenceHighlightOut(
                 item=items[ref],
                 highlight_id=highlight.id,
-                version=highlight.version,
                 quote=highlight.exact,
                 prefix=highlight.prefix,
                 suffix=highlight.suffix,
@@ -241,10 +240,7 @@ def build_reader_evidence(
                 root.continuation = (
                     ReaderSiblingContinuationOut(
                         source=endpoint,
-                        position=Position(
-                            after=connection.edge_id,
-                            expected_links_version=connections.links_version,
-                        ),
+                        position=Position(after=connection.edge_id),
                     )
                     if root.resolution is None
                     else _child_continuation(
@@ -265,9 +261,7 @@ def build_reader_evidence(
             root.authored_placement = ReaderAuthoredPlacementOut(
                 endpoint=endpoint.ref,
                 link_id=connection.edge_id,
-                position=Position(
-                    after=predecessor, expected_links_version=connections.links_version
-                ),
+                position=Position(after=predecessor),
             )
         if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):
             root.direct_facts.append(

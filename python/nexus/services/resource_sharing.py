@@ -74,7 +74,9 @@ def _unavailable(
     media_id, owner_id = subject.id, viewer_id
     if subject.scheme == "highlight":
         owned_by = select(Highlight.anchor_media_id, Highlight.user_id)
-        row = db.execute(owned_by.where(Highlight.id == subject.id)).one_or_none()
+        row = db.execute(
+            owned_by.where(Highlight.id == subject.id, Highlight.authored_visible)
+        ).one_or_none()
         if row is None:
             raise _not_found()
         media_id, owner_id = row

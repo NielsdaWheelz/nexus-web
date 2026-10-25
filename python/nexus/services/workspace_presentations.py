@@ -61,28 +61,6 @@ def read_presentations(
         daily_bindings = {row.local_date: row.page_id for row in rows}
         ids["page"].update(daily_bindings.values())
 
-    # Version reads must never create the lane. The text owners start absent
-    # lanes at 1; read title/body and its version in this same snapshot.
-    versions: dict[str, int] = {}
-    if ids["page"] or ids["note_block"]:
-        rows = db.execute(
-            text("""
-                SELECT resource_scheme, resource_id, version FROM resource_versions
-                WHERE user_id = :viewer_id AND (
-                    (resource_scheme = 'page' AND lane = 'title'
-                        AND resource_id = ANY(:page_ids))
-                    OR (resource_scheme = 'note_block' AND lane = 'body'
-                        AND resource_id = ANY(:note_ids))
-                )
-            """),
-            {
-                "viewer_id": viewer_id,
-                "page_ids": list(ids["page"]),
-                "note_ids": list(ids["note_block"]),
-            },
-        )
-        versions = {f"{row.resource_scheme}:{row.resource_id}": row.version for row in rows}
-
     facts: dict[str, WorkspacePresentationOut] = {}
     if ids["media"]:
         rows = db.execute(
@@ -154,9 +132,7 @@ def read_presentations(
     if ids["page"]:
         for page_id, page in notes.page_facts(db, viewer_id, list(ids["page"])).items():
             ref = f"page:{page_id}"
-            facts[ref] = WorkspacePresentationOut(
-                resource_ref=ref, title=page.title, text_version=versions.get(ref, 1)
-            )
+            facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=page.title)
 
     if ids["note_block"]:
         rows = db.execute(
@@ -164,7 +140,7 @@ def read_presentations(
                 SELECT id, left(btrim(regexp_replace(
                     split_part(body_text, chr(10), 1), :whitespace, ' ', 'g'
                 )), 513) AS title
-                FROM note_blocks WHERE id = ANY(:ids) AND user_id = :viewer_id
+                FROM note_blocks WHERE id = ANY(:ids) AND user_id = :viewer_id AND authored_visible
             """),
             {
                 "ids": list(ids["note_block"]),
@@ -175,9 +151,7 @@ def read_presentations(
         for row in rows:
             ref = f"note_block:{row.id}"
             title = row.title if len(row.title) <= 512 else row.title[:511] + "…"
-            facts[ref] = WorkspacePresentationOut(
-                resource_ref=ref, title=title, text_version=versions.get(ref, 1)
-            )
+            facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=title)
 
     if ids["oracle_reading"]:
         rows = db.execute(
@@ -218,14 +192,10 @@ def read_presentations(
             ref = author_refs.get(locator.handle)
             presentation = facts.get(ref) if ref is not None else None
         else:
+            # an unbound or deleted day presents latently; opening it writes nothing.
             page_id = daily_bindings.get(locator.local_date)
-            if page_id is not None:
-                presentation = facts.get(f"page:{page_id}")
-            else:
-                presentation = WorkspacePresentationOut(
-                    resource_ref=None,
-                    title=notes.daily_page_title(locator.local_date),
-                    text_version=1,
-                )
+            presentation = facts.get(f"page:{page_id}") or WorkspacePresentationOut(
+                resource_ref=None, title=notes.daily_page_title(locator.local_date)
+            )
         items.append(WorkspacePresentationItemOut(locator=locator, presentation=presentation))
     return WorkspacePresentationsOut(items=items)

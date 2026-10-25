@@ -23,8 +23,8 @@ server components: callFastAPI ────────────────�
   call carries `X-Nexus-Wire`; a supplied sealed revision must match this build
   and is never rewritten; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
   request id comes from the body, else the `x-request-id` header). A 426 reloads
-  the tab once per (tab, build), unless authored memory or incompatible/sealed
-  pending writing holds reload: a `sessionStorage` marker holds the bundle's
+  the tab once per (tab, build), unless uncommitted writing or incompatible/sealed
+  submitted work holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
   every 426 reads "Nexus was updated. Reload this page to continue."
   (`STALE_BUILD_FEEDBACK`: the notice's title, whatever failed, with reload as
@@ -64,8 +64,8 @@ server components: callFastAPI ────────────────�
   until its own snapshot exists. `requestedKey` names that requested scope, even
   before a response; initial-wait feedback uses it to retire abandoned queries. private exact-key visit snapshots remain valid. strict
   refresh supersedes; periodic `revalidate()` waits behind admitted reads and
-  coalesces observations. `usePagePrefix` belongs only to explicit authored
-  outline branches.
+  coalesces observations. these hooks serve server-owned domains. authored
+  resources, adjacency, search and references always query the durable local owner.
   installed catalog loaders are explicit local reads, separate from `apiFetch`.
   values, lists and retained snapshots identify their live/catalog source; a
   complete saved result stages a complete live reread before promotion. local
@@ -185,3 +185,22 @@ updated; the extension shows "Update the Nexus extension to keep capturing."
   an asset answer that writes no cookie, which keeps FastAPI's own policy.
 - I10 a wire mismatch is refused with 426 before routing, on every lane that
   carries a client build.
+
+## authored transport
+
+all authenticated `/authored` routes require `X-Nexus-Account` matching the verified
+viewer. the header is a local-binding assertion, never another identity authority;
+wrong or missing assertions return 403 before a transaction. wire mismatch remains
+426, invalid authored schema 400, source gaps/foreign identities 409.
+
+`POST /authored/replicas` admits a fresh replica; `POST /authored/changes` retries
+immutable contiguous source commands. accepted prefixes are compared and skipped.
+`GET /authored/changes?after=…` captures one head and returns a bounded complete
+ascending prefix, never a cursor past unapplied commands.
+
+`GET /authored/snapshot` uses a dedicated streaming bff route with `Stream`,
+`maxDuration=300`, no buffering and no-store/no-transform. its ndjson header and
+footer repeat the same repeatable-read head/lamport; the footer includes exact
+counts. cancellation closes its server transaction even if the iterator is
+suspended. the existing 280-second stream deadline still applies. writing-stream
+`state {revision}` now carries the account feed head and is only a catch-up hint.

@@ -3,7 +3,6 @@ import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 // Launcher composition: local navigation, resources and evidence have separate budgets.
 // Selection preserves identity; deliberate movement also pins the visible prefix.
 import {
-  Activity,
   FilePlus2,
   FileText,
   Globe,
@@ -23,6 +22,7 @@ import {
 } from "@/lib/panes/paneRouteModel";
 import { parseResourceRef, resourceIconForScheme, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceItem } from "@/lib/resources/items";
+import type { LocalMatch } from "@/lib/search/localSearch";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { searchHref } from "@/lib/search/searchParams";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -53,7 +53,7 @@ const TIERS: readonly NexusRankTier[] = [
   "FuzzyOrSynonym",
   "MetadataOrFullText",
 ];
-const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "ManageTabs", "Activity", "Continuation"];
+const KEY_KINDS = ["Pane", "Destination", "Resource", "QuickAction", "ImportUrl", "Intent", "ManageTabs", "Continuation"];
 const UNRANKED = { tier: "CurrentContext", score: 0, frecency: 0 } as const;
 const MOBILE_PLACES: readonly DestinationId[] = ["lectern", "libraries", "browse", "podcasts", "chats", "notes"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
@@ -177,13 +177,6 @@ function appendToToday(text: string): NexusAction {
   };
 }
 
-function activityRow(tier: NexusRankTier): NexusRow {
-  return { key: "Activity", existing: true, label: "activity", icon: Activity,
-    action: { kind: "Available", target: { kind: "Activity" } },
-    rank: { tier, score: 0, frecency: 0 },
-  };
-}
-
 function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
   const { intent, text } = query;
   const explicit: NexusRow[] = [];
@@ -249,8 +242,6 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
           const tier = textTier(text, NEXUS_COMMANDS[id].label, { aliases: NEXUS_COMMANDS[id].keywords });
           return tier ? [commandRow(id, tier, "")] : [];
         });
-  const activityTier = intent.kind === "Search" ? textTier(text, "activity", { aliases: ["needs attention", "undo", "current status", "updates"] }) : null;
-  if (activityTier) explicit.push(activityRow(activityTier));
   const unique = new Map<string, NexusRow>();
   for (const row of [...explicit, ...places, ...commands]) if (!unique.has(row.key)) unique.set(row.key, row);
   for (const row of tabs) {
@@ -292,7 +283,26 @@ function resourceRow(item: ResourceItem, home: NexusHomeSection, panes: readonly
   };
 }
 
-/** Server order is authoritative inside each resource band; only local navigation ranks here. */
+/** A local authored match: canonical label, literal excerpt and its exact target. */
+function localRow(match: LocalMatch, home: NexusHomeSection, panes: readonly NexusPane[]): NexusRow {
+  const ref = match.resource.ref;
+  const matching = panes.filter((candidate) => candidate.resourceRef === ref);
+  const pane = matching.find((pane) => pane.current) ?? matching[0];
+  const excerpt = match.excerpt;
+  return {
+    key: `Resource:${ref}`, existing: true, label: match.label,
+    icon: resourceIconForScheme(parseResourceRef(ref)!.scheme), type: resourceTypeLabel(parseResourceRef(ref)!.scheme),
+    detail: excerpt === null ? undefined : `${excerpt.before ? "…" : ""}${excerpt.text}${excerpt.after ? "…" : ""}`,
+    state: pane ? tabState(pane) : undefined,
+    action: match.href === null ? { kind: "Unavailable", reason: "source unavailable" }
+      : { kind: "Available", target: { kind: "InternalHref", href: match.href, labelHint: match.label } },
+    secondary: resourceMenu(ref, matching),
+    source: "Search", rank: { ...UNRANKED, tier: "MetadataOrFullText" }, placement: { home, promoted: false },
+  };
+}
+
+/** Local authored matches lead the resource band; server order is authoritative after
+ * them; only local navigation ranks here. */
 export function candidateRows(input: {
   readonly query: NexusQuery;
   readonly panes: readonly NexusPane[];
@@ -300,20 +310,26 @@ export function candidateRows(input: {
   readonly preview: Schema<"SearchPreviewResponse"> | null;
   readonly reference: ResourceItem | null;
   readonly referenceFailed: boolean;
+  readonly local: readonly LocalMatch[];
+  readonly localReference: LocalMatch | null;
+  readonly localReferenceMissing: boolean;
   readonly retained: readonly NexusRow[];
 }): NexusRow[] {
   const { query, panes, frecency, preview } = input;
   if (!query.text) return [];
   if (query.intent.kind === "Resource") {
-    const row = input.reference ? resourceRow(input.reference, "Commands", panes) : {
+    const row = input.localReference ? localRow(input.localReference, "Commands", panes)
+      : input.reference ? resourceRow(input.reference, "Commands", panes) : {
       key: `Resource:${query.intent.ref}`, existing: true, label: query.intent.ref,
       icon: resourceIconForScheme(parseResourceRef(query.intent.ref)!.scheme),
-      action: { kind: "Unavailable", reason: input.referenceFailed ? "resource lookup failed" : "looking up resource…" },
+      action: { kind: "Unavailable", reason: input.localReferenceMissing ? "not on this device"
+        : input.referenceFailed ? "resource lookup failed" : "looking up resource…" },
       placement: { home: "Commands", promoted: false },
     } satisfies Partial<NexusRow>;
     return [{ ...row, rank: { tier: "ExplicitIntent", score: 0, frecency: 0 } }];
   }
   const rows = localRows(query, panes, frecency);
+  for (const match of input.local) rows.push(localRow(match, "Resources", panes));
   for (const result of [...(preview?.resources ?? []), ...(preview?.saved ?? [])]) {
     rows.push({
       ...resourceRow(result.item, result.section === "saved" ? "Saved" : "Resources", panes),
@@ -387,7 +403,7 @@ export function mergeResults(previous: NexusList, identity: string, candidates: 
   if (stable.length === 0) {
     const promoted = rows.find((row) => row.rank.tier === "ExplicitIntent")
       ?? rows.find((row) => row.placement?.home === "Commands" && row.rank.tier === "Exact"
-        && (row.key === "Activity" || row.key.startsWith("Destination:") || row.key.startsWith("QuickAction:")))
+        && (row.key.startsWith("Destination:") || row.key.startsWith("QuickAction:")))
       ?? rows.find((row) => row.placement?.home === "Resources" && row.rank.tier === "Exact");
     if (promoted) {
       rows.splice(rows.indexOf(promoted), 1);
@@ -524,7 +540,6 @@ export function nexusGroups(input: {
     command("Nexus.Quick.Page"),
     command("Nexus.Quick.Library"),
     command("Nexus.Quick.Import"),
-    activityRow("CurrentContext"),
   ];
   const openGroup = group("Open", "Open", open);
   const continueGroup = group("Continue", "Continue", input.playback ? [input.playback] : []);
@@ -557,7 +572,7 @@ function mobileOverview(input: {
   const place = (id: DestinationId) => mobileRow(placeRow(getDestination(id), "CurrentContext", input.frecency));
   return [
     { id: "Open", label: "open tabs", rows: visible.slice(start, start + 3).map((pane) => tabRow(pane, "CurrentContext", input.frecency)) },
-    { id: "Places", label: "places", rows: [...MOBILE_PLACES.map(place), activityRow("CurrentContext")] },
+    { id: "Places", label: "places", rows: MOBILE_PLACES.map(place) },
     { id: "QuickActions", label: "", rows: [
       place("today"),
       { key: "QuickAction:New", existing: false, label: "new…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },

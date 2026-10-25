@@ -56,6 +56,9 @@ export interface LocalItem {
   readonly saved_at: string | null;
   /** Non-null only for a Ready reading copy. */
   readonly progress: LocalProgress | null;
+  /** The publication generation the device pinned when it saved a reading copy: positive for a
+   * Ready copy, whose offsets address exactly it; 0 before publication and for episodes. */
+  readonly generation: number;
   /** The immutable acquisition a Ready episode plays; null before publication and for copies. */
   readonly package_id: string | null;
   /** Episodes with a capture (always when Ready); null before capture and for copies. */
@@ -173,13 +176,16 @@ function decodeProgress(raw: unknown, name: string): LocalProgress | null {
 function decodeItem(raw: unknown, index: number): LocalItem {
   const name = `items[${index}]`;
   const value = expectExactRecord(raw, ["media_id", "kind", "title", "state", "failure", "attempts", "received", "total",
-    "size_bytes", "saved_at", "progress", "package_id", "extras"], name);
+    "size_bytes", "saved_at", "progress", "package_id", "extras", "generation"], name);
   const kind = expectOneOf(value.kind, KINDS, `${name}.kind`);
   const state = expectOneOf(value.state, ["Queued", "Downloading", "Ready", "Failed", "Removing"] as const, `${name}.state`);
   const extras = value.extras === null ? null : expectExactRecord(value.extras, ["artwork", "transcript"], `${name}.extras`);
   // Episode extras exist once a capture does (always when Ready); copies never have them.
   if (kind !== "podcast_episode" ? extras !== null : state === "Ready" && extras === null)
     throw new TypeError(`${name}.extras must be present for a ready episode and absent for a copy`);
+  const generation = expectNonnegativeInteger(value.generation, `${name}.generation`);
+  if (kind !== "podcast_episode" && state === "Ready" && generation === 0)
+    throw new TypeError(`${name}.generation must be positive for a ready reading copy`);
   return {
     media_id: expectCanonicalRfcUuid(value.media_id, `${name}.media_id`),
     kind,
@@ -193,6 +199,7 @@ function decodeItem(raw: unknown, index: number): LocalItem {
     saved_at: value.saved_at === null ? null : expectIsoInstant(value.saved_at, `${name}.saved_at`),
     progress: decodeProgress(value.progress, `${name}.progress`),
     package_id: value.package_id === null ? null : expectCanonicalRfcUuid(value.package_id, `${name}.package_id`),
+    generation,
     extras: extras === null ? null : { artwork: decodeExtra(extras.artwork, `${name}.extras.artwork`), transcript: decodeExtra(extras.transcript, `${name}.extras.transcript`) },
   };
 }

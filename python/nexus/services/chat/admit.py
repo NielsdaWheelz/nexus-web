@@ -45,6 +45,7 @@ from nexus.schemas.llm import (
     Ineligible,
     InvalidGenerationSelection,
 )
+from nexus.services import authored
 from nexus.services.chat import citations, context, events, quotes, reads
 from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
 from nexus.services.generation.catalog import (
@@ -359,13 +360,16 @@ def _branch_anchor(
 def _quote(
     db: Session, viewer_id: UUID, conversation_id: UUID, selection: ReaderSelectionInput
 ) -> dict[str, object]:
-    """Snapshot the locked highlight; link it and its media into the chat's context."""
+    """Snapshot the highlight under the account head; link it and its media into the chat.
+
+    The head, after the chat and media locks, fences the highlight projection: only the
+    head-locked authored projection writes it, so no projection row is locked here."""
 
     from nexus.services.library_entries import lock_media_for_reference
 
     key = selection.key
     lock_media_for_reference(db, key.media_id)
-    db.execute(text("SELECT 1 FROM highlights WHERE id = :id FOR UPDATE"), {"id": key.highlight_id})
+    authored.lock_account(db, viewer_id)
     snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, key=key)
     if quotes.revision(snapshot) != selection.revision:
         raise ApiError(

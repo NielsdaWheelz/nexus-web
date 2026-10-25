@@ -1,43 +1,29 @@
-"""The note row: its text projection, persistence, embed facts and teardown.
+"""Server reads of the note projection, its derived embed facts and tool-created bodies.
 
-I1: ``body_text == text_from_pm_json(body_pm_json)``. The browser mirrors the projection
-byte for byte (``lib/notes/noteBody.ts``) for offsets; ``body_text`` is the search,
-passage-anchor and content-index basis.
-I3: every body change (create or write) bumps the ``body`` lane, replaces the note's
-``note_body`` embed edges and enqueues ``note_reindex_job``.
-I9: a missing version row reads as 1; ``bump_version`` creates it first.
-
-Retry rules: ``ensure_note`` creates under the client id, an existing own note is reused
-unchanged and another owner's id is 409; ``write_body`` is absolute (current == desired
-succeeds whatever the version, else the expected version must match: 409 with the
-current note); ``delete_note`` is idempotent.
+``body_pm_json`` and ``body_text`` are projections the shared kernel derives from the
+note's canonical Yjs state (``node/authored``); python never recomputes either. Readers
+see only ``authored_visible`` notes. ``note_body`` facts are rebuilt from the kernel's
+``embedded_refs`` inside each projecting transaction; they carry no visibility gate of
+their own, because every reader filters endpoint liveness and access.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NoteBlock, ResourceVersion
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.notes import NoteBlockOut
-from nexus.services import authored_identities, writing
-from nexus.services.content_indexing import IndexOwner, delete_content_index
-from nexus.services.note_indexing import enqueue_note_reindex
-from nexus.services.resource_graph import retention
-from nexus.services.resource_graph.cleanup import (
-    delete_edges_for_deleted_resource,
-    delete_resource_protocol_state,
+from nexus.db.models import NoteBlock, ResourceEdge, ResourceViewState
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    assert_resource_ref,
+    parse_resource_ref,
 )
-from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
 
 
@@ -45,291 +31,96 @@ def note_ref(note_id: UUID) -> ResourceRef:
     return ResourceRef(scheme="note_block", id=note_id)
 
 
-def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
-    """Plain text as one paragraph; newlines become hard breaks, brackets stay literal."""
+def markdown_body(markdown: str) -> dict[str, Any]:
+    """A tool's literal text as one canonical prose body: newlines become hard breaks and
+    brackets stay literal. The kernel validates it in the creating command."""
     content: list[dict[str, Any]] = []
     for index, line in enumerate(markdown.split("\n")):
         if index:
             content.append({"type": "hard_break"})
         if line:
             content.append({"type": "text", "text": line})
-    return {"type": "paragraph", "content": content} if content else {"type": "paragraph"}
+    return {"type": "body", "attrs": {"presentation": "prose"}, "content": content}
 
 
-def text_from_pm_json(value: object) -> str:
-    parts: list[str] = []
-
-    def visit(node: object) -> None:
-        if isinstance(node, list):
-            for child in node:
-                visit(child)
-            return
-        if not isinstance(node, dict):
-            return
-        kind, attrs = node.get("type"), node.get("attrs")
-        if kind == "text" and isinstance(node.get("text"), str):
-            parts.append(node["text"])
-        elif kind == "object_embed" and isinstance(attrs, dict):
-            label = attrs.get("label") or f"{attrs.get('objectType')}:{attrs.get('objectId')}"
-            if isinstance(label, str):
-                parts.append(label)
-        elif kind == "image" and isinstance(attrs, dict) and isinstance(attrs.get("alt"), str):
-            parts.append(attrs["alt"])
-        elif kind == "hard_break":
-            parts.append("\n")
-        visit(node.get("content"))
-        if kind in ("paragraph", "code_block"):
-            parts.append("\n")
-
-    visit(value)
-    return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
-
-
-def note_exists(db: Session, *, viewer_id: UUID, note_id: UUID) -> bool:
-    """Whether the viewer has this note; another owner's id is 409."""
-    block = db.get(NoteBlock, note_id)
-    if block is not None and block.user_id != viewer_id:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note id is taken")
-    return block is not None
-
-
-def owned_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlock:
-    block = db.get(NoteBlock, note_id)
-    if block is None or block.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-    return block
-
-
-def read_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlockOut:
-    note = read_notes(db, viewer_id=viewer_id, note_ids=[note_id]).get(note_id)
-    if note is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-    return note
-
-
-def read_notes(
-    db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
-) -> dict[UUID, NoteBlockOut]:
-    rows = _read_note_rows(db, viewer_id, note_ids)
-    from nexus.services.resource_items.items import resource_items_out
-
-    targets = {note_id: _embeds(body) for note_id, body, _, _ in rows}
-    embedded = {
-        item.ref: item
-        for item in resource_items_out(
-            db,
-            viewer_id=viewer_id,
-            refs=list({ref.uri: ref for refs in targets.values() for ref in refs}.values()),
-        )
-    }
-    return {
-        note_id: NoteBlockOut(
-            id=note_id,
-            body_pm_json=body,
-            body_text=body_text,
-            body_version=version,
-            embedded_item=embedded.get(targets[note_id][0].uri) if targets[note_id] else None,
-        )
-        for note_id, body, body_text, version in rows
-    }
+def sole_embed(body_pm_json: dict[str, Any]) -> ResourceRef | None:
+    """The resource a body consisting of exactly one embed presents standalone."""
+    content = body_pm_json.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return None
+    node = content[0]
+    if not isinstance(node, dict) or node.get("type") != "resource_embed":
+        return None
+    ref = parse_resource_ref(str(node["attrs"]["resource_ref"]))
+    return None if isinstance(ref, ResourceRefParseFailure) else ref
 
 
 @dataclass(frozen=True, slots=True)
-class NoteSource:
+class NoteRead:
+    body_pm_json: dict[str, Any]
     body_text: str
-    body_version: int
 
 
-def read_note_sources(
-    db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
-) -> dict[UUID, NoteSource]:
-    """Location validation needs text/version, without recursively projecting embeds."""
-    return {
-        note_id: NoteSource(body_text, version)
-        for note_id, _, body_text, version in _read_note_rows(db, viewer_id, note_ids)
-    }
-
-
-def _read_note_rows(db: Session, viewer_id: UUID, note_ids: Sequence[UUID]):
-    """Read each owned body and its version in one statement snapshot.
-
-    Separate queries under READ COMMITTED can pair an older body with a newer
-    version, admitting a subsequent edit that unknowingly overwrites that version.
-    Selecting columns also avoids older ORM identity-map bodies.
-    """
+def read_notes(db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]) -> dict[UUID, NoteRead]:
+    """The viewer's visible note projections among ``note_ids``."""
+    if not note_ids:
+        return {}
     rows = db.execute(
-        select(
-            NoteBlock.id,
-            NoteBlock.body_pm_json,
-            NoteBlock.body_text,
-            func.coalesce(ResourceVersion.version, 1),
+        select(NoteBlock.id, NoteBlock.body_pm_json, NoteBlock.body_text).where(
+            NoteBlock.user_id == viewer_id,
+            NoteBlock.id.in_(note_ids),
+            NoteBlock.authored_visible,
         )
-        .outerjoin(
-            ResourceVersion,
-            and_(
-                ResourceVersion.user_id == viewer_id,
-                ResourceVersion.resource_scheme == "note_block",
-                ResourceVersion.resource_id == NoteBlock.id,
-                ResourceVersion.lane == "body",
-            ),
-        )
-        .where(NoteBlock.user_id == viewer_id, NoteBlock.id.in_(note_ids))
     )
-    return list(rows)
+    return {id_: NoteRead(body, words) for id_, body, words in rows}
 
 
-def ensure_note(
-    db: Session, *, viewer_id: UUID, note_id: UUID, body_pm_json: dict[str, Any], reason: str
+def project_note_embeds(
+    db: Session, *, viewer_id: UUID, note_id: UUID, embedded_refs: Sequence[str]
 ) -> None:
-    """Create the note under its client id; an existing own note is reused unchanged."""
-    binding = authored_identities.recognize(db, viewer_id=viewer_id, kind="note_block", id=note_id)
-    if binding is not None:
-        writing.identity(db, binding.out())
-        authored_identities.require_live(binding)
-        return
-    created = db.scalar(
-        insert(NoteBlock)
-        .values(
-            id=note_id,
+    """Replace the note's ``note_body`` facts with its current embeds. Flush-only.
+
+    Called by the authored projection for every merged note, visible or not: a hidden
+    note's facts are hidden by endpoint liveness and return with revival. Unparseable,
+    self and non-embeddable refs derive no fact; a ref the viewer cannot read still
+    derives one and stays unreadable to every reader.
+    """
+    source = note_ref(note_id)
+    wanted: dict[ResourceRef, None] = {}
+    for raw in embedded_refs:
+        target = parse_resource_ref(raw)
+        if (
+            not isinstance(target, ResourceRefParseFailure)
+            and target != source
+            and capability(target.scheme).embeddable
+        ):
+            wanted[target] = None
+    existing = {
+        assert_resource_ref(f"{row.target_scheme}:{row.target_id}"): row
+        for row in db.scalars(
+            select(ResourceEdge).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "note_body",
+                ResourceEdge.source_scheme == "note_block",
+                ResourceEdge.source_id == note_id,
+            )
+        )
+    }
+    stale = [row.id for ref, row in existing.items() if ref not in wanted]
+    if stale:
+        db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(stale)))
+        db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(stale)))
+    db.add_all(
+        ResourceEdge(
             user_id=viewer_id,
-            body_pm_json=body_pm_json,
-            body_text=text_from_pm_json(body_pm_json),
+            kind="context",
+            origin="note_body",
+            source_scheme="note_block",
+            source_id=note_id,
+            target_scheme=target.scheme,
+            target_id=target.id,
         )
-        .on_conflict_do_nothing(index_elements=["id"])
-        .returning(NoteBlock.id)
+        for target in wanted
+        if target not in existing
     )
-    block = db.get(NoteBlock, note_id)
-    if block is None:
-        binding = authored_identities.recognize(
-            db, viewer_id=viewer_id, kind="note_block", id=note_id
-        )
-        if binding is not None:
-            authored_identities.require_live(binding)
-        raise RuntimeError("Accepted note insert has no row")
-    if block.user_id != viewer_id:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note id is taken")
-    binding = authored_identities.register(db, viewer_id=viewer_id, kind="note_block", id=note_id)
-    authored_identities.require_live(binding)
-    writing.identity(db, binding.out())
-    if created is None:
-        if binding.newly_registered:
-            raise RuntimeError("Existing note has no authored identity")
-        return
-    writing.changed(db, viewer_id)
-    for lane in ("body", "links"):
-        writing.lane(
-            db, viewer_id=viewer_id, ref=note_ref(note_id), name=lane, before=None, checked=1
-        )
-        versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane=lane)
-    _changed(db, viewer_id, block, reason)
-
-
-def write_body(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    note_id: UUID,
-    body_pm_json: dict[str, Any],
-    expected_version: int,
-    reason: str,
-) -> bool:
-    """Write a changed body; return false when the exact body is already present."""
-    block = db.scalar(
-        select(NoteBlock)
-        .where(NoteBlock.id == note_id, NoteBlock.user_id == viewer_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if block is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-    writing.effects(db).addressed.add(note_ref(note_id))
-    if block.body_pm_json == body_pm_json:
-        return False
-    require_version(db, viewer_id=viewer_id, note_id=note_id, version=expected_version)
-    block.body_pm_json = body_pm_json
-    block.body_text = text_from_pm_json(body_pm_json)
-    block.updated_at = func.now()
-    versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane="body")
-    _changed(db, viewer_id, block, reason)
-    retention.touch_owners(db, [note_ref(note_id)])
-    return True
-
-
-def require_version(db: Session, *, viewer_id: UUID, note_id: UUID, version: int) -> None:
-    """409 E_NOTE_CONFLICT with ``details.current`` (a NoteBlockOut) unless it matches."""
-    if _version(db, viewer_id, note_id) != version:
-        current = read_note(db, viewer_id=viewer_id, note_id=note_id)
-        raise ConflictError(
-            ApiErrorCode.E_NOTE_CONFLICT,
-            "Note changed elsewhere",
-            details={"current": current.model_dump(mode="json")},
-        )
-    writing.lane(
-        db, viewer_id=viewer_id, ref=note_ref(note_id), name="body", before=version, checked=version
-    )
-
-
-def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
-    """The one teardown: subject state, edges, anchors, index, protocol state, row."""
-    from nexus.services import passage_anchors
-
-    block = db.scalar(
-        select(NoteBlock)
-        .where(NoteBlock.id == note_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if block is not None and block.user_id != viewer_id:
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note id is taken")
-    binding = authored_identities.retire(db, viewer_id=viewer_id, kind="note_block", id=note_id)
-    writing.identity(db, binding.out())
-    if block is None:
-        return
-    writing.changed(db, viewer_id)
-    ref = note_ref(note_id)
-    delete_edges_for_deleted_resource(db, ref=ref, remove_inbound_citations=True)
-    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=note_id)
-    delete_content_index(db, owner=IndexOwner("note_block", note_id))
-    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
-    db.delete(block)
     db.flush()
-
-
-def _version(db: Session, viewer_id: UUID, note_id: UUID) -> int:
-    lanes = versions.versions_for_ref(db, viewer_id=viewer_id, ref=note_ref(note_id))
-    return lanes.get("body", 1)
-
-
-def _changed(db: Session, viewer_id: UUID, block: NoteBlock, reason: str) -> None:
-    source = note_ref(block.id)
-    replace_edges_for_origin(
-        db,
-        viewer_id=viewer_id,
-        source=source,
-        origin="note_body",
-        edges=[
-            EdgeCreate(source=source, target=target, kind="context", origin="note_body")
-            for target in _embeds(block.body_pm_json)
-            if target != source and capability(target.scheme).embeddable
-        ],
-    )
-    enqueue_note_reindex(db, note_block_id=block.id, reason=reason)
-
-
-def _embeds(value: object) -> list[ResourceRef]:
-    found: dict[str, ResourceRef] = {}
-
-    def visit(node: object) -> None:
-        if isinstance(node, list):
-            for child in node:
-                visit(child)
-        elif isinstance(node, dict):
-            attrs = node.get("attrs")
-            if node.get("type") == "object_embed" and isinstance(attrs, dict):
-                scheme = cast(ResourceScheme, attrs["objectType"])
-                ref = ResourceRef(scheme=scheme, id=UUID(attrs["objectId"]))
-                found.setdefault(ref.uri, ref)
-            visit(node.get("content"))
-
-    visit(value)
-    return list(found.values())

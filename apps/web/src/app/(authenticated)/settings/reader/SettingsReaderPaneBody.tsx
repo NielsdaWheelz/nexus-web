@@ -2,7 +2,7 @@
 
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useId } from "react";
-import { FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import Select from "@/components/ui/Select";
@@ -123,6 +123,9 @@ export default function SettingsReaderPaneBody() {
           />
           {reader.persistence.state === "Pending" ? (
             <FeedbackStatus content={{ tone: "Neutral", title: "saving reader settings…" }} announcement="Polite" />
+          ) : reader.persistence.state === "SaveFailed" ? (
+            <FeedbackNotice content={{ tone: "Warning", title: "reader settings not synced", message: "your settings are applied in this tab. retry to sync them." }}
+              announcement="None" actions={[{ label: "retry", onClick: reader.retrySave }]} />
           ) : null}
         </fieldset>
       </PaneSection>

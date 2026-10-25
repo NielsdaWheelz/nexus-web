@@ -1,7 +1,6 @@
 "use client";
 
 import { apiFetch } from "@/lib/api/client";
-import type { FeedbackOffer } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import type { ListPage } from "@/lib/api/useServerList";
@@ -51,15 +50,11 @@ export function openConversationAbout({ ctx, ref, originPaneId, intent, subject 
   const key = `${ctx.accountId}:${ref}`;
   const signal = ctx.sessionSignal();
   let frozenIntent = intent;
-  const submit = async (requested: OpenIntent, fromPaneId: string, recovery: FeedbackOffer | null = null) => {
+  // A retry resends the same id; its own failure reports once with another retry.
+  const submit = async (requested: OpenIntent, fromPaneId: string, retried = false) => {
     if (signal.aborted || chatsAboutInFlight.has(key)) return;
     if (requested === "new_pane") frozenIntent = requested;
     chatsAboutInFlight.add(key);
-    recovery?.update({ needsAttention: true, announcement: "None",
-      content: { tone: "Neutral", title: "chat creation wasn’t confirmed", message: "checking the same request…" },
-      actions: [{ label: "retry creation", busy: true, commandKey: `create-chat:${id}`,
-        onClick: next => { void submit(next, ctx.workspace().state.active_primary_pane_id, recovery); } }],
-    });
     try {
       await openAsyncResult({ ctx, originPaneId: fromPaneId, intent: frozenIntent, subject, create: async () => {
         const response = await apiFetch<ApiJson<"/conversations", "post">>("/api/conversations", {
@@ -68,19 +63,14 @@ export function openConversationAbout({ ctx, ref, originPaneId, intent, subject 
         if (!signal.aborted) publishChange("Chats");
         return { target: { href: `/conversations/${response.data.id}`, labelHint: response.data.title }, title: "chat created", openLabel: "open chat" };
       } });
-      recovery?.withdraw();
     } catch (error) {
       if (signal.aborted) return;
       const failure = chatFailure(error, "chat couldn’t be created");
       if (failure.kind === "Handled") return;
       if (failure.kind === "Defect") { ctx.reportDefect({ error: failure.error }); return; }
-      const offer = ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `create-chat:${id}`, announcement: "Polite",
-        content: recovery !== null ? { ...failure.feedback, title: "chat creation wasn’t confirmed", message: "the original request may have succeeded. review the current chat before choosing again." }
-          : failure.ambiguous ? { ...failure.feedback, title: "chat creation wasn’t confirmed" } : failure.feedback,
-        actions: failure.ambiguous ? [{ label: "retry creation", commandKey: `create-chat:${id}`, onClick: next => {
-          void submit(next, ctx.workspace().state.active_primary_pane_id, offer);
-        } }] : undefined,
-      });
+      ctx.feedback.receipt(retried ? { ...failure.feedback, title: "chat creation wasn’t confirmed", message: "the original request may have succeeded. review the current chat before choosing again." }
+        : failure.ambiguous ? { ...failure.feedback, title: "chat creation wasn’t confirmed" } : failure.feedback,
+      failure.ambiguous ? { label: "retry creation", onClick: next => { void submit(next, ctx.workspace().state.active_primary_pane_id, true); } } : undefined);
     } finally {
       chatsAboutInFlight.delete(key);
     }

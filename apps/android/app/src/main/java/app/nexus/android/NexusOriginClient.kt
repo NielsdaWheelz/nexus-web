@@ -36,6 +36,8 @@ private const val READING_COPY_DEADLINE_MINUTES = 5L
 // a lectern answer carries at most 2,000 rows
 private const val MAX_ORIGIN_RESPONSE_BYTES = 4 * 1024 * 1024L
 
+internal class NexusNetworkError(cause: IOException) : IOException("could not connect to nexus", cause)
+
 internal class NexusOriginResponse(
     val status: Int,
     val body: String,
@@ -196,6 +198,29 @@ internal class NexusOriginClient(
             destination = destination, destinationLimit = MAX_CATALOG_BYTES))
     }
 
+    suspend fun authoredRegister(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "replicas")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
+    suspend fun authoredPush(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "changes")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
+    suspend fun authoredPull(account: UUID, after: String): JSONObject {
+        require(after.toLong() >= 0)
+        return data(Request.Builder().url(api("authored", "changes").newBuilder().addQueryParameter("after", after).build()).header("X-Nexus-Account", account.toString()).get())
+    }
+    suspend fun authoredHints(account: UUID, onHint: () -> Unit) {
+        var lineBytes = 0
+        val sink = object : OutputStream() {
+            override fun write(value: Int) {
+                if (value == 10) { if (lineBytes == 0) onHint(); lineBytes = 0 }
+                else if (value != 13) { lineBytes++; require(lineBytes <= 256 * 1024) }
+            }
+            override fun write(bytes: ByteArray, offset: Int, count: Int) { for (index in offset until offset + count) write(bytes[index].toInt() and 255) }
+        }
+        val hintsClient = client.newBuilder().callTimeout(280, TimeUnit.SECONDS).readTimeout(280, TimeUnit.SECONDS).build()
+        checkStatus(execute(Request.Builder().url(api("stream", "writing")).header("X-Nexus-Account", account.toString()).get(), hintsClient, destination = sink, destinationLimit = Long.MAX_VALUE))
+    }
+    suspend fun authoredSnapshot(account: UUID, destination: OutputStream) {
+        val snapshotClient = client.newBuilder().callTimeout(280, TimeUnit.SECONDS).readTimeout(280, TimeUnit.SECONDS).build()
+        checkStatus(execute(Request.Builder().url(api("authored", "snapshot")).header("X-Nexus-Account", account.toString()).get(), snapshotClient, destination = destination, destinationLimit = Long.MAX_VALUE))
+    }
+
     /** Immutable capture; mutable progress is a separate canonical observation. */
     suspend fun episodeDownload(mediaId: UUID): JSONObject =
         data(Request.Builder().url(api("media", mediaId.toString(), "episode-download")).get())
@@ -300,8 +325,14 @@ internal class NexusOriginClient(
         destination: OutputStream? = null,
         destinationLimit: Long = MAX_ORIGIN_RESPONSE_BYTES,
     ): NexusOriginResponse = suspendCancellableCoroutine { continuation ->
+        if (requestBuilder.build().header("X-Nexus-Account") == null) DeviceSession.current()?.accountId()?.let { requestBuilder.header("X-Nexus-Account", it.toString()) }
         if (current == null && sendCookies && DeviceSession.current()?.remotelyAdmitted() != true) {
-            continuation.resumeWithException(NexusOriginError(503, "E_REMOTE_UNAVAILABLE"))
+            val error = when (DeviceSession.current()?.remoteAdmission) {
+                "SignInRequired" -> NexusOriginError(401, "E_UNAUTHENTICATED")
+                "UpdateRequired" -> NexusOriginError(426, "E_WIRE_MISMATCH")
+                else -> NexusNetworkError(IOException("remote credentials are not currently admitted"))
+            }
+            continuation.resumeWithException(error)
             return@suspendCancellableCoroutine
         }
         val cookie = capturedCookie ?: if (sendCookies) cookies.cookiesFor(origin) else null
@@ -323,7 +354,7 @@ internal class NexusOriginClient(
             object : Callback {
                 override fun onFailure(call: Call, error: IOException) {
                     if (continuation.isActive) {
-                        continuation.resumeWithException(error)
+                        continuation.resumeWithException(NexusNetworkError(error))
                     }
                 }
 
@@ -362,7 +393,7 @@ internal class NexusOriginClient(
                 val buffer = ByteArray(64 * 1024)
                 var bytes = 0L
                 while (true) {
-                    val count = input.read(buffer)
+                    val count = try { input.read(buffer) } catch (error: IOException) { throw NexusNetworkError(error) }
                     if (count == -1) break
                     bytes += count
                     if (bytes > destinationLimit) throw LocalStateError(limitCode, "saved content exceeds this device’s size limit")
@@ -377,14 +408,11 @@ internal class NexusOriginClient(
             if (!unlimited && declared > MAX_ORIGIN_RESPONSE_BYTES) {
                 throw IOException("owned-origin response exceeds size limit")
             }
-            if (unlimited) return@let it.string()
+            if (unlimited) return@let try { it.string() } catch (error: IOException) { throw NexusNetworkError(error) }
             val source = it.source()
             val buffer = Buffer()
             while (true) {
-                val read = source.read(
-                    buffer,
-                    MAX_ORIGIN_RESPONSE_BYTES + 1 - buffer.size,
-                )
+                val read = try { source.read(buffer, MAX_ORIGIN_RESPONSE_BYTES + 1 - buffer.size) } catch (error: IOException) { throw NexusNetworkError(error) }
                 if (read == -1L) {
                     break
                 }

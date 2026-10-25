@@ -37,7 +37,7 @@ internal class AppRouter(private val context: Context, private val session: Devi
     fun isAppRoute(uri: Uri): Boolean {
         if (!isOwned(uri)) return false
         val path = uri.path ?: "/"
-        return !(path in setOf("/login", "/forgot-password", "/share", "/s", "/android", "/version", "/extension/connect/start", "/account/identities") || path == "/account/password" || path.startsWith("/account/password/") ||
+        return !(path in setOf("/login", "/forgot-password", "/s", "/android", "/version", "/extension/connect/start", "/account/identities") || path == "/account/password" || path.startsWith("/account/password/") ||
             path == "/auth" || path.startsWith("/auth/") || path == "/api" || path.startsWith("/api/") ||
             path.startsWith("/s/") || path.startsWith("/_nexus/") || path.startsWith("/_next/") ||
             path in setOf("/privacy", "/terms", "/robots.txt", "/favicon.ico", "/manifest.webmanifest", "/sitemap.xml") ||

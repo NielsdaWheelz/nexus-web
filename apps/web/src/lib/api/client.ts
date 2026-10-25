@@ -12,6 +12,13 @@ import { WIRE_REVISION } from "./wire.gen";
 
 export type ApiPath = `/api/${string}`;
 export const WIRE_HEADER = "X-Nexus-Wire";
+let accountBinding: { accountId: string } | null = null;
+/** An account assertion prevents a changed cookie jar from moving local data
+ * into another account. It grants no authority; the BFF verifies the bearer. */
+export function bindApiAccount(accountId: string): () => void {
+  const binding = { accountId }; accountBinding = binding;
+  return () => { if (accountBinding === binding) accountBinding = null; };
+}
 const RELOADED_FOR = "nexus.reloaded-for-wire";
 
 export class ApiError extends Error {
@@ -239,7 +246,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
     isRecord(error.details) ? error.details : undefined,
     retryAfterMs(response.headers.get("retry-after")),
   );
-  observeRemoteFailure(status);
+  if (status !== 403 || failure.code === "E_ACCOUNT_MISMATCH") observeRemoteFailure(status);
   if (status === 426 && typeof window !== "undefined" && !installedApp && !androidShellDocument) reloadForNewBuild();
   throw failure;
 }
@@ -253,7 +260,7 @@ export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
 ): Promise<T> {
-  if (installedApp && !remoteReady()) {
+  if (!remoteReady()) {
     const admission = remoteAdmission();
     throw new ApiError(admission === "SignInRequired" ? 401 : admission === "UpdateRequired" ? 426 : 0, admission === "SignInRequired" ? "E_UNAUTHENTICATED" : admission === "UpdateRequired" ? "E_WIRE_MISMATCH" : "E_NETWORK", "remote work is unavailable");
   }
@@ -262,6 +269,7 @@ export async function apiFetch<T>(
   if (sealed !== null && sealed !== String(WIRE_REVISION))
     throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision");
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
+  if (accountBinding) headers.set("X-Nexus-Account", accountBinding.accountId);
   if (typeof init.body === "string") {
     headers.set("Content-Type", "application/json");
   }

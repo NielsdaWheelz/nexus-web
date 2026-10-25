@@ -4,9 +4,7 @@
 // find, the inspector (Contents and Connections), the view menu, the document map rail, the pane width
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
-import { Activity } from "lucide-react";
-import { useWorkspaceCondition } from "@/components/feedback/Feedback";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
@@ -67,17 +65,25 @@ export function useReaderChrome(input: {
     handle: input.failed ? null : media?.id ?? null,
     bodies: { contents: input.contents, linkedItems: input.evidence },
   });
+  const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
+  const summaries = useMediaSummaries(seed === null ? [] : [seed]);
+  const summary = seed === null ? null : summaries.resolve(seed);
+  // The item's own summary refresh failure stays with the item, beside its controls.
+  const { error: summaryError, retrying: summaryRetrying, retry: retrySummary } = summaries;
+  const summaryNotice = useMemo(() => summaryError === null ? null : <FeedbackNotice
+    content={{ tone: "Warning", title: "couldn’t update items", requestId: summaryError.requestId }} announcement="Polite"
+    actions={[{ label: "try again", busy: summaryRetrying, onClick: retrySummary }]} />, [summaryError, summaryRetrying, retrySummary]);
   const navigation = useMemo(
     () => {
-      if (!readable) return undefined;
-      const hasNavigation = kind === "pdf" || kind === "text" && sectioned;
-      if (!hasNavigation && !input.annotationNotice) return undefined;
+      const hasNavigation = readable && (kind === "pdf" || kind === "text" && sectioned);
+      const annotationNotice = readable ? input.annotationNotice : null;
+      if (!hasNavigation && !annotationNotice && summaryNotice === null) return undefined;
       return {
-        label: input.annotationNotice ? "reader controls" : kind === "pdf" ? "PDF controls" : "section navigation",
-        content: <>{hasNavigation ? <ReaderNavigation reader={reader} /> : null}{input.annotationNotice}</>,
+        label: annotationNotice || summaryNotice ? "reader controls" : kind === "pdf" ? "PDF controls" : "section navigation",
+        content: <>{hasNavigation ? <ReaderNavigation reader={reader} /> : null}{annotationNotice}{summaryNotice}</>,
       };
     },
-    [input.annotationNotice, kind, readable, reader, sectioned],
+    [input.annotationNotice, kind, readable, reader, sectioned, summaryNotice],
   );
   const menuActions = useMemo<ActionDescriptor[]>(() => {
     const resolving = media === null;
@@ -90,13 +96,6 @@ export function useReaderChrome(input: {
       onSelect: () => setTheme(value),
     });
     return [
-      {
-        kind: "link",
-        id: "consumption-activity",
-        label: "Activity",
-        icon: <Activity size={16} aria-hidden="true" />,
-        href: "/stats",
-      },
       {
         kind: "command",
         id: "ViewAction.Reader.Settings",
@@ -117,21 +116,6 @@ export function useReaderChrome(input: {
         : [theme("light", "Light"), theme("dark", "Dark")]),
     ];
   }, [activateTarget, media, pdf, profile.theme, setTheme]);
-  const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
-  const summaries = useMediaSummaries(seed === null ? [] : [seed]);
-  const summary = seed === null ? null : summaries.resolve(seed);
-  useWorkspaceCondition(`media-summary:${paneId}:${id}`, summaries.error === null ? null : {
-    needsAttention: true,
-    priority: "Status",
-    announcement: "Polite",
-    content: {
-      tone: "Warning",
-      title: "couldn’t update items",
-      requestId: summaries.error.requestId,
-    },
-    actions: [{ label: "try again", busy: summaries.retrying, onClick: summaries.retry }],
-    returnFocus: () => findPaneLandmarkFocusTarget(paneId),
-  });
   const authors = summary
     ? groupContributorCredits(selectMediaAuthors(summary.contributors)).find((group) => group.role === "author")
     : undefined;

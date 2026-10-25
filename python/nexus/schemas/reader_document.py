@@ -114,7 +114,12 @@ class ReaderTextBodyOut(_Out):
 
 
 class ReaderTextDocumentOut(ReaderTextBodyOut):
+    """``publication_generation`` is the mounted canonical publication whose fragment
+    offsets the units carry; null when the units belong to other owners (X threads) or
+    are not canonically addressed (public shares)."""
+
     kind: Literal["web_article", "epub"]
+    publication_generation: int | None = Field(ge=1)
 
 
 class ReaderPartUnitOut(ReaderUnitOut):
@@ -183,8 +188,12 @@ class ReaderPdfFileOut(_Out):
 
 
 class ReaderPdfDocumentOut(_Out):
+    """``publication_generation`` is the mounted file's proven publication; null on a
+    public share, which grants no annotation authority."""
+
     kind: Literal["pdf"]
     identity: str
+    publication_generation: int | None = Field(ge=1)
     title: str
     page_count: int | None
     file: ReaderPdfFileOut

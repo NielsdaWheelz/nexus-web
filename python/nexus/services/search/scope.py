@@ -23,6 +23,7 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.library_entries import library_media_ids_cte_sql, library_podcast_rows_sql
 from nexus.services.media_text_scope import highlight_in_reading_scope_sql
 from nexus.services.resource_graph.context import context_facts_sql
+from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.query import SearchScope
 
@@ -88,13 +89,13 @@ def _media_cells(conversation: str) -> dict[str, str]:
 
 
 def _note_cells(scheme: str, column: str) -> dict[str, str]:
-    """A note joins a media or library scope only through its user or highlight-note edges."""
+    """A note joins a media or library scope only through its live authored links."""
     edge = f"""EXISTS (SELECT 1 FROM resource_edges e
         LEFT JOIN highlights h ON (e.source_scheme = 'highlight' AND h.id = e.source_id)
             OR (e.target_scheme = 'highlight' AND h.id = e.target_id)
         WHERE ((e.source_scheme = '{scheme}' AND e.source_id = {column})
             OR (e.target_scheme = '{scheme}' AND e.target_id = {column}))
-          AND e.kind = 'context' AND e.origin IN ('user', 'highlight_note')
+          AND e.kind = 'context' AND {authored_link_sql("e")} AND {edge_live_sql("e")}
           AND e.user_id = :viewer_id AND e.ordinal IS NULL
           AND (MEDIA IN (CASE WHEN e.source_scheme = 'media' THEN e.source_id END,
               CASE WHEN e.target_scheme = 'media' THEN e.target_id END, h.anchor_media_id)

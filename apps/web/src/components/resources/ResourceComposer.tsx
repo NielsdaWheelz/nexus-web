@@ -1,163 +1,129 @@
 "use client";
 
-// The visit owns unsent rich input. Explicit save transfers an immutable value
-// and fixed create ids to the live writer; only acknowledgement advances its base.
-import { useContext, useEffect, useRef, useSyncExternalStore } from "react";
+// The editor host (pane visit or reader document) owns unsent rich input; nothing unsaved is stored. Explicit save commits
+// the new note and its first link to the destination in one local transaction,
+// after any caller prelude (a latent day's page). A
+// failed commit keeps its input visible and frozen until its retry lands the same
+// bytes. Once saved, the note keeps editing in place through its bound editor.
 import Button from "@/components/ui/Button";
 import NoteEditor from "@/components/notes/NoteEditor";
-import { TextComparison, copyWriting, useWriting } from "@/components/notes/NoteNotices";
-import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
-import { OutlineSessionContext, OutlineSessionScope, ResourceBranch } from "./ResourceOutlineList";
-import { useOutlineSession, type NoteEdit, type OutlineSession } from "@/lib/notes/useOutlineSession";
+import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
+import { bodyHasContent, emptyBody, type NoteBody } from "@nexus/authored/body";
+import type { Intent } from "@nexus/authored/commands";
 import { emptyNoteBodyHistory, recordNoteBodyEdit, type NoteBodyHistory } from "@/lib/notes/bodyHistory";
-import { emptyBody, bodyHasContent, parseBody, sameBody, type NoteBody } from "@/lib/notes/noteBody";
-import { adoptText } from "@/lib/notes/texts";
-import { admitWriting, captureLane, canRetryWriting, readWriting, WritingDecisionError, type Publication, type WriteHandle } from "@/lib/notes/writes";
-import { apiTransportFeedback, isApiError } from "@/lib/api/client";
-import { fetchNote } from "@/lib/notes/api";
-import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import type { InsertionSource } from "@/lib/resourceGraph/links";
+import { useWritingRuntime } from "@/lib/notes/hooks";
+import type { NoteEdit } from "@/lib/notes/editorTypes";
+import { LocalCommitError } from "@/lib/notes/runtime";
+import { createLink, prepareTarget, type LinkTarget } from "@/lib/resourceGraph/links";
+import { useEditorDraft } from "@/lib/notes/editorHost";
+import type { ResourceItem } from "@/lib/resources/items";
 import styles from "./ResourceComposer.module.css";
 
-type ItemPublication = Extract<Publication, { kind: "insert_note" }>;
 type Composer = {
-  body: NoteBody; revision: number; selection: NoteEdit["selectionAfter"] | null; history: NoteBodyHistory;
-  focus: { selection: NoteEdit["selectionAfter"]; serial: number } | null; searching: boolean;
-  publication: ItemPublication; base: { body: NoteBody; version: number } | null;
-  write: WriteHandle | null; failure: unknown; conflict: { body: NoteBody; version: number } | null;
+  body: NoteBody; revision: number; searching: boolean;
+  history: NoteBodyHistory;
+  focus: { selection: NoteEdit["selectionAfter"]; serial: number } | null;
+  /** Minted once per draft; a retried commit keeps it. */
+  noteRef: string;
+  state: "editing" | "saving" | "saved";
+  /** `retry` re-persists a failed local commit's frozen command until it lands, then finishes as that command would. */
+  failure: { content: FeedbackContent; retry: (() => void) | null } | null;
 };
-type Props = { source: InsertionSource; occurrenceKey: string; label: string; onSaved?: () => void; onActiveChange?: (active: boolean) => void };
-const idle = () => null;
-const noSubscription = () => () => undefined;
+type Props = {
+  destinationRef: string; occurrenceKey: string; label: string;
+  /** The host's literal label for a non-authored destination, captured in its source stub. */
+  destinationLabel?: string;
+  /** Intents committed first in the same transaction, e.g. a latent day's page creation. */
+  prelude?: readonly Intent[];
+  /** `keep`: the saved note keeps editing in place. `clear`: a surface that lists the new
+   * note itself starts a fresh draft instead of showing it twice. */
+  afterSave?: "keep" | "clear";
+  onSaved?: () => void; onActiveChange?: (active: boolean) => void;
+};
+const LOCAL_FAILURE: FeedbackContent = { tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." };
 
-export default function ResourceComposer(props: Props) {
-  const session = useContext(OutlineSessionContext);
-  return session ? <SessionComposer {...props} session={session} /> : <StandaloneComposer {...props} />;
-}
-function StandaloneComposer(props: Props) {
-  const branch = useContext(ResourceBranch);
-  const session = useOutlineSession({ scope: `resource-composer:${props.occurrenceKey}`, inheritedBranch: branch });
-  return <OutlineSessionScope session={session}><SessionComposer {...props} session={session} /></OutlineSessionScope>;
-}
-function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange, session }: Props & { session: OutlineSession }) {
-  const writing = useWriting();
-  const feedback = useFeedback();
-  const draft = useResourceDraft<Composer>(`Resources.ItemDraft:${occurrenceKey}`, () => ({
-    body: emptyBody(), revision: 0, selection: null, history: emptyNoteBodyHistory(), focus: null, searching: false,
-    publication: { kind: "insert_note", initial_title: null, request: { kind: "insert_note", source: structuredClone(source), position: null,
-      note_id: crypto.randomUUID(), link_id: crypto.randomUUID(), body_pm_json: emptyBody().body_pm_json } },
-    base: null, write: null, failure: null, conflict: null,
-  }));
-  const mounted = useRef(true);
-  const inspectClosed = useRef<(() => void) | null>(null);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; inspectClosed.current?.(); }; }, []);
+const fresh = (revision: number): Composer => ({
+  body: emptyBody(), revision, searching: false, history: emptyNoteBodyHistory(), focus: null,
+  noteRef: `note_block:${crypto.randomUUID()}`, state: "editing", failure: null,
+});
+
+export default function ResourceComposer({ destinationRef, occurrenceKey, label, destinationLabel, prelude = [], afterSave = "keep", onSaved, onActiveChange }: Props) {
+  const writing = useWritingRuntime();
+  const draft = useEditorDraft<Composer>(`Resources.ItemDraft:${occurrenceKey}`, () => fresh(0));
   const value = draft.value;
-  const state = useSyncExternalStore(value.write?.subscribe ?? noSubscription, value.write?.read ?? idle, idle);
-  const pending = state?.kind === "queued" || state?.kind === "sending" || state?.kind === "unconfirmed";
-  const saved = value.base !== null && sameBody(value.body, value.base.body);
-  const save = async () => {
-    const submitted = draft.read();
-    if (writing.paused || submitted.searching || pending || submitted.conflict || !bodyHasContent(submitted.body) && submitted.base === null) return;
-    const generation = readWriting().generation;
-    const ref = `note_block:${submitted.publication.request.note_id}`;
+  /** Local writing never waits for a server label: the host's capture, the existing stub, else the literal ref. */
+  const sourceLabel = async (): Promise<string | null> => {
+    if (/^(note_block|page|highlight):/u.test(destinationRef) || writing === null) return null;
+    if (destinationLabel !== undefined) return destinationLabel;
+    const local = await (await writing.store).query({ kind: "resource", ref: destinationRef });
+    return local.rows[0]?.resource.title ?? destinationRef;
+  };
+  const commit = async (attempt: () => Promise<unknown>, after: () => void, frozen: (() => Promise<unknown>) | null = null) => {
+    draft.set(current => ({ ...current, state: "saving", failure: null }));
     try {
-      const write = admitWriting(submitted.base === null
-        ? { ...submitted.publication, request: { ...submitted.publication.request, body_pm_json: submitted.body.body_pm_json } }
-        : { kind: "body", policy: "explicit", note_id: submitted.publication.request.note_id,
-          body_pm_json: submitted.body.body_pm_json, expected: captureLane(ref, "body", submitted.base.version) });
-      draft.set(current => ({ ...current, write, failure: null }));
-      let notice: ReturnType<typeof feedback.retainCondition> | null = null;
-      let irreducible: boolean | null = null;
-      const copy = () => { if (readWriting().generation === generation) copyWriting(feedback, submitted.body.body_text); };
-      const inspect = () => {
-        const state = write.read();
-        if (readWriting().generation !== generation || state.kind === "accepted" || state.kind === "refused" || state.kind === "abandoned") {
-          notice?.withdraw(); return;
-        }
-        if (state.kind === "unconfirmed") irreducible = !canRetryWriting(write);
-        if (irreducible === null || mounted.current && notice === null) return;
-        const condition = { priority: "Write" as const, needsAttention: true, announcement: "Polite" as const,
-          content: { tone: "Warning" as const, title: "item save not confirmed", message: irreducible
-            ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded." },
-          actions: irreducible ? [{ label: "copy text", onClick: copy },
-            { label: "reload", onClick: () => { if (readWriting().generation === generation) window.location.reload(); } }] as const
-            : [{ label: "retry same save", commandKey: `item-save:${write.id}:retry`, busy: state.kind === "queued" || state.kind === "sending",
-              onClick: () => { if (readWriting().generation === generation) write.retry(); } }, { label: "copy text", onClick: copy }] as const,
-        };
-        if (notice) notice.update(condition); else notice = feedback.retainCondition({ key: `item-save:${write.id}`, ...condition });
-      };
-      inspectClosed.current = inspect;
-      const stop = write.subscribe(inspect);
-      void write.settled.then(() => { stop(); notice?.withdraw(); }, error => {
-        stop(); notice?.withdraw();
-        if (!mounted.current && readWriting().generation === generation) feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `item-save:${write.id}`, announcement: "Polite",
-          content: { tone: "Warning", title: "couldn’t save this item", message: isApiError(error) ? error.message : "review its destination before saving again." },
-          actions: [{ label: "copy text", onClick: () => copyWriting(feedback, submitted.body.body_text) }] });
-      });
-      const ack = await write.settled;
-      if (readWriting().generation !== generation) return;
-      const id = ack.identities.find(identity => identity.kind === "note_block" && identity.requested_id === submitted.publication.request.note_id)?.canonical_id ?? submitted.publication.request.note_id;
-      const note = ack.notes.find(note => note.id === id);
-      if (note) {
-        const body = parseBody(note.body_pm_json);
-        adoptText(`note_block:${id}`, body, note.body_version);
-        draft.set(current => ({ ...current, write: null, base: { body, version: note.body_version },
-          publication: { ...current.publication, request: { ...current.publication.request, note_id: id } } }));
-      }
-      if (mounted.current && draft.read().revision === submitted.revision) onSaved?.();
-      feedback.receipt({ tone: "Success", title: "note saved" });
+      await attempt();
+      after();
     } catch (error) {
-      if (readWriting().generation !== generation) return;
-      draft.set(current => ({ ...current, failure: error }));
-      if (isApiError(error) && error.code === "E_NOTE_CONFLICT" && submitted.base !== null) {
-        try {
-          const note = await fetchNote(submitted.publication.request.note_id);
-          if (readWriting().generation !== generation) return;
-          draft.set(current => ({ ...current, conflict: { body: parseBody(note.body_pm_json), version: note.body_version } }));
-        } catch (readError) { draft.set(current => ({ ...current, failure: readError })); }
-      }
+      const retry = error instanceof LocalCommitError ? error.retry : frozen;
+      draft.set(current => ({ ...current, state: "editing", failure: retry
+        ? { content: LOCAL_FAILURE, retry: () => void commit(retry, after, retry) }
+        : { content: { tone: "Warning", title: "couldn’t save this note", message: error instanceof Error ? error.message : undefined }, retry: null } }));
     }
   };
-  const edit = (change: NoteEdit) => draft.set(current => ({ ...current, body: change.after, selection: change.selectionAfter,
+  const save = () => {
+    const submitted = draft.read();
+    if (writing === null || submitted.state !== "editing") return;
+    if (submitted.failure?.retry) { submitted.failure.retry(); return; }
+    if (submitted.searching || !bodyHasContent(submitted.body)) return;
+    void commit(async () => createLink(writing, {
+      source_ref: destinationRef, target_ref: submitted.noteRef, source_label: await sourceLabel(), target_label: null,
+      after: null, prelude: [...prelude, { kind: "create_note", ref: submitted.noteRef, body: submitted.body }],
+    }), () => {
+      draft.set(current => afterSave === "keep" ? { ...current, state: "saved" } : fresh(current.revision + 1));
+      onSaved?.();
+    });
+  };
+  /** A picked reference links to the destination now; the draft note stays unsent. */
+  const linkReference = (target: LinkTarget, item: ResourceItem) => {
+    if (writing === null) return;
+    void commit(async () => {
+      const endpoint = await prepareTarget(writing, target);
+      return createLink(writing, { source_ref: destinationRef, target_ref: endpoint.ref, source_label: await sourceLabel(),
+        target_label: item.label, after: null, prelude: [...prelude, ...endpoint.intents] });
+    }, () => draft.set(current => ({ ...current, state: "editing" })));
+  };
+  const edit = (change: NoteEdit) => draft.set(current => ({ ...current, body: change.after,
     history: recordNoteBodyEdit(current.history, change), focus: null, revision: current.revision + 1 }));
   const step = (redo: boolean) => {
     const current = draft.read();
     const change = (redo ? current.history.redo : current.history.undo).at(-1);
     if (!change) return;
-    draft.set({ ...current, body: redo ? change.after : change.before,
-      selection: redo ? change.selectionAfter : change.selectionBefore, revision: current.revision + 1,
-      focus: { selection: redo ? change.selectionAfter : change.selectionBefore, serial: current.revision + 1 },
+    const selection = redo ? change.selectionAfter : change.selectionBefore;
+    draft.set({ ...current, body: redo ? change.after : change.before, revision: current.revision + 1,
+      focus: { selection, serial: current.revision + 1 },
       history: { undo: redo ? [...current.history.undo, change] : current.history.undo.slice(0, -1),
         redo: redo ? current.history.redo.slice(0, -1) : [...current.history.redo, change], group: current.history.group + 1 } });
   };
-  return <div className={styles.composer}>
-    {source.kind === "resource" && source.ref.startsWith("conversation:") ? <p className={styles.status}>linked items supply context to future turns in this conversation</p> : null}
-    <NoteEditor editorKey={`resource-composer:${occurrenceKey}`} body={value.body} revision={value.revision} label={label}
-      containingNoteRef={value.base === null ? null : `note_block:${value.publication.request.note_id}`} editable={!writing.paused} focus={value.focus}
-      history={{ undo: () => step(false), redo: () => step(true), boundary: () => draft.set(current => ({ ...current, history: { ...current.history, group: current.history.group + 1 } })) }}
-      onEdit={edit} onSelectionChange={selection => draft.set(current => ({ ...current, selection }))} onSave={() => void save()}
-      reference={{ source: value.publication.request.source, label, position: null,
-        onActiveChange: active => { draft.set(current => ({ ...current, searching: active })); onActiveChange?.(active); },
-        onSelected(target, targetItem, authored) {
-          void session.insertReference({ destination: { source: value.publication.request.source, position: null, occurrencePrefix: occurrenceKey, path: [] }, target, targetItem, authored });
-        },
-      }} />
-    <Button className={styles.textButton} onClick={() => void save()} disabled={writing.paused || value.searching || pending || saved || !bodyHasContent(value.body) && value.base === null}>save note</Button>
-    {value.conflict ? <TextComparison value={value.body} saved={value.conflict.body} before={value.base?.body ?? null}
-      shown={{ revision: value.revision, saved_version: value.conflict.version }} resolve={async (choice, shown) => {
-        const current = draft.read();
-        if (current.revision !== shown.revision || current.conflict?.version !== shown.saved_version) throw new WritingDecisionError("the comparison changed; review both versions again.");
-        draft.set(entry => ({ ...entry, base: current.conflict, conflict: null, failure: null,
-          ...(choice === "saved" ? { body: current.conflict!.body, revision: entry.revision + 1, selection: null, history: emptyNoteBodyHistory() } : {}) }));
-        if (choice === "mine") await save();
-      }} />
-      : state?.kind === "unconfirmed" ? <FeedbackNotice content={{ tone: "Warning", title: "save not confirmed", message: !canRetryWriting(value.write!) ? "copy changes you want to keep, then reload. other unsaved changes will be lost." : "the request may have succeeded." }} announcement="Polite"
-        actions={!canRetryWriting(value.write!) ? [
-          { label: "copy text", onClick: () => copyWriting(feedback, value.body.body_text) },
-          { label: "reload", onClick: () => { window.location.reload(); } },
-        ] : [{ label: "retry same save", onClick: () => value.write?.retry() }, { label: "copy text", onClick: () => copyWriting(feedback, value.body.body_text) }]} />
-        : value.failure ? <FeedbackNotice content={isApiError(value.failure) && apiTransportFeedback(value.failure, "couldn’t save this note") || { tone: "Warning", title: "couldn’t save this note", message: "review your input before saving again." }} announcement="Polite"
-          actions={[{ label: "copy text", onClick: () => copyWriting(feedback, value.body.body_text) }]} />
-          : pending ? <FeedbackStatus content={{ tone: "Neutral", title: "saving…" }} announcement="None" /> : null}
+  // A pending or failed commit freezes the displayed input: retry lands exactly what is shown.
+  const frozen = value.state !== "editing" || value.failure?.retry != null;
+  return <div className={styles.composer} data-composer-destination={destinationRef}>
+    {destinationRef.startsWith("conversation:") ? <p className={styles.status}>linked items supply context to future turns in this conversation</p> : null}
+    {value.state === "saved" ? <BoundNoteEditor noteRef={value.noteRef} label="edit saved note" /> : <>
+      <NoteEditor editorKey={`resource-composer:${occurrenceKey}`} body={value.body} revision={value.revision} label={label}
+        containingNoteRef={null} editable={writing !== null && !frozen} focus={value.focus}
+        history={{ undo: () => step(false), redo: () => step(true), boundary: () => draft.set(current => ({ ...current, history: { ...current.history, group: current.history.group + 1 } })) }}
+        onEdit={edit} onSave={save}
+        reference={{ source_ref: destinationRef, label,
+          onActiveChange: active => { draft.set(current => ({ ...current, searching: active })); onActiveChange?.(active); },
+          onSelected: linkReference }} />
+      <Button className={styles.textButton} onClick={save}
+        disabled={writing === null || value.state !== "editing" || !value.failure?.retry && (value.searching || !bodyHasContent(value.body))}>
+        {value.failure?.retry ? "retry saving" : "save note"}</Button>
+    </>}
+    {value.state === "saving" ? <FeedbackStatus content={{ tone: "Neutral", title: "saving on this device…" }} announcement="None" /> : null}
+    {value.failure ? <FeedbackNotice content={value.failure.content} announcement="Polite" actions={value.failure.retry
+      ? [{ label: "retry saving", onClick: save }, { label: "copy text", onClick: () => void navigator.clipboard.writeText(value.body.body_text) }]
+      : [{ label: "copy text", onClick: () => void navigator.clipboard.writeText(value.body.body_text) }]} /> : null}
   </div>;
 }

@@ -232,7 +232,8 @@ _PERSONAL_CHUNKS = f"""btrim(cc.chunk_text) <> '' AND cc.owner_id <> ALL(:exclud
     SELECT 1 FROM ({visible_media_ids_cte_sql()}) vm
     WHERE cc.owner_kind = 'media' AND vm.media_id = cc.owner_id
     UNION ALL SELECT 1 FROM note_blocks nb
-    WHERE cc.owner_kind = 'note_block' AND nb.id = cc.owner_id AND nb.user_id = :viewer_id)"""
+    WHERE cc.owner_kind = 'note_block' AND nb.id = cc.owner_id AND nb.user_id = :viewer_id
+      AND nb.authored_visible)"""
 
 
 def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapshot | Failure:

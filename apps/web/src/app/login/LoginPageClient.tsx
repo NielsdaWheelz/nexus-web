@@ -17,6 +17,7 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
+import { beginBrowserSignIn } from "@/lib/authored/binding";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
 import {
@@ -122,6 +123,7 @@ function ProviderLink({
   handoff: HandoffContext | null;
   disabled: boolean;
 }) {
+  const [localFailure, setLocalFailure] = useState<Error | null>(null);
   const destination = disabled || nextPath === null
     ? { href: null, "aria-disabled": true } as const
     : {
@@ -129,9 +131,16 @@ function ProviderLink({
           ? nativeGoogleDeepLink(nextPath, handoff)
           : oauthPath(provider, nextPath, handoff),
       };
-  return (
+  return <>
     <ButtonLink
       {...destination}
+      onClick={event => {
+        const href = destination.href;
+        if (handoff !== null || href === null) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) { void beginBrowserSignIn().catch(error => setLocalFailure(error)); return; }
+        event.preventDefault();
+        void beginBrowserSignIn().then(() => window.location.assign(href)).catch(error => setLocalFailure(error));
+      }}
       emphasis={provider === "google" ? "strong" : undefined}
       size="comfortable"
       icon={provider === "google" ? <GoogleMark /> : <GitHubMark />}
@@ -139,7 +148,8 @@ function ProviderLink({
     >
       {`Continue with ${PROVIDER_NAMES[provider]}`}
     </ButtonLink>
-  );
+    {localFailure ? <FeedbackNotice announcement="Polite" content={{ tone: "Danger", title: "couldn’t open local account storage", message: localFailure.message }} /> : null}
+  </>;
 }
 
 function Disclosure({
@@ -284,7 +294,7 @@ export default function LoginPageClient({
             noValidate
             onSubmit={(event) => {
               if (target.kind === "Pending") return event.preventDefault();
-              void submit(event, target.target, { validate });
+              void submit(event, target.target, { validate, beforeSubmit: handoff === null ? beginBrowserSignIn : undefined });
             }}
           >
             {completedTarget === null || completedTarget === DEFAULT_RETURN_TARGET ? null : (

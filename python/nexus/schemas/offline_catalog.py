@@ -17,7 +17,6 @@ from nexus.schemas.consumption import EpisodeConsumptionState, LecternOut
 from nexus.schemas.conversation import ConversationListItemOut
 from nexus.schemas.library import LibraryOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.notes import NotePageSummaryOut
 from nexus.schemas.podcast import LibraryPodcastsOut, PodcastDetailOut
 
 Rank = Annotated[int, Field(strict=True, ge=1, le=9_007_199_254_740_991)]
@@ -117,11 +116,6 @@ class CatalogEpisodeOut(_Closed):
     order: EpisodeOrder
 
 
-class CatalogNoteOut(_Closed):
-    value: NotePageSummaryOut
-    order: UpdatedTitleOrder
-
-
 class CatalogChatOut(_Closed):
     value: ConversationListItemOut
     order: UpdatedTitleOrder
@@ -155,7 +149,6 @@ class OfflineCatalogOut(_Closed):
     library_shows: list[CatalogLibraryShowsOut]
     episodes: list[CatalogEpisodeOut]
     lectern: LecternOut
-    notes: list[CatalogNoteOut]
     chats: list[CatalogChatOut]
 
     @model_validator(mode="after")
@@ -170,13 +163,11 @@ class OfflineCatalogOut(_Closed):
         _unique([row.library_id for row in self.library_shows])
         _unique([row.media_id for row in self.episodes])
         _unique([row.media_summary.media_id for row in self.lectern.items])
-        _unique([row.value.id for row in self.notes])
         _unique([row.value.id for row in self.chats])
         _orders([row.order for row in self.libraries])
         _orders([row.order for row in self.media])
         _orders([row.index.order for row in self.shows if row.index is not None])
         _orders([row.order for row in self.episodes])
-        _orders([row.order for row in self.notes])
         _orders([row.order for row in self.chats])
         if {row.library_id for row in self.library_shows} != libraries:
             raise ValueError("catalog library sections are incomplete")

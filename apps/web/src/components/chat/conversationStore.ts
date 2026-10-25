@@ -27,7 +27,6 @@ import {
 } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
-import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 
 // A pane's copy of a conversation: the server's messages and its last-send default
@@ -232,11 +231,6 @@ export function createChatStore(accountId: string, conversationId: string | null
         cleanups.push(
           () => window.removeEventListener("online", online),
           commands.subscribe(() => set({ command: commands.getSnapshot() }), applyTree),
-          subscribeLinkMutations((mutation) => {
-            if (mutation.kind !== "resource_deleted") return;
-            set({ contextVersion: state.contextVersion + 1 });
-            void store.load();
-          }),
         );
         set({ command: commands.getSnapshot() });
       }

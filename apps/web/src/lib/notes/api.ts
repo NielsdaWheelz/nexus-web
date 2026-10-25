@@ -1,80 +1,37 @@
-// Notes reads and the two small live actions outside the outline.
-// Page deletion is idempotent. Capture retries retain the client note/link ids
-// and frozen local date; its accepted insertion alone resolves the daily page.
-import { apiFetch, type ApiPath } from "@/lib/api/client";
-import type { ListPage } from "@/lib/api/useServerList";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+/** Local note gestures. Captures freeze their date/id/body and commit the page,
+ * independent note and first relationship together. Retry uses LocalCommitError,
+ * never a second create. Deletion observes only the addressed page's liveness. */
+import { bodyText } from "@nexus/authored/body";
+import { isVisible } from "@nexus/authored/merge";
+import { dailyId } from "@nexus/authored/identity";
+import type { Intent } from "@nexus/authored/commands";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
-import { admitWriting, type WriteHandle } from "./writes";
-
-export type NotePageSummary = Schema<"NotePageSummaryOut">;
-
-const pageDeletions = new Map<string, WriteHandle>();
-/** A live page removal remains hidden while its exact outcome is unknown. */
-export function isDeletingPage(pageId: string): boolean {
-  const state = pageDeletions.get(pageId)?.read();
-  return state?.kind === "queued" || state?.kind === "sending" || state?.kind === "unconfirmed";
+import { createLink, deleteResource } from "@/lib/resourceGraph/links";
+import type { WritingRuntime } from "./runtime";
+import { selectStates } from "./runtime";
+export interface NotePageSummary { id: string; title: string }
+export async function deletePage(runtime: WritingRuntime, pageId: string): Promise<void> {
+  await deleteResource(runtime, { ref: `page:${pageId}` });
 }
-
-/** Deletes the page (a missing one too); its notes are kept. */
-export function deletePage(pageId: string): WriteHandle {
-  const pending = pageDeletions.get(pageId);
-  if (pending && isDeletingPage(pageId)) return pending;
-  const write = admitWriting({ kind: "resource_delete", resource_kind: "page", resource_id: pageId });
-  pageDeletions.set(pageId, write);
-  const release = () => { if (pageDeletions.get(pageId) === write) pageDeletions.delete(pageId); };
-  void write.settled.then(release, release);
-  return write;
+export async function dailyPage(runtime: WritingRuntime, local_date: string): Promise<{ ref: string; prelude: Intent[] }> {
+  if (!isLocalDate(local_date)) throw new TypeError("A daily date must be YYYY-MM-DD");
+  const store = await runtime.store;
+  const replica = await store.readReplica();
+  const binding = await store.query({ kind: "binding", key: { kind: "daily", local_date } });
+  const ref = binding.binding_id ?? `page:${dailyId(replica.account_id, local_date)}`;
+  const states = await store.readStates(selectStates({ refs: [ref] }));
+  const existing = states.resources.find(resource => resource.ref === ref);
+  return { ref, prelude: existing ? isVisible(existing.touch_vv, existing.delete_vv) ? [] : [{ kind: "restore_resource", ref }] : [{ kind: "create_page", ref, title: "", local_date }] };
 }
-
-/** One keyset page of the viewer's pages; `query` holds the view's keys, `limit` and `cursor`. */
-export async function fetchNotePages(
-  query: URLSearchParams,
-  signal: AbortSignal,
-): Promise<ListPage<NotePageSummary>> {
-  const { data } = await apiFetch<ApiJson<"/notes/pages", "get">>(
-    `/api/notes/pages?${query}`,
-    { cache: "no-store", signal },
-  );
-  return data;
+export async function captureToday(runtime: WritingRuntime, localDate: string, noteId: string, text: string): Promise<string> {
+  const page = await dailyPage(runtime, localDate);
+  const ref = `note_block:${noteId}`;
+  await createLink(runtime, { source_ref: page.ref, target_ref: ref, source_label: null, target_label: null, after: null, prelude: [...page.prelude, { kind: "create_note", ref, body: bodyText(text) }] });
+  return page.ref.slice("page:".length);
 }
-
-/** Appends `text` as one note last on the day's page; a retry with the same note id
- * has landed. Resolves the page's id. */
-export function captureToday(
-  localDate: string,
-  noteId: string,
-  text: string,
-): { write: WriteHandle; settled: Promise<string> } {
-  const linkId = crypto.randomUUID();
-  const write = admitWriting({ kind: "capture", local_date: localDate, request: { note_id: noteId, link_id: linkId, text } });
-  const settled = write.settled.then(ack => {
-    const inserted = ack.insertions.find(item => item.requested_link_id === linkId);
-    // justify-defect: the capture endpoint must acknowledge its requested insertion.
-    if (!inserted?.source_ref.startsWith("page:")) throw new Error("the accepted capture has no daily page");
-    return inserted.source_ref.slice("page:".length);
-  });
-  return { write, settled };
-}
-
-export async function fetchNote(noteId: string, signal?: AbortSignal): Promise<Schema<"NoteBlockOut">> {
-  const path = `/api/notes/blocks/${encodeURIComponent(noteId)}` as ApiPath;
-  const { data } = await apiFetch<ApiJson<"/notes/blocks/{note_id}", "get">>(path, {
-    cache: "no-store",
-    signal,
-  });
-  return data;
-}
-
 export type DailyLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };
-
-/** The YYYY-MM-DD a locator names in the account's calendar time zone. */
 export function dailyDateFor(locator: DailyLocator, calendarTimeZone: string): string {
-  const date =
-    locator.kind === "Today"
-      ? formatLocalDateInTimeZone(new Date(), calendarTimeZone)
-      : locator.value;
-  // justify-defect: locators come from the launcher's parser and the daily route.
+  const date = locator.kind === "Today" ? formatLocalDateInTimeZone(new Date(), calendarTimeZone) : locator.value;
   if (!isLocalDate(date)) throw new TypeError("A daily page date is YYYY-MM-DD");
   return date;
 }

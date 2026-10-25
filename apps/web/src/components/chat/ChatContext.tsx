@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -11,14 +11,15 @@ import ResourceList from "@/components/ui/ResourceList";
 import ResourceComposer from "@/components/resources/ResourceComposer";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import Button from "@/components/ui/Button";
-import { FeedbackNotice, FeedbackStatus, useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { connectionMutationErrorMessage, mutateConnection, subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { connectionMutationErrorMessage, mutateConnection } from "@/lib/resourceGraph/links";
+import { useWritingRuntime } from "@/lib/notes/hooks";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ChatContext.module.css";
 
@@ -30,13 +31,10 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   const paneId = usePaneRuntime()?.paneId;
   const selfRef = `conversation:${conversationId}`;
   const attachments = useConnectionAttachments(selfRef);
-  const [revision, setRevision] = useState(0);
-  const changed = useCallback(() => setRevision((value) => value + 1), []);
-  useEffect(() => subscribeLinkMutations(changed), [changed]);
   const [adding, setAdding] = useState(false);
   const metadata = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const context = useServerValue<Schema<"ContextOut">>({
-    key: `/conversations/${conversationId}/context`, stale: `${refreshKey}:${revision}:${metadata}`, visit: VISIT,
+    key: `/conversations/${conversationId}/context`, stale: `${refreshKey}:${metadata}`, visit: VISIT,
     load: async (signal) => (await apiFetch<ApiJson<"/conversations/{conversation_id}/context", "get">>(`/api/conversations/${conversationId}/context`, { signal })).data,
   });
   const entries = context.status === "ready" ? context.data.items : [];
@@ -66,7 +64,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
         conversationId={conversationId} onChanged={context.refetch} />)}
       {context.data.items.length === 0 ? <li><FeedbackStatus content={{ tone: "Neutral", title: "no context yet" }} announcement="None"  /></li> : null}
     </ResourceList> : null}
-    {adding ? <ResourceComposer source={{ kind: "resource", ref: selfRef }} occurrenceKey={`context:${selfRef}`} label="add to future context" onSaved={context.refetch} /> : null}
+    {adding ? <ResourceComposer destinationRef={selfRef} occurrenceKey={`context:${selfRef}`} label="add to future context" onSaved={context.refetch} /> : null}
   </section>;
 }
 
@@ -83,17 +81,17 @@ function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, af
   const removeButton = useRef<HTMLButtonElement>(null);
   const more = useRef<HTMLButtonElement>(null);
   const title = useRef<HTMLAnchorElement>(null);
-  const conditionKey = `chat-context:${conversationId}:${entry.item.ref}:${useId()}`;
-  const returnFocus = () => more.current?.isConnected && more.current.getClientRects().length ? more.current : title.current;
+  const feedback = useFeedback();
+  const runtime = useWritingRuntime();
   if (defect) throw defect.error;
   const remove = async () => {
-    if (busy || stale) return;
+    if (busy || stale || runtime === null) return;
     const command = submitted.current ?? entry.mutation;
     if (!command) return;
     submitted.current = command;
     setBusy(true); setFailure(null);
     try {
-      await mutateConnection(command);
+      await mutateConnection(runtime, command);
       submitted.current = null;
       const button = removeButton.current;
       if (button && document.activeElement === button) {
@@ -105,7 +103,10 @@ function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, af
       if (handleUnauthenticatedApiError(error)) return;
       try {
         const content = connectionMutationErrorMessage(error);
-        setFailure(isApiError(error) && error.code === "E_CONTEXT_CHANGED" ? { ...content, title: "future context changed; refresh before removing this item" } : content);
+        const shown = isApiError(error) && error.code === "E_CONTEXT_CHANGED" ? { ...content, title: "future context changed; refresh before removing this item" } : content;
+        // The row keeps the failure and its next control; the receipt reports this attempt once.
+        setFailure(shown);
+        feedback.receipt(shown);
       }
       catch (error) { setDefect({ error }); }
       if (!outcomeUnknown(error)) {
@@ -123,15 +124,12 @@ function ContextIndexItem({ entry, conversationId, onChanged, podcastSubject, af
     setStale(false);
     setFailure(null);
   }, [entry.mutation, stale]);
-  useWorkspaceCondition(conditionKey, failure ? {
-    needsAttention: true,
-    priority: "Write", content: failure, announcement: "Polite", returnFocus,
-    actions: [{ label: stale ? "refresh context" : "retry removal", onClick: stale ? () => { refreshRequested.current = true; onChanged(); } : () => { void remove(); }, busy }],
-  } : null);
   return <ResourceIndexRow presentation={{ kind: "Index" }} item={entry.item} podcastSubject={podcastSubject} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     moreTriggerRef={more} primaryLinkRef={title}
     attention={failure ? [failure.title, failure.message].filter(Boolean).join(" · ") : undefined}
-    primaryControl={entry.mutation ? <Button className={styles.remove} ref={removeButton} aria-disabled={busy || stale}
-      aria-label={`remove from future context: ${entry.item.label}`} onClick={() => { void remove(); }}>remove</Button> : undefined}
+    primaryControl={entry.mutation ? stale ? <Button className={styles.remove}
+      aria-label={`refresh future context before removing: ${entry.item.label}`} onClick={() => { refreshRequested.current = true; onChanged(); }}>refresh context</Button>
+      : <Button className={styles.remove} ref={removeButton} aria-disabled={busy || undefined}
+        aria-label={`${failure ? "retry removing" : "remove"} from future context: ${entry.item.label}`} onClick={() => { void remove(); }}>{failure ? "retry removal" : "remove"}</Button> : undefined}
   />;
 }

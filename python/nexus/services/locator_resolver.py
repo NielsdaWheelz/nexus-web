@@ -178,7 +178,10 @@ def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> Pas
         {
             id_: words
             for id_, words in db.execute(
-                text("SELECT id,body_text FROM note_blocks WHERE id=ANY(:ids)"), {"ids": note_ids}
+                text(
+                    "SELECT id,body_text FROM note_blocks WHERE id=ANY(:ids) AND authored_visible"
+                ),
+                {"ids": note_ids},
             )
         }
         if note_ids
@@ -273,7 +276,7 @@ def read_highlight_reader_sources(
                   ON hpa.highlight_id = h.id AND hpa.media_id = h.anchor_media_id
                 LEFT JOIN pdf_page_text_spans ppts
                   ON ppts.media_id = h.anchor_media_id AND ppts.page_number = hpa.page_number
-                WHERE h.id = ANY(:highlight_ids)
+                WHERE h.id = ANY(:highlight_ids) AND h.authored_visible
                 """
             ),
             {"highlight_ids": list(highlight_ids)},

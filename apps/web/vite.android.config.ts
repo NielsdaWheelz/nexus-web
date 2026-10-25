@@ -1,15 +1,20 @@
 // Complete installed application closure. The APK serves these bytes locally;
 // shared CSP generation remains the owner of executable-content policy.
 import path from "node:path";
-import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { compileQuery } from "../../node/authored/src/queries";
+import type { AuthoredQuery } from "../../node/authored/src/types";
+import { DEVICE_SCHEMA } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
 import { assertPdfJsRuntimeClosure, copyPdfJsRuntime } from "./scripts/copy-pdfjs.mjs";
 
-const outDir = path.resolve(__dirname, "../android/app/src/main/assets/app");
+const outDir = path.resolve(__dirname, "public/_nexus/app");
+const nativeOutDir = path.resolve(__dirname, "../android/app/src/main/assets/app");
 const storage = process.env.R2_S3_API_ORIGIN;
 const connect = storage ? [new URL(storage).origin] : [];
 
@@ -19,7 +24,7 @@ export default defineConfig({
   publicDir: false,
   html: { cspNonce: "__NEXUS_NONCE__" },
   define: { __NEXUS_PDF_RUNTIME_ROOT__: JSON.stringify("/_nexus/app/pdfjs") },
-  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  resolve: { dedupe: ["yjs", "prosemirror-model", "prosemirror-state", "prosemirror-view"], alias: { "@": path.resolve(__dirname, "src") } },
   plugins: [
     react(),
     {
@@ -35,8 +40,35 @@ export default defineConfig({
           ...Object.fromEntries(STATIC_SECURITY_HEADERS.map(header => [header.key, header.value])),
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
+        writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
+        const samples: AuthoredQuery[] = [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }, { kind: "resource", ref: "" }, { kind: "daily", local_date: "" }, { kind: "pages", cursor: null, limit: 100 }, { kind: "annotations", source_ref: "", cursor: null, limit: 100 }, { kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }, { kind: "backlinks", ref: "", cursor: null, limit: 100 }, { kind: "search", text: "", cursor: null, limit: 100 }, { kind: "adjacency", ref: "", cursor: null, limit: 100 }, ...Array.from({ length: 101 }, (_, count): AuthoredQuery => ({ kind: "resolve", refs: Array(count).fill("") }))];
+        writeFileSync(path.join(outDir, "authored-queries.json"), JSON.stringify(Object.fromEntries(samples.map(query => [query.kind === "resolve" ? `resolve_${query.refs.length}` : query.kind === "binding" ? `binding_${query.key.kind}` : query.kind, compileQuery(query).sql]))));
+        rmSync(nativeOutDir, { recursive: true, force: true });
+        mkdirSync(nativeOutDir, { recursive: true });
+        cpSync(outDir, nativeOutDir, { recursive: true });
+        function closure(directory: string, prefix: string): string[] {
+          return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? closure(path.join(directory, entry.name), `${prefix}/${entry.name}`) : [`${prefix}/${entry.name}`]);
+        }
+        const assets = [...closure(outDir, "/_nexus/app"), ...closure(path.resolve(__dirname, "public/_nexus/authored"), "/_nexus/authored")].filter(asset => !asset.endsWith("security-headers.json"));
+        const policy = appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: true, ws: [], connect });
+        writeFileSync(path.resolve(__dirname, "public/workspace-sw.js"), serviceWorker(assets, policy));
       },
     },
   ],
   build: { outDir, emptyOutDir: true, assetsDir: "assets", sourcemap: false },
 });
+
+
+function serviceWorker(assets: string[], policy: string): string {
+  const revision = createHash("sha256").update(assets.map(asset => readFileSync(path.join(__dirname, "public", asset))).reduce((hash, value) => hash + createHash("sha256").update(value).digest("hex"), "")).digest("hex");
+  return String.raw`const CACHE=${JSON.stringify("nexus-workspace-" )}+${JSON.stringify(revision)};
+const ASSETS=${JSON.stringify(assets)};
+const POLICY=${JSON.stringify(policy)};
+self.addEventListener("install",event=>event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(ASSETS);})()));
+self.addEventListener("activate",event=>event.waitUntil((async()=>{for(const key of await caches.keys())if(key.startsWith("nexus-workspace-")&&key!==CACHE)await caches.delete(key);await self.clients.claim();})()));
+self.addEventListener("message",event=>{if(event.data?.op==="ready")event.waitUntil((async()=>{const cache=await caches.open(CACHE);const ready=(await Promise.all(ASSETS.map(asset=>cache.match(asset)))).every(Boolean);event.ports[0]?.postMessage({ready});})());});
+self.addEventListener("fetch",event=>{const request=event.request,url=new URL(request.url);if(request.method!=="GET"||url.origin!==self.location.origin)return;
+if(ASSETS.includes(url.pathname)){event.respondWith((async()=>{const cache=await caches.open(CACHE);return await cache.match(url.pathname)||fetch(request);})());return;}
+if(request.mode!=="navigate"||!(/^\/(?:$|notes(?:\/[^/]+)?$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
+event.respondWith((async()=>{const cached=await(await caches.open(CACHE)).match("/_nexus/app/index.html");if(!cached)throw Error("offline workspace shell incomplete");const nonce=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));const html=(await cached.text()).replaceAll("__NEXUS_NONCE__",nonce);return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Content-Security-Policy":POLICY.replaceAll("__NEXUS_NONCE__",nonce),"Cache-Control":"no-store"}});})());});`;
+}

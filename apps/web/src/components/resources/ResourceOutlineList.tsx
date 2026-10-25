@@ -1,129 +1,12 @@
 "use client";
 
-import Button from "@/components/ui/Button";
-
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useRef,
-  useEffect,
-  type ReactNode,
-} from "react";
-import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
-import {hasActiveInteractionOwner, useInteractionOwner} from "@/lib/ui/overlay";
-import {usePaneIsActive} from "@/lib/panes/paneRuntime";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import type {
-  OutlineBranch,
-  OutlineTarget,
-} from "@/lib/resources/outlineProjection";
-import {
-  useOutlineSession,
-  type OutlineSession,
-} from "@/lib/notes/useOutlineSession";
+// Native lists share one host visit's folds and reveal scope; ancestry follows occurrences.
+// Structure, selection and editing belong to the outline that renders the rows.
+import {createContext, useCallback, useContext, useRef, type ReactNode} from "react";
+import {usePaneRuntime} from "@/lib/panes/paneRuntime";
+import type {OutlineBranch, OutlineTarget} from "@/lib/resources/outlineProjection";
+import {useEditorDraft} from "@/lib/notes/editorHost";
 import styles from "./ResourceOutline.module.css";
-
-export const OutlineSessionContext = createContext<OutlineSession | null>(null);
-const ObservedSession = createContext<OutlineSession | null>(null);
-
-/** The whole editing surface, including root bodies and route masthead. */
-export function OutlineSessionScope({
-  session,
-  children,
-}: {
-  session: OutlineSession;
-  children: ReactNode;
-}) {
-  const inherited = useContext(ObservedSession);
-  return inherited === session ? (
-    <>{children}</>
-  ) : (
-    <ObservedOutlineSession session={session}>
-      {children}
-    </ObservedOutlineSession>
-  );
-}
-
-function ObservedOutlineSession({
-  session,
-  children,
-}: {
-  session: OutlineSession;
-  children: ReactNode;
-}) {
-  const root = useRef<HTMLDivElement>(null);
-  const markInteraction = session.markInteraction;
-  const runtime = usePaneRuntime();
-  const active = usePaneIsActive();
-  const interactionOwner = useInteractionOwner();
-  const latest = useRef(session);
-  latest.current = session;
-  useEffect(() => {if (!active || interactionOwner !== null) latest.current.revokeCommands();}, [active, interactionOwner]);
-  usePaneOutlineCommands(session.commandOwner && active && interactionOwner === null ? {
-    session: session.scope, insertLabel: session.insertLabel,
-    commandState: command => latest.current.commandState(command),
-    executeCommand: command => latest.current.executeCommand(command),
-    done: () => {
-      const focused = document.activeElement;
-      latest.current.revokeCommands();
-      if (focused instanceof HTMLElement && root.current?.contains(focused)) focused.blur();
-    },
-  } : null);
-  useEffect(() => {
-    const mark = (event: Event) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const accessory = target.closest("[data-outline-commands]");
-      if (accessory?.getAttribute("data-outline-commands") === latest.current.scope) return;
-      const inside = root.current?.contains(target) ?? false;
-      if (!inside && (event.type === "pointerdown" || event.type === "focusin")) latest.current.revokeCommands();
-      if (inside && (event.type === "pointerdown" || event.type === "keydown" || event.type === "focusin"))
-        markInteraction(target.closest("[data-outline-occurrence]")?.getAttribute("data-outline-occurrence") ?? null,
-          event.type as "pointerdown" | "keydown" | "focusin");
-      if (hasActiveInteractionOwner() && latest.current.commandOwner) latest.current.revokeCommands();
-    };
-    document.addEventListener("pointerdown", mark, true);
-    document.addEventListener("keydown", mark, true);
-    document.addEventListener("focusin", mark, true);
-    return () => {
-      document.removeEventListener("pointerdown", mark, true);
-      document.removeEventListener("keydown", mark, true);
-      document.removeEventListener("focusin", mark, true);
-    };
-  }, [markInteraction, runtime]);
-  return (
-    <ObservedSession value={session}>
-      <OutlineSessionContext value={session}>
-        <div ref={root} data-outline-session={session.scope}>
-          {children}
-          {session.failedIntents.length > 0 ? (
-            <section aria-label="kept outline drafts">
-              <p role="alert">this change was refused. your drafts are kept.</p>
-              {session.failedIntents.map((intent, index) => (
-                <div key={index}>
-                  {intent.drafts.map((draft) => (
-                    <pre key={draft.ref}>{draft.body.body_text}</pre>
-                  ))}
-                  {intent.problem ? <p>{intent.problem}</p> : null}
-                  {index === 0 ? (
-                    <Button
-                      type="button"
-                      disabled={intent.problem !== null}
-                      onClick={session.retryFailed}
-                    >
-                      retry this change at the reviewed position
-                    </Button>
-                  ) : null}
-                </div>
-              ))}
-            </section>
-          ) : null}
-        </div>
-      </OutlineSessionContext>
-    </ObservedSession>
-  );
-}
 
 export const ResourceOutlineContext = createContext<{
   scope: string;
@@ -149,7 +32,6 @@ type Props = {
   viewLocked?: boolean;
 };
 
-/** Native lists share one visit's folds and reveal scope; ancestry follows occurrences. */
 export default function ResourceOutlineList(props: Props) {
   const parent = useContext(ResourceOutlineContext);
   const inherited = useContext(ResourceBranch);
@@ -157,55 +39,23 @@ export default function ResourceOutlineList(props: Props) {
   if (parent)
     return (
       <ResourceBranch value={props.branch ?? inherited}>
-        <ul
-          className={styles.list}
-          aria-label={props.ariaLabel}
-          aria-busy={props.busy}
-        >
+        <ul className={styles.list} aria-label={props.ariaLabel} aria-busy={props.busy}>
           {props.children}
         </ul>
         {props.after}
       </ResourceBranch>
     );
-  return (
-    <RootList
-      key={`${runtime?.visitId ?? "outside"}:${props.scope}`}
-      {...props}
-    />
-  );
+  return <RootList key={`${runtime?.visitId ?? "outside"}:${props.scope}`} {...props} />;
 }
 
-function RootList(props: Props) {
-  const session = useContext(OutlineSessionContext);
-  return session ? (
-    <OutlineSessionScope session={session}>
-      <SessionList {...props} session={session} />
-    </OutlineSessionScope>
-  ) : (
-    <StandaloneList {...props} />
-  );
-}
-
-function StandaloneList(props: Props) {
-  const branch = useContext(ResourceBranch);
-  const session = useOutlineSession({
-    scope: props.scope,
-    inheritedBranch: props.branch ?? branch,
-  });
-  return (
-    <OutlineSessionScope session={session}>
-      <SessionList {...props} session={session} />
-    </OutlineSessionScope>
-  );
-}
-
-function SessionList({
+function RootList({
   children, after, ariaLabel, scope, ancestorRef, branch: suppliedBranch,
-  onRevealRoot, busy, viewLocked = false, session,
-}: Props & { session: OutlineSession }) {
+  onRevealRoot, busy, viewLocked = false,
+}: Props) {
   const inherited = useContext(ResourceBranch);
   const root = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLUListElement | null>(null);
+  const folds = useEditorDraft<ReadonlyMap<string, boolean>>(`Resources.OutlineFolds:${scope}`, () => new Map());
   const reveal = useCallback((target: OutlineTarget) => {
     if (target.kind === "root") {
       if (onRevealRoot) onRevealRoot();
@@ -217,9 +67,9 @@ function SessionList({
     )?.focus();
   }, [onRevealRoot]);
   const context = {
-    scope, view: session.view, viewLocked,
+    scope, view: {folds: folds.value}, viewLocked,
     toggle(key: string, open: boolean) {
-      if (!viewLocked) session.toggle({key, open});
+      if (!viewLocked) folds.set(current => new Map(current).set(key, open));
     },
     reveal,
   };

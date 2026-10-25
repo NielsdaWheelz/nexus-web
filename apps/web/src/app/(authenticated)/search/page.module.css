@@ -55,3 +55,12 @@
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
 }
+
+.localResult {
+  padding: var(--space-2) 0;
+}
+
+.localKind {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}

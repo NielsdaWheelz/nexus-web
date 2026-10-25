@@ -1,7 +1,7 @@
-"""The connections read model: the viewer's edges around a set of refs, hydrated once
-per page into ``ConnectionOut``. A user link is undirected and matches either way;
-``other`` is always the far endpoint and ``mutation`` names the one command that may
-remove the fact."""
+"""The connections read model: the viewer's live edges around a set of refs, hydrated
+once per page into ``ConnectionOut``. An authored link is undirected and matches either
+way; ``other`` is always the far endpoint and ``mutation`` names the one server command
+that may remove a machine fact."""
 
 from __future__ import annotations
 
@@ -27,10 +27,11 @@ from nexus.schemas.resource_graph import (
     DetachContextMutation,
     EdgeKind,
     EdgeOrigin,
-    UnlinkMutation,
+    RemoveFactMutation,
 )
 from nexus.schemas.resource_items import CitationSourceTargetKey
 from nexus.services.resource_graph.edges import Pair
+from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import assert_resource_ref, require_ref
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
@@ -125,14 +126,14 @@ def query_connections(
 
     at_source = at("source")
     at_target = at("target")
-    link = ResourceEdge.origin == "user"
+    link = ResourceEdge.origin.in_(AUTHORED_LINK_ORIGINS)
     incident = {
         "both": or_(at_source, at_target),
         "incoming": or_(at_target, and_(link, at_source)),
         "outgoing": or_(at_source, and_(link, at_target)),
     }[query.direction]
     stmt = select(ResourceEdge, at_source, at_target).where(
-        ResourceEdge.user_id == viewer_id, incident
+        ResourceEdge.user_id == viewer_id, incident, text(edge_live_sql("resource_edges"))
     )
     filters = query.filters
     if filters.origins is not None:
@@ -243,13 +244,14 @@ def hydrate_connections(
         source = f"{row.source_scheme}:{row.source_id}"
         target = f"{row.target_scheme}:{row.target_id}"
         incoming = direction == "incoming"
-        if row.origin == "user" or direction == "both":
+        authored = row.origin in AUTHORED_LINK_ORIGINS
+        if authored or direction == "both":
             far_end_is_source = (row.source_scheme, row.source_id) not in matched
             incoming = (row.target_scheme, row.target_id) in matched and far_end_is_source
         creation = provenance.get(row.id) if row.origin == "assistant" else None
-        mutation = None
-        if row.origin in ("user", "discovery", "assistant"):
-            mutation = UnlinkMutation()
+        mutation: RemoveFactMutation | DetachContextMutation | None = None
+        if row.origin in ("discovery", "assistant"):
+            mutation = RemoveFactMutation()
         elif row.origin in ("citation", "system") and row.ordinal is None:
             mutation = DetachContextMutation(
                 conversation_id=row.source_id,
@@ -259,9 +261,7 @@ def hydrate_connections(
         items.append(
             ConnectionOut(
                 edge_id=row.id,
-                direction="undirected"
-                if row.origin == "user"
-                else ("incoming" if incoming else "outgoing"),
+                direction="undirected" if authored else ("incoming" if incoming else "outgoing"),
                 kind=cast(EdgeKind, row.kind),
                 origin=cast(EdgeOrigin, row.origin),
                 snapshot=CitationSnapshot.model_validate(row.snapshot)

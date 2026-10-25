@@ -5,7 +5,7 @@ import type { Delete, Emphasis, Link, Paragraph, PhrasingContent, RootContent, S
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { defaultHandlers, toMarkdown } from "mdast-util-to-markdown";
 import type { Mark } from "prosemirror-model";
-import { noteBodySchema, type NoteBody } from "@/lib/notes/noteBody";
+import { noteBodySchema, type NoteBody } from "@nexus/authored/body";
 
 export type ReaderQuestion =
   | { kind: "Blank" }
@@ -51,21 +51,22 @@ function markdownMarkEdges(children: PhrasingContent[]): PhrasingContent[] {
 /** Preserve the complete question as markdown source; this does not save the note. */
 export function convertReaderQuestion(body: NoteBody): ReaderQuestion {
   const block = noteBodySchema.nodeFromJSON(body.body_pm_json);
-  let unsupported: "Images" | "Embeds" | null = block.type.name === "object_embed" ? "Embeds" : null;
+  let unsupported: "Images" | "Embeds" | null = false ? "Embeds" : null;
   block.descendants((node) => {
     if (node.type.name === "image") unsupported ??= "Images";
-    if (node.type.name === "object_embed") unsupported ??= "Embeds";
+    if (node.type.name === "resource_embed") unsupported ??= "Embeds";
   });
   if (unsupported) return { kind: "Unsupported", reason: unsupported };
 
   const blocks: RootContent[] = [];
   let substantive = false;
-  switch (block.type.name) {
-    case "code_block":
-      substantive = block.textContent.length > 0;
-      blocks.push({ type: "code", value: block.textContent });
+  switch (block.attrs.presentation) {
+    case "code":
+      const codeText = block.textBetween(0, block.content.size, "", "\n");
+      substantive = codeText.length > 0;
+      blocks.push({ type: "code", value: codeText });
       break;
-    case "paragraph": {
+    case "prose": {
       let paragraph: Paragraph = { type: "paragraph", children: [] };
       // shared marks stay open across adjacent nodes; reopening them can change meaning.
       const active: { mark: Mark; node: Strong | Emphasis | Delete | Link }[] = [];

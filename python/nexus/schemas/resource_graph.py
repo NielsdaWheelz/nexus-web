@@ -1,14 +1,14 @@
 """The resource graph's vocabulary and wire: edge kinds and origins, the stored edge
-snapshot, connection reads and the link commands. Refs travel as ``<scheme>:<uuid>``."""
+snapshot, connection reads, machine-fact removal and link endpoints. Refs travel as
+``<scheme>:<uuid>``."""
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Literal, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
-from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
 from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
@@ -68,8 +68,10 @@ class ConnectionCreationOut(Model):
     message_id: UUID | None
 
 
-class UnlinkMutation(Model):
-    kind: Literal["unlink"] = "unlink"
+class RemoveFactMutation(Model):
+    """Removal of one discovery or assistant fact by ``DELETE /resource-graph/facts/{id}``."""
+
+    kind: Literal["remove_fact"] = "remove_fact"
 
 
 class DetachContextMutation(Model):
@@ -80,14 +82,15 @@ class DetachContextMutation(Model):
 
 
 ConnectionMutation = Annotated[
-    UnlinkMutation | DetachContextMutation,
+    RemoveFactMutation | DetachContextMutation,
     Field(discriminator="kind"),
 ]
 
 
 class ConnectionOut(Model):
-    """One fact seen from a queried ref: ``other`` is the far endpoint, a user link is
-    ``undirected``, and ``mutation`` names the one command that may remove it."""
+    """One fact seen from a queried ref: ``other`` is the far endpoint, an authored link is
+    ``undirected``, and ``mutation`` names the one server command that may remove it; an
+    authored link has none, because only the local authored store unlinks it."""
 
     edge_id: UUID
     direction: Literal["incoming", "outgoing", "undirected"]
@@ -123,32 +126,6 @@ class LinkResourceEndpoint(Model):
     ref: str
 
 
-class LinkFragmentSelectionSource(Model):
-    """A reflowable selection, materialized as a highlight with the link."""
-
-    kind: Literal["fragment_selection"] = "fragment_selection"
-    highlight_id: UUID
-    reading_media_id: UUID
-    fragment_id: UUID
-    start_offset: int = Field(..., ge=0)
-    end_offset: int = Field(..., gt=0)
-    color: HIGHLIGHT_COLORS
-    expected_reader_generation: int | None = Field(default=None, ge=1)
-
-
-class LinkPdfSelectionSource(Model):
-    """A PDF page-space selection, materialized as a highlight with the link."""
-
-    kind: Literal["pdf_selection"] = "pdf_selection"
-    highlight_id: UUID
-    media_id: UUID
-    page_number: int = Field(..., ge=1)
-    quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
-    exact: str = ""
-    color: HIGHLIGHT_COLORS
-    expected_reader_generation: int | None = Field(..., ge=1)
-
-
 class LinkPassageEndpoint(Model):
     """A transient passage candidate, materialized into a ``passage_anchor`` on confirm."""
 
@@ -158,19 +135,3 @@ class LinkPassageEndpoint(Model):
 
 
 LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discriminator="kind")]
-
-
-class LinkDailyPageSource(Model):
-    kind: Literal["daily_page"] = "daily_page"
-    local_date: date
-    page_id: UUID
-
-
-InsertionSource = Annotated[
-    LinkResourceEndpoint
-    | LinkPassageEndpoint
-    | LinkFragmentSelectionSource
-    | LinkPdfSelectionSource
-    | LinkDailyPageSource,
-    Field(discriminator="kind"),
-]

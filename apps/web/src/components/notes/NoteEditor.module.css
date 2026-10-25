@@ -115,3 +115,9 @@
 .compact :global(p) {
   min-height: 0;
 }
+
+.view pre :is(strong, em, u, s, a, code) {
+  font: inherit;
+  text-decoration: none;
+  color: inherit;
+}

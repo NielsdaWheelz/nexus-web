@@ -7,6 +7,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { podcastPendingNotice } from "@/lib/podcasts/commands";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -80,6 +81,7 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
   const destination = libraryDisplayName(library);
   const subject = `admission:${JSON.stringify([id, target.kind, target.kind === "Canonical" ? target.podcast_id : target.target])}`;
   const pending = ctx.podcasts.pending(subject);
+  const notice = pending === null ? null : podcastPendingNotice(pending);
   const following = "subscription" in facts && facts.subscription !== null;
   const operation = "import" in facts ? facts.import : null;
   const blocked = !facts.can_add_content || operation !== null || mode === "follow" && following;
@@ -106,7 +108,9 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
     {mode === "follow" && following ? <FeedbackNotice content={{ tone: "Neutral", title: `already subscribed in ${destination}.` }} announcement="Polite" /> : null}
     {operation !== null ? <PodcastImportProgress operation={operation} title={title} following={following} /> : null}
     {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh the destination.")} announcement="Polite" /> : null}
-    {refused || pending !== null && pending.phase !== "Sending" ? <FeedbackNotice content={{ tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "review the current destination before choosing again.", message: pending?.phase === "Unknown" ? "the request may have succeeded. recovery remains available in workspace feedback." : "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review destination", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setRefused(false); } }] : undefined} /> : null}
+    {pending?.phase === "Unknown" && notice !== null ? <FeedbackNotice content={notice} announcement="Polite"
+      actions={[{ label: "check change", onClick: () => { void ctx.podcasts.check(pending.key); } }, { label: "stop tracking", onClick: () => ctx.podcasts.review(pending.key) }]} />
+      : refused || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "review the current destination before choosing again.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review destination", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setRefused(false); } }] : undefined} /> : null}
     <div className={styles.actions}>
       <Button emphasis="strong" aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || refused || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "import episodes"}</Button>
       {mode === "current_episodes" ? <Button disabled={sending || pending?.phase === "Sending"} onClick={onChangeDestination}>change destination</Button> : null}

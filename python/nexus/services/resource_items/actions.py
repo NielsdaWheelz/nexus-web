@@ -21,7 +21,6 @@ from nexus.schemas.resource_items import (
     ConsumptionAction,
     DownloadAction,
     DownloadKind,
-    HighlightNoteAction,
     LecternMembershipAction,
     OpenPodcastFeedAction,
     OpenSourceAction,
@@ -247,7 +246,7 @@ def _highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[Resourc
     owner = _owner(facts.is_owner)
     actions: list[ResourceActionOut] = [
         _simple("EditHighlight", owner),
-        HighlightNoteAction(blocked=None, note_block_id=facts.note_block_id),
+        _simple("HighlightNote"),
     ]
     if facts.edit_bounds_applicable:
         actions.append(_simple("EditHighlightBounds", owner))

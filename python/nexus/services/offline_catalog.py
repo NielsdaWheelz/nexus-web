@@ -4,7 +4,8 @@ Physical memberships, active subscriptions/imports and visible Lectern selection
 admit roots. Included shows admit their complete visible episodes, never provider
 history or the global corpus. Domain owners supply facts and total-order plans;
 Postgres assigns ordinals so local selectors need no database collation replica.
-Retries produce a new independent snapshot identity. This read writes nothing.
+Retries produce a new independent snapshot identity. This read writes nothing. Authored
+pages and notes are absent: the local authored store is their sole owner offline.
 """
 
 from collections.abc import Mapping, Sequence
@@ -19,9 +20,8 @@ from nexus.api.edge import WIRE_REVISION
 from nexus.db.models import TranscriptState
 from nexus.schemas import offline_catalog as wire
 from nexus.schemas.conversation import ConversationListItemOut
-from nexus.schemas.notes import NotePageSummaryOut
 from nexus.schemas.podcast import PodcastEpisodeCountsOut
-from nexus.services import libraries, library_entries, library_listing, media, notes
+from nexus.services import libraries, library_entries, library_listing, media
 from nexus.services.chat.conversations import conversation_index_rows_sql
 from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, SortKey, order_by_sql
 from nexus.services.consumption import lectern, observation
@@ -182,7 +182,6 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         "title_asc": UPDATED_TITLE_PLANS[("title", "asc")],
         "title_desc": UPDATED_TITLE_PLANS[("title", "desc")],
     }
-    page_rows = _ranked(db, notes.page_index_rows_sql(), updated_plans, params)
     chat_rows = _ranked(db, conversation_index_rows_sql(), updated_plans, params)
     return wire.OfflineCatalogOut(
         format_version=2,
@@ -237,15 +236,6 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
             for row in episode_rows
         ],
         lectern=lectern.get_lectern(db, viewer_id, summaries=summaries),
-        notes=[
-            wire.CatalogNoteOut(
-                value=NotePageSummaryOut(
-                    id=row["id"], title=row["title"], updated_at=row["updated_at"]
-                ),
-                order=_order(row, wire.UpdatedTitleOrder),
-            )
-            for row in page_rows
-        ],
         chats=[
             wire.CatalogChatOut(
                 value=ConversationListItemOut(

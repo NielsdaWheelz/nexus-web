@@ -10,13 +10,7 @@
  */
 
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import {
-  useFeedback,
-  useWorkspaceCondition,
-  type FeedbackContextValue,
-  type FeedbackOffer,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContextValue, type FeedbackContent } from "@/components/feedback/Feedback";
 import {
   ApiError,
   apiFetch,
@@ -28,12 +22,11 @@ import {
 } from "@/lib/api/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { createCollectionCommands, CollectionCommandFeedback, type StateChange } from "./collectionCommands";
+import { createCollectionCommands, type StateChange } from "./collectionCommands";
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { remoteReady } from "@/lib/native/admission";
-import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { CollectionTarget } from "./api";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -113,24 +106,17 @@ interface UndoEntry {
   mediaId: string;
   title: string;
   receipt: ApiJson<"/media/{media_id}/finish", "post">["data"];
-  offer: FeedbackOffer;
   status: "Offered" | "Sending" | "Unconfirmed";
   uncertain: boolean;
-  needsAttention: boolean;
   failure: FeedbackContent | null;
   observed: number | null;
   unregister(): void;
-}
-interface UndoRecovery {
-  commandKey: string;
-  key: string;
-  content: FeedbackContent;
-  busy: boolean;
-  needsAttention: boolean;
-  retry(): void;
+  /** Withdraws the latest failed-undo report once undo is retried or retired. */
+  retract: (() => void) | null;
 }
 
-/** Exact finish receipts stay in this account owner; prior uncertainty survives later refusal. */
+/** Exact finish receipts stay in this account owner; prior uncertainty survives later refusal.
+ * The subject's menu offers the inverse while it holds; each failed undo reports once. */
 function createConsumptionCommands(
   feedback: FeedbackContextValue,
   accountId: string,
@@ -141,28 +127,19 @@ function createConsumptionCommands(
   const entries = new Map<string, UndoEntry>();
   const listeners = new Set<() => void>();
   const finishes = new Set<{ mediaId: string; observed: number | null }>();
-  let snapshot: { recoveries: readonly UndoRecovery[]; undoItems: readonly ConsumptionUndo[] } = { recoveries: [], undoItems: [] };
+  let snapshot: { undoItems: readonly ConsumptionUndo[] } = { undoItems: [] };
   const publish = () => {
     snapshot = {
       undoItems: [...entries.values()].map<ConsumptionUndo>(entry => ({ commandKey: entry.commandKey,
         target: { kind: "Media", mediaId: entry.mediaId }, title: entry.title, actionLabel: "undo finish",
         scopeLabel: null, changedCount: 1, phase: entry.status === "Offered" ? "Available" : entry.status })),
-      recoveries: [...entries.values()].filter(entry => entry.status !== "Offered").map<UndoRecovery>(entry => ({
-        key: `completion-undo:${entry.commandKey}`, commandKey: entry.commandKey,
-        content: entry.status === "Sending"
-          ? { tone: "Neutral", title: `undoing finish… · ${entry.title}` }
-          : { tone: "Warning", title: `undo not confirmed · ${entry.title}`,
-              message: `the request may have succeeded. retry uses the same finish receipt.${entry.failure === null ? "" : ` ${entry.failure.title} ${entry.failure.message ?? ""}`}`,
-              ...(entry.failure?.reload ? { reload: true as const } : {}), requestId: entry.failure?.requestId },
-        busy: entry.status === "Sending", needsAttention: entry.needsAttention,
-        retry: () => void undo(entry),
-      })),
     };
     for (const listener of listeners) listener();
   };
   const retire = (entry: UndoEntry) => {
-    entry.offer.withdraw(); entry.unregister(); entries.delete(entry.commandKey); publish();
+    entry.unregister(); entry.retract?.(); entries.delete(entry.commandKey); publish();
   };
+  const retryUndo = (entry: UndoEntry) => ({ label: "undo finish", disabledReason: remoteReady() ? undefined : "requires a connection", onClick: () => void undo(entry) });
   const invalidate = (revisions: ReadonlyMap<string, number>) => {
     for (const entry of [...entries.values()]) {
       const revision = revisions.get(entry.mediaId);
@@ -176,18 +153,10 @@ function createConsumptionCommands(
     }
   };
   const collections = createCollectionCommands({ accountId, guard, feedback, fail, supersedeSingle: invalidate, fence: withProgressFence });
-  function discardUndo(commandKey: string) {
-    const entry = entries.get(commandKey);
-    if (entry?.status === "Offered") retire(entry);
-  }
   async function undo(entry: UndoEntry): Promise<void> {
     const scope = lifetime;
     if (scope === null || scope.signal.aborted || entries.get(entry.commandKey) !== entry || entry.status === "Sending" || !remoteReady()) return;
-    entry.offer.update({ content: { tone: "Success", title: `finished · ${entry.title}` },
-      needsAttention: entry.needsAttention, announcement: "None",
-      actions: [{ label: "undo", commandKey: entry.commandKey, onClick: () => void undo(entry), busy: true }],
-    });
-    entry.status = "Sending"; entry.failure = null; publish();
+    entry.status = "Sending"; entry.failure = null; entry.retract?.(); entry.retract = null; publish();
     let sent = false;
     let admissionLost = false;
     let restoredRevision: number;
@@ -206,7 +175,6 @@ function createConsumptionCommands(
       restoredRevision = response.data.override_revision;
     } catch (error) {
       if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return;
-      entry.needsAttention = true;
       if (sent && !isRefusal(error)) entry.uncertain = true;
       const content = admissionLost
         ? { tone: "Neutral" as const, title: `requires a connection · ${entry.title}`, message: "this attempt sent no state change. try undo again after reconnecting." }
@@ -216,18 +184,16 @@ function createConsumptionCommands(
         entry.status = "Unconfirmed";
         entry.failure = isRefusal(error) ? { ...content, tone: "Warning", title: "this attempt changed nothing; the earlier undo outcome remains unconfirmed.", requestId: error.requestId } : content;
         publish();
+        entry.retract = feedback.receipt({ tone: "Warning", title: `undo not confirmed · ${entry.title}`,
+          message: `the request may have succeeded. retry uses the same finish receipt.${entry.failure === null ? "" : ` ${entry.failure.title} ${entry.failure.message ?? ""}`}`,
+          ...(entry.failure?.reload ? { reload: true as const } : {}), requestId: entry.failure?.requestId }, retryUndo(entry));
       } else if ((isApiError(error) && (error.code === "E_RESOURCE_CONFLICT" || error.status === 404)) || (entry.observed !== null && entry.observed > entry.receipt.revision)) {
         retire(entry);
-        feedback.offer({ key: `completion-undo-result:${entry.commandKey}`, announcement: "Polite", needsAttention: true, undo: null, onDismiss: null,
-          content: content ?? { tone: "Warning", title: `this item changed; undo is no longer available · ${entry.title}` } });
+        feedback.receipt(content ?? { tone: "Warning", title: `this item changed; undo is no longer available · ${entry.title}` });
       } else {
         entry.status = "Offered";
-        entry.offer = feedback.offer({ key: `completion-undo:${entry.commandKey}`,
-          content: content ?? { tone: "Warning", title: `couldn’t undo finish · ${entry.title}` },
-          needsAttention: true, undo: "Retain", onDismiss: () => discardUndo(entry.commandKey), announcement: "Polite",
-          actions: [{ label: "undo", commandKey: entry.commandKey, onClick: () => void undo(entry) }],
-        });
         publish();
+        entry.retract = feedback.receipt(content ?? { tone: "Warning", title: `couldn’t undo finish · ${entry.title}` }, retryUndo(entry));
       }
       if (content === null && !authHandled) fail({ error });
       return;
@@ -236,14 +202,12 @@ function createConsumptionCommands(
     retire(entry);
     collections.supersede([{ mediaId: entry.mediaId, revision: restoredRevision }]);
     publishChange("Consumption", "Podcasts", "Lectern");
-    feedback.settleCondition({ key: `completion-undo:${entry.commandKey}`, content: { tone: "Success", title: `finish undone · ${entry.title}` } });
   }
   return {
     collections,
     commands: {
       ...collections.commands,
       undo(commandKey: string) { const entry = entries.get(commandKey); if (entry !== undefined) void undo(entry); else collections.commands.undo(commandKey); },
-      discardUndo(commandKey: string) { if (entries.has(commandKey)) discardUndo(commandKey); else collections.commands.discardUndo(commandKey); },
       async finish(mediaId: string, { title, leaveLectern }: { title: string; leaveLectern: boolean }): Promise<void> {
         const scope = lifetime;
         if (scope === null) return;
@@ -260,17 +224,10 @@ function createConsumptionCommands(
         if (lifetime !== scope || scope.signal.aborted || receipt === null) return;
         collections.supersede([{ mediaId, revision: receipt.revision }]);
         publishChange("Consumption", "Podcasts", "Lectern");
-        if (pending.observed !== null && pending.observed > receipt.revision) {
-          feedback.receipt({ tone: "Success", title: `finished; undo is unavailable after overlapping state changes · ${title}` });
-          return;
-        }
+        if (pending.observed !== null && pending.observed > receipt.revision) return;
         const commandKey = `${mediaId}:${receipt.revision}:${crypto.randomUUID()}`;
-        const entry: UndoEntry = { mediaId, title, receipt, commandKey, status: "Offered", uncertain: false, needsAttention: false, failure: null,
-          observed: null, unregister: () => {}, offer: feedback.offer({ key: `completion-undo:${commandKey}`,
-            content: { tone: "Success", title: `finished · ${title}` }, needsAttention: false,
-            undo: "Invite", onDismiss: () => discardUndo(commandKey), announcement: "Polite",
-            actions: [{ label: "undo", commandKey, onClick: () => void undo(entry) }],
-          }) };
+        const entry: UndoEntry = { mediaId, title, receipt, commandKey, status: "Offered", uncertain: false, failure: null,
+          observed: null, unregister: () => {}, retract: null };
         entries.set(commandKey, entry);
         entry.unregister = guard.register({ id: `completion-undo:${commandKey}`, scope: { kind: "account" }, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, read: () => ({ changed: false, unconfirmed: entry.status !== "Offered", stopsBrowserWork: false }) });
         publish();
@@ -302,7 +259,7 @@ function createConsumptionCommands(
       return () => {
         scope.abort(); if (lifetime !== scope) return; lifetime = null;
         stopCollections(); stateSettled.delete(settled);
-        for (const entry of entries.values()) { entry.offer.withdraw(); entry.unregister(); }
+        for (const entry of entries.values()) entry.unregister();
         entries.clear(); finishes.clear(); publish();
       };
     },
@@ -318,21 +275,5 @@ export function useConsumptionCommands(reportDefect: (failure: { error: unknown 
   const single = useSyncExternalStore(owner.subscribe, owner.snapshot, owner.snapshot);
   const undoItems = useMemo(() => [...single.undoItems, ...bulk.undoItems], [single.undoItems, bulk.undoItems]);
   useLayoutEffect(() => owner.attach(), [owner]);
-  return { commands: owner.commands, undoItems,
-    feedback: <>
-      {single.recoveries.map(recovery => <UndoFeedback key={recovery.key} recovery={recovery} />)}
-      {bulk.entries.map(entry => <CollectionCommandFeedback key={entry.key} entry={entry} commands={owner.collections.commands} />)}
-    </>,
-  };
-}
-
-function UndoFeedback({ recovery }: { recovery: UndoRecovery }) {
-  const connected = useRemoteAdmission() === "Ready";
-  useWorkspaceCondition(recovery.key, {
-    priority: "Write", announcement: "Polite", needsAttention: recovery.needsAttention,
-    content: recovery.content,
-    actions: [{ label: "undo", commandKey: recovery.commandKey, onClick: recovery.retry,
-      busy: recovery.busy, disabledReason: connected ? undefined : "requires a connection" }],
-  });
-  return null;
+  return { commands: owner.commands, undoItems };
 }

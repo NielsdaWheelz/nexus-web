@@ -23,6 +23,7 @@ import {
 import { getEnv } from "@/lib/env";
 import { nativeError } from "@/lib/native/server";
 import { appCsp, cspNonce, publicReaderCsp } from "@/lib/security/csp";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { AuthUnavailable } from "@/lib/supabase/auth";
 
 // public paths bypass the protected gate. login handles its own continuation
@@ -49,6 +50,17 @@ const PUBLIC_PREFIXES = ["/auth/", "/pdfjs/", "/_next"];
 
 export async function middleware(request: NextRequest) {
   const { pathname, search, host, protocol } = request.nextUrl;
+  // Normal browser startup uses the exact same asset shell as the APK. An
+  // expired remote session cannot evict its confirmed local account.
+  if ((request.method === "GET" || request.method === "HEAD") &&
+      (pathname === "/" || pathname === "/daily" || resolvePaneRouteModel(`${pathname}${search}`).id !== "unsupported")) {
+    return NextResponse.rewrite(new URL("/workspace-shell", request.url));
+  }
+  if (pathname === "/workspace-shell" || pathname === "/workspace-sw.js" || pathname.startsWith("/_nexus/")) {
+    const response = NextResponse.next();
+    if (pathname === "/_nexus/authored/worker.js") response.headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'");
+    return response;
+  }
   const native = isAndroidShellUserAgent(request.headers.get("user-agent") ?? "");
   const isAuthSurface =
     pathname === "/login" ||

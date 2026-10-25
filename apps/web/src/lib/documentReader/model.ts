@@ -2,6 +2,7 @@
 // one identity, the points and targets that address it, and the one mapping
 // between its points and the cursor's wire locator. Offsets are codepoints
 // into a unit's canonical text, half-open.
+import type { HighlightColor as AuthoredHighlightColor, Quad } from "@nexus/authored/types";
 import type { Schema } from "@/lib/api/wire";
 import type { ReaderDestination } from "./location";
 
@@ -10,8 +11,8 @@ export type ReaderDocumentOut =
 export type Locator = Schema<"CursorWrite">["locator"];
 export type CursorSnapshot =
   Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned"> | Schema<"ReaderCursorUnresolved">;
-export type HighlightColor = Schema<"TypedHighlightOut">["color"];
-export type PdfQuad = Schema<"HighlightTargetPdfQuadOut">;
+export type HighlightColor = AuthoredHighlightColor;
+export type PdfQuad = Quad;
 export type SourceIssue =
   Schema<"ReaderTextDocumentOut">["source_issues"][number];
 export type DocumentEmbed = Schema<"DocumentEmbedOut">;
@@ -80,6 +81,11 @@ export type TextDocument = {
   readonly kind: "text";
   readonly format: "web" | "epub" | "transcript";
   readonly identity: string;
+  /** The canonical publication whose fragment offsets the units carry; null when units
+   * belong to other owners (X threads), to a part's source, or to no canonical text. */
+  readonly generation: number | null;
+  /** A part's units address its source media's fragments at this publication. */
+  readonly part: { readonly mediaId: string; readonly generation: number } | null;
   readonly title: string;
   readonly transcriptNavigation: { readonly key: string; readonly chapters: readonly TranscriptChapter[] } | null;
   readonly transcriptCoverage: "full" | "partial" | null;
@@ -96,6 +102,8 @@ export type TextDocument = {
 export type PdfDocument = {
   readonly kind: "pdf";
   readonly identity: string;
+  /** The mounted file's proven publication; null grants no annotation authority. */
+  readonly generation: number | null;
   readonly title: string;
   readonly pages: number | null;
   readonly file: PdfFile;
@@ -164,6 +172,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     return {
       kind: "pdf",
       identity: out.identity,
+      generation: out.publication_generation,
       title: out.title,
       pages: out.page_count,
       file: {
@@ -244,6 +253,8 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     kind: "text",
     format: out.kind === "text_part" ? out.source_format === "web_article" ? "web" : "epub" : out.kind === "web_article" ? "web" : out.kind,
     identity: out.identity,
+    generation: out.kind === "web_article" || out.kind === "epub" ? out.publication_generation : null,
+    part: out.kind === "text_part" ? { mediaId: out.provenance.source_media_id, generation: out.provenance.source_generation } : null,
     title: out.title,
     units,
     ranges,

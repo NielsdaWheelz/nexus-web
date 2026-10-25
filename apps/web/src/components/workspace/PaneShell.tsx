@@ -19,7 +19,6 @@ import {
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
-import { ActivityControl } from "@/components/feedback/Activity";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -437,7 +436,6 @@ function PaneView({
       paneActions={paneActions}
       menuActions={menuActions}
       resourceRef={body?.resourceRef}
-      workspaceAction={isMobile ? <ActivityControl /> : null}
       navigation={{
         canGoBack: router.canGoBack,
         canGoForward: router.canGoForward,

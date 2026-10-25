@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
 import { podcastTargetKey } from "@/lib/podcasts/api";
 import ResourceActions from "@/components/resources/ResourceActions";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
@@ -64,7 +64,6 @@ export default function SurfaceHeader({
   menuActions = [],
   resourceRef,
   navigation,
-  workspaceAction,
   onMouseDown,
 }: {
   projection: "Desktop" | "Mobile";
@@ -84,7 +83,6 @@ export default function SurfaceHeader({
   menuActions?: readonly ActionDescriptor[];
   resourceRef?: CanonicalResourceRef;
   navigation: SurfaceHeaderNavigation;
-  workspaceAction?: ReactNode;
   onMouseDown?: MouseEventHandler<HTMLElement>;
 }) {
   const reasonId = useId();
@@ -267,7 +265,6 @@ export default function SurfaceHeader({
                 }}
               />
             ) : null}
-            {workspaceAction ? <div className={styles.workspaceAction}>{workspaceAction}</div> : null}
           </div>
         </header>
       </div>

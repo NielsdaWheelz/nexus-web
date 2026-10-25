@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run build && bun run start",
-    "build:next": "rm -rf .next && node scripts/copy-pdfjs.mjs && next build",
+    "build:next": "bun run build:android && rm -rf .next && node scripts/copy-pdfjs.mjs && next build",
     "build": "bun run build:next && node scripts/package-standalone.mjs",
     "start": "node .next/standalone/serve.mjs",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
@@ -14,8 +14,9 @@
     "build:extension": "node scripts/build-extension.mjs",
     "gen:wire": "node scripts/gen-wire.mjs",
     "gen:chat-citations": "node scripts/gen-chat-citations.mjs",
-    "build:android": "vite build --config vite.android.config.ts",
-    "build:packaged": "bun run build:shelf && bun run build:android"
+    "build:android": "bun run build:authored && vite build --config vite.android.config.ts",
+    "build:packaged": "bun run build:shelf && bun run build:android",
+    "build:authored": "vite build --config vite.authored.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",
@@ -41,7 +42,12 @@
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "remark-parse": "11.0.0",
-    "unified": "11.0.5"
+    "unified": "11.0.5",
+    "@nexus/authored": "file:../../node/authored",
+    "@journeyapps/wa-sqlite": "2.0.8",
+    "yjs": "13.6.33",
+    "y-prosemirror": "1.3.7",
+    "fractional-indexing": "4.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",

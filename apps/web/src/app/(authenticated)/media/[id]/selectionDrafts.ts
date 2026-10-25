@@ -1,20 +1,34 @@
-import type { Schema } from "@/lib/api/wire";
+import type { NoteEditorProps } from "@/components/notes/NoteEditor";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
-import type { Publication, WriteHandle } from "@/lib/notes/writes";
-import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
-import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
-import type { NoteEdit } from "@/lib/notes/useOutlineSession";
 import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands";
 import type { Selection } from "@/lib/chat/wire";
+import { sameBody } from "@nexus/authored/body";
+import type { Capture } from "@/lib/documentReader/annotations";
 
-export type NoteBase =
-  | { kind: "Absent" }
-  | { kind: "Present"; id: string; linkId: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
+export type NoteEdit = Parameters<NoteEditorProps["onEdit"]>[0];
+type Body = NoteEditorProps["body"];
+
+/** The composer's own undo over its unsubmitted input; saved notes use their documents' undo. */
+export interface DraftHistory {
+  undo: Array<NoteEdit & { group: number }>;
+  redo: Array<NoteEdit & { group: number }>;
+  group: number;
+}
+export const emptyDraftHistory = (): DraftHistory => ({ undo: [], redo: [], group: 0 });
+
+/** Contiguous typing shares a group; selection, composition and commands break it. */
+export function recordDraftEdit(history: DraftHistory, edit: NoteEdit): DraftHistory {
+  const last = history.undo.at(-1);
+  if (edit.source === "input" && last?.source === "input" && last.group === history.group && sameBody(last.after, edit.before))
+    return { ...history, redo: [], undo: [...history.undo.slice(0, -1), { ...last, after: edit.after, selectionAfter: edit.selectionAfter }] };
+  return { undo: [...history.undo, { ...edit, group: history.group }], redo: [], group: history.group + (edit.source === "input" ? 0 : 1) };
+}
 
 export type DraftIssue =
-  | { kind: "Failed" | "Deleted" | "Source"; message: string }
-  | { kind: "Conflict"; message: string; saved: NoteBase; linksVersion: number | null };
+  | { kind: "Source"; message: string }
+  /** A local commit that did not persist: its frozen command retries; the input stays. */
+  | { kind: "Failed"; message: string; retry: () => void };
 
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" | "LookupFailed" }
@@ -33,23 +47,18 @@ type ChatAttempt =
 
 export interface ComposerDraft {
   id: string;
-  /** visual anchor only; capture-only fields belong to reference/publication inputs. */
+  /** Visual anchor and literal quote; capture-only fields live in `capture`. */
   passage: Passage & { quote: string };
-  referenceSource: Schema<"LinkFragmentSelectionSource"> | Schema<"LinkPdfSelectionSource">;
+  /** A new selection's frozen local capture; null when the draft opened an existing highlight. */
+  capture: Capture | null;
+  /** The annotated highlight, once it exists. Its notes are its own resources, never this draft. */
   highlightId: string | null;
-  highlight: Schema<"TypedHighlightOut"> | null;
-  noteId: string;
-  linkId: string;
-  linksVersion: number | null;
-  publication: Extract<Publication, { kind: "passage" | "attach_highlight" }> | null;
-  write: WriteHandle | null;
-  base: NoteBase;
-  body: NoteBody;
+  /** The unsubmitted new note. Saving commits it locally; dismissal discards it. */
+  body: Body;
   revision: number;
   selection: NoteEdit["selectionAfter"] | null;
-  history: NoteBodyHistory;
-  load: "Loading" | "Ready" | "Failed";
-  operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" | "Delete" } | null;
+  history: DraftHistory;
+  operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" } | null;
   issue: DraftIssue | null;
   referenceActive: boolean;
   attachmentActive: boolean;
@@ -60,7 +69,7 @@ export interface ComposerDraft {
   chatIssue: ReaderChatIssue | null;
 }
 
-/** One ephemeral working value. Submitted requests belong to their live owners. */
+/** One ephemeral working value. Submitted commands belong to the local writing runtime. */
 export function createSelectionDrafts() {
   let drafts: readonly ComposerDraft[] = [];
   const listeners = new Set<() => void>();
@@ -93,24 +102,4 @@ export type SelectionDrafts = ReturnType<typeof createSelectionDrafts>;
 
 export function samePassage(a: Passage, b: Passage): boolean {
   return a.identity === b.identity && sameAnchor(a.anchor, b.anchor);
-}
-
-/** Text projection cannot distinguish empty text from images, breaks or code. */
-export function isEmptyParagraph(body: NoteBody): boolean {
-  return body.body_pm_json.type === "paragraph" &&
-    (!Array.isArray(body.body_pm_json.content) || body.body_pm_json.content.length === 0);
-}
-
-export function noteBase(highlight: Schema<"TypedHighlightOut">): NoteBase {
-  if (highlight.linked_note_blocks.length > 1)
-    throw new Error("A highlight has more than one note for this viewer");
-  const note = highlight.linked_note_blocks[0];
-  return note
-    ? { kind: "Present", id: note.note_block_id, linkId: note.link_id, version: note.body_version,
-      body: parseBody(note.body_pm_json), embeddedItem: note.embedded_item ?? null }
-    : { kind: "Absent" };
-}
-
-export function initialBody(base: NoteBase): NoteBody {
-  return base.kind === "Present" ? base.body : emptyBody();
 }

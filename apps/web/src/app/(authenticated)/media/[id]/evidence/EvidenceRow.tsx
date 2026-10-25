@@ -1,18 +1,22 @@
 "use client";
 
-// Every reader root is a resource. Membership facts only select its facets and
-// reveal target; lazy shared disclosure owns individual relationship commands.
-import { useContext, useLayoutEffect, useRef, type CSSProperties } from "react";
-import {FeedbackNotice} from "@/components/feedback/Feedback";
+// One reader evidence row. Local highlights and whole-document links render from the
+// account database by ref; remote roots keep their server presentation. Membership
+// only selects facets and reveal targets; the shared row owns resource commands.
+import { useLayoutEffect, useRef, type CSSProperties } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
-import { OutlineSessionContext } from "@/components/resources/ResourceOutlineList";
+import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import type { ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Reader } from "@/lib/documentReader/runtime";
-import type { OutlineDestination, PendingOccurrence } from "@/lib/notes/useOutlineSession";
 import { useInteractionOwner } from "@/lib/ui/overlay";
+import { useWritingRuntime } from "@/lib/notes/hooks";
+import { deleteLink } from "@/lib/resourceGraph/links";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
+import type { LocalLink } from "../annotations";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
-import { pendingContinuation, pendingRootKey, rootContinuation, rootItem, rootKey, type EvidenceRoot } from "./model";
+import { rootItem, type EvidenceRoot } from "./model";
 
 export interface EvidenceOpenRequest {
   readonly id: string;
@@ -22,13 +26,18 @@ export interface EvidenceOpenRequest {
 
 export interface EvidenceActions {
   readonly sourceContext: boolean;
+  /** The media every whole-document link attaches to. */
+  readonly mediaLabel: string;
   readonly verbs: Pick<AnnotationVerbs, "noteEdit" | "hovered" | "hover" | "closeNoteEdit" | "relocate">;
   readonly refresh: () => void;
 }
 
-export type EvidenceEntry = { kind: "root"; root: EvidenceRoot } | { kind: "pending"; pending: PendingOccurrence };
+export type EvidenceEntry =
+  | { readonly kind: "highlight"; readonly key: string; readonly annotation: ReaderAnnotation }
+  | { readonly kind: "link"; readonly key: string; readonly link: LocalLink }
+  | { readonly kind: "remote"; readonly key: string; readonly root: EvidenceRoot };
 
-export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className, displaced, indentDestination = null }: {
+export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className, displaced }: {
   readonly entry: EvidenceEntry;
   readonly actions: EvidenceActions;
   readonly active: boolean;
@@ -40,14 +49,11 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   readonly style?: CSSProperties;
   readonly className?: string;
   readonly displaced: boolean;
-  readonly indentDestination?: OutlineDestination | null;
 }) {
   const row = useRef<HTMLLIElement>(null);
   const interactionOwner = useInteractionOwner();
-  const session = useContext(OutlineSessionContext);
-  const root = entry.kind === "root" ? entry.root : null;
-  const item = entry.kind === "root" ? rootItem(entry.root) : entry.pending.item;
-  const occurrenceKey = entry.kind === "root" ? rootKey(entry.root) : pendingRootKey(entry.pending);
+  const writing = useWritingRuntime();
+  const occurrenceKey = `evidence/${entry.key}`;
   useLayoutEffect(() => {
     if (!visible || !openRequest?.isCurrent()) return;
     const element = row.current;
@@ -56,32 +62,44 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
     if (openRequest.isCurrent()) openRequest.onResolved(element);
   }, [openRequest, interactionOwner, visible, occurrenceKey, revealInSidebar]);
   const { verbs } = actions;
-  const content = root?.content;
-  const highlight = content?.kind === "Highlight" ? content : null;
-  return <ResourceOutlineRow incoming={null} item={item} occurrenceKey={occurrenceKey} rowRef={row}
-    omitResourceActions={!actions.sourceContext && highlight !== null ? ["Share"] : undefined}
-    continuation={entry.kind === "root" ? rootContinuation(entry.root) : pendingContinuation(entry.pending)}
-    insertionSource={root?.continuation === null ? null : root?.continuation?.kind === "child" ? root.continuation.source : undefined}
-    indentDestination={indentDestination}
-    annotationFocusRequest={highlight?.is_owner && verbs.noteEdit?.kind === "highlight" && verbs.noteEdit.id === highlight.highlight_id ? verbs.noteEdit.request : null}
-    onAnnotationClose={verbs.closeNoteEdit}
-    authoredPlacement={root?.authored_placement ? { ...root.authored_placement, key: occurrenceKey, item }
-      : entry.kind === "pending" ? session?.pendingPlacement(entry.pending) ?? null : null}
-    noteAuthority={entry.kind === "pending" && entry.pending.body !== null ? "local"
-      : (entry.kind === "pending" || content?.kind === "Resource") && !item.missing && item.ref.startsWith("note_block:") ? "current" : undefined}
-    sourceContent={root && content?.kind === "SourceReference" ? <SourceNote occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
-    rootProps={{ hidden: !visible, style, className, "data-active": active || openRequest !== null,
-      ...{ "data-group": item.ref },
-      onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); },
-      onMouseLeave: () => { if (highlight) verbs.hover(null); },
-    }}
+  const highlightId = entry.kind === "highlight" ? entry.annotation.id
+    : entry.kind === "remote" && entry.root.content.kind === "Highlight" ? entry.root.content.highlight_id : null;
+  const rootProps = { hidden: !visible, style, className, "data-active": active || openRequest !== null, "data-group": entry.key,
+    onMouseEnter: () => { if (highlightId) verbs.hover(highlightId); },
+    onMouseLeave: () => { if (highlightId) verbs.hover(null); },
+  };
+  const placementDetails = <>
+    {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
+  </>;
+  if (entry.kind === "highlight") {
+    const { annotation } = entry;
+    const placement = annotation.placement.kind;
+    return <ResourceOutlineRow resourceRef={annotation.ref} incoming={null} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
+      omitResourceActions={!actions.sourceContext ? ["Share"] : undefined}
+      annotationFocusRequest={verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
+      onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
+      resourceDetails={<>
+        {placement === "unlocated" && unresolvedText ? <FeedbackNotice content={{ tone: "Warning", title: PLACEMENT_COPY.unlocated }} announcement="None"
+          actions={[{ label: "select matching text to relocate", onClick: () => verbs.relocate(annotation.id) }]} />
+          : placement !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[placement] }} announcement="None" /> : null}
+        {placementDetails}
+      </>} />;
+  }
+  if (entry.kind === "link") {
+    const { resource, link } = entry.link;
+    return <ResourceOutlineRow resourceRef={resource.ref} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} onChanged={actions.refresh}
+      incoming={link && writing ? { kind: "link", linkId: link.link_id, parentLabel: actions.mediaLabel, unlink: () => deleteLink(writing, { linkId: link.link_id }) } : null}
+      occurrenceLabel={link ? undefined : "mentions this document"} />;
+  }
+  const { root } = entry;
+  const content = root.content;
+  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps}
+    omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
+    sourceContent={content.kind === "SourceReference" ? <SourceNote occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}
     resourceDetails={<>
-      {unresolvedText && highlight?.is_owner ? <FeedbackNotice
-        content={{tone: "Warning", title: "highlight location unavailable"}} announcement="None"
-        actions={[{label: "select matching text to relocate", onClick: () => verbs.relocate(highlight.highlight_id)}]}/> : null}
-      {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      {root?.resolution?.kind === "Unavailable" ? <span className={styles.quiet}>location unavailable</span> : null}
+      {placementDetails}
+      {root.resolution?.kind === "Unavailable" ? <span className={styles.quiet}>location unavailable</span> : null}
     </>}
   />;
 }

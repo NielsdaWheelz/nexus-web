@@ -88,7 +88,6 @@ class WorkspacePresentationOut(BaseModel):
     media_kind: MediaKind | None = None
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     source_label: str | None = None
-    text_version: int | None = Field(default=None, ge=1)
 
 
 class WorkspacePresentationItemOut(BaseModel):

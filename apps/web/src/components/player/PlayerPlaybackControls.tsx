@@ -179,9 +179,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   const report = (error: unknown) => {
     if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
     if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-    ctx.feedback.offer({ key: `chapter:${mediaId}:${chapter.start_ms}`, announcement: "Polite",
-      needsAttention: true, undo: null, onDismiss: null,
-      content: apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId } });
+    ctx.feedback.receipt(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
   };
   const activate = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -198,9 +196,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       onOpened,
       create: async () => {
         const result = await resolve(ctx.sessionSignal());
-        if (!result && !ctx.sessionSignal().aborted) ctx.feedback.offer({ key: `chapter:${mediaId}:${chapter.start_ms}`, announcement: "Polite",
-          needsAttention: false, undo: null, onDismiss: null,
-          content: { tone: "Warning", title: "no transcript at this time", message: chapter.title } });
+        if (!result && !ctx.sessionSignal().aborted) ctx.feedback.receipt({ tone: "Warning", title: "no transcript at this time", message: chapter.title });
         return result;
       },
     }).catch(report);

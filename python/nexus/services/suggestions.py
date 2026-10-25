@@ -36,6 +36,7 @@ from nexus.services.podcasts.subscriptions_query import (
     active_subscription_rows_sql,
     hydrate_compact_podcast_targets,
 )
+from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -329,8 +330,8 @@ def _candidates(
                     AS a(scheme text, id uuid, rank integer)
             ),
             edges AS (
-                SELECT * FROM resource_edges
-                WHERE user_id = :viewer_id AND origin = ANY(:origins)
+                SELECT * FROM resource_edges e
+                WHERE user_id = :viewer_id AND origin = ANY(:origins) AND {edge_live_sql("e")}
             ),
             owners AS ({
             owner_rows_sql('''

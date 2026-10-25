@@ -7,12 +7,13 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { remoteReady } from "@/lib/native/admission";
 import {
   apiFetch,
@@ -38,8 +39,6 @@ import {
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { useLatestWorkspace } from "@/lib/workspace/store";
 
 export type AdmissionIntent =
   | { kind: "SourceRefresh"; mediaId: string; request: Schema<"RefreshSourceRequest"> }
@@ -54,7 +53,6 @@ interface AdmissionEntry {
   readonly intent: AdmissionIntent;
   kind: "sending" | "unconfirmed";
   error: ApiError | null;
-  needsAttention: boolean;
 }
 interface LiveEntry extends AdmissionEntry {
   readonly body: string;
@@ -140,7 +138,6 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
     } catch (error) {
       if (!current(entry, scope)) return { kind: "OwnerGone" };
       entry.kind = "unconfirmed";
-      entry.needsAttention = true;
       entry.error = isApiError(error) ? error : null;
       publish();
       if (isUnauthenticatedApiError(error)) {
@@ -192,7 +189,7 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
         ? { ...original, request: { expected_attempt_id: original.request.expected_attempt_id } }
         : { ...original, request: { expected_job_id: original.request.expected_job_id } };
       const entry: LiveEntry = {
-        key, intent, body: JSON.stringify(intent.request), kind: "sending", error: null, needsAttention: false,
+        key, intent, body: JSON.stringify(intent.request), kind: "sending", error: null,
         unregister: guard.register({
           id: key,
           scope: { kind: "account" },
@@ -241,17 +238,18 @@ export function useMediaAdmissions() {
   return { admit: owner.admit, retry: owner.retry, pending: owner.pending, forget: owner.forget };
 }
 
+/** The subject's menu and metadata actions carry an unconfirmed request's retry;
+ * this reports each unconfirmed attempt once, even after its initiator closed. */
 export function MediaAdmissionsHost() {
   const owner = useOwner();
   const entries = useSyncExternalStore(owner.subscribe, owner.getSnapshot, () => EMPTY);
-  return entries.map(entry => <AdmissionCondition key={entry.key} entry={entry} />);
+  return entries.map(entry => <AdmissionReport key={entry.key} entry={entry} />);
 }
 
-function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
+function AdmissionReport({ entry }: { entry: AdmissionEntry }) {
   const owner = useMediaAdmissions();
   const online = useConnectivity() === "Online";
   const fail = useThrowLater();
-  const workspace = useLatestWorkspace();
   const resource = usePaneFreeServerValue({
     key: `admission-resource:${entry.intent.mediaId}`,
     stale: "",
@@ -259,22 +257,19 @@ function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
   });
   const label = resource.status === "ready" && !resource.data.missing ? resource.data.label : null;
   const subject = entry.intent.kind === "SourceRefresh" ? "source refresh" : "metadata request";
-  const title = entry.kind === "sending" ? `sending ${subject}` : `${subject}: request unconfirmed`;
-  useWorkspaceCondition(`media-admission:${entry.key}`, {
-    needsAttention: entry.needsAttention,
-    priority: "Write",
-    content: isStaleBuild(entry.error) ? STALE_BUILD_FEEDBACK : {
-      tone: entry.kind === "sending" ? "Neutral" : "Warning",
-      title: label === null ? title : `${title} · ${label}`,
-      message: entry.kind === "sending" ? undefined : "the request may already have started work. retry sends the same request. accepted server work is not cancelled.",
+  const title = `${subject}: request unconfirmed`;
+  const feedback = useFeedback();
+  useEffect(() => {
+    if (entry.kind !== "unconfirmed") return;
+    if (isStaleBuild(entry.error)) return feedback.receipt(STALE_BUILD_FEEDBACK);
+    // A retry or retirement retracts this attempt's report.
+    return feedback.receipt({ tone: "Warning", title: label === null ? title : `${title} · ${label}`,
+      message: "the request may already have started work. retry sends the same request. accepted server work is not cancelled.",
       requestId: entry.error?.requestId,
-    },
-    announcement: "Polite",
-    actions: [
-      { label: "retry same request", busy: entry.kind === "sending", disabledReason: online ? undefined : "this request needs a connection", onClick: () => { void owner.retry(entry.key).catch(error => fail({ error })); } },
-      { label: "dismiss", onClick: () => owner.forget(entry.key) },
-    ],
-    returnFocus: () => findPaneLandmarkFocusTarget(workspace().state.active_primary_pane_id),
-  });
+    }, { label: "retry same request", disabledReason: online ? undefined : "this request needs a connection",
+      onClick: () => { void owner.retry(entry.key).catch(error => fail({ error })); } });
+    // One report per unconfirmed attempt; its label may still be resolving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the attempt's outcome alone
+  }, [entry.kind, entry.error]);
   return null;
 }

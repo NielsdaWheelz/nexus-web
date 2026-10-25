@@ -21,6 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.types import Receive, Scope, Send
@@ -32,8 +33,8 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
 from nexus.schemas.suggestions import SuggestionCurrentOut, SuggestionWithdrawnOut
 from nexus.schemas.writing import WritingState
+from nexus.services import authored, metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services import media as media_service
-from nexus.services import metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.oracle import readings as oracle_readings
@@ -151,12 +152,23 @@ async def _snapshot_stream(
 
 @router.get("/stream/writing")
 async def stream_writing(request: Request, viewer: ViewerDep) -> StreamingResponse:
-    """Listen first, then read the durable wake token in every fresh snapshot."""
+    """Listen first, then read the authored head and annotation token in every fresh snapshot.
+
+    A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
+    refetch document maps whose ``annotations_version`` moved."""
 
     def read() -> Snapshot:
         with _snapshot() as db:
-            revision = suggestion_changes.input_revision(db)
-        return WritingState(revision=revision).model_dump(mode="json"), False
+            revision = str(authored.head(db, viewer.user_id))
+            annotations = db.scalar(
+                text(
+                    "SELECT COALESCE(sum(version), 0) FROM resource_versions"
+                    " WHERE user_id = :viewer AND lane = 'annotations'"
+                ),
+                {"viewer": viewer.user_id},
+            )
+        state = WritingState(revision=revision, annotations_revision=str(annotations))
+        return state.model_dump(mode="json"), False
 
     return await _snapshot_stream(request, "nexus_writing", viewer.user_id, read)
 

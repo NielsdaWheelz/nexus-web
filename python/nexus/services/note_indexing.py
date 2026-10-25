@@ -1,10 +1,12 @@
-"""A note block's index: its body as one citable block, rebuilt by ``note_reindex_job``.
+"""A visible note block's index: its body as one citable block, rebuilt by ``note_reindex_job``.
 
-Every body change marks the index ``pending`` (out of search) and leaves a job that has
-not started. The job reads the body, embeds it with no transaction open, and publishes
-only if the body is still the one it embedded; otherwise the edit that changed it left
-a newer waiting job, which publishes instead. Exhausted retries mark a still ``pending``
-index ``failed`` with the job's code (``jobs/dead_letters.note_index``).
+Every projected body change marks the index ``pending`` (out of search) and leaves a job
+that has not started. The job reads the visible body, embeds it with no transaction open,
+and publishes only if the body is still the one it embedded, under the owner's account
+head (which fences the note projection's only writer); otherwise the merge that changed
+it left a newer waiting job, which publishes instead. A deleted note's index is removed.
+Exhausted retries mark a still ``pending`` index ``failed`` with the job's code
+(``jobs/dead_letters.note_index``).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import get_session_factory
 from nexus.jobs import queue
+from nexus.services import authored
 from nexus.services.content_chunking import IndexableBlock, plan_chunks
 from nexus.services.content_indexing import (
     IndexOwner,
@@ -29,7 +32,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.suggestion_changes import record_input_change
 
 JOB_KIND = "note_reindex_job"
-_BODY = "SELECT body_text, user_id FROM note_blocks WHERE id = :id"
+_BODY = "SELECT body_text, user_id FROM note_blocks WHERE id = :id AND authored_visible"
 
 
 def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> None:
@@ -65,8 +68,13 @@ def run_note_reindex_job(
     blocks = _note_blocks(note_block_id, body)
     chunks = list(plan_chunks(blocks, max_bytes=None))
     with get_session_factory()() as db:
-        # Exclude edits and live derived-reference admission before replacing the index.
-        current = db.execute(text(_BODY + " FOR UPDATE"), {"id": note_block_id}).one_or_none()
+        # Exclude merges before replacing the index; the owner never changes.
+        account = db.scalar(
+            text("SELECT user_id FROM note_blocks WHERE id = :id"), {"id": note_block_id}
+        )
+        if account is not None:
+            authored.lock_account(db, account)
+        current = db.execute(text(_BODY), {"id": note_block_id}).one_or_none()
         if current is None:
             delete_content_index(db, owner=owner)
             record_input_change(db)

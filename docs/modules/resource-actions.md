@@ -177,12 +177,12 @@ selection scope while execution keeps the same catalog command ids.
   reader *open next* runs its finish through the existing tracked action runtime
   and delayed-result landing contract. the
   owner fences progress holders and keeps the finish response's exact undo receipt beyond
-  the originating pane. the named popup expires; the exact inverse remains in
-  activity and its subject menu through reactive `consumptionUndoItems`. `undo(commandKey)` and
-  `discardUndo(commandKey)` retain private receipts and revisions. overlapping
+  the originating pane. the exact inverse is offered only by its subject menu through
+  reactive `consumptionUndoItems`. `undo(commandKey)` retains private receipts and
+  revisions. overlapping
   changes or authoritative refusal retire optional inverses. an uncertain undo
-  remains a required workspace condition even after a later refusal; the earlier
-  outcome is still unknown. send admission and exact owner identity are checked
+  stays on that menu even after a later refusal; the earlier outcome is still
+  unknown, and each failed attempt reports once. send admission and exact owner identity are checked
   after progress preparation, immediately before transmission.
 - progress preparation refusal means the position is not ready, not necessarily
   that a save failed. no state request is sent; the reader/player retains its

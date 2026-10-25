@@ -1,202 +1,159 @@
 "use client";
 
-// A page (/pages/{id}) or a dated page (/daily/{date}, latent until its first write;
-// a page bound to a date behaves the same at /pages/{id}). Serves the entries
-// ComposePage (the launcher’s title), EditPageTitle (focus and select the title),
-// AppendNote (a new empty row, focused) and FocusNote (the caret at its end).
-import { useEffect, useMemo, useRef, useState } from "react";
+// Opening a daily page resolves its permanent identity but writes nothing. Its
+// first title edit or item commits the latent page and that edit/item together.
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { Intent } from "@nexus/authored/commands";
+import { pageTitle } from "@nexus/authored/queries";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
-import { UnavailableTexts } from "@/components/notes/NoteNotices";
-import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
+import LocalOutline, { type LocalOutlineHandle } from "@/components/notes/LocalOutline";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
-import { useCatalogState } from "@/lib/catalog/provider";
-import { catalogPage } from "@/lib/catalog/selectors";
-import { remoteReady } from "@/lib/native/admission";
-import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
+import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
-import { editText, hasUnsavedText, readText, useTextReady } from "@/lib/notes/texts";
-import { readWriting } from "@/lib/notes/writes";
-import { isDeletedResource } from "@/lib/resourceGraph/links";
-import { useOutline } from "@/lib/notes/useOutline";
-import { outlineTextRefs, type PageCreation } from "@/lib/notes/useOutlineSession";
+import { useAuthoredAccountId } from "@/lib/authored/provider";
+import { dailyPage } from "@/lib/notes/api";
+import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
+import { type WritingRuntime } from "@/lib/notes/runtime";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import {
-  requirePaneRuntime,
-  usePaneDailyPage,
-  usePaneEntryDelivery,
-  usePaneParam,
-  usePaneRuntime,
-  usePaneSearchParams,
-} from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneDailyPage, usePaneEntryDelivery, usePaneParam, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
+type ResolvedPage = { ref: string; prelude: Intent[] };
+
 export default function PagePaneBody() {
-  const pageParam = usePaneParam("pageId");
-  const pageId = pageParam === "new" ? null : pageParam;
-  const localDate = usePaneParam("localDate");
-  const params = usePaneSearchParams();
-  const route = pageId ?? (localDate === null ? "new" : `daily:${localDate}`);
-  const initialCreation = (): PageCreation | null => {
-    if (localDate !== null) return null;
-    if (pageId !== null) return null;
-    return { page_id: crypto.randomUUID(), note_id: crypto.randomUUID(), link_id: crypto.randomUUID(), title: params.get("title") ?? "" };
-  };
-  const [owner, setOwner] = useState(() => ({ route, creation: initialCreation() }));
-  if (owner.route !== route) {
-    setOwner({ route, creation: owner.creation?.page_id === pageId ? owner.creation : initialCreation() });
-    return null;
-  }
-  const creation = owner.creation;
-  const owned = creation !== null && (pageId === null || pageId === creation.page_id) && localDate === null ? creation : null;
-  const resource = owned?.page_id ?? pageId ?? localDate;
-  return <PageContent key={resource} creation={owned} />;
+  const writing = useWritingRuntime();
+  const accountId = useAuthoredAccountId();
+  const page = usePaneParam("pageId");
+  const date = usePaneParam("localDate");
+  const key = date === null ? page ?? "new" : `daily:${date}`;
+  if (writing === null) return <PaneLoadingState label="preparing your notes" announcement="None" />;
+  return <PageContent key={`${accountId}:${key}`} writing={writing} pageId={page === "new" ? null : page} localDate={date} />;
 }
 
-function PageContent({ creation }: { creation: PageCreation | null }) {
-  const pageParam = usePaneParam("pageId");
-  const routePageId = pageParam === "new" ? null : pageParam;
-  const pageId = creation?.page_id ?? routePageId;
-  const localDate = usePaneParam("localDate");
-  const catalog = useCatalogState();
-  const saved = pageId === null || catalog.data === null ? null : catalogPage(catalog.data, pageId);
-  const runtime = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
+function PageContent({ writing, pageId, localDate }: { writing: WritingRuntime; pageId: string | null; localDate: string | null }) {
+  const pane = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
+  const params = usePaneSearchParams();
   const { delivery, claim } = usePaneEntryDelivery();
-  const feedback = useFeedback();
-  const outline = useOutline({
-    root: pageId ? `page:${pageId}` : null,
-    dailyDate: pageId ? null : localDate,
-    creation,
+  const [createdId] = useState(() => crypto.randomUUID());
+  const newPage = pageId === null && localDate === null;
+  const direct = useMemo<ResolvedPage>(() => ({
+    ref: `page:${pageId ?? createdId}`,
+    prelude: newPage ? [{ kind: "create_page", ref: `page:${createdId}`, title: "", local_date: null }] : [],
+  }), [createdId, newPage, pageId]);
+  const [dailyAttempt, setDailyAttempt] = useState(0);
+  const [daily, setDaily] = useState<{ writing: WritingRuntime; date: string; value: ResolvedPage | null; error: unknown | null } | null>(null);
+  useEffect(() => {
+    if (localDate === null) return;
+    let retired = false;
+    void dailyPage(writing, localDate).then(value => {
+      if (!retired) setDaily({ writing, date: localDate, value, error: null });
+    }).catch(error => { if (!retired) setDaily({ writing, date: localDate, value: null, error }); });
+    return () => { retired = true; };
+  }, [dailyAttempt, localDate, writing]);
+  const currentDaily = daily?.writing === writing && daily.date === localDate ? daily : null;
+  const resolved = localDate === null ? direct : currentDaily?.value ?? null;
+  const ref = resolved?.ref ?? null;
+  const read = useAuthoredQuery(ref === null ? null : { kind: "resource", ref });
+  const page = read.data?.rows.find(row => row.resource.kind === "page")?.resource ?? null;
+  const prelude = page === null ? resolved?.prelude ?? [] : [];
+  const latent = prelude.length > 0;
+  const ready = resolved !== null && read.data !== null;
+  const gone = ready && page === null && !latent;
+  const date = page?.local_date ?? localDate;
+  const id = ref?.slice("page:".length) ?? null;
+  const [initialTitle, setInitialTitle] = useState(() => newPage ? params.get("title") ?? "" : "");
+  const [entryMessage, setEntryMessage] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [entryError, setEntryError] = useState<unknown | null>(null);
+  const titleInput = useRef<HTMLTextAreaElement>(null);
+  const outline = useRef<LocalOutlineHandle | null>(null);
+  const surface = useRef<HTMLDivElement>(null);
+  const saved = useSyncExternalStore(writing.subscribe, writing.snapshot, writing.snapshot);
+  const localError = ref !== null && saved.error_refs.includes(ref) ? saved.error : null;
+  const { inputRef, focusInput } = usePaneQueryInput();
+  const displayTitle = pageTitle(page?.title ?? initialTitle, date);
+  usePaneReturnReady(ready || read.error !== null || (currentDaily !== null && currentDaily.error !== null));
+  usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
+  const menuActions = useMemo<ActionDescriptor[]>(() => date === null ? [] : ([-1, 1] as const).map(days => ({
+    kind: "link", id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
+    label: days < 0 ? "Open yesterday" : "Open tomorrow", href: `/daily/${shiftLocalDate(date, days)}`,
+  })), [date]);
+  usePaneChrome({
+    displayTitle, menuActions,
+    resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
+    query: { kind: "Controls", label: "Filter page items", focusInput, content: <PaneQueryToolbar inputRef={inputRef}
+      input={{ label: "Filter page items", placeholder: "Filter page items", value: filter, appliedValue: filter, onChange: setFilter, onClear: () => setFilter("") }}
+      onReset={filter ? () => setFilter("") : undefined} /> },
   });
-  const titleReady = useTextReady(creation ? `page:${creation.page_id}` : "");
-  const titleSeeded = useRef(false);
   useEffect(() => {
-    if (!creation || !titleReady || titleSeeded.current || readWriting().paused) return;
-    titleSeeded.current = true;
-    const ref = `page:${creation.page_id}`;
-    const value = readText(ref)?.value;
-    // The launcher supplied authored title text; a blank route supplies none.
-    if (readText(ref)?.revision === 0 && typeof value === "string" && value.length > 0)
-      editText(ref, value);
-  }, [creation, titleReady]);
+    if (newPage && page !== null && id !== null) pane.router.replace(`/pages/${id}`, { activate: false });
+  }, [id, newPage, page, pane.router]);
   useEffect(() => {
-    if (creation && outline.creationPublished && routePageId === null)
-      runtime.router.replace(`/pages/${creation.page_id}`, { activate: false });
-  }, [creation, outline.creationPublished, routePageId, runtime.router]);
-  const source = outline.root?.source ?? null;
-  const id = source ? source.item.ref.slice("page:".length) : pageId;
-  const content = source?.content;
-  const dailyDate = content?.kind === "page" ? content.daily_date : localDate;
-  const titleRef = useRef<HTMLTextAreaElement | null>(null);
-  const { query, queryControls } = useOutlineFilter(
-    outline,
-    `page:${pageId ?? localDate}`,
-    "Filter page items",
-  );
-  usePaneReturnReady(outline.status !== "loading" || !remoteReady() && !catalog.loading && creation === null);
-  usePaneDailyPage(dailyDate && id ? { localDate: dailyDate, pageId: id } : null);
-
-  useEffect(() => {
-    if (!creation || !titleReady || readWriting().paused || delivery?.entry.kind !== "ComposePage") return;
-    if (claim(delivery)) editText(`page:${creation.page_id}`, delivery.entry.title);
-  }, [claim, creation, delivery, titleReady]);
-
-  const reloadedFor = useRef<string | null>(null);
-  useEffect(() => {
-    const entry = delivery?.entry;
-    if (!delivery || !entry || outline.status !== "ready" || !source) return;
-    const gone = (title: string) =>
-      void feedback.offer({ needsAttention: false, undo: null, onDismiss: null, key: "page-entry", announcement: "Polite", content: { tone: "Neutral", title } });
+    if (!delivery || !ready) return;
+    const entry = delivery.entry;
+    if (entry.kind === "ComposePage" && newPage) {
+      if (claim(delivery)) setInitialTitle(entry.title);
+      return;
+    }
+    if (gone) { if (claim(delivery)) setEntryMessage("this page is no longer available."); return; }
     if (entry.kind === "EditPageTitle") {
       if (!claim(delivery)) return;
-      if (entry.pageId !== id) return gone("This page is no longer available.");
-      titleRef.current?.focus();
-      titleRef.current?.select();
+      if (entry.pageId !== id) { setEntryMessage("this page is no longer available."); return; }
+      titleInput.current?.focus(); titleInput.current?.select();
     } else if (entry.kind === "AppendNote") {
-      if (claim(delivery)) outline.insert("end");
+      if (outline.current && claim(delivery)) void outline.current.append().catch(setEntryError);
     } else if (entry.kind === "FocusNote") {
-      const ref = `note_block:${entry.noteBlockId}`;
-      const row = outline.rows.find((r) => r.terminal === null && r.link.target.item.ref === ref);
-      if (!row && reloadedFor.current !== delivery.activationId) {
-        reloadedFor.current = delivery.activationId;
-        return void outline.reload();
-      }
-      if (!claim(delivery)) return;
-      if (row) outline.focusRow(row.key, "end");
-      else gone("This note is no longer available.");
+      setFilter("");
+      const focus = () => {
+        if (!outline.current?.focusNote(`note_block:${entry.noteBlockId}`)) return false;
+        const editor = [...surface.current?.querySelectorAll<HTMLElement>("[data-resource-ref]") ?? []]
+          .find(row => row.dataset.resourceRef === `note_block:${entry.noteBlockId}`)?.querySelector<HTMLElement>('[role="textbox"]');
+        if (editor?.isContentEditable) {
+          const range = editor.ownerDocument.createRange(); range.selectNodeContents(editor); range.collapse(false);
+          const selection = editor.ownerDocument.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+        }
+        claim(delivery);
+        return true;
+      };
+      if (focus()) return;
+      const observer = new MutationObserver(focus);
+      if (surface.current) observer.observe(surface.current, { childList: true, subtree: true });
+      return () => observer.disconnect();
     }
-  }, [claim, delivery, feedback, id, outline, source]);
-
-  const gone = id !== null && isDeletedResource(`page:${id}`);
-  const retainedRefs = id ? outlineTextRefs(`page:${id}`) : [];
-  const savedOnly = !gone && !remoteReady() && outline.root === null && creation === null && !catalog.loading &&
-    outline.failure?.status !== 403 && outline.failure?.status !== 404 && !isStaleBuild(outline.failure);
-  const materialized = id !== null && !gone && !outline.latent && outline.root !== null && (creation === null || outline.creationPublished);
-  const resourceRef = materialized ? canonicalResourceRef({ scheme: "page", id }) : undefined;
-  const { activateTarget } = runtime;
-  const menuActions = useMemo<ActionDescriptor[]>(
-    () =>
-      dailyDate
-        ? ([-1, 1] as const).map((days) => ({
-            kind: "link",
-            id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
-            label: days < 0 ? "Open yesterday" : "Open tomorrow",
-            href: `/daily/${shiftLocalDate(dailyDate, days)}`,
-          }))
-        : [],
-    [dailyDate],
-  );
-  usePaneChrome(useMemo(() => ({ displayTitle: savedOnly && saved !== null ? saved.title || "untitled page" : undefined, query: queryControls, resourceRef, menuActions }), [savedOnly, saved, resourceRef, menuActions, queryControls]));
-
-  const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
-  const stale = isStaleBuild(outline.failure);
-  const failure: FeedbackContent | null = outline.failure === null ? null : stale ? STALE_BUILD_FEEDBACK : {
-    tone: "Warning",
-    title: unavailable ? "this page is no longer available" :
-      outline.root ? "couldn’t refresh connections" : "this page couldn’t be loaded",
-    message: unavailable ? "it may have been removed or your access may have changed." :
-      outline.root ? "the current outline remains in this tab." : undefined,
-    requestId: outline.failure.requestId,
+  }, [claim, delivery, gone, id, newPage, ready]);
+  const enterTitle = () => {
+    if (ref === null) return;
+    void (async () => {
+      const first = await (await writing.store).query({ kind: "adjacency", ref, cursor: null, limit: 1 });
+      if (first.rows.length) outline.current?.focusFirst();
+      else await outline.current?.append();
+    })().catch(setEntryError);
   };
-  const actions: FeedbackActions | undefined = stale || unavailable
-    ? undefined
-    : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
-  if (gone && retainedRefs.some(hasUnsavedText)) return <UnavailableTexts kind="page" refs={retainedRefs} />;
+  const error = currentDaily?.error ?? read.error;
+  if (error !== null && error !== undefined) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open this page on this device" }} announcement="Assertive"
+    actions={[{ label: "retry", onClick: localDate === null ? read.retry : () => setDailyAttempt(attempt => attempt + 1) }]} />;
+  if (!ready || ref === null) return <PaneLoadingState label="loading page…" announcement="None" />;
   if (gone) return <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />;
-  if (failure !== null && (unavailable || stale)) return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
-  if (savedOnly) return <>
-    {saved === null ? null : <h1>{saved.title || "untitled page"}</h1>}
-    <FeedbackState content={saved === null ? catalogErrorFeedback(catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }) ?? { tone: "Warning", title: "saved catalog couldn’t be opened" } : { tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />
-  </>;
-  if (failure !== null && (outline.root === null || unavailable || stale))
-    return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
-  if (!outline.root) return <PaneLoadingState label="Loading page…" announcement="Polite" />;
-  return (
-    <>
-      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
-      {outline.dailyConflict ? <FeedbackNotice content={{ tone: "Warning", title: "this day was saved in another tab", message: "your input remains here. save it to the current page when ready." }} announcement="Polite" actions={[{ label: "save to this day", onClick: outline.retryDaily }]} /> : null}
-      {materialized ? <Inspector pageId={id} /> : null}
-      <OutlineEditor
-        outline={outline}
-        filter={query}
-        inspection={null}
-        titleRef={titleRef}
-        activateTarget={activateTarget}
-      />
-    </>
-  );
+  return <div ref={surface}>
+    {page !== null && id !== null ? <Inspector pageId={id} /> : null}
+    {localError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
+      actions={[{ label: "retry saving", onClick: () => { void writing.retry(); } }, { label: "copy text", onClick: () => { void navigator.clipboard.writeText(titleInput.current?.value ?? ""); } }]} /> : null}
+    {entryError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
+    {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
+    <BoundPageTitleEditor pageRef={ref} prelude={prelude} initialTitle={initialTitle} placeholder={pageTitle("", date)} inputRef={titleInput} onEnter={enterTitle} />
+    {filter.trim() ? <p>filter applies to loaded items.</p> : null}
+    <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} />
+  </div>;
 }
 
-/** A page's inspector: its connections. */
 function Inspector({ pageId }: { pageId: string }) {
-  const connections = useMemo(
-    () => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} />,
-    [pageId],
-  );
+  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} />, [pageId]);
   useResourceInspector({ scheme: "page", handle: pageId, bodies: { linkedItems: connections } });
   return null;
 }

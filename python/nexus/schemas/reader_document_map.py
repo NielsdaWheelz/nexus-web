@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlight_color import HighlightColor
-from nexus.schemas.notes import Position
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
@@ -76,8 +75,7 @@ class ReaderEvidenceHighlightOut(_ReaderMapOut):
     kind: Literal["Highlight"] = "Highlight"
     item: ResourceItemOut
     highlight_id: UUID
-    # Full current fields and version are command inputs; item owns bounded display.
-    version: str
+    # Full current projection fields; item owns bounded display.
     quote: str
     prefix: str
     suffix: str
@@ -167,6 +165,12 @@ class ReaderDirectFactOut(_ReaderMapOut):
     ordinal: int | None
 
 
+class Position(_ReaderMapOut):
+    """An insertion after one exact link at the source endpoint, or first."""
+
+    after: UUID | None
+
+
 class ReaderChildContinuationOut(_ReaderMapOut):
     kind: Literal["child"] = "child"
     source: LinkEndpoint
@@ -237,7 +241,8 @@ class ReaderDocumentMapDiagnosticsOut(_ReaderMapOut):
 
 
 class ReaderDocumentMapOut(_ReaderMapOut):
-    """Annotations over one publication: ``identity`` is the reader document's identity."""
+    """Annotations over one publication: ``identity`` is the reader document's identity.
+    ``annotations_version`` moves when the viewer's readable annotations of it change."""
 
     media_id: UUID
     annotations_version: int

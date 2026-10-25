@@ -31,7 +31,8 @@ def read_atlas(db: Session, *, viewer_id: UUID, default_library_id: UUID) -> Atl
         text(f"""
             SELECT m.id AS media_id, p.x, p.y, m.title, m.kind,
                    (SELECT count(*) FROM highlights h
-                    WHERE h.anchor_media_id = m.id AND h.user_id = :viewer_id) AS magnitude
+                    WHERE h.anchor_media_id = m.id AND h.user_id = :viewer_id
+                      AND h.authored_visible) AS magnitude
             FROM media m
             JOIN ({_PERSONAL}) personal ON personal.media_id = m.id
             LEFT JOIN media_atlas_positions p ON p.media_id = m.id

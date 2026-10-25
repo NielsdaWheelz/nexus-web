@@ -17,3 +17,10 @@
 }
 
 .headerActions { display: flex; align-items: center; gap: var(--space-1); }
+
+.subtitle {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  margin: var(--space-2) 0 var(--space-1);
+}

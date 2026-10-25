@@ -119,7 +119,7 @@ export async function sessionSignIn(): Promise<SignInResult> {
     default: throw invalidReply();
   }
 }
-export async function sessionSignOut(): Promise<void> { await call("session_sign_out"); }
+export async function sessionSignOut(discardAuthored = false): Promise<void> { await call("session_sign_out", { discard_authored: discardAuthored }); }
 export async function accountEmailChange(email: string): Promise<{ data: EmailChangeResult }> {
   const reply = await call("account_email_change", { email });
   return { data: reply.data as EmailChangeResult };

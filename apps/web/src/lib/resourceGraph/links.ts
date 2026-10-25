@@ -1,180 +1,125 @@
-/**
- * The resource graph's http client: connection reads, link commands, and the one
- * owner-named removal of each fact. Committed link changes are announced to
- * subscribers (outlines, panes) after success only. Unlink retries the selected
- * uuid through the write queue; context detachment retains its version fence.
- */
-import { ApiError, apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
-import { assertNever } from "@/lib/assertNever";
+/** User links belong to the local authored graph. Server-owned citation, machine
+ * and context facts retain their existing query/removal owners. Unlink observes
+ * only the selected edge's add vector and never deletes either endpoint. */
+import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { admitWriting, captureLane, type WritingAck, type WritingCommand } from "@/lib/notes/writes";
+import { insertionPositions, type Intent } from "@nexus/authored/commands";
+import { captureLocator } from "@nexus/authored/capture";
+import { linkId, sortedEndpoints, normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
+import type { LinkState } from "@nexus/authored/types";
+import { type WritingRuntime, selectStates } from "@/lib/notes/runtime";
 import { parseResourceRef } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
-
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
-export type ConnectionCommand =
-  | { kind: "unlink"; link_id: string }
-  | Extract<ConnectionMutation, { kind: "detach_context" }>;
-export type InsertionSource = Schema<"InsertLink">["source"];
-export type LinkTarget = Schema<"InsertLink">["target"];
-export type Position = Schema<"Position">;
-export type WritingInsertion = WritingAck["insertions"][number];
-/** Resolve a result by requested identity; array ordering is never causal evidence. */
-export function insertionTarget(ack: WritingAck, insertion: WritingInsertion): string {
-  const link = ack.links.find(item => item.link_id === insertion.canonical_link_id);
-  if (!link) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "the saved link is no longer available");
-  return link.source_ref === insertion.source_ref ? link.target_ref : link.source_ref;
-}
-/** Capability belongs to this resource's canonical identity, not its action owner. */
+export type ConnectionCommand = { kind: "unlink"; link_id: string } | Extract<ConnectionMutation, { kind: "detach_context" }> | { kind: "remove_fact"; edge_id: string };
+export type LinkTarget = { kind: "resource"; ref: string } | { kind: "passage"; candidate_ref: string; passage_target: Schema<"CapturedPassageTarget"> | null };
+export type InsertionSource = LinkTarget | { kind: "daily_page"; local_date: string; page_id: string };
+export interface Position { after: string | null; before?: string | null; prelude?: readonly Intent[] }
+export interface LinkRequest { source_ref: string; target_ref: string; source_label: string | null; target_label: string | null; after: string | null }
 export function endpointForResource(ref: string): LinkTarget | null {
   const parsed = parseResourceRef(ref);
   if (!parsed) return null;
   const mode = RESOURCE_CAPABILITIES[parsed.scheme].link_mode;
   return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref, passage_target: null };
 }
-export type LinkMutation =
-  | { kind: "created"; sourceRef: string; targetRef: string }
-  | { kind: "deleted"; linkId: string; origin: object | null }
-  | { kind: "context_detached"; sourceRef: string; targetRef: string }
-  | { kind: "resource_deleted"; ref: string };
-
-const listeners = new Set<(mutation: LinkMutation) => void>();
-const deletedResources = new Set<string>();
-
-/** A committed deletion outranks older reads, including for later subscribers. */
-export function isDeletedResource(ref: string): boolean {
-  return deletedResources.has(ref);
-}
-
-export function subscribeLinkMutations(
-  listener: (mutation: LinkMutation) => void,
-): () => void {
-  listeners.add(listener);
-  return () => void listeners.delete(listener);
-}
-
-function announce(mutation: LinkMutation): void {
-  for (const listener of listeners) {
-    try { listener(mutation); }
-    catch (error) { reportError(error); }
+export async function prepareLink(runtime: WritingRuntime, input: LinkRequest): Promise<{ link_id: string; intents: Intent[] }> {
+  const store = await runtime.store;
+  const replica = await store.readReplica();
+  const [a, b] = sortedEndpoints(input.source_ref, input.target_ref);
+  const binding = await store.query({ kind: "binding", key: { kind: "link", endpoint_a: a, endpoint_b: b } });
+  const id = binding.binding_id ?? linkId(replica.account_id, a, b);
+  const position = async (ref: string, after: string | null, before: string | null): Promise<{ value: string; moves: Intent[] }> => {
+    const siblings: LinkState[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await store.query({ kind: "adjacency", ref, cursor, limit: 100 });
+      for (const row of page.rows) if (row.link && row.link.link_id !== id) siblings.push(row.link);
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    const keys = siblings.map(link => ({ id: link.link_id, position: (link.endpoint_a === ref ? link.position_a : link.position_b)!.value }));
+    let index = keys.length;
+    if (before !== null) index = keys.findIndex(item => item.id === before);
+    else if (after !== null) { const previous = keys.findIndex(item => item.id === after); index = previous < 0 ? -1 : previous + 1; }
+    if (index < 0) throw new Error("The selected insertion position is no longer available");
+    const positions = insertionPositions(keys.map(item => ({ link_id: item.id, position: item.position })), index, id);
+    const value = positions.find(item => item.link_id === id)!.position;
+    return { value, moves: positions.filter(item => item.link_id !== id).map(item => ({ kind: "move_link", link_id: item.link_id, endpoint_ref: ref, position: item.position })) };
+  };
+  const sourcePosition = await position(input.source_ref, input.after, input.before ?? null);
+  const targetPosition = await position(input.target_ref, null, null);
+  const intents: Intent[] = [...sourcePosition.moves, ...targetPosition.moves];
+  for (const [ref, label] of [[input.source_ref, input.source_label], [input.target_ref, input.target_label]] as const) {
+    if (/^(note_block|page|highlight):/u.test(ref)) continue;
+    const parsed = parseResourceRef(ref);
+    if (!parsed) throw new TypeError("Invalid link endpoint");
+    intents.push({ kind: "capture_source", source_ref: ref, capture: { kind: parsed.scheme, label: label ?? ref, publication: null } });
   }
+  intents.push({ kind: "add_link", link_id: id, endpoint_a: a, endpoint_b: b, position_a: a === input.source_ref ? sourcePosition.value : targetPosition.value, position_b: b === input.source_ref ? sourcePosition.value : targetPosition.value });
+  return { link_id: id, intents };
 }
-
-/** Announce only confirmed absence or acknowledged resource teardown. */
-export function announceResourceDeletion(ref: string): void {
-  if (deletedResources.has(ref)) return;
-  deletedResources.add(ref);
-  announce({ kind: "resource_deleted", ref });
+export async function createLink(runtime: WritingRuntime, input: LinkRequest): Promise<string> {
+  const prepared = await prepareLink(runtime, input);
+  await runtime.run({ kind: "batch", intents: [...input.prelude ?? [], ...prepared.intents] });
+  return prepared.link_id;
 }
-
-export async function queryConnections(
-  input: Schema<"ConnectionQueryRequest">,
-  signal?: AbortSignal,
-): Promise<Schema<"ConnectionPageOut">> {
-  const { data } = await apiFetch<
-    ApiJson<"/resource-graph/connections/query", "post">
-  >("/api/resource-graph/connections/query", {
-    method: "POST",
-    signal,
-    body: JSON.stringify({ ...input, limit: input.limit === undefined ? undefined : Math.min(input.limit, 100) }),
-  });
+export async function deleteLink(runtime: WritingRuntime, { linkId }: { linkId: string }): Promise<void> {
+  const state = await (await runtime.store).readStates(selectStates({ link_ids: [linkId] }));
+  const link = state.links.find(link => link.link_id === linkId);
+  if (!link) return;
+  await runtime.run({ kind: "unlink", link_id: linkId, observed_add: link.add_vv });
+}
+export async function deleteResource(runtime: WritingRuntime, { ref }: { ref: string }): Promise<import("@/lib/notes/runtime").LocalCommit> {
+  let observed_touch;
+  if (ref.startsWith("note_block:") || ref.startsWith("page:")) {
+    observed_touch = (await (await runtime.openDocument(ref)).capture()).observed_touch;
+  } else {
+    const states = await (await runtime.store).readStates(selectStates({ refs: [ref] }));
+    const resource = states.resources.find(resource => resource.ref === ref);
+    if (!resource) throw new Error("This resource is unavailable on this device");
+    observed_touch = resource.touch_vv;
+  }
+  return runtime.run({ kind: "delete_resource", ref, observed_touch });
+}
+export async function queryConnections(input: Schema<"ConnectionQueryRequest">, signal?: AbortSignal): Promise<Schema<"ConnectionPageOut">> {
+  const { data } = await apiFetch<ApiJson<"/resource-graph/connections/query", "post">>("/api/resource-graph/connections/query", { method: "POST", signal, body: JSON.stringify({ ...input, limit: Math.min(input.limit ?? 100, 100) }) });
   return data;
 }
-
-/** Absolute commands are immutable after admission; a retry reuses its sealed bytes. */
-export async function graphCommands(commands: WritingCommand[]): Promise<WritingAck> {
-  return admitWriting({ kind: "outline", commands }).settled;
+export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand): Promise<void> {
+  if (command.kind === "unlink") return deleteLink(runtime, { linkId: command.link_id });
+  if (command.kind === "remove_fact") { await apiFetch(`/api/resource-graph/facts/${command.edge_id}`, { method: "DELETE" }); return; }
+  await apiFetch(`/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`, { method: "DELETE" });
+}
+export function connectionMutationErrorMessage(error: unknown): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) return { tone: "Warning", title: "couldn’t save this change on this device", message: "keep this page open and retry saving." };
+  if (outcomeUnknown(error)) return { tone: "Warning", title: "couldn’t confirm removal", requestId: error.requestId };
+  return apiTransportFeedback(error, "couldn’t remove connection") ?? { tone: "Warning", title: "this connection can’t be removed here", requestId: error.requestId };
 }
 
-/** Called once by the account's committed acknowledgement receiver. */
-export function acknowledgeGraphCommands(reply: WritingAck): void {
-  for (const ref of reply.deleted_refs) announceResourceDeletion(ref);
-  announceLinkDeletions({ linkIds: reply.removed_link_ids, origin: null });
-  for (const link of reply.links)
-    announce({ kind: "created", sourceRef: link.source_ref, targetRef: link.target_ref });
-}
-export async function createLink(input: Omit<Schema<"InsertLink">, "kind" | "require_created">): Promise<WritingInsertion> {
-  const ref = input.source.kind === "resource" ? input.source.ref : input.source.kind === "daily_page" ? `page:${input.source.page_id}` : null;
-  if (input.position !== null && ref === null)
-    throw new ApiError(409, "E_RESOURCE_CONFLICT", "the captured destination cannot supply a placement version");
-  const position = input.position === null ? null : {
-    after: input.position.after,
-    expected_links_version: captureLane(ref!, "links", input.position.expected_links_version),
-  };
-  const result = await graphCommands([{ kind: "insert_link", ...input, position, require_created: false }]);
-  const insertion = result.insertions.find(item => item.requested_link_id === input.link_id);
-  if (!insertion) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "this link is no longer available");
-  return insertion;
-}
-export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Promise<WritingInsertion> {
-  const ref = input.source.kind === "resource" ? input.source.ref : input.source.kind === "daily_page" ? `page:${input.source.page_id}` : null;
-  if (input.position !== null && ref === null)
-    throw new ApiError(409, "E_RESOURCE_CONFLICT", "the captured destination cannot supply a placement version");
-  const result = await graphCommands([{ kind: "insert_note", ...input, position: input.position === null ? null : {
-    after: input.position.after, expected_links_version: captureLane(ref!, "links", input.position.expected_links_version),
-  } }]);
-  const insertion = result.insertions.find(item => item.requested_link_id === input.link_id);
-  if (!insertion) throw new ApiError(409, "E_WRITING_DEPENDENCY_GONE", "this note is no longer available");
-  return insertion;
-}
-export async function deleteLink({ linkId }: { linkId: string }): Promise<void> {
-  await graphCommands([{ kind: "unlink", link_id: linkId, expected: null }]);
-}
-
-/** The origin has already finalized its own local state before notifying observers. */
-export function announceLinkDeletions(input: { linkIds: readonly string[]; origin: object | null }): void {
-  for (const linkId of input.linkIds) announce({ kind: "deleted", linkId, origin: input.origin });
-}
-
-/** The server names the owning command; provenance alone never authorizes removal. */
-export async function mutateConnection(
-  command: ConnectionCommand,
-): Promise<void> {
-  switch (command.kind) {
-    case "unlink":
-      return deleteLink({ linkId: command.link_id });
-    case "detach_context":
-      await apiFetch(
-        `/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`,
-        { method: "DELETE" },
-      );
-      announce({ kind: "context_detached", sourceRef: `conversation:${command.conversation_id}`, targetRef: command.target_ref });
-      return;
-  }
-  return assertNever(command);
-}
-
-const GONE = new Set([
-  "E_NOT_FOUND",
-  "E_CONVERSATION_NOT_FOUND",
-  "E_FORBIDDEN",
-  "E_INVALID_REQUEST",
-  "E_RESOURCE_CONFLICT",
-  "E_CONTEXT_CHANGED",
-]);
-
-export function connectionMutationErrorMessage(
-  error: unknown,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const { code, requestId } = error;
-  if (outcomeUnknown(error)) {
-    return {
-      tone: "Warning",
-      title: "couldn’t confirm removal",
-      requestId,
-    };
-  }
-  const transport = apiTransportFeedback(error, "couldn’t remove connection");
-  if (transport !== null) return transport;
-  if (GONE.has(code)) {
-    return {
-      tone: "Warning",
-      title: "this connection can’t be removed here",
-      requestId,
-    };
-  }
-  throw error;
+/** A passage picker result carries its own quote/locator baseline. Known semantic
+ * bindings survive deletion; no server reread is substituted during acceptance. */
+export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget): Promise<{ ref: string; intents: Intent[] }> {
+  if (target.kind === "resource") return { ref: target.ref, intents: [] };
+  const capture = target.passage_target;
+  if (capture === null) throw new Error("This passage has no retained selection. select it again before linking.");
+  const locator = captureLocator(capture.locator, capture.owner_ref);
+  const selector = "text_quote_selector" in locator ? locator.text_quote_selector : null;
+  const quote_exact = selector?.exact ?? (locator.type === "pdf_page_geometry" ? locator.exact : null);
+  if (quote_exact === null || quote_exact.length === 0) throw new Error("This passage has no retained quote. select it again before linking.");
+  const prefix = normalizeQuote(selector?.prefix ?? (locator.type === "pdf_page_geometry" ? locator.prefix ?? "" : ""));
+  const suffix = normalizeQuote(selector?.suffix ?? (locator.type === "pdf_page_geometry" ? locator.suffix ?? "" : ""));
+  const normalized_exact = normalizeQuote(quote_exact);
+  const source_ref = capture.owner_ref;
+  const store = await runtime.store;
+  const replica = await store.readReplica();
+  const known = await store.query({ kind: "binding", key: { kind: "passage", source_ref, normalized_exact, prefix, suffix } });
+  const anchor_id = known.binding_id ?? passageId(replica.account_id, source_ref, await passageKey(normalized_exact, prefix, suffix));
+  const publication = null;
+  const source = parseResourceRef(source_ref);
+  if (!source) throw new TypeError("Invalid passage source");
+  return { ref: `passage_anchor:${anchor_id}`, intents: [
+    { kind: "capture_source", source_ref, capture: { kind: source.scheme, label: source_ref, publication } },
+    { kind: "capture_passage", anchor_id, source_ref, normalized_exact, prefix, suffix, capture: { quote_exact, publication, locator } },
+  ] };
 }

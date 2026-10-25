@@ -73,7 +73,7 @@ internal class AppBridge(
                     "catalog_status" -> JSONObject().put("catalog", session.catalog.status())
                     "catalog_refresh" -> JSONObject().put("catalog", session.catalog.refresh())
                     "session_sign_in" -> JSONObject().put("result", signIn())
-                    "session_sign_out" -> { session.signOut(); JSONObject() }
+                    "session_sign_out" -> { session.signOut(frame.optBoolean("discard_authored", false)); JSONObject() }
                     "account_email_change" -> session.accountOperation(op, frame.getString("email"))
                     "account_identities_get" -> session.accountOperation(op, null)
                     "account_identity_delete" -> session.accountOperation(op, frame.getString("identity_id"))

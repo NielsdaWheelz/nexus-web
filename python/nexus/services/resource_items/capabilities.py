@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight
+from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 ShareMode = Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
@@ -206,15 +207,16 @@ _MEDIA_ANCHORS = (
     "SELECT id FROM passage_anchors"
     " WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id"
 )
-_PAGE_NOTE_BLOCKS = """
+# Live authored links only: a deleted note, page or unlinked link breaks the closure.
+_PAGE_NOTE_BLOCKS = f"""
 WITH RECURSIVE links AS (
     SELECT source_scheme AS a_scheme, source_id AS a_id, target_scheme AS b_scheme, target_id AS b_id
-    FROM resource_edges
-    WHERE user_id = :viewer_id AND origin = 'user'
+    FROM resource_edges e
+    WHERE user_id = :viewer_id AND origin = 'user' AND {edge_live_sql("e")}
     UNION ALL
     SELECT target_scheme, target_id, source_scheme, source_id
-    FROM resource_edges
-    WHERE user_id = :viewer_id AND origin = 'user'
+    FROM resource_edges e
+    WHERE user_id = :viewer_id AND origin = 'user' AND {edge_live_sql("e")}
 ), connected(id) AS (
     SELECT b_id FROM links WHERE a_scheme = 'page' AND a_id = :id AND b_scheme = 'note_block'
     UNION

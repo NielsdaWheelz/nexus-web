@@ -1,8 +1,9 @@
 // A downloaded copy in the shared reader. The source reads the copy's
 // reader.json (the reader document as the server built it); the progress
 // port keeps the position on the device through the bridge, which syncs it.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+// Annotations are the account's local authored state, not part of the copy.
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackProvider, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_HEADER } from "@/lib/api/client";
@@ -12,6 +13,10 @@ import {
   SourceIssuesNotice,
 } from "@/lib/documentReader/chrome/Contents";
 import { MapRail } from "@/lib/documentReader/chrome/MapRail";
+import { CompactAnnotationLayer, type ReaderAnnotationProps } from "@/lib/documentReader/chrome/CompactAnnotations";
+import { AuthoredProvider } from "@/lib/authored/provider";
+import { ReaderNoteEditorHost } from "@/lib/notes/editorHost";
+import { WorkProvider } from "@/lib/unsavedWork";
 import DocumentReaderView, {
   useDocumentReader,
   useReaderState,
@@ -35,7 +40,9 @@ import styles from "./shelf.module.css";
 const copyUrl = (mediaId: string, path: string) =>
   new URL(`/shelf/copies/${mediaId}/${path}`, window.location.href).href;
 
-function shelfSource(mediaId: string): ReaderSource {
+/** The copy's publication is the generation the device pinned when it saved the copy, never
+ * a field its reader.json may predate. Thread copies keep their per-post owner generations. */
+function shelfSource(mediaId: string, generation: number): ReaderSource {
   const pdf = { url: copyUrl(mediaId, "document.pdf"), expiresAtMs: null };
   return {
     async load(signal) {
@@ -47,7 +54,9 @@ function shelfSource(mediaId: string): ReaderSource {
       };
       if (copy.document.kind !== "pdf" && (copy.document.x_article_content === undefined || copy.document.x_capture === undefined || copy.document.units.some((unit) => unit.x_post === undefined)))
         throw new Error("this copy predates the current reader format; download it again");
-      const doc = readerDocument(copy.document);
+      const out = copy.document;
+      const doc = readerDocument(out.kind === "pdf" ? { ...out, publication_generation: generation }
+        : out.kind === "web_article" || out.kind === "epub" ? { ...out, publication_generation: out.units.some(unit => unit.x_post) ? null : generation } : out);
       if (doc.kind === "pdf") return { ...doc, file: pdf };
       // Epub html points at the hosted asset route; the copy carries the same assets.
       const assets = `/api/media/${mediaId}/assets/`;
@@ -124,11 +133,11 @@ export default function ShelfReader({
 }) {
   const options = useMemo(
     () => ({
-      source: shelfSource(item.media_id),
+      source: shelfSource(item.media_id, item.generation),
       progress: shelfProgress(item.media_id),
       entry: { fresh: null, cold: null },
     }),
-    [item.media_id],
+    [item.media_id, item.generation],
   );
   // No redownload in place: a copy's identity is its media and when it was saved.
   const reader = useDocumentReader(`${item.media_id}:${item.saved_at}`, options);
@@ -139,12 +148,28 @@ export default function ShelfReader({
   const frame = useRef<HTMLDivElement>(null);
   const [contents, setContents] = useState(false);
   const [continued, setContinued] = useState(false);
+  const [annotations, setAnnotations] = useState<ReaderAnnotationProps | null>(null);
+  const account = useContext(ShelfAccount);
   // A sync pass may settle or conflict this position while the copy is open.
   useEffect(() => reader.revalidate(), [item.progress, reader]);
+  // The copy's bytes never wait on the account store: annotations join when it opens.
+  // the shelf hosts the same editor through reader ports: drafts, feedback and the account store.
+  const layer = account.kind === "Ready" ? <FeedbackProvider><WorkProvider><AuthoredProvider accountId={account.id} host="shelf">
+    <ReaderNoteEditorHost identity={`shelf:${item.media_id}:${item.saved_at}`}>
+      <CompactAnnotationLayer reader={reader} mediaId={item.media_id} source={{ kind: item.kind, label: item.title }} available report={setAnnotations} />
+    </ReaderNoteEditorHost>
+  </AuthoredProvider></WorkProvider></FeedbackProvider> : account.kind === "Unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
+    actions={[{ label: "retry", onClick: account.retry }]} /> : null;
 
-  if (document.status === "failed") {
-    return (
-      <div className={styles.documentReader} ref={frame} tabIndex={-1}>
+  const text =
+    document.status === "ready" && document.doc.kind === "text"
+      ? document.doc
+      : null;
+  const notice = progress && NOTICE[progress];
+  // one tree for both states: the annotation layer keeps its place across a retried load.
+  return (
+    <div className={styles.documentReader} ref={frame} tabIndex={-1}>
+      {document.status === "failed" ? (
         <FeedbackState
           content={{ tone: "Warning", title: "downloaded copy couldn’t open", message: "retry opening it. you can also remove this copy and download it again from nexus." }}
           announcement="Assertive"
@@ -155,58 +180,56 @@ export default function ShelfReader({
           disclosure="Anchored"
           returnFocus={() => frame.current}
         />
-      </div>
-    );
-  }
-  const text =
-    document.status === "ready" && document.doc.kind === "text"
-      ? document.doc
-      : null;
-  const notice = progress && NOTICE[progress];
-  return (
-    <div className={styles.documentReader} ref={frame} tabIndex={-1}>
-      {text ? <SourceIssuesNotice issues={text.sourceIssues} readable /> : null}
-      {text?.format === "web" ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: "text-only copy · images not included" }} announcement="None" />
-      ) : null}
-      {notice ? (
-        <FeedbackNotice content={{ tone: "Warning", title: progress === "ContentChanged" ? "source version changed" : "source unavailable", message: notice }} announcement="Polite" />
-      ) : null}
-      {progress === "ContentChanged" && !continued ? (
-        <div className={styles.actions} aria-label="Changed source">
-          <Button
-            emphasis="strong"
-            onClick={() => setContinued(true)}
-          >
-            Continue reading
-          </Button>
-          <Button
-            tone="danger"
-            onClick={onRemove}
-          >
-            Remove downloaded copy
-          </Button>
+      ) : <>
+        {text ? <SourceIssuesNotice issues={text.sourceIssues} readable /> : null}
+        {text?.format === "web" ? (
+          <FeedbackStatus content={{ tone: "Neutral", title: "text-only copy · images not included" }} announcement="None" />
+        ) : null}
+        {notice ? (
+          <FeedbackNotice content={{ tone: "Warning", title: progress === "ContentChanged" ? "source version changed" : "source unavailable", message: notice }} announcement="Polite" />
+        ) : null}
+        {progress === "ContentChanged" && !continued ? (
+          <div className={styles.actions} aria-label="Changed source">
+            <Button
+              emphasis="strong"
+              onClick={() => setContinued(true)}
+            >
+              Continue reading
+            </Button>
+            <Button
+              tone="danger"
+              onClick={onRemove}
+            >
+              Remove downloaded copy
+            </Button>
+          </div>
+        ) : null}
+        {text && text.toc.length > 0 ? (
+          <div className={`${styles.actions} ${styles.readerActions}`}>
+            <Button
+              aria-expanded={contents}
+              onClick={() => setContents(!contents)}
+            >
+              Contents
+            </Button>
+          </div>
+        ) : null}
+        {contents ? (
+          <div className={styles.readerMapPanel}>
+            <Contents reader={reader} />
+          </div>
+        ) : null}
+        <div className={styles.textWithMap}>
+          <DocumentReaderView playback={null} reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false}
+            decorations={annotations?.decorations} onSelection={annotations?.onSelection} onMarks={annotations?.onMarks} />
+          <MapRail reader={reader} evidence={null} />
         </div>
-      ) : null}
-      {text && text.toc.length > 0 ? (
-        <div className={`${styles.actions} ${styles.readerActions}`}>
-          <Button
-            aria-expanded={contents}
-            onClick={() => setContents(!contents)}
-          >
-            Contents
-          </Button>
-        </div>
-      ) : null}
-      {contents ? (
-        <div className={styles.readerMapPanel}>
-          <Contents reader={reader} />
-        </div>
-      ) : null}
-      <div className={styles.textWithMap}>
-        <DocumentReaderView playback={null} reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
-        <MapRail reader={reader} evidence={null} />
-      </div>
+      </>}
+      {layer}
     </div>
   );
 }
+
+/** The native session's account for this shelf document; the shelf never chooses one. */
+export type ShelfAccountState = { readonly kind: "Loading" } | { readonly kind: "Ready"; readonly id: string } | { readonly kind: "Unavailable"; readonly retry: () => void };
+export const ShelfAccount = createContext<ShelfAccountState>({ kind: "Loading" });

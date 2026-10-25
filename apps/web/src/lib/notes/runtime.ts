@@ -1,0 +1,275 @@
+/** Account-scoped live documents and command preparation. A shared store lease
+ * covers sequence allocation through durable commit, including uncertain replies
+ * and local failure/retry. Unsynchronized committed work needs no loss warning. */
+import * as Y from "yjs";
+import { prepareChange, type Intent } from "@nexus/authored/commands";
+import { bodyInline, decodeBytes, encodeBytes, hydrateNote, createTitle, LOCAL_EDIT } from "@nexus/authored/documents";
+import { mergeChanges } from "@nexus/authored/merge";
+import type { AuthoredStore, Change, CommitFrame, StateSelection, Vector } from "@nexus/authored/types";
+import { openAuthoredStore } from "@/lib/authored/client";
+export interface WritingSnapshot { body_state: string; observed_touch: Vector }
+export interface WritingDocument { ref: string; doc: Y.Doc; undo: Y.UndoManager; retain(): () => void; capture(): Promise<WritingSnapshot> }
+export class LocalCommitError extends Error {
+  constructor(message: string, readonly cause: unknown, readonly retry: () => Promise<LocalCommit>, readonly completion: Promise<LocalCommit>) { super(message); this.name = "LocalCommitError"; }
+}
+export interface LocalCommit { command_seq: string; store_revision: string; change: Change }
+interface CachedDocument extends WritingDocument { pins: number; bytes: number; last_used: number; unsubscribe: () => void }
+interface SaveState { saving: boolean; error: unknown | null; error_refs: string[]; revision: number }
+interface FailedCommit {
+  intent: Intent; selection: StateSelection; change: Change | null; frame: CommitFrame | null;
+  store: AuthoredStore | null; held: boolean; attempting: boolean;
+  settled: Promise<LocalCommit>; resolve(receipt: LocalCommit): void; reject(error: Error): void;
+  refuse(error: unknown): void; retry_failure: ((error: unknown) => void) | null;
+}
+const REMOTE = Symbol("incoming authored state");
+const runtimes = new Map<string, WritingRuntime>();
+export function hasUncommittedWriting(): boolean { return [...runtimes.values()].some(runtime => runtime.snapshot().saving || runtime.snapshot().error !== null); }
+export async function closeWritingRuntime(accountId: string): Promise<void> { await runtimes.get(accountId)?.close(); }
+export async function discardWritingRuntime(accountId: string): Promise<void> { await runtimes.get(accountId)?.discard(); }
+export function getWritingRuntime(accountId: string): WritingRuntime {
+  let runtime = runtimes.get(accountId);
+  if (!runtime) { runtime = new WritingRuntime(accountId); runtimes.set(accountId, runtime); }
+  return runtime;
+}
+export function selectStates(selection: Partial<StateSelection>): StateSelection {
+  return { refs: selection.refs ?? [], link_ids: selection.link_ids ?? [], anchor_ids: selection.anchor_ids ?? [], source_refs: selection.source_refs ?? [] };
+}
+export class WritingRuntime {
+  private opened_store: Promise<AuthoredStore> | null = null;
+  get store(): Promise<AuthoredStore> {
+    if (!this.opened_store) {
+      const pending = openAuthoredStore(this.accountId);
+      this.opened_store = pending;
+      void pending.catch(() => { if (this.opened_store === pending) this.opened_store = null; });
+    }
+    return this.opened_store;
+  }
+  private readonly documents = new Map<string, Promise<CachedDocument>>();
+  private readonly listeners = new Set<() => void>();
+  private tail: Promise<unknown> = Promise.resolve();
+  private failed: FailedCommit | null = null;
+  private retired = false;
+  private state: SaveState = { saving: false, error: null, error_refs: [], revision: 0 };
+  private pending = 0;
+  constructor(private readonly accountId: string) {}
+  snapshot = (): SaveState => this.state;
+  subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+  private publish(patch: Partial<SaveState>): void {
+    this.state = { ...this.state, ...patch, revision: this.state.revision + 1 };
+    for (const listener of this.listeners) listener();
+  }
+  whenUploaded(commandSeq: string, signal: AbortSignal): Promise<void> { return this.store.then(store => store.whenUploaded(commandSeq, signal)); }
+  run(intent: Intent, selection: Partial<StateSelection> = {}): Promise<LocalCommit> {
+    if (this.retired) return Promise.reject(new Error("Writing account is closed"));
+    const frozen = structuredClone(intent);
+    const inferred = intentSelection(frozen);
+    const selected = selectStates(selection);
+    for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) inferred[key] = [...new Set([...inferred[key], ...selected[key]])];
+    this.pending++;
+    this.publish({ saving: true });
+    let accept: (receipt: LocalCommit) => void = () => {};
+    let refuse: (error: unknown) => void = () => {};
+    const result = new Promise<LocalCommit>((resolve, reject) => { accept = resolve; refuse = reject; });
+    const operation = this.tail.then(async () => {
+      if (this.retired) throw new Error("Writing account is closed");
+      let resolve: (receipt: LocalCommit) => void = () => {};
+      let reject: (error: Error) => void = () => {};
+      const settled = new Promise<LocalCommit>((done, failed) => { resolve = done; reject = failed; });
+      const owner: FailedCommit = { intent: frozen, selection: inferred, change: null, frame: null, store: null, held: false, attempting: false, settled, resolve, reject, refuse, retry_failure: null };
+      this.failed = owner;
+      let receipt: LocalCommit;
+      try { receipt = await this.attempt(owner); }
+      catch (error) { this.reportFailure(owner, error); receipt = await settled; }
+      if (this.failed === owner) this.failed = null;
+      this.publish({ error: null, error_refs: [] });
+      return receipt;
+    });
+    this.tail = operation.then(accept, error => { if (!this.retired) this.publish({ error, error_refs: inferred.refs }); refuse(error); }).finally(() => {
+      this.pending--; this.publish({ saving: this.pending > 0 });
+    });
+    return result;
+  }
+  private reportFailure(owner: FailedCommit, error: unknown): void {
+    if (this.retired) return;
+    this.publish({ error, error_refs: owner.selection.refs });
+    const failure = new LocalCommitError("couldn’t save on this device", error, async () => { await this.retry(); return owner.settled; }, owner.settled);
+    owner.refuse(failure);
+    owner.retry_failure?.(failure);
+  }
+  private async attempt(owner: FailedCommit): Promise<LocalCommit> {
+    owner.attempting = true;
+    try {
+      const store = await this.store;
+      owner.store = store;
+      return await store.withCommand(async () => {
+        owner.held = true;
+        try { return await this.prepareAndPersist(owner, store); }
+        catch (error) {
+          owner.attempting = false;
+          this.reportFailure(owner, error);
+          // Retain the account lease until these exact bytes settle or the
+          // account is deliberately discarded. Other tabs cannot reuse its seq.
+          return await owner.settled;
+        } finally { owner.held = false; }
+      });
+    } finally { owner.attempting = false; }
+  }
+  private async prepareAndPersist(owner: FailedCommit, store: AuthoredStore): Promise<LocalCommit> {
+    if (this.retired) throw new Error("Writing account is closed");
+    if (owner.frame === null) {
+      const replica = await store.readReplica();
+      const states = await store.readStates(owner.selection);
+      if (this.retired) throw new Error("Writing account is closed");
+      if (owner.change === null) owner.change = prepareChange({ replica_id: replica.replica_id, command_seq: (BigInt(replica.command_seq) + 1n).toString(), lamport: (BigInt(replica.lamport) + 1n).toString() }, owner.intent, states);
+      owner.frame = { expected_store_revision: replica.store_revision, replica_id: replica.replica_id, change: owner.change, states: mergeChanges(states, [owner.change]) };
+    }
+    return this.persist(owner.frame, store);
+  }
+  private async persist(frame: CommitFrame, store: AuthoredStore): Promise<LocalCommit> {
+    for (;;) {
+      let result;
+      try { result = await store.commit(frame); }
+      catch (error) {
+        const replica = await store.readReplica();
+        if (BigInt(replica.command_seq) >= BigInt(frame.change.command_seq)) return { command_seq: frame.change.command_seq, store_revision: replica.store_revision, change: frame.change };
+        throw error;
+      }
+      if (result.kind === "committed") return { command_seq: result.command_seq, store_revision: result.store_revision, change: frame.change };
+      frame.expected_store_revision = result.store_revision;
+      frame.states = mergeChanges(result.states, [frame.change]);
+    }
+  }
+  async retry(): Promise<void> {
+    if (this.retired) throw new Error("Writing account is closed");
+    const owner = this.failed;
+    if (!owner) return;
+    if (owner.attempting) { await owner.settled; return; }
+    if (owner.held && owner.store) {
+      owner.attempting = true;
+      try { const receipt = await this.prepareAndPersist(owner, owner.store); owner.resolve(receipt); }
+      catch (error) { this.reportFailure(owner, error); throw error; }
+      finally { owner.attempting = false; }
+      return;
+    }
+    let refuse: (error: unknown) => void = () => {};
+    const failedAttempt = new Promise<never>((_resolve, reject) => { refuse = reject; });
+    owner.retry_failure = refuse;
+    const recovery = this.attempt(owner).then(receipt => { owner.resolve(receipt); }, error => { this.reportFailure(owner, error); throw error; });
+    try { await Promise.race([recovery, failedAttempt]); }
+    finally { owner.retry_failure = null; }
+  }
+  async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
+    if (this.retired) throw new Error("Writing account is closed");
+    let pending = this.documents.get(ref);
+    if (!pending) {
+      pending = this.loadDocument(ref, prelude);
+      this.documents.set(ref, pending);
+      void pending.catch(() => this.documents.delete(ref));
+    }
+    return pending;
+  }
+  private async loadDocument(ref: string, prelude: readonly Intent[]): Promise<CachedDocument> {
+    const store = await this.store;
+    const selection = selectStates({ refs: [ref] });
+    const states = await store.readStates(selection);
+    const existing = states.resources.find(r => r.ref === ref);
+    const creation = prelude.find((intent): intent is Extract<Intent,{kind:"create_page"}> => intent.kind === "create_page" && intent.ref === ref);
+    const resource = existing ?? (creation ? {kind:"page" as const,ref,touch_vv:{},delete_vv:{},local_date:creation.local_date,title_state:createTitle("")} : null);
+    if (!resource || resource.kind === "highlight") throw new Error("Writing document is unavailable");
+    let initial_prelude: readonly Intent[] = prelude;
+    const doc = resource.kind === "note" ? hydrateNote(resource.body_state) : new Y.Doc();
+    if (resource.kind === "page") Y.applyUpdate(doc, decodeBytes(resource.title_state), REMOTE);
+    const root = resource.kind === "note" ? [doc.getXmlFragment("body"), bodyInline(doc)] : doc.getText("title");
+    const undo = new Y.UndoManager(root, { trackedOrigins: new Set([LOCAL_EDIT]), captureTimeout: 500 });
+    let observed_touch = resource.touch_vv;
+    const pending_edits = new Set<Promise<LocalCommit>>();
+    const cached: CachedDocument = {
+      ref, doc, undo, pins: 0, bytes: Y.encodeStateAsUpdate(doc).byteLength, last_used: Date.now(), unsubscribe: () => {},
+      capture: () => {
+        const body_state = encodeBytes(Y.encodeStateAsUpdate(doc));
+        const observed = { ...observed_touch };
+        const pending = [...pending_edits];
+        return Promise.all(pending).then(receipts => {
+          for (const receipt of receipts) {
+            const patch = receipt.change.resources.find(patch => patch.ref === ref);
+            for (const [replica, sequence] of Object.entries(patch?.touch_vv ?? {})) if (BigInt(sequence) > BigInt(observed[replica] ?? "0")) observed[replica] = sequence;
+          }
+          return { body_state, observed_touch: observed };
+        });
+      },
+      retain: () => { cached.pins++; return () => { cached.pins--; cached.last_used = Date.now(); void this.evict(); }; },
+    };
+    doc.on("update", (update: Uint8Array, origin: unknown) => {
+      if (origin === REMOTE || this.retired) return;
+      const intent: Intent = resource.kind === "note" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
+      const prepared: Intent = initial_prelude.length ? {kind:"batch",intents:[...initial_prelude,intent]} : intent;
+      initial_prelude = [];
+      const pending = this.run(prepared, { refs: [ref] }).catch(error => {
+        if (error instanceof LocalCommitError && this.failed) return this.failed.settled;
+        throw error;
+      });
+      pending_edits.add(pending);
+      void pending.then(() => pending_edits.delete(pending), () => pending_edits.delete(pending));
+    });
+    cached.unsubscribe = store.subscribe({ kind: "resource", ref }, () => {
+      void store.readStates(selection).then(current => {
+        if (this.retired) return;
+        const latest = current.resources.find(r => r.ref === ref);
+        if (!latest || latest.kind === "highlight") return;
+        if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) initial_prelude=[];
+        observed_touch = latest.touch_vv;
+        Y.applyUpdate(doc, decodeBytes(latest.kind === "note" ? latest.body_state : latest.title_state), REMOTE);
+        cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
+        void this.evict();
+      }).catch(error => this.publish({ error, error_refs: [ref] }));
+    });
+    return cached;
+  }
+  private async evict(): Promise<void> {
+    const entries = await Promise.all(this.documents.values());
+    const unmounted = entries.filter(d => d.pins === 0).sort((a, b) => a.last_used - b.last_used);
+    let count = unmounted.length;
+    let bytes = unmounted.reduce((n, d) => n + d.bytes, 0);
+    for (const entry of unmounted) {
+      if (count <= 64 && bytes <= 16 * 1024 * 1024) break;
+      if (this.state.error !== null || this.state.saving) return;
+      entry.undo.clear();
+      entry.unsubscribe(); entry.undo.destroy(); entry.doc.destroy(); this.documents.delete(entry.ref);
+      count--; bytes -= entry.bytes;
+    }
+  }
+  async discard(): Promise<void> {
+    this.retired = true;
+    if (runtimes.get(this.accountId) === this) runtimes.delete(this.accountId);
+    this.failed?.reject(new Error("Writing deliberately discarded"));
+    this.failed = null;
+    await this.finishClose();
+  }
+  async close(): Promise<void> {
+    if (this.pending > 0 || this.failed || this.state.error !== null) throw new Error("Uncommitted writing must be saved or deliberately discarded");
+    this.retired = true;
+    if (runtimes.get(this.accountId) === this) runtimes.delete(this.accountId);
+    await this.finishClose();
+  }
+  private async finishClose(): Promise<void> {
+    await this.tail;
+    for (const pending of this.documents.values()) { const doc = await pending; doc.unsubscribe(); doc.undo.destroy(); doc.doc.destroy(); }
+    this.documents.clear();
+    if (this.opened_store) await (await this.opened_store).close();
+    if (runtimes.get(this.accountId) === this) runtimes.delete(this.accountId);
+  }
+}
+
+function intentSelection(intent: Intent): StateSelection {
+  const selection = selectStates({});
+  function visit(intent: Intent): void {
+    if (intent.kind === "batch") { intent.intents.forEach(visit); return; }
+    if ("ref" in intent) selection.refs.push(intent.ref);
+    if ("link_id" in intent) selection.link_ids.push(intent.link_id);
+    if (intent.kind === "add_link") selection.refs.push(intent.endpoint_a, intent.endpoint_b);
+    if (intent.kind === "capture_passage") selection.anchor_ids.push(intent.anchor_id);
+    if (intent.kind === "capture_source") selection.source_refs.push(intent.source_ref);
+  }
+  visit(intent);
+  return selection;
+}

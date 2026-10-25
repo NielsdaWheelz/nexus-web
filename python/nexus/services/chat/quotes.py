@@ -32,7 +32,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 def build_snapshot(
     db: Session, *, viewer_id: UUID, key: ReaderSelectionKey
 ) -> ReaderSelectionSnapshot:
-    """Resolve the highlight (the caller holds its row lock when sending) into a snapshot."""
+    """Resolve the highlight (the sender holds its account head) into a snapshot."""
 
     missing = ApiErrorCode.E_READER_SELECTION_NOT_FOUND
     highlight = db.get(Highlight, key.highlight_id)

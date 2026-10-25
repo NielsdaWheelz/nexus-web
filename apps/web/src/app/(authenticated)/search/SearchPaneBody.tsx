@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
 import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -25,6 +25,8 @@ import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import { searchHref, searchQueryFromParams, searchQueryToParams } from "@/lib/search/searchParams";
 import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { AUTHORED_REF, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
+import { TRANSPORT_CODES } from "@/lib/nexus/useNexusFind";
 import SearchControls from "./SearchControls";
 import styles from "./page.module.css";
 
@@ -67,7 +69,8 @@ function InvalidSearch() {
   />;
 }
 
-/** The URL owns criteria; the server owns result identity, grouping and order. */
+/** The URL owns criteria. The account database owns authored results; the server owns
+ * every other result's identity, grouping and order, and never repeats an authored row. */
 function SearchResults({ query }: { query: SearchQuery }) {
   const router = usePaneRouter();
   const paneId = usePaneRuntime()?.paneId;
@@ -106,7 +109,12 @@ function SearchResults({ query }: { query: SearchQuery }) {
       };
     },
   });
-  const results = list.items;
+  // remote search reads synchronized projections; local authored rows are canonical.
+  const results = list.items.filter(row => !AUTHORED_REF.test(row.item.ref))
+    .map(row => "matching_passage" in row && row.matching_passage && AUTHORED_REF.test(row.matching_passage.item.ref) ? { ...row, matching_passage: null } : row);
+  const localApplies = localSearchApplies(query);
+  const [localPages, setLocalPages] = useState(1);
+  const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages);
   const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
     targets: results.flatMap(row => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
     refresh: `${list.current}:${list.running}:${list.requestedKey}`,
@@ -122,6 +130,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
     ?? findPaneLandmarkFocusTarget(paneId);
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const failure = list.failure?.op === "More" ? null : list.failure;
+  const offline = failure !== null && TRANSPORT_CODES.includes(failure.error.code);
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
   const emptyTitle = list.complete
@@ -156,8 +165,10 @@ function SearchResults({ query }: { query: SearchQuery }) {
     { key: "inside", label: "inside sources", rows: results.filter((row) => "section" in row && row.section === "inside") },
   ];
   return <div ref={root} data-pane-return-scope="Search.Results">
+    {localApplies ? <LocalResults local={local} more={() => setLocalPages(value => value + 1)} /> : null}
     {failure && failure.op !== "More" ? <FeedbackNotice
-      content={failureContent(failure.error, failure.op)} announcement="Polite"
+      content={offline ? { tone: "Neutral", title: "other results aren’t available offline", message: "your notes and highlights on this device are still searchable." }
+        : failureContent(failure.error, failure.op)} announcement="Polite"
       actions={UNFIXABLE.includes(failure.error.code) ? undefined : failure.error.code === "E_EMBEDDING_PROVIDER_UNAVAILABLE"
         ? [{ label: "retry", onClick: list.retry, busy: list.running !== null }, { label: "restart search", onClick: () => { void list.refetch().catch(() => {}); }, busy: list.running !== null }]
         : [{ label: "retry", onClick: list.retry, busy: list.running !== null }]}
@@ -174,7 +185,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
     </section>) : <ResourceList ariaLabel="Passages" busy={searching}>
       {results.map((row, index) => <SearchResult key={row.item.ref} row={row} podcastSubject={podcastFor(row)} afterRemoval={afterRemoval(results.slice(index + 1))} />)}
     </ResourceList>}
-    {count === 0 && !failure ? blank && !unsupported ? <FeedbackNotice
+    {count === 0 && !failure && !local.matches?.length ? blank && !unsupported ? <FeedbackNotice
       content={{ tone: "Info", title: query.view === "passages" ? "search inside your sources" : "search your nexus", message: query.view === "passages" ? "type text to find individual passages." : "type a name or text, or open filters to narrow by format or author." }} announcement="None"
     /> : list.current ? <div className={styles.empty}>
       <FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />
@@ -186,6 +197,38 @@ function SearchResults({ query }: { query: SearchQuery }) {
     {feedback.notice}
     {feedback.announcement}
   </div>;
+}
+
+/** Literal local matches: canonical label, exact excerpt, exact target. */
+function LocalResults({ local, more }: { local: ReturnType<typeof useLocalSearch>; more: () => void }) {
+  const runtime = usePaneRuntime();
+  if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search notes on this device" }} announcement="Polite"
+    actions={[{ label: "retry", onClick: local.retry }]} />;
+  if (!local.matches?.length) return null;
+  return <section className={styles.section} aria-label="your notes">
+    <h2 className={styles.sectionHeading}>your notes</h2>
+    <ResourceList ariaLabel="your notes">
+      {local.matches.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}
+    </ResourceList>
+    {!local.complete ? <Button onClick={more}>show more of your notes</Button> : null}
+  </section>;
+}
+
+function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnType<typeof usePaneRuntime> }) {
+  const { href, label, excerpt, resource } = match;
+  const kind = resource.kind === "note" ? "note" : resource.kind === "page" ? "page" : "highlight";
+  const activate = (event: Parameters<typeof activateTargetLink>[0]["event"]) => href ? activateTargetLink({ event, runtime, target: { href, labelHint: label } }) : undefined;
+  return <li className={styles.localResult} data-resource-ref={resource.ref}>
+    {href ? <a href={href} data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{label}</a> : <span>{label}</span>}
+    <span className={styles.localKind}> · {kind}</span>
+    {excerpt ? <p className={styles.evidence}>
+      {excerpt.before ? "…" : null}
+      {excerpt.marks.reduce<{ at: number; parts: ReactNode[] }>((acc, [start, end], index) => ({ at: end,
+        parts: [...acc.parts, excerpt.text.slice(acc.at, start), <mark key={index}>{excerpt.text.slice(start, end)}</mark>] }), { at: 0, parts: [] }).parts}
+      {excerpt.text.slice(excerpt.marks.at(-1)?.[1] ?? 0)}
+      {excerpt.after ? "…" : null}
+    </p> : null}
+  </li>;
 }
 
 /** A matching passage owns the single evidence slot and its exact destination. */

@@ -4,7 +4,7 @@
 // requests; this registry reads their current risks and never stores either.
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { hasUnsettledWriting } from "@/lib/notes/writes";
+import { hasUncommittedWriting } from "@/lib/notes/runtime";
 
 export type WorkRisk = Readonly<{
   changed: boolean;
@@ -175,5 +175,5 @@ export function useGuardedSignOut() {
 
 /** Automatic exits also retain admitted explicit writing, without adding a user-exit warning. */
 export function reloadStrandsWriting(guard: WorkGuard): boolean {
-  return guard.hasWork() || hasUnsettledWriting();
+  return guard.hasWork() || hasUncommittedWriting();
 }

@@ -1,138 +1,66 @@
 "use client";
-
-// A note (/notes/{id}): its body is the masthead, its links the outline below.
-// Source arrivals inspect the acknowledged body without editing or selecting it.
+/** A note's canonical body and relationships always read the device corpus. Source
+ * arrivals inspect exact canonical text; they never edit or replace writing. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
+import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
+import LocalOutline from "@/components/notes/LocalOutline";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
-import { UnavailableTexts } from "@/components/notes/NoteNotices";
-import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { remoteReady } from "@/lib/native/admission";
-import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
+import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
+import { OutlineHistory } from "@/lib/notes/structure";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
-import { hasUnsavedText, readText, useText, useTextVersion } from "@/lib/notes/texts";
-import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import {
-  requirePaneRuntime,
-  usePaneEntryDelivery,
-  usePaneParam,
-  usePaneRuntime,
-} from "@/lib/panes/paneRuntime";
+import { usePaneEntryDelivery, usePaneParam } from "@/lib/panes/paneRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
-import { isDeletedResource } from "@/lib/resourceGraph/links";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
-  // justify-defect: the note route always carries its id.
   if (!blockId) throw new Error("note route requires a block id");
-  const runtime = requirePaneRuntime(usePaneRuntime(), "NotePaneBody");
   const ref = `note_block:${blockId}`;
-  const deleted = isDeletedResource(ref);
-  const outline = useOutline({ root: ref, dailyDate: null });
-  const bodyVersion = useTextVersion(ref);
-  const titleRef = useRef<HTMLTextAreaElement | null>(null);
-  const sourceView = useRef<HTMLDivElement | null>(null);
-  const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
-  usePaneReturnReady(deleted || outline.status !== "loading" || !remoteReady() && outline.root === null);
-
+  const runtime = useWritingRuntime();
+  const read = useAuthoredQuery({ kind: "resource", ref });
+  const resource = read.data?.rows[0]?.resource ?? null;
+  const sourceView = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<unknown | null>(null);
+  const history = useMemo(() => runtime ? new OutlineHistory(runtime, setError) : null, [runtime]);
+  useEffect(() => () => history?.close(), [history]);
+  usePaneReturnReady(read.data !== null || read.error !== null);
   const { delivery, claim } = usePaneEntryDelivery();
-  const feedback = useFeedback();
   useEffect(() => {
-    if (delivery?.entry.kind !== "EditNoteBody" || outline.status !== "ready") return;
-    if (!claim(delivery)) return;
-    if (!deleted && delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
-    else
-      feedback.offer({ needsAttention: false, undo: null, onDismiss: null, key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
-  }, [blockId, claim, deleted, delivery, feedback, outline]);
-
-  const [inspection, setInspection] = useState<{ view: NoteInspection; bodyText: string; version: number } | null>(null);
+    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !claim(delivery)) return;
+    sourceView.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus();
+  }, [resource, delivery, claim]);
+  const [inspection, setInspection] = useState<{ text: string; view: NoteInspection } | null>(null);
   const arrival = useSourceArrival({
-    ready: !deleted && outline.status === "ready" && bodyVersion !== null,
-    sourceIdentity: bodyVersion === null ? null : `${ref}:${bodyVersion}`,
+    ready: resource !== null,
+    sourceIdentity: resource?.body_text ?? null,
     apply: async (arrival, context) => {
-      if (arrival.kind !== "source") return "Unavailable";
-      const result = arrival.source;
-      const text = readText(ref);
-      if (result.location.kind === "resource") {
-        if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
-        return "Applied";
-      }
-      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return "Unavailable";
-      const locator = result.location.locator;
-      const saved = text?.acked;
-      const shown = text?.value;
-      if (!saved || typeof saved.value === "string" || typeof shown !== "object" ||
-          locator.block_id !== blockId || locator.body_version !== saved.version ||
-          shown.body_text !== saved.value.body_text) return "Unavailable";
-      const exact = Array.from(shown.body_text).slice(locator.start_offset, locator.end_offset).join("");
-      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return "Unavailable";
-      setInspection({ bodyText: shown.body_text, version: saved.version, view: {
-        startOffset: locator.start_offset, endOffset: locator.end_offset,
-        activationId: context.activationId, signal: context.signal,
-        mayFocus: context.mayFocus, restored: context.restored,
-      } });
-      context.signal.addEventListener("abort", () => {
-        setInspection((current) => current?.view.activationId === context.activationId ? null : current);
-      }, { once: true });
+      if (arrival.kind !== "source" || !resource) return "Unavailable";
+      const location = arrival.source.location;
+      if (location.kind === "resource") { if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true }); return "Applied"; }
+      if (location.kind !== "located" || location.locator.type !== "note_block_offsets" || location.locator.block_id !== blockId) return "Unavailable";
+      const locator = location.locator, text = resource.body_text ?? "";
+      const exact = locator.text_quote_selector?.exact;
+      if (typeof exact !== "string" || Array.from(text).slice(locator.start_offset, locator.end_offset).join("") !== exact || context.signal.aborted) return "Unavailable";
+      setInspection({ text, view: { startOffset: locator.start_offset, endOffset: locator.end_offset, activationId: context.activationId, signal: context.signal, mayFocus: context.mayFocus, restored: context.restored } });
+      context.signal.addEventListener("abort", () => setInspection(current => current?.view.activationId === context.activationId ? null : current), { once: true });
       return "Applied";
     },
   });
-
-  const text = readText(ref);
-  const currentInspection = inspection && typeof text?.value === "object" && text.value.body_text === inspection.bodyText && text.acked?.version === inspection.version ? inspection.view : null;
-
-
-  const connections = useMemo(
-    () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
-    [blockId],
-  );
-  useResourceInspector({ scheme: "note_block", handle: !deleted && outline.root !== null && outline.failure?.status !== 404 && outline.failure?.status !== 403 ? blockId : null, bodies: { linkedItems: connections } });
-  const resourceRef = deleted ? undefined : canonicalResourceRef({ scheme: "note_block", id: blockId });
-  usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
-
-  if (deleted) return hasUnsavedText(ref)
-    ? <UnavailableTexts kind="note" refs={[ref]} />
-    : <FeedbackState content={{ tone: "Neutral", title: "this note is no longer available" }} announcement="Polite" />;
-  const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
-  const stale = isStaleBuild(outline.failure);
-  const failure: FeedbackContent | null = outline.failure === null ? null : stale ? STALE_BUILD_FEEDBACK : {
-    tone: "Warning",
-    title: unavailable ? "this note is no longer available" :
-      outline.root ? "couldn’t refresh connections" : "this note couldn’t be loaded",
-    message: unavailable ? "it may have been removed or your access may have changed." :
-      outline.root ? "the current outline remains in this tab." : undefined,
-    requestId: outline.failure.requestId,
-  };
-  const actions: FeedbackActions | undefined = stale || unavailable
-    ? undefined
-    : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
-  if (!remoteReady() && outline.root === null && !unavailable && !stale) return <FeedbackState content={{ tone: "Neutral", title: "this text is not available offline" }} announcement="Polite" />;
-  if (failure !== null && (outline.root === null || unavailable || stale))
-    return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
-  if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
-  return (
-    <div ref={sourceView} tabIndex={-1}>
-      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
-      <SourceArrivalNotice textRef={ref} inspected={inspection !== null} failure={arrival.failure?.title ?? null} />
-      <OutlineEditor
-        outline={outline}
-        filter={query}
-        inspection={currentInspection}
-        titleRef={titleRef}
-        activateTarget={runtime.activateTarget}
-      />
-    </div>
-  );
-}
-
-/** Location feedback observes writing without rerendering the whole note outline. */
-function SourceArrivalNotice({ textRef, inspected, failure }: { textRef: string; inspected: boolean; failure: string | null }) {
-  const text = useText(textRef);
-  const changed = inspected && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
-  return changed || failure ? <FeedbackStatus content={{ tone: "Neutral", title: changed ? "location unavailable in current draft" : failure! }} announcement="Polite" /> : null;
+  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />, [blockId]);
+  useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
+  const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
+  usePaneChrome(useMemo(() => ({ resourceRef }), [resourceRef]));
+  if (read.error) return <p role="alert">couldn’t open this note on this device.</p>;
+  if (!read.data) return <p>opening note…</p>;
+  if (!resource) return <p>this note is no longer available.</p>;
+  return <div ref={sourceView} tabIndex={-1}>
+    {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
+    {error ? <p role="alert">{error instanceof Error ? error.message : "couldn’t save this change on this device."}</p> : null}
+    <BoundNoteEditor noteRef={ref} label="edit note" session={history ?? undefined}
+      inspection={inspection?.text === resource.body_text ? inspection.view : null}
+      onSplit={position => { if (history) void history.split(ref, position, ref, null).catch(setError); }} />
+    <LocalOutline rootRef={ref} />
+  </div>;
 }

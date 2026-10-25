@@ -103,7 +103,9 @@ build and packaging command.
   make only its direct download calls above. AndroidX WebKit exposes the
   main-frame `nexusApp` and `nexusPlayer` listeners on the owned origin and
   `nexusLocalContent` on the owned and shelf origins.
-  Android code must not add other product or Supabase clients, OAuth/PKCE
+  Android authored replication uses fixed provision/change/snapshot paths through
+  `NexusOriginClient`; its bridge admits only the owned workspace and exact
+  packaged shelf generation. Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
   OAuth/PKCE exchange remains server-side.
 - Supabase Auth alone owns password hashes, invitation and recovery tokens, and
