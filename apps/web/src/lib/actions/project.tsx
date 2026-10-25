@@ -3,7 +3,8 @@ import { parseResourceRef, type ResourceRef } from "@/lib/resourceGraph/resource
 import { assertNever } from "@/lib/assertNever";
 import { installedApp, remoteReady } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
-import type { PodcastActionFocus } from "./inlineActions";
+import type { PodcastActionFacts, PodcastActionFocus } from "./inlineActions";
+import PodcastSubscriptionIcon from "@/components/podcasts/PodcastSubscriptionIcon";
 import type { MetadataSubject } from "./subjects";
 import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/api";
 import type { EpisodeState } from "@/lib/podcasts/api";
@@ -33,7 +34,7 @@ import { getConversationCommands, readConversationTree, repeatMessage, type Comm
 import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { LECTERN_INTENT_COPY, lecternFull } from "@/lib/lectern/lectern";
-import { deleteLibrary, leaveLibrary } from "@/lib/libraries/api";
+import { deleteLibrary, leaveLibrary, placements } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
   metadataResearchLabel,
@@ -302,26 +303,48 @@ export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
   return result;
 }
 
-/** Subscription and organization keep the admitted target and original focus. */
-export function projectPodcastSubscriptionAction({ target, title, subscribed, disabledReason, ctx, run, focus }: {
+/** observations choose the glyph; only ready facts authorize a reviewed command. */
+export function projectPodcastSubscriptionAction({ target, title, facts, disabledReason, ctx, run, focus }: {
   readonly target: PodcastTarget;
   readonly title: string;
-  readonly subscribed: boolean;
+  readonly facts: PodcastActionFacts;
   readonly disabledReason: string | null;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
   readonly focus?: PodcastActionFocus;
-}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId } {
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId; readonly accessibleLabel: string } {
+  let subscribed: boolean | null = null;
+  let label: string;
+  if (facts.kind === "Ready") {
+    switch (facts.resolution.kind) {
+      case "Canonical":
+        target = { kind: "Canonical", podcast_id: facts.resolution.podcast_id };
+        subscribed = facts.resolution.subscribed;
+        label = ACTION_CATALOG[subscribed ? "UnsubscribePodcast" : "SubscribePodcast"].label;
+        break;
+      case "Discovery": subscribed = false; label = ACTION_CATALOG.SubscribePodcast.label; break;
+      case "Unavailable":
+        label = "subscription unavailable";
+        disabledReason = facts.resolution.reason === "NotFound" ? "this podcast is no longer available" : "this podcast discovery target is invalid";
+        break;
+      default: assertNever(facts.resolution);
+    }
+  } else {
+    subscribed = facts.observedSubscribed;
+    label = subscribed === null ? "subscription status unknown" : subscribed ? "last known subscribed" : "last known not subscribed";
+    disabledReason = facts.kind === "Failed" ? "couldn’t check subscription" : "checking subscription…";
+  }
   disabledReason = installedApp && !ctx.online ? "requires a connection" : disabledReason;
   const id = subscribed ? "UnsubscribePodcast" : "SubscribePodcast";
   const entry = ACTION_CATALOG[id];
   return {
-    kind: "command", id, label: entry.label,
-    icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+    kind: "command", id, label,
+    accessibleLabel: `${facts.kind === "Ready" && subscribed ? `subscribed; ${label}` : label}: ${title}`,
+    icon: createElement(PodcastSubscriptionIcon, { subscribed: subscribed === true }), hasPopup: "dialog",
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined,
     restoreFocusOnClose: false,
     onSelect: detail => {
-      if (disabledReason !== null) return;
+      if (facts.kind !== "Ready" || disabledReason !== null) return;
       if (subscribed && target.kind !== "Canonical") throw new Error("a subscription requires canonical identity");
       const overlay: Overlay = subscribed && target.kind === "Canonical"
         ? { kind: "UnsubscribePodcast", podcastId: target.podcast_id, title, libraryId: null, successFocus: focus?.afterRemoval }
@@ -348,7 +371,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
       if (disabledReason !== null) return;
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
       const successFocus = focus?.afterRemoval;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: "libraries…", title,
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: "add to library…", title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "PodcastLibraries", target, title, successFocus },
           focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
@@ -580,7 +603,7 @@ export function projectResourceActions(
         resource.scheme !== "media" ? triggerEl : focused instanceof HTMLElement && focused !== document.body
           ? focused
           : triggerEl,
-      fallback: returnFocus ?? (() => findPaneChromeFocusTarget(pane)),
+      fallback: returnFocus ?? (() => findPaneChromeFocusTarget(pane) ?? findPaneLandmarkFocusTarget(pane)),
     });
   };
 
@@ -642,7 +665,17 @@ export function projectResourceActions(
     LeaveLibrary: deleted(() => leaveLibrary(id), "/libraries"),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
-    ImportPodcastEpisodes: overlay({ kind: "ImportPodcastEpisodes", target: { kind: "Canonical", podcast_id: id }, title: facts.label }),
+    AddEpisodeToAll: [async () => {
+      if (ctx.podcasts.pending(`episode-save:${id}`) !== null) return;
+      const snapshot = await placements({ kind: "Media", id }, ctx.sessionSignal());
+      if (!ctx.isActive() || snapshot.all_membership.included) return;
+      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: `${facts.label} · all`, command: {
+        kind: "EpisodeSave", mediaId: id, libraryId: snapshot.all_membership.library_id,
+        body: { included: true, expected_order_revision: snapshot.all_membership.order_revision,
+          expected_removal_revision: snapshot.removal_revision },
+      } });
+    }],
+    RemoveEpisodeFromAll: overlay({ kind: "RemoveEpisodeFromAll", mediaId: id, title: facts.label }),
     RemovePodcastEpisodes: overlay({ kind: "RemovePodcastEpisodes", podcastId: id, title: facts.label }),
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
@@ -793,7 +826,9 @@ export function projectResourceActions(
       case "SubscribePodcast":
       case "UnsubscribePodcast":
         return projectPodcastSubscriptionAction({
-          target: { kind: "Canonical", podcast_id: id }, title: facts.label, focus: podcastFocus, subscribed: action.kind === "UnsubscribePodcast", disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run,
+          target: { kind: "Canonical", podcast_id: id }, title: facts.label, focus: podcastFocus,
+          facts: { kind: "Ready", resolution: { kind: "Canonical", podcast_id: id, subscribed: action.kind === "UnsubscribePodcast" } },
+          disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run,
         });
       case "PodcastLibraries":
         return projectPodcastLibrariesAction({ target: { kind: "Canonical", podcast_id: id }, title: facts.label, disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run, focus: podcastFocus });

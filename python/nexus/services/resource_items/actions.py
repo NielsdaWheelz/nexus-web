@@ -37,7 +37,7 @@ from nexus.schemas.resource_items import (
     TranscriptAction,
     TranscriptState,
 )
-from nexus.services import highlights, libraries
+from nexus.services import highlights, libraries, library_entries
 from nexus.services.chat import conversations
 from nexus.services.consumption import lectern, projection
 from nexus.services.media import media_facts
@@ -160,7 +160,22 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
         and operation.reviewed_at is None
     ):
         actions.append(ReviewMetadataResultAction(blocked=None, job_id=operation.job_id))
-    actions.append(_simple("RemoveMedia", _owner(media.can_delete)))
+    if kind == "podcast_episode":
+        membership = library_entries.list_item_libraries(
+            db, viewer_id=viewer_id, target=library_entries.media_target(media_id)
+        ).all_membership
+        if membership.included:
+            blocked = membership.remove_blocked
+            actions.append(
+                _simple(
+                    "RemoveEpisodeFromAll",
+                    "PermissionDenied" if blocked == "RequiresAdmin" else blocked,
+                )
+            )
+        else:
+            actions.append(_simple("AddEpisodeToAll"))
+    else:
+        actions.append(_simple("RemoveMedia", _owner(media.can_delete)))
     if media.progress_resettable:
         actions.append(_simple("ResetProgress"))
     actions.append(
@@ -229,10 +244,8 @@ def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceAct
         actions.append(OpenSourceAction(blocked=None, href=state.website_url))
     actions.append(_simple("UnsubscribePodcast" if state.subscribed else "SubscribePodcast"))
     actions.append(_simple("PodcastLibraries"))
-    actions.append(_simple("ImportPodcastEpisodes"))
     actions.append(_simple("PodcastSettings"))
-    if state.subscribed:
-        actions.append(_simple("RefreshPodcast"))
+    actions.append(_simple("RefreshPodcast"))
     if state.has_episodes:
         actions.append(_simple("RemovePodcastEpisodes"))
     return actions

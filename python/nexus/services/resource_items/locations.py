@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_media,
     highlight_visibility_sql,
-    visible_media_ids_cte_sql,
+    requested_media_ids_cte_sql,
 )
 from nexus.schemas.resource_evidence import CapturedPassageTarget, CapturedQuote
 from nexus.schemas.retrieval import (
@@ -121,7 +121,7 @@ def _reading_candidates(
     reading_media_id: UUID | None,
     admitted_reading_media_ids: Sequence[UUID] | None,
 ) -> list[UUID]:
-    admitted = visible_media_ids_cte_sql()
+    admitted = requested_media_ids_cte_sql()
     if admitted_reading_media_ids is not None:
         admitted = f"SELECT media_id FROM ({admitted}) audience WHERE media_id=ANY(CAST(:admitted_ids AS uuid[]))"
     if reading_media_id is not None:
@@ -315,7 +315,7 @@ def media_passages(
             row.id: row.reading_media_ids
             for row in db.execute(
                 text(f"""SELECT h.id,array_agg(reading.media_id) AS reading_media_ids
-                    FROM highlights h JOIN ({visible_media_ids_cte_sql()}) reading
+                    FROM highlights h JOIN ({requested_media_ids_cte_sql()}) reading
                       ON reading.media_id=h.anchor_media_id
                         OR (h.anchor_kind='fragment_offsets'
                             AND {highlight_in_reading_scope_sql("h.id", "reading.media_id")})

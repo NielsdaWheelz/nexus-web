@@ -6,8 +6,6 @@
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import type { AcquisitionGuard } from "@/lib/libraries/api";
-import { mediaAcquisitionAvailable } from "@/lib/imports/ingest";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
 
@@ -113,28 +111,34 @@ export async function savePodcastSettings(podcastId: string, patch: Schema<"Podc
   return result;
 }
 
-export async function addEpisodeFromDiscovery(input: {
-  readonly target: string;
-  readonly guard: AcquisitionGuard;
-  readonly signal?: AbortSignal;
-  readonly onAccepted?: (receipt: ApiJson<"/podcast-episodes/from-discovery", "post">["data"]) => void;
-}): Promise<ApiJson<"/podcast-episodes/from-discovery", "post">["data"] & { available: boolean }> {
-  const { target, guard } = input;
-  type Body = ApiJson<"/podcast-episodes/from-discovery", "post">;
-  const response = await apiFetch<Body>(
-    "/api/podcast-episodes/from-discovery",
-    {
-      method: "POST",
-      body: JSON.stringify({ target, ...guard }),
-      signal: input.signal,
-    },
-  );
-  publishChange("Entries");
-  input.onAccepted?.(response.data);
-  return { ...response.data, available: await mediaAcquisitionAvailable(response.data.media_id, input.signal) };
+/** Explicit directory opening resolves catalogue identity without personal filing. */
+export async function resolvePodcast(target: string, signal?: AbortSignal) {
+  const { data } = await apiFetch<ApiJson<"/podcasts/resolve", "post">>("/api/podcasts/resolve", {
+    method: "POST", body: JSON.stringify({ target }), signal,
+  });
+  publishChange("Podcasts");
+  return data;
 }
 
-/** Admits a refresh of every subscription in scope; returns how many. */
+/** Source-deduplicated catalogue resolution; only a separate placement saves it. */
+export async function resolvePodcastEpisode(target: string, signal?: AbortSignal) {
+  const { data } = await apiFetch<ApiJson<"/podcast-episodes/resolve", "post">>("/api/podcast-episodes/resolve", {
+    method: "POST", body: JSON.stringify({ target }), signal,
+  });
+  publishChange("Podcasts", "PodcastEpisodes", "Entries");
+  return data;
+}
+
+export async function getEpisodeRemovalPreview(mediaId: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/podcast-episodes/{media_id}/removal-preview", "get">>(`/api/podcast-episodes/${mediaId}/removal-preview`, { signal })).data;
+}
+
+/** Exact request transport; the account owner retains every reviewed guard. */
+export async function removeEpisodeFromAll(mediaId: string, body: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/podcast-episodes/{media_id}/remove", "post">>(`/api/podcast-episodes/${mediaId}/remove`, { method: "POST", body, signal })).data;
+}
+
+/** Show checks need no subscription; aggregate scopes select subscribed shows. */
 export async function requestPodcastRefresh(
   scope: PodcastRefreshScope,
   signal?: AbortSignal,
@@ -151,8 +155,8 @@ export async function requestPodcastRefresh(
 
 export function podcastRefreshRequestAnnouncement(count: number): string {
   return count === 0
-    ? "Nothing to refresh"
-    : `Refresh requested for ${count} show${count === 1 ? "" : "s"}`;
+    ? "no episode checks needed"
+    : `episode check requested for ${count} show${count === 1 ? "" : "s"}`;
 }
 
 const transcriptTarget = (podcastId: string, state: EpisodeState) => ({

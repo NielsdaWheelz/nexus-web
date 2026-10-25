@@ -1,7 +1,7 @@
 """Remove retained queue provenance without changing playback identities or progress.
 
-Revision ID: 0318
-Revises: 0317
+Revision ID: 0319
+Revises: 0318
 
 Data effects: validate every supported saved browser queue and its surviving
 occurrence/cursor invariants, then remove only state.source. Session, queue and
@@ -16,8 +16,8 @@ from uuid import UUID
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0318"
-down_revision: str | Sequence[str] | None = "0317"
+revision: str = "0319"
+down_revision: str | Sequence[str] | None = "0318"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

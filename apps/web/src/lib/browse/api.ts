@@ -8,7 +8,6 @@ export type BrowseSource = Schema<"BrowseSource">;
 export type BrowseSort = Schema<"BrowseSort">;
 export type BrowseCandidate = Schema<"BrowseCandidate">;
 export type BrowsePreview = Schema<"BrowsePreview">;
-export type PreviewEpisode = Schema<"PodcastPreviewEpisode">;
 
 export function browsePreviewHref(target: string): string {
   return `/browse/preview?target=${encodeURIComponent(target)}`;

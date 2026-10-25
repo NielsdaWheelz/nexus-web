@@ -3,7 +3,7 @@
 pending production delivery of the queue index; existing playback sessions and
 native player data must survive this upgrade.
 
-rehearse migration 0318 on the newest production backup before merge. it removes
+rehearse migration 0319 on the newest production backup before merge. it removes
 only saved `state.source` after strict preflight. keep a verified backup; provenance removal
 is irreversible without it. follow the once-between-releases wire revision rule
 and pair api/web/apk delivery. no old/new bridge compatibility period.
@@ -24,3 +24,8 @@ listening/completion delivery after reconnect. do not substitute a clean install
 for conversion of the installed account. shelf controls and video remain separate.
 resolve after backup rehearsal, migration, paired delivery and this installed-device
 check. local qualification evidence and authored/deleted lines belong in the pr.
+
+this paired cut also owns the quiet-player-feedback rollout: pending geometry,
+cancel/check recovery and stale or unavailable restore must preserve newer playback
+and activation. recovery and replacement undo use shared app feedback; no queue
+banner or routine playback footer is restored.

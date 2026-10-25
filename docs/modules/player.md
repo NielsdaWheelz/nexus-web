@@ -409,12 +409,14 @@ finish, undo, unread, reset and settle publish `Consumption`.
   lives inside playback; chapter context lives in chapters.
   preview exposes rate only, with no queue advancement, chapters or default save.
   numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
-  work uses control markers and shared app feedback; it never adds a routine footer
-  row. failures expose details and recovery through that same owner. up next is
-  the complete compact occurrence index; its opening/focus, revision-bound commands
-  and shared replacement undo follow [playback sessions](playback-sessions.md).
-  mobile queue/player invocation chooses one initial target inside the same sheet;
-  automatic advance does not refocus it. application
+  work uses control markers and shared app feedback. preparing and saving mark
+  up next busy; other pending activation marks transport busy independently of
+  loaded buffering. routine work adds no footer row. failures expose details and
+  recovery through the same feedback owner. up next is the complete compact
+  occurrence index; its opening/focus, revision-bound commands and shared replacement
+  undo follow [playback sessions](playback-sessions.md). mobile queue/player
+  invocation chooses one initial target inside the same sheet; automatic advance
+  does not refocus it. application
   gain is unity; volume belongs exclusively to the os/device.
   pointer scrubbing previews locally and commits once on captured release,
   including outside the range. cancellation, capture loss, source retirement or

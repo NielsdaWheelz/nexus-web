@@ -24,7 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import non_system_media_ref_exists_sql, visible_media_ids_cte_sql
+from nexus.auth.permissions import non_system_media_ref_exists_sql, requested_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
@@ -77,7 +77,7 @@ _TRANSCRIPT_KINDS = ("video", "podcast_episode")
 
 # Every fact a projection decides on; the detail's prose and stamps are _DETAIL_SQL's.
 _ROWS_SQL = f"""
-    WITH visible_media AS ({visible_media_ids_cte_sql()})
+    WITH visible_media AS ({requested_media_ids_cte_sql()})
     SELECT m.id, m.kind, m.title, m.original_published_date,
         part_definition.version AS part_version,
         part_source.title AS part_source_title,

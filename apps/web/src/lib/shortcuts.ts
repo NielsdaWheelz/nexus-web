@@ -28,7 +28,9 @@ export const SHORTCUTS = {
   },
 } as const;
 
-export const PANE_STRIP_DESCRIPTION = "left/right browse pane titles and controls. home/end reach the first/last control. enter or space activates. tab leaves the strip. delete closes the focused pane. shift+m maximizes or restores layout.";
+export const NEW_PANE_HINT = "shift-click or shift-enter opens in a new pane";
+
+export const PANE_STRIP_DESCRIPTION = "left/right browse pane titles and controls. home/end reach the first/last control. enter or space activates. shift+enter opens the focused title's page in a new pane. tab leaves the strip. delete closes the focused pane. shift+m maximizes or restores layout.";
 
 // These keys belong to the focused toolbar control, not the app-wide matcher.
 export const PANE_STRIP_SHORTCUTS = [
@@ -47,7 +49,7 @@ export const PANE_STRIP_SHORTCUTS = [
   {
     id: "PaneStrip.Open",
     title: "Activate title or control",
-    description: "A title selects its pane and enters its content. A management control keeps focus in the strip.",
+    description: "A title selects its pane and enters its content. Shift-click or Shift+Enter on a title opens its current page in a new pane. A management control keeps focus in the strip.",
     meta: "Enter / Space",
   },
   {
@@ -58,14 +60,14 @@ export const PANE_STRIP_SHORTCUTS = [
   },
   {
     id: "PaneStrip.Close",
-    title: "Close tab",
-    description: "Closes the focused tab once per press. The resource remains available.",
+    title: "Close pane",
+    description: "Closes the focused pane once per press. The resource remains available.",
     meta: "Delete / Backspace",
   },
   {
     id: "PaneStrip.Maximize",
     title: "Maximize or restore layout",
-    description: "Maximizes the focused tab, or restores the canvas when that pane is already maximized. Focus stays in the strip.",
+    description: "Maximizes the focused pane, or restores the canvas when that pane is already maximized. Focus stays in the strip.",
     meta: "Shift+M",
   },
 ] as const;

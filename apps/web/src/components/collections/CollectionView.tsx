@@ -21,7 +21,7 @@ import {
 } from "@/lib/ui/viewTransitions";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { focusableElements } from "@/lib/ui/overlay";
 
 function followingRowIds(root: HTMLElement, target: HTMLElement): string[] {
@@ -110,10 +110,11 @@ export default function CollectionView({
       ? focusableElements(control)[0] : control;
     const followingRow = focus.followingIds.map((id) => remaining.find((item) => item.dataset.collectionRowId === id))
       .find((item) => item !== undefined);
+    const paneId = root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
     const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??
       followingRow?.querySelector<HTMLElement>("a[href], button:not([disabled])") ??
       root.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]') ??
-      findPaneChromeFocusTarget(root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+      findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
     target?.focus({ preventScroll: true });
   });
   const [displayRows, setDisplayRows] = useState<readonly CollectionRowView[]>(rows);
@@ -173,9 +174,10 @@ export default function CollectionView({
       afterRemoval: () => {
         const root = returnScopeRef.current;
         const remaining = Array.from(root?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
+        const paneId = root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
         return following.map(id => remaining.find(item => item.dataset.collectionRowId === id)?.querySelector<HTMLElement>("[data-row-focusable]")).find(item => item !== undefined && item !== null)
           ?? root?.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]')
-          ?? findPaneChromeFocusTarget(root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId);
+          ?? findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
       },
       row,
       as,

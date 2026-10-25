@@ -11,6 +11,7 @@ import {
   useContext,
   useLayoutEffect,
   useState,
+  useSyncExternalStore,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -239,4 +240,13 @@ export function usePaneChromeState(store: PaneChromeStore): PaneChromeState {
     return store.subscribe(sync);
   }, [store]);
   return read.store === store ? read.state : store.get();
+}
+
+const noSubscription = () => () => {};
+
+/** The enclosing pane's published `resourceRef`; null outside a pane or before its body publishes one. */
+export function usePaneSubject(): CanonicalResourceRef | null {
+  const store = useContext(PaneChromeContext);
+  const read = () => store?.get().chrome?.resourceRef ?? null;
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, read, read);
 }

@@ -131,7 +131,9 @@ export const ACTION_CATALOG = {
       Ready: { label: "Remove download", icon: Trash2 },
     },
   },
-  LibraryPlacement: { label: "Libraries…", icon: Library, group: "Organize" },
+  AddEpisodeToAll: { label: "add to all", icon: ListPlus, group: "Organize" },
+  RemoveEpisodeFromAll: { label: "remove from all…", icon: ListMinus, group: "Danger" },
+  LibraryPlacement: { label: "libraries…", icon: Library, group: "Organize" },
   LecternMembership: {
     label: "add to lectern",
     icon: ListPlus,
@@ -142,10 +144,9 @@ export const ACTION_CATALOG = {
     },
   },
   AddUnfinishedToLectern: { label: "add unfinished contents to lectern…", icon: ListPlus, group: "Organize" },
-  PodcastLibraries: { label: "libraries…", icon: Library, group: "Organize" },
+  PodcastLibraries: { label: "add to library…", icon: Library, group: "Organize" },
   SubscribePodcast: { label: "subscribe", icon: Rss, group: "Organize" },
   UnsubscribePodcast: { label: "unsubscribe", icon: Rss, group: "Organize" },
-  ImportPodcastEpisodes: { label: "import available episodes…", icon: Download, group: "Organize" },
   Chat: {
     label: "Chat about this…",
     icon: MessageCircle,
@@ -239,11 +240,11 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   RefreshPodcast: {
-    label: "Check for new episodes",
+    label: "check for new episodes",
     icon: RefreshCw,
     group: "Manage",
   },
-  RemovePodcastEpisodes: { label: "remove podcast and episodes…", icon: Trash2, group: "Danger" },
+  RemovePodcastEpisodes: { label: "remove episodes from libraries…", icon: Trash2, group: "Danger" },
   RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
     label: "remove from nexus",
@@ -304,6 +305,7 @@ export const ACTION_CATALOG = {
 export type ActionId = keyof typeof ACTION_CATALOG;
 
 export const BLOCKED_COPY = {
+  PodcastSubscription: "included by this podcast subscription",
   PermissionDenied: "You don’t have permission to do this.",
   Locked: "This item is locked.",
   Processing: "Available when processing finishes.",

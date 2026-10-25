@@ -383,9 +383,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 (ownsDocument && (
                     (op == "queue_read" && inbound.optBoolean("reconcile")) ||
                     op in setOf("cancelPlayback", "play", "pause", "seekAndPlay", "seek", "skip", "load", "preview", "fence", "unbind", "dismiss", "queue_commit") ||
-                    (op == "queue_command" && inbound.optJSONObject("command")?.optString("kind") in setOf("select", "next", "previous", "stop", "restore"))
+                    (op == "queue_command" && inbound.optJSONObject("command")?.optString("kind") in setOf("select", "next", "previous", "stop"))
                 ))
-            ) retireActivation() else null
+            ) retireActivation()
+            else if (ownsDocument && op == "queue_command" && inbound.optJSONObject("command")?.optString("kind") == "restore") activationGeneration
+            else null
             scope.launch {
                 val reply = try {
                     handle(JSONObject(raw), controller, mine)

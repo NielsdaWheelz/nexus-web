@@ -144,6 +144,26 @@ bool; not found and not visible are the same False. The ORM adapters
 are text clauses correlated to the unaliased `highlights` table: a query that
 aliases `Highlight` cannot use them.
 
+`visible_media_ids_cte_sql` enumerates workspace roots: library reach, exact
+grants and retained x evidence, closed over actual containment. viewer removal
+markers and teardown exclude each step. library lists, personal search, contributor
+indexes and suggestion roots keep this relation.
+
+`requested_media_ids_cte_sql` adds every canonical podcast episode to that
+workspace relation. catalogue episodes ignore personal removal markers; teardown
+still excludes them. `can_read_media`, bounded summaries and resource references,
+player/transcript/state/annotation tools and explicit media search scopes use
+this authority. episode access creates no holding, subscription or search root.
+known show queries enumerate their own catalogue explicitly. ordinary document
+permissions remain workspace-scoped.
+
+highlight readability still requires its author, shared non-system library or
+exact grant path as well as a valid readable anchor. catalogue access never
+exposes another viewer's private annotation. writes may request teardown-inclusive
+readability to report `E_MEDIA_DELETING`; this grants no right to mutate teardown.
+`can_restore_media` separately admits membership reach or a canonical episode
+while leaving placement authority and guards to the membership owner.
+
 ## handles (`python/nexus/services/sealed_handles.py`)
 
 A discovery handle is `ndt1.<payload>.<tag>`: a canonical base64url payload

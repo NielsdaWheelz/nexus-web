@@ -25,7 +25,9 @@ if TYPE_CHECKING:
 _ROW_SQL = """
     SELECT l.name AS library_name,l.is_default AS library_is_default,i.id,i.library_id,i.run_id,i.added_count,i.already_present_count,i.created_at,
            p.title AS podcast_title,r.podcast_id,r.attempt_version,r.updated_at,r.started_at,r.completed_at,
-           r.failed_at,r.cancelled_at,r.error_code,r.error_detail
+           r.failed_at,r.cancelled_at,r.error_code,r.error_detail,
+           (SELECT s.id FROM library_podcast_subscriptions s
+            WHERE s.initial_import_id=i.id) AS subscription_id
     FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id = i.run_id
     JOIN podcasts p ON p.id=r.podcast_id
     JOIN libraries l ON l.id=i.library_id
@@ -60,6 +62,7 @@ def import_from_row(
         library_id=row["library_id"],
         podcast_id=row["podcast_id"],
         run_id=row["run_id"],
+        subscription_id=row["subscription_id"],
         state=state,
         attempt_version=row["attempt_version"],
         added_count=row["added_count"],
@@ -68,7 +71,9 @@ def import_from_row(
         error_detail=row["error_detail"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-        can_cancel=can_manage and state in ("pending", "running", "failed"),
+        can_cancel=can_manage
+        and row["subscription_id"] is None
+        and state in ("pending", "running", "failed"),
         can_retry=can_manage and state == "failed",
         order_revision=str(order_revision),
     )
@@ -149,8 +154,8 @@ def publish_episodes(
 ) -> None:
     """Process this traversal's observations, then insertion-only ongoing delivery.
 
-    named membership belongs to its library; default delivery respects its owner's
-    marker. metadata refresh never supplies ongoing placement authority.
+    each rule/addition files only its destination. metadata refresh never supplies
+    ongoing placement authority; episode hiding markers do not exist.
     """
     from nexus.services import libraries, library_entries
     from nexus.services.search import projection
@@ -187,42 +192,35 @@ def publish_episodes(
             {"ids": held_media},
         )
     )
-    for media_id in held_media:
-        library_entries.lock_media_for_reference(db, media_id)
+    library_entries.lock_media_for_references(db, held_media)
     target_library_ids: set[UUID] = set(ongoing)
     if finite is not None:
         target_library_ids.add(finite.library_id)
     target_libraries = sorted(target_library_ids)
     libraries.lock_library_rows_in_order(db, target_libraries)
     if finite is not None:
-        added = present = 0
-        for media_id in held_media:
-            if media_id not in media_ids:
-                continue
-            first = db.scalar(
+        observed = set(media_ids)
+        first = list(
+            db.scalars(
                 text("""
                 INSERT INTO podcast_import_processed_episodes(import_id,media_id)
-                VALUES (:id,:media) ON CONFLICT (import_id,media_id) DO NOTHING RETURNING id
+                SELECT :id,unnest(CAST(:media AS uuid[]))
+                ON CONFLICT (import_id,media_id) DO NOTHING RETURNING media_id
             """),
-                {"id": finite.id, "media": media_id},
+                {"id": finite.id, "media": [media for media in held_media if media in observed]},
             )
-            if first is None:
-                continue
-            outcome = library_entries.deliver_podcast_episode_locked(
-                db, library_id=finite.library_id, media_id=media_id
-            )
-            added += outcome == "added"
-            present += outcome == "present"
+        )
+        added, present = library_entries.add_podcast_episodes_locked(
+            db, library_id=finite.library_id, media_ids=sorted(first)
+        )
         db.execute(
             text("""UPDATE podcast_library_imports SET added_count = added_count + :added,
                            already_present_count = already_present_count + :present WHERE id = :id"""),
             {"id": finite.id, "added": added, "present": present},
         )
+    arrivals = sorted(set(new_media_ids) & set(held_media))
     for library_id in ongoing:
-        for media_id in sorted(set(new_media_ids) & set(held_media)):
-            library_entries.deliver_podcast_episode_locked(
-                db, library_id=library_id, media_id=media_id
-            )
+        library_entries.add_podcast_episodes_locked(db, library_id=library_id, media_ids=arrivals)
     if held_media and target_libraries:
         projection.refresh_viewer_contributors(
             db,
@@ -252,6 +250,11 @@ def cancel(
         libraries.lock_library_rows_in_order(db, [library_id])
         library = libraries.access(db, viewer_id, library_id, lock=False)
         library.require_add_content(viewer_id)
+        if row["subscription_id"] is not None:
+            raise ConflictError(
+                ApiErrorCode.E_PODCAST_SUBSCRIPTION_ACTIVE,
+                "Unsubscribe before cancelling initial history",
+            )
         if row["attempt_version"] != body.expected_attempt_version:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast import changed")
         if row["completed_at"] is None and row["cancelled_at"] is None:

@@ -133,9 +133,19 @@ class LibraryPlacementOut(BaseModel):
     name: str
     order_revision: OrderRevision
     relation: Literal["Absent", "Direct"]
-    blocked: Literal["RequiresAdmin", "SystemManaged"] | None
+    blocked: Literal["RequiresAdmin", "SystemManaged", "PodcastSubscription"] | None
+
+
+class LibraryAllMembershipOut(BaseModel):
+    """Effective all membership, addressed through the viewer's real personal library."""
+
+    library_id: UUID
+    order_revision: OrderRevision
+    included: bool
+    remove_blocked: Literal["RequiresAdmin", "PodcastSubscription"] | None
 
 
 class LibraryPlacementsOut(BaseModel):
     removal_revision: OrderRevision
+    all_membership: LibraryAllMembershipOut
     placements: list[LibraryPlacementOut]

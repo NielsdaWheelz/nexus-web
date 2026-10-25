@@ -1,55 +1,64 @@
 # podcasts
 
-podcasts own canonical shows/episodes, per-library automatic delivery, finite
-history imports, source traversal and independent playback defaults. library
-entries are physical media memberships; shows have no entry and never hide their
-episodes. all aggregates member-library subscriptions once per show and is the
-parent command scope. subscribe adds available episodes and ongoing delivery to
-one destination; contextless subscribe uses the existing default library. finite
-import chooses that personal destination or one writable named library and never
-changes subscriptions.
+podcasts separate canonical catalogue access, physical collection membership,
+future delivery, finite additions and listening state. a known show lists every
+known episode, including unsaved episodes. counts describe that catalogue, not
+saved contents or a guaranteed publisher total. playback, transcripts, annotations,
+state, queue/lectern and device downloads require no save. source withdrawal and
+normal removal preserve canonical identities; this promises no permanent audio copy.
 
-the show pane's libraries section contains named subscription destinations, including
-read-only rows. its shared title links navigate; inline removal unsubscribes only
-that library and keeps episodes. the section's library control manages named
-subscription destinations, including reviewed removal. the header's shared rss
-action subscribes personally or unsubscribes everywhere from loaded aggregate
-facts. the default destination is
-excluded only from section rows, never from subscription state. library changes
-invalidate these names immediately within the tab.
+named libraries contain physical episodes. all is their distinct non-system
+member-library union, including personal holdings. a subscription requires every
+known episode in its exact destination plus future discoveries. subscription,
+membership, source coverage and addition progress remain separate facts. catalogue
+access never enrolls unsaved episodes in personal search, indexes or suggestions.
+
+`add to library…` chooses one actual destination: personal all or a writable named
+library. its review offers `podcast` for available history plus automatic future
+delivery, or `episodes` for available history once without changing subscriptions.
+the buttons confirm `subscribe` or `add episodes`. an already-subscribed destination
+keeps the same review, disables `episodes`, and shows its rule and current addition
+progress. explicit `unsubscribe…` opens that destination’s existing stop review.
+selection and cancel create no rule or placement. acknowledged empty-library creation
+survives cancellation.
+
+bulk addition files only the chosen destination. all uses the account's actual
+default uuid; choosing a named library does not create a personal holding. the
+primary rss subscribe action still selects the personal default; its unsubscribe
+action reviews every destination. the show pane's libraries section lists named
+subscriptions, including locked read-only rows; its shared links navigate and its
+control opens the same destination/mode manager, including all. library changes
+invalidate displayed names immediately within the tab.
 
 library podcast sections and the podcast index share the native `browse podcasts`
-plus link. browse has no destination context: discovery and canonical subscribe
-both use the personal default; named placement requires explicit selection.
-browsing remains available in readable, read-only libraries. all promotes global
-unsubscribe; named sections promote local removal with the same projector as the
-show's libraries section. confirmed rows remain during failed/refreshing reads, with
-their shortcuts blocked. ordinary rows have no expanded panel; actual coverage
-warnings and import progress remain.
-local removal uses the permission from the same current section read as its rows.
+plus link. browsing carries no destination context and remains available from
+read-only libraries. all promotes global unsubscribe; named menus retain distinct
+local unsubscribe and global unsubscribe. confirmed rows remain during failed or
+refreshing reads, with shortcuts blocked. ordinary rows have no expanded panel;
+coverage warnings and addition progress remain. local removal uses authority from
+the same current section read as its rows.
 
 index rows use the shared compact layout below 32em; headers move shortcuts into
-more at 479px and below. named menus
-contain distinct local occurrence removal and canonical global unsubscribe; all
-contains the canonical action once. hiding a focused shortcut returns focus to
-more. removal captures displayed successor ids at selection; acknowledged success
-focuses the next surviving title, then the section's browse/picker control, then its
-section or pane. cancellation restores the opener. list refresh does not own
-acknowledgement or this success target.
+more at 479px and below. hiding a focused shortcut returns focus to more. removal
+captures displayed successor ids at selection; acknowledgement focuses the next
+surviving title, then the section's browse/picker control, then its section or pane.
+cancellation restores the opener. list refresh does not own acknowledgement or
+this success target.
 
-import and destructive cleanup are separate menu commands. cleanup chooses one
-named affected library or everywhere, including while subscribed and for
-episode-only destinations. changing scope remounts the review and reads fresh
-guards; it never slices an aggregate preview. all four intents use fixed dialogs,
-the existing account command owner and retained uncertainty recovery. canonical
-admission reads the exact library/show relationship; the default section's
-aggregate cannot establish personal membership. destination choice writes
-nothing. progress/retry/cancel remain available without subscription rows.
-acknowledgement settles the command's feedback condition before offering a
-`subscribed` or `import started` receipt. modal and unrelated-work suppression
-still apply; authoritative rereads never settle an uncertain command.
-command feedback names the observed destination or everywhere, including refusal
-and exact-request recovery.
+unsubscribe defaults to `keep episodes`, with an explicit remove choice. global
+remove includes every affected destination and individually added episode; named
+remove changes only that library. `remove episodes from libraries…` remains
+available after unsubscribe when placements remain. cleanup chooses a named scope
+or everywhere and reads that scope's own preview. mode/scope changes disarm old
+reviews; no aggregate preview is silently narrowed. permission blockers refuse the
+whole reviewed scope.
+
+the account command owner retains exact requests and uncertainty recovery after
+presentation closes. admission feedback says `addition started` with show and
+destination; it asserts admission, not completed history. progress counts committed
+`added` and `already present`, with no invented denominator. authoritative rereads
+never settle an uncertain command; unknown writes say `change not confirmed`.
+modal and unrelated-work suppression still apply.
 
 the show identity keeps its 56px cover, contributor links, counts and explicit
 show-more disclosure. expanded description, contributor roles, source links and
@@ -64,48 +73,70 @@ refresh controls own read feedback.
 
 ## owners and contracts
 
-`subscriptions.py` owns admission/stop; `imports.py` owns finite operations and
-processed identities; `traversal.py` owns one fetched page per durable step;
-`sync.py` owns recurring show scans; `ingest.py` owns canonical identities;
+`catalog.py` owns source-only resolution; `ingest.py` owns canonical episode
+identities; `episodes.py` owns catalogue enumeration. `subscriptions.py` owns
+admission/stop; `imports.py` owns finite operations and processed identities;
+`traversal.py` owns one fetched page per durable step; `sync.py` owns source scans.
 `chapters.py` owns chapter source/jobs/publication; `settings.py` owns viewer/show
 playback defaults. `subscriptions_query.py` owns aggregate reads and section guards.
-all physical placement goes through the [library writer](library.md).
+all physical placement goes through the [library writer](library.md);
+`media_deletion.py` owns guarded episode all-removal.
 
 | resource | contract |
 | --- | --- |
-| `library_podcast_subscriptions` | unique library/show; presence means future delivery; initial import id binds exact create recovery |
+| `library_podcast_subscriptions` | unique library/show; requires all known episode memberships and ongoing delivery; `initial_import_id` binds exact create recovery and initial work lifetime |
 | `podcast_library_imports` | finite library/run operation with committed addition/presence counts; one unfinished operation per destination/show |
-| `podcast_feed_runs` | one owning finite import or current recurring scan; exact attempt/step/job fences, url worklist and coverage facts |
-| `podcast_import_processed_episodes` | temporary import/episode set preserves first processing and later removal intent; retain through failure, clear on completion/cancel |
+| `podcast_feed_runs` | one owning finite import or current source scan; exact attempt/step/job fences, url worklist and coverage facts |
+| `podcast_import_processed_episodes` | import/episode set preserves first processing and permitted later unfiling; retain through failure/retry, clear after fenced completion/cancel |
 | `podcast_playback_settings` | independent viewer/show identity/version and nullable speed/silence pair; unsubscribe preserves it |
 
-admission creates rule+initial import or only a finite import, copies known source
-episodes and schedules traversal atomically. explicit re-add restores visibility
-and retained work; it does not require old episode readability. replaying the same
-ids returns current resources without recopying. fresh admission checks exact
-library/removal guards; existing different rules/unfinished operations require review.
+admission creates rule plus initial import, or only a finite import; it files known
+episodes in the chosen destination and schedules traversal atomically. exact-id
+replay returns current resources without recopying. fresh admission checks exact
+library/removal guards. an unfinished once addition must finish or be explicitly
+cancelled before subscribing; it is never adopted as subscription history. fresh
+once admission refuses an already-subscribed destination.
 
-ongoing delivery occurs only at first canonical insertion, to current rules. known
-metadata refresh never refiles. a finite import processes its own observations
-once even when another scan discovered them first. validated individual unfile
-marks every unfinished destination import processed before deleting. workspace
-removal also covers pending destinations without entries. fresh explicit import
-can restore an episode; background work never clears viewer suppression.
+both canonical ingress paths publish newly inserted episodes to current rules.
+metadata refresh never refiles an existing episode. a finite addition processes
+its own observations once even when another scan discovered them first. permitted
+individual unfiling marks unfinished destination additions processed before deleting;
+an all-removal covers pending destinations even without a current placement.
+a fresh explicit addition can restore a previously removed episode.
 
-named unsubscribe keeps episodes; separate cleanup removes all show episodes
-there, including manual placements, and preserves personal retention. all stop cascades to affected
-non-system member libraries and own default, with confirmation. all/remove deletes
-all selected placements/actor lectern items and sets visibility markers while
-preserving highlights, notes, attachments, grants, listening history and settings.
-read-only affected libraries block the whole operation. no partial parent mutation.
+individual named unfiling and assistant filing undo refuse while that exact
+library/show rule is active. all-removal refuses while any contributing rule is
+active, including a read-only shared rule. `E_PODCAST_SUBSCRIPTION_ACTIVE` is a 409;
+removal never silently unsubscribes. episode membership cleanup preserves canonical
+identity, transcripts, annotations, listening/settings, queue/lectern and device
+downloads. it writes no episode hiding marker and manufactures no default retention.
 
-stop previews freeze exact rule/import identities and attempts plus removal fence;
-keep ignores changing media revisions so imports cannot prevent stopping. removal
-also freezes library revisions/counts. cancellation freezes import identity/attempt,
-keeps arrivals and does not stop an ongoing rule. failure retry increments attempt,
-retains processed identities and resumes cursor; drained-gap repair restarts at head.
-old fetched pages/dead letters cannot affect newer work. cancel never waits on queue
-rows while holding show locks.
+stop preview and execution select identical destinations. keep selects active
+rules and only each rule's unfinished initial import; independent once additions
+and their permission blockers are excluded. remove selects rules, unfinished
+additions or episode placements and cancels all selected unfinished additions.
+rules leave before optional placement removal in the same transaction. read-only
+affected destinations block the complete operation. named cleanup preserves
+pre-existing personal and other-library holdings.
+
+stop guards freeze destination/rule/import identities, attempts and the removal
+fence. keep ignores arriving-entry revisions; remove also freezes library revisions.
+`PodcastImportOut.subscription_id` derives from the live initial-import binding;
+`can_cancel` is false while bound, and cancellation rechecks it. unsubscribe stops
+that bound work. independent cancellation keeps committed arrivals and changes no
+rule. retry increments the attempt, retains processed identities and resumes the
+cursor; drained-gap repair restarts at the head. old fetched pages/dead letters
+cannot affect newer work. cancel never waits on queue rows while holding show locks.
+
+individual all-removal uses its own preview/remove routes. the preview includes
+member non-system libraries with a placement, show rule or unfinished addition,
+including read-only destinations and only the actor's own default. execution
+rechecks that exact set, guards and authority under show/media/library locks,
+marks the episode processed in affected unfinished additions, and removes placements.
+an absent retry is inert only when no current unfinished addition can restore it;
+processed identities prove that condition. a newer placement or unprocessed
+addition must pass the original guards or refuse. the result reports current
+absence, never a causal receipt. generic `DELETE /media/{id}` rejects episodes.
 
 ## source publication
 
@@ -119,12 +150,19 @@ finite means observed available history, not an exact publication-time snapshot.
 unsafe/rejected observations retain coverage gaps while safe branches continue.
 fetch exhaustion pauses finite work; clean pages cannot erase earlier gaps.
 
-recurring scans walk the full reachable graph, once per show. successful settlement
-schedules the next hourly slot; failure backs off 15m/1h/6h/24h. settlement copies
-observation, clears current pointer and deletes the run. no active rule stops the
-recurring owner; finite operations retain their independent lifetime. supported feed
-traversal requires no directory success. no bulk audio, transcript or model-enrichment
-requests occur; those remain explicit operations.
+source scans walk the full reachable graph with one current scan per show. a
+known unsubscribed show starts or joins one check per distinct remotely admitted
+live visit, including after directory resolution. rerenders and polling never
+readmit that visit. `check for new episodes` works for every known show; detail,
+preview, hover and action-facts reads issue no source work. rows remain during
+checking or failure, with explicit check feedback and retry.
+
+accepted scans may finish after the last unsubscribe; publication consults current
+rules. only shows with a remaining rule schedule another scan: the next hourly
+slot after success, or 15m/1h/6h/24h failure backoff. settlement records the observation,
+clears the current pointer and deletes the run. aggregate/library refresh retains
+subscribed-show scope. supported traversal requires no directory success. no bulk
+audio, transcript or model-enrichment requests occur; those remain explicit.
 
 canonical identity is per-show guid/provider/enclosure aliases. title/date are
 never identity. a stable guid may gain enclosure aliases; contradictory stored
@@ -150,9 +188,27 @@ derive the next later start only from confirmed absence, never lost provenance.
 
 library podcast section/detail reads provide relationships and guards in one
 snapshot; ordinary media counts/sort/paging exclude that section. api routes use
-client-minted ids, typed snake_case envelopes and nullable fields. podcast acquisition,
-imports, previews/stops and settings have dedicated routes. ordinary item placement
-accepts only media; no old subscription/backfill CRUD, SSE or show replacement path.
+client-minted ids, typed snake_case envelopes and nullable fields. source resolution
+uses `POST /podcasts/resolve` and `POST /podcast-episodes/resolve`; neither acquires a
+holding or rule. directory opening resolves identity before canonical navigation;
+the subsequent live show visit separately admits its source check. library
+subscription/import routes retain their guards and exact ids. ordinary item
+placement accepts media; no standalone finite-import action remains.
+
+`PodcastEpisodeCountsOut.known_count` and show keyset pages enumerate known catalogue
+episodes. requested-media authority admits workspace-readable media or canonical
+episodes outside teardown; document and annotation authority remain scoped. episode
+`add to all` uses the real default-library placement route with frozen removal/order
+guards. named filing remains separate and retains personally. discovery save freezes
+the removal fence before source resolution, then reads canonical placement facts
+without replacing that fence. open, play and resolve alone never save.
+
+`GET /podcast-episodes/{id}/removal-preview` supplies the complete scope;
+`POST /podcast-episodes/{id}/remove` submits its exact destination/rule/import/attempt/order
+guards and removal revision. required placement facts
+include effective `all_membership`, its actual library id/revision and current
+subscription/admin removal blocker. episode actions distinguish `add to all`,
+`libraries…` and `remove from all…`; generic document removal keeps its own contract.
 
 web account owners retain exact pending command bytes across presentation close.
 unknown outcomes are inspected/retried without rebasing or claiming success.
@@ -162,22 +218,25 @@ coverage errors and keep/remove consequences are explicit. global removal remain
 available on show detail after unsubscribing when saved episodes remain.
 
 the subscriptions index, discovery results, live search/context rows and pane
-headers share subscription and libraries shortcuts with their complete menus.
-global subscribe uses the actual default library; global
-unsubscribe reviews every destination and keeps arrived episodes. libraries
-manages named subscriptions, including checked, locked read-only memberships.
-the detail card is named `Library Subscriptions`; its icon control names the
-show, and an empty card has no instructional body. library choice uses the shared
-search/create picker: anchored and nonmodal on desktop, a sheet on phones. search
-stays mounted through loading and retry; retained checks remain visible during
-refresh, while unready or failed facts admit no new choice or creation. errors
-never claim an empty catalog. default/personal delivery is outside this picker.
-one choice replaces the picker with the complete exact subscription or scoped
-removal dialog; the departing picker does not restore focus during this handoff.
-cancel or acknowledgement closes the whole flow. cancellation restores its
-opener or logical fallback; acknowledged removal prefers its supplied surviving
-target even before stale rows disappear. scoped removal keeps arrived episodes
-and other libraries' subscriptions. finite import remains separate.
+headers share subscription and library shortcuts with complete menus. the primary
+rss subscribe action uses the actual default library. the `libraries` card lists
+named rules; its `add to library…` manager includes all, writable named destinations
+and checked read-only subscription rows. checked rows review that subscription;
+new destinations proceed to the shared podcast/episodes mode review.
+
+subscription commands retain the rss glyph and add a monochrome check for an
+observed subscription. the check denotes recurring delivery somewhere, not feed
+health, completed import or permission. native commands open reviews; they are
+not pressed toggles. opening/cancelling a review changes no relationship.
+
+library choice uses the shared search/create picker: anchored and nonmodal on
+desktop, a sheet on phones. search stays mounted through loading and retry;
+retained checks stay visible during refresh, while unready or failed facts admit
+no new choice or creation. errors never claim an empty catalogue. a choice hands
+focus to one complete admission or scoped removal dialog; the departing picker
+never restores focus during that handoff. cancel or acknowledgement closes the
+flow. cancellation restores the opener or logical fallback; acknowledged removal
+prefers its supplied surviving target even before stale rows disappear.
 
 `POST /podcasts/action-facts/resolve` is an authenticated, read-only snapshot of
 1–100 distinct canonical/sealed discovery targets, in input order. canonical
@@ -197,10 +256,23 @@ reread local facts without repeating directory content reads. failed or refreshi
 facts authorize no new shortcut. sealed row identity and admitted command identity
 never migrate when local resolution becomes canonical.
 
+only ready action facts carry canonical resolution. resolving/failed facts carry
+only a nullable last-observed subscription boolean from the existing matching
+read; no extra cache or remembered value exists. the containing source's gate
+retains priority over the action-facts read. retained checks stay dimmed and
+disabled, named `last known subscribed`; descriptions explain checking/failure.
+unknown never means unsubscribed. existing account/read-key/source/admission
+boundaries govern observation lifetime; changed target sets may clear marks.
+observations never settle uncertain commands. the shared subscription projector
+owns glyph, menu/state copy, complete inline names, dialog semantics and the
+activation guard, including the default-library shortcut's direct renderer.
+failed reads report busy only during an actual retry; an old observation's stale
+stamp cannot keep retry disabled after the request ends.
+
 the account action owner retains one scoped library-creation helper and loss
 guard. creation retries preserve the exact uuid/name. only the originating live
-chooser can advance to subscription review; dismissal leaves an empty created
-library and never subscribes or reopens. account feedback retains recovery after
+chooser can advance to addition review; dismissal leaves an empty created
+library and never starts an addition or reopens. account feedback retains recovery after
 dismissal. checks always describe acknowledged subscription, never proposed choice.
 
 the podcast overview uses one visit-local expansion state for its panel and
@@ -253,6 +325,11 @@ next can report cached failures through `onLoad`; readiness requires positive
 
 ## Android Offline Downloads
 
+included-show offline snapshots export complete known episode metadata at snapshot
+time, with physical membership stored separately. this saves no episode or audio
+and grants no write authority. outside snapshot coverage remains unavailable
+offline; existing snapshot limits and atomic live-group promotion remain.
+
 Manual episode downloads are a device capability, not Podcast domain state
 ([offline](offline.md)). An episode whose `external_playback_url` is HTTPS
 gets a `Download {media_kind, title, audio_url}` resource action;
@@ -268,8 +345,8 @@ migration, archive copy, or browser/PWA path.
 
 ## Transcription
 
-recurring scans and finite imports store observed rss sidecar references without fetching
-transcript content. discovery-only add currently does not observe those references
+source scans and finite imports store observed rss sidecar references without fetching
+transcript content. discovery-only resolution does not observe those references
 ([issue](../issues/podcast-discovery-misses-publisher-transcript.md)). only explicit transcribe enters this
 boundary (`transcription.py`). Admission precedence for an episode: a readable
 transcript only asks for semantic repair; one in flight (transcript `queued |

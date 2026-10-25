@@ -1635,7 +1635,7 @@ After its first opening, the portal subtree stays mounted across dismissal so
 controller, focus, and measurement lifecycles are not recreated on every use;
 the inactive projection becomes `hidden` and `inert`, while children continue
 to receive lifecycle updates before the next opening.
-The mobile Nexus control also carries a primary-touch horizontal adjacent-tab
+The mobile Nexus control also carries a primary-touch horizontal adjacent-pane
 accelerator over visible panes in `state.panes` order, the store's clamped
 traversal command; tap remains the task entrance and the gesture creates
 no second navigation model.
@@ -1835,8 +1835,8 @@ usable saved session, Resume creates the one-pane Lectern empty state.
 in a layout effect before the store's first state-to-URL projection, so they
 open over Resume and never become panes.
 
-- **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
-  multi-pane canvas. Durable state (`WorkspaceState`: primary panes with
+- **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a multi-pane
+  canvas with a pane strip. Durable state (`WorkspaceState`: primary panes with
   visit-identified Back/Forward history, embedded inspectors, widths) lives in
   one external store (`useSyncExternalStore`) whose commands apply synchronously,
   and is persisted **per-user-per-device** to `workspace_sessions`; the api's

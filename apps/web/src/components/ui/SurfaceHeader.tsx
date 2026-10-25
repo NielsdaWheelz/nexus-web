@@ -7,6 +7,7 @@ import ResourceActions from "@/components/resources/ResourceActions";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
+import { truncateText } from "@/lib/display/format";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneChrome } from "@/lib/panes/paneChrome";
@@ -20,6 +21,7 @@ import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { PaneCompanionAction, PanePrimaryAction } from "@/lib/panes/paneChrome";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import { NEW_PANE_HINT } from "@/lib/shortcuts";
 import {
   projectActionControlState,
   type ActionDescriptor,
@@ -33,8 +35,9 @@ import PaneHeaderIdentity from "./PaneHeaderIdentity";
 import styles from "./SurfaceHeader.module.css";
 
 export interface SurfaceHeaderNavigation {
-  canGoBack: boolean;
-  canGoForward: boolean;
+  /** null: no adjacent visit (control disabled). title null: no name to show yet. */
+  back: { readonly title: string | null } | null;
+  forward: { readonly title: string | null } | null;
   onBack: (event: TargetActivationEvent) => void;
   onForward: (event: TargetActivationEvent) => void;
 }
@@ -140,6 +143,8 @@ export default function SurfaceHeader({
   );
 
   const scope = mobile ? "" : " in this pane";
+  const historyHint = (verb: "back" | "forward", visit: SurfaceHeaderNavigation["back"]) =>
+    visit?.title ? `${verb} to ${truncateText(visit.title, 60)} · ${NEW_PANE_HINT}` : NEW_PANE_HINT;
   return (
     <>
       {recovery ? (
@@ -165,8 +170,8 @@ export default function SurfaceHeader({
               className={styles.navigationButton}
               onClick={navigation.onBack}
               onKeyDown={navigation.onBack}
-              tooltip={{ text: "shift-click or shift-enter opens in a new pane" }}
-              disabled={!navigation.canGoBack}
+              tooltip={{ text: historyHint("back", navigation.back) }}
+              disabled={navigation.back === null}
               aria-label={`Go back${scope}`}
             />
             <Button
@@ -175,8 +180,8 @@ export default function SurfaceHeader({
               className={styles.navigationButton}
               onClick={navigation.onForward}
               onKeyDown={navigation.onForward}
-              tooltip={{ text: "shift-click or shift-enter opens in a new pane" }}
-              disabled={!navigation.canGoForward}
+              tooltip={{ text: historyHint("forward", navigation.forward) }}
+              disabled={navigation.forward === null}
               aria-label={`Go forward${scope}`}
             />
           </div>
@@ -239,7 +244,7 @@ export default function SurfaceHeader({
                 sections={sections} omitResourceActions={narrow ? [...seen] : undefined}
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
                 renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} /></span>} />
-            ) : mobile || projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
+            ) : projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
               <ContextualActionMenu title={header.title} subjectKey={identityId}
                 label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections}
@@ -283,7 +288,7 @@ function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<Comp
   const shortcuts = useMediaActions(subject.subject, subject.knownDescriptor);
   const present = new Set(sections.flatMap(section => section.actions.map(action => action.id)));
   const actions: ActionDescriptor[] = shortcuts.filter(action => !present.has(action.id)).map(action => ({
-    kind: "command", id: action.id, label: action.label, icon: action.icon,
+    kind: "command", id: action.id, label: action.menuLabel, icon: action.icon,
     disabled: action.disabled, disabledReason: action.disabledReason ?? undefined, busy: action.busy, hasPopup: action.hasPopup ?? undefined,
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ ...actionFocus, trigger: triggerEl }),

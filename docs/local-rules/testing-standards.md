@@ -266,6 +266,12 @@ inherited volume mount and places pg15 data at `/var/lib/postgresql/data` on
 tmpfs, with `fsync`, `synchronous_commit` and `full_page_writes` off. storage keeps
 its named volume; Supabase's auth database remains separately CLI-managed.
 
+stores start before migration and api readiness. worker startup uses
+`up --no-build --no-deps` on the precreated lanes: it never reconciles those
+qualified dependencies against a subsequently rebuilt shared image tag. fake
+provider/codex dependencies start explicitly earlier; shared live codex attachment
+and the run cwd are prepared before workers start.
+
 ### checkout worker images
 
 lab and `make worker-*` share `python/scripts/worker_checkout_image.py`. the tag
@@ -285,9 +291,9 @@ no compose project/service labels, so normal and saved `down --rmi local` retain
 them. a host `fcntl.flock` at
 `${XDG_STATE_HOME:-~/.local/state}/nexus-lab/worker-image.lock` serializes image
 acquisition through `compose up --no-start --no-deps --no-build`. the real
-containers pin their image before lock release, so later `up --no-build` uses
-the same composition. waits log the holder's compose project and fail after
-1320 seconds. the cold build itself is bounded to 1200 seconds; lock acquisition
+containers pin their image before lock release, so later startup uses the same
+composition without building. lab startup also excludes dependency reconciliation.
+waits log the holder's compose project and fail after 1320 seconds. the cold build itself is bounded to 1200 seconds; lock acquisition
 can time out while another caller finishes its build, creation or retention.
 the kernel releases the lock on exit or crash. the lock stays outside checkouts
 and docker bind mounts.

@@ -44,7 +44,8 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
         : <>
           <p>{source.data.label}</p>
           <p>{source.data.items.length} {podcast ? "episode" : "item"}{source.data.items.length === 1 ? "" : "s"} selected · {scopeLabel}.</p>
-          <p>{selection.kind === "Podcast" && selection.state !== "all" ? "this state selection includes episodes beyond the loaded page. text filters and sort do not narrow it." : "this includes accessible items beyond the loaded page. sort, text and view filters do not narrow it."}</p>
+          <p>{podcast ? "includes known episodes beyond this page. new episodes found later are unchanged." : "this includes accessible items beyond the loaded page. sort, text and view filters do not narrow it."}</p>
+          {selection.kind === "Podcast" && selection.state !== "all" ? <p>this state selection ignores text filters and sort.</p> : null}
           <p>positions, observed history and lectern membership stay. progress is saved before changing state.</p>
           <p>undo restores the explicit states changed by the acknowledged request. it remains available in this account session; reload or sign-out clears it.</p>
           {source.data.items.length === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no items in this selection." }} announcement="Polite" /> : null}

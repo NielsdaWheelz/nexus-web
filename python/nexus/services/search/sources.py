@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     highlight_readability_sql,
     highlight_visibility_sql,
+    requested_media_ids_cte_sql,
     visible_content_credit_rows_sql,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
@@ -82,7 +83,7 @@ def _ctes(
     if reading_media_id is not None:
         return (
             _BASE_CTES
-            + ", admitted_media AS (SELECT CAST(:reading_media_id AS uuid) AS media_id WHERE :reading_media_id IN (SELECT media_id FROM visible_media))"
+            + f", admitted_media AS (SELECT CAST(:reading_media_id AS uuid) AS media_id WHERE :reading_media_id IN ({requested_media_ids_cte_sql()}))"
             + _NO_EXACT_PASSAGES,
             {"reading_media_id": reading_media_id},
         )
@@ -125,7 +126,7 @@ def _ctes(
         prefix
         + f""", admitted_media AS ({eligible}),
         frozen_passages AS ({exact_refs}),
-        exact_passage_media AS (SELECT m.id AS media_id FROM visible_media visible
+        exact_passage_media AS (SELECT m.id AS media_id FROM ({requested_media_ids_cte_sql()}) visible
             JOIN media m ON m.id=visible.media_id
             WHERE EXISTS (SELECT 1 FROM frozen_passages) {metadata})""",
         params,
@@ -244,7 +245,7 @@ SOURCES: dict[str, str] = {
             to_tsvector('english', concat_ws(' ', m.title, m.description, m.publisher,
                 mc.contributor_search_text)) AS doc, m.description AS text,
             concat_ws(' ', m.description, m.publisher, mc.contributor_search_text) AS discovery_text
-        FROM media m JOIN visible_media vm ON vm.media_id = m.id
+        FROM media m JOIN admitted_media vm ON vm.media_id = m.id
         LEFT JOIN ({contributor_credits_rollup_cte_sql("media_id")}) mc ON mc.media_id = m.id
         WHERE TRUE {{where}}""",
     "podcast": f"""SELECT 'podcast' AS type, p.id, p.title AS label, to_tsvector('english',

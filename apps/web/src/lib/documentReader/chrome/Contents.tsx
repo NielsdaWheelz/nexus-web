@@ -4,10 +4,8 @@
 // names a publication's recorded defects.
 import type { ReactElement, ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import ActionMenu from "@/components/ui/ActionMenu";
-import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { useReaderState, type Reader } from "../DocumentReader";
-import { sourceTarget, type SourceIssue, type TocNode } from "../model";
+import type { SourceIssue, TocNode } from "../model";
 import { ReaderLink } from "../navigation";
 import type { ReaderDestination } from "../location";
 import styles from "./chrome.module.css";
@@ -37,9 +35,6 @@ export function Contents({
         const chapter = ready.doc.kind === "text" ? ready.doc.transcriptNavigation?.chapters.find((chapter) => chapter.id === id) ?? null : null;
         const target: ReaderDestination["target"] | null = !at ? null : chapter ? { kind: "time", ms: chapter.startMs }
           : { kind: "point", point: { kind: "text", ...at } };
-        const portable = target && sourceTarget(ready.doc, target);
-        const destination = portable && { source_identity: ready.doc.identity, target: portable };
-        const href = destination ? reader.navigation?.href(destination) ?? null : null;
         return <li key={id}>
           <div className={styles.tocRow}>
           {target ? (
@@ -58,19 +53,6 @@ export function Contents({
           ) : (
             <span>{label}{ready.doc.kind === "text" && ready.doc.format === "transcript" ? <span className="sr-only">; no transcript at this time</span> : null}</span>
           )}
-          {destination !== null || chapter !== null ? <ActionMenu label={`more actions for ${label}`} source={{ kind: "Immediate", subjectKey: `reader-contents:${ready.doc.identity}:${id}`, title: label,
-            content: { sections: [{ id: "Open", label: null, options: [{ kind: "link", id: "OpenInPane", label: "open in new pane",
-              ...(href === null ? { href: null, disabled: true as const } : { href }),
-              disabledReason: !at && chapter ? "no transcript at this time" : href === null ? "opening this location in a new pane is unavailable" : undefined,
-              onActivate: (event) => {
-                const activation = workspaceTargetActivationIntent(event);
-                if (activation.kind === "Unowned") return "unhandled";
-                event.preventDefault();
-                if (activation.kind === "Consume" || !destination || !reader.navigation) return "consumed";
-                return reader.navigation.activate(destination, "new_pane", () => {}) === "Accepted" ? "handled-new-pane" : "consumed";
-              },
-            }] }] },
-          }} /> : null}
           {sectionId !== null ? actions?.(sectionId) : null}
           </div>
           {children.length > 0 ? list(children) : null}

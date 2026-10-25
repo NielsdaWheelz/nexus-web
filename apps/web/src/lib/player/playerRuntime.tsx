@@ -11,6 +11,7 @@
  * Queue absence is actionable only after authority confirms it. Creation never
  * replaces a queue discovered while acquiring ownership; retries retain the
  * captured occurrence and use the existing absolute-state revision contract.
+ * Restore proves that revision and retained undo before retiring playback intent.
  * Only public explicit-play admission notifies presentation, before any awaits.
  */
 
@@ -1053,14 +1054,17 @@ export function GlobalPlayerProvider({
           const request = command.request;
           const operation = request.command;
           admitQueueCommand(queueViewRef.current, request);
-          if (queueCommandChangesPlayback(operation)) retainedCursor.current = null;
+          if (operation.kind !== "restore" && queueCommandChangesPlayback(operation)) retainedCursor.current = null;
           if (before === null || before === undefined || request.queue_id !== before.state.queue_id) throw new QueueCommandError("queue changed; try again");
           if ((operation.kind === "append" || operation.kind === "insert-next") &&
               before.state.entries.some(entry => entry.id === operation.entry.id && entry.media_id === operation.entry.media_id)) return;
           if (request.expected_revision !== before.revision) throw new QueueCommandError("queue changed; try again");
           if (operation.kind === "stop") { await target.dismiss(); return; }
           if (operation.kind === "restore") {
+            if (mine !== latest.current) throw new QueueCommandError("queue changed; try again");
             if (!session?.snapshot().canRestore) throw new QueueCommandError("previous queue is no longer available");
+            retainedCursor.current = null;
+            retirePending();
             await target.dismiss();
             if (target !== engineRef.current || !ownership.current?.owner()) return;
             await session.restore(request);
@@ -1117,7 +1121,7 @@ export function GlobalPlayerProvider({
         : saved == null && source?.kind === "Episode" ? { kind: "Episode", mediaId: source.descriptor.media_id } : null;
       retirePending();
       await enqueue(work, playback);
-    } else await enqueueQueueEdit(work, changesPlayback);
+    } else await enqueueQueueEdit(work, selection?.kind !== "restore" && changesPlayback);
   }, [activate, enqueue, enqueueQueueEdit, requestPreferences, retainCurrent, retirePending]);
   executeRef.current = execute;
   const route = useCallback(async (command: BrowserPlayerCommand) => {

@@ -1,8 +1,8 @@
-"""Browse: one page of one (kind, source) section, one target's Preview, and owned resolution.
+"""Browse: a provider section, one target's preview and read-only local resolution.
 
-Provider calls finish before any database read; the reads share one snapshot. A candidate or
-Preview the viewer already owns resolves to the in-Nexus item instead of a Preview.
-An external candidate retains its sealed target identity across that resolution change.
+Provider calls finish before database reads, which share one snapshot. Readable documents
+and known catalogue shows/episodes resolve locally without saving or source work.
+An external candidate retains its sealed target across that resolution change.
 """
 
 from __future__ import annotations
@@ -47,8 +47,7 @@ from nexus.services.browse.targets import (
     unseal_target,
 )
 from nexus.services.media import media_summaries
-from nexus.services.podcasts.ingest import select_visible_episode_media_id_by_podcast_index_ref
-from nexus.services.podcasts.subscriptions_query import active_subscription_rows_sql
+from nexus.services.podcasts.catalog import select_episode_media_id_by_podcast_index_ref
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 from nexus.services.search.query import decode_cursor, encode_cursor, is_offset
 from nexus.services.search.service import read_snapshot
@@ -68,8 +67,8 @@ _OWNED_BY_URL = f"""{_VISIBLE} WHERE m.kind = :kind AND (m.requested_url = ANY(:
 _OWNED_VIDEO = (
     f"{_VISIBLE} WHERE m.kind = 'video' AND m.provider = 'youtube' AND m.provider_id = :ref"
 )
-_OWNED_PODCAST = f"""SELECT p.id FROM podcasts p JOIN ({active_subscription_rows_sql()}) a
-    ON a.podcast_id = p.id WHERE p.provider = 'podcast_index' AND p.provider_podcast_id = :ref"""
+_KNOWN_PODCAST = """SELECT p.id FROM podcasts p
+    WHERE p.provider = 'podcast_index' AND p.provider_podcast_id = :ref"""
 
 
 async def search_browse(
@@ -149,7 +148,7 @@ def _in_nexus(media_id: UUID, summary: MediaSummaryOut) -> InNexusMediaResolutio
 
 
 def preview_browse(db: Session, viewer_id: UUID, query: BrowsePreviewQuery) -> BrowsePreview:
-    """One target's Preview; a target the viewer already owns resolves into Nexus."""
+    """One target's preview; a readable local identity resolves into Nexus."""
     unsealed = unseal_target(query.target)
     handle = DiscoveryTargetHandle(query.target)
     fetched: BrowsePreview | None = None
@@ -171,7 +170,7 @@ def preview_browse(db: Session, viewer_id: UUID, query: BrowsePreviewQuery) -> B
 
 
 def resolve_podcast_discovery_target(handle: str) -> ResolvedPodcast | ResolvedEpisode:
-    """The provider podcast or episode a sealed handle names (podcast acquisition); a
+    """The provider podcast or episode a sealed handle names (catalogue resolution); a
     vanished target is 404 and a failing provider its browse code, as for Preview."""
     try:
         match unseal_target(handle):
@@ -189,8 +188,10 @@ def resolve_podcast_discovery_target(handle: str) -> ResolvedPodcast | ResolvedE
 
 
 def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str = "") -> list[Any]:
-    """Each item, its Preview resolution swapped for an in-Nexus one when the viewer owns
-    the target (``url``: a Preview's fetched page, an equivalent article URL)."""
+    """Replace previews with readable local identities, without catalogue writes.
+
+    ``url`` is the preview's fetched page, an equivalent article URL.
+    """
     owned = {}
     for item in items:
         if isinstance(item.resolution, PreviewResolution):
@@ -221,7 +222,7 @@ def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str 
 def _owned(
     db: Session, viewer_id: UUID, target: DiscoveryTarget, url: str
 ) -> tuple[Literal["media", "podcast"], UUID] | None:
-    """The viewer's visible media, or subscribed podcast, that is this provider item."""
+    """Workspace-readable documents or canonical podcast identities for this provider item."""
     params: dict[str, Any] = {"viewer_id": viewer_id}
     match target:
         case ProjectGutenbergEpubTarget(ebook_ref=ref):
@@ -238,10 +239,10 @@ def _owned(
             sql = _OWNED_VIDEO
             params["ref"] = ref
         case PodcastIndexPodcastTarget(podcast_ref=ref):
-            podcast_id = db.scalar(text(_OWNED_PODCAST), params | {"ref": ref})
+            podcast_id = db.scalar(text(_KNOWN_PODCAST), params | {"ref": ref})
             return None if podcast_id is None else ("podcast", podcast_id)
         case PodcastIndexEpisodeTarget(podcast_ref=podcast, episode_ref=episode):
-            media_id = select_visible_episode_media_id_by_podcast_index_ref(
+            media_id = select_episode_media_id_by_podcast_index_ref(
                 db, viewer_id=viewer_id, podcast_ref=podcast, episode_ref=episode
             )
             return None if media_id is None else ("media", media_id)

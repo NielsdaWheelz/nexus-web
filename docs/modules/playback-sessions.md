@@ -26,7 +26,8 @@ first creation uses `INSERT ... ON CONFLICT DO NOTHING`, requires null expected
 revision and starts at revision `1`. an identity held by another account/device
 or a competing row for this device is `E_RESOURCE_CONFLICT`.
 
-writes lock viewer then session in a serializable transaction. already-present
+writes lock viewer then session in a serializable transaction. `viewer_txn` owns
+commit/rollback; its callback never ends the transaction. already-present
 desired state is inert success; otherwise the captured revision must match.
 new occurrences must name visible playable episodes. unchanged occurrences can
 remain unavailable. saved malformed state is a defect, never absence.

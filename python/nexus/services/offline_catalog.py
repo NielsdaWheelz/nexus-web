@@ -1,7 +1,7 @@
 """A complete personal browsing projection from one read-only repeatable-read snapshot.
 
 Physical memberships, active subscriptions/imports and visible Lectern selections
-admit roots. Included shows admit their complete visible episodes, never provider
+admit roots. Included shows admit their complete known episodes, never provider
 history or the global corpus. Domain owners supply facts and total-order plans;
 Postgres assigns ordinals so local selectors need no database collation replica.
 Retries produce a new independent snapshot identity. This read writes nothing.
@@ -150,12 +150,11 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         )
     )
     counts = {
-        show_id: PodcastEpisodeCountsOut(available_count=0, unfinished_count=0)
-        for show_id in show_ids
+        show_id: PodcastEpisodeCountsOut(known_count=0, unfinished_count=0) for show_id in show_ids
     }
     for row in episode_rows:
         count = counts[row["podcast_id"]]
-        count.available_count += 1
+        count.known_count += 1
         count.unfinished_count += row["episode_state"] != "played"
     sections, details = subscriptions_query.read_catalog(db, viewer_id, member_libraries, counts)
     followed_rows = _ranked(

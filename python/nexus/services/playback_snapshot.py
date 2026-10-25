@@ -12,8 +12,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
+from nexus.auth.permissions import requested_media_ids_cte_sql
+from nexus.errors import ApiErrorCode, ConflictError
 from nexus.schemas import playback_sessions as wire
 from nexus.services import library_listing
 from nexus.services.playback_source import episode_playback_source
@@ -39,11 +39,6 @@ def capture(
             ),
         )
     else:
-        if not db.scalar(
-            text(f"SELECT :podcast_id IN ({visible_podcast_ids_cte_sql()})"),
-            {"viewer_id": viewer_id, "podcast_id": source.podcast_id},
-        ):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
         _, ids = episodes.ordered_selection_ids(
             db, viewer_id, source.podcast_id, state=source.state, sort=source.sort
         )
@@ -75,7 +70,7 @@ def playable_episode_fields(
             SELECT m.id, m.kind, m.title, m.external_playback_url, m.canonical_source_url,
                    m.provider, m.provider_id
             FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
-            WHERE m.id = ANY(:media_ids) AND m.id IN ({visible_media_ids_cte_sql()})
+            WHERE m.id = ANY(:media_ids) AND m.id IN ({requested_media_ids_cte_sql()})
               AND m.kind = 'podcast_episode'
         """),
         {"viewer_id": viewer_id, "media_ids": media_ids},

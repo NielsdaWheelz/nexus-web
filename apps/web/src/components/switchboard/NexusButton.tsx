@@ -1,7 +1,7 @@
 "use client";
 
 // The mobile Nexus trigger: a tap opens the switchboard inside the gesture; a horizontal
-// touch swipe switches to the adjacent tab instead (left: next, right: previous).
+// touch swipe switches to the adjacent pane instead (left: next, right: previous).
 import { useLayoutEffect, useRef, type PointerEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
@@ -58,7 +58,7 @@ export default function NexusButton({
         ref={buttonRef}
         type="button"
         className={styles.nexusButton}
-        aria-label={paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`}
+        aria-label={paneCount === 1 ? "Open Nexus, 1 pane" : `Open Nexus, ${paneCount} panes`}
         aria-haspopup="dialog"
         data-switchboard-open={open || undefined}
         onPointerDown={(event) => {
