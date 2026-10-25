@@ -53,7 +53,10 @@ remains unattributed with selected-runtime measured stability accepted.
 
 warm visible-result p95 budgets remain500/2000/4000ms for direct/keyword/related;
 cold keyword3000/related4000ms has one accepted control, not a percentile.
-independent failure deadlines remain unchanged. current `b5234285` passes
+the owner approves related failure budgets of api5000ms and browser/bff5750ms,
+with a publication-visible5000ms bound; warm related remains4000ms. the revised
+budgets are not yet qualified and can increase shared-admission occupancy.
+current `b5234285` passes
 `./scripts/test`, the three retained checks, six same-snapshot presentation
 parity/count cases and the separate semantic piece/owner fixture. the actual0312 restore through unchanged
 main0316 and search0317 preserves104 canonical tables and3,396,985 rows, with exact
@@ -70,7 +73,14 @@ in1332ms. related expires after3032.92ms during presentation, following provider
 stage does not establish presentation as the sole cause. this active related
 failure is outside the restored-background waiver. the separate
 [note-search admission gap](search-publication-note-check-waits-for-admission.md)
-leaves updated-note searchability unproved; its admission holder is unattributed.
+leaves updated-note searchability unproved. a controlled replay attributes its
+queue to qualification verification; the earlier strict holder remains unknown.
+
+one completed diagnostic measures hybrid core work at4204.427ms before transport
+and paint; the original3000ms crossing is inside ann scoring. it returns20 results
+with18 semantic matches. its overall receipt remains failed on a stale sql-hash
+guard, independently explained by exact approved-expression and parameter parity.
+this is no browser/p95 pass or verification of the newly approved failure budgets.
 
 the initial publication completes in36.69s; the held replacement commits in one
 audited attempt in40.75s. these elapsed intervals include setup, verification and
@@ -94,9 +104,11 @@ repair decision needs completed timing; these observations establish no hardware
 the owner accepts occasional restored-pane related failure during publication
 with verified honest failure, preserved useful results and retry. the integrated
 mac tls/http2 check establishes those behaviours by holding one client response
-through its unchanged3750ms cutoff and successfully retrying. it does not measure
+through the earlier3750ms cutoff and successfully retrying. that observation does
+not qualify the revised5750ms cutoff. it does not measure
 api queue cost or waive active after-input failure. the cost is occasional manual
-retry of restored related results; no scheduler or cutoff increase is authorized.
+retry of restored related results. no scheduler is authorized; the approved
+related cutoff increase is recorded above.
 preserve the [historical unjoined abort](search-hybrid-publication-cutoff.md).
 manual screen-reader and unrestricted ordinary-worker qualification remain
 explicitly deferred. give the [restored backlog](restored-search-worker-backlog.md)

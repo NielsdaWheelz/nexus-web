@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 _PHASE_CAPS = {
     "direct": timedelta(milliseconds=400),
     "lexical": timedelta(milliseconds=1500),
-    "hybrid": timedelta(milliseconds=3000),
+    "hybrid": timedelta(milliseconds=5000),
 }
 
 
