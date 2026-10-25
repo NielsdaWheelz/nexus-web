@@ -153,6 +153,10 @@ _HIGHLIGHT_READING = (
 _HIGHLIGHT_KEY = "'highlight:' || reading.media_id::text || ':' || h.id::text"
 
 
+_CHUNK_WHERE = (
+    "c.owner_kind='media' AND c.primary_evidence_span_id IS NOT NULL AND c.chunk_text<>''"
+)
+
 _SOURCES = {
     "media": _source(
         "media",
@@ -259,7 +263,7 @@ _SOURCES = {
         revision="s.lexical_revision",
         admission="'content_chunk:' || c.owner_id::text || ':' || s.lexical_revision::text",
         fields={"body": "c.chunk_text"},
-        where="c.owner_kind='media' AND c.primary_evidence_span_id IS NOT NULL AND c.chunk_text<>'' AND s.lexical_revision IS NOT NULL",
+        where=f"{_CHUNK_WHERE} AND s.lexical_revision IS NOT NULL",
     ),
     "web_result": _source(
         "web_result",
@@ -294,6 +298,17 @@ _SOURCES = {
         where="COALESCE(p.selector#>>'{quote,exact}','')<>''",
     ),
 }
+
+_PUBLISHED_CONTENT_CHUNKS = _source(
+    "content_chunk",
+    "content_chunks c",
+    identity="c.id",
+    owner="'media:' || c.owner_id::text",
+    revision="CAST(:published_revision AS bigint)",
+    admission="'content_chunk:' || c.owner_id::text || ':' || CAST(:published_revision AS text)",
+    fields={"body": "c.chunk_text"},
+    where=f"{_CHUNK_WHERE} AND c.owner_id=CAST(:published_owner_id AS uuid)",
+)
 
 
 def _withdraw_batch(
@@ -394,6 +409,32 @@ def refresh(
                 previous = last
         else:
             db.execute(text(f"INSERT INTO {TABLE} ({','.join(_COLUMNS)}) {source}"), params)
+
+
+def publish_content_chunks(db: Session, *, owner_id: UUID, revision: int) -> None:
+    """Project the publisher's newly written media revision before its commit.
+
+    The caller has set this owner's lexical revision after writing its chunks. Its
+    owner/revision facts replace a late scan of unrelated content index states.
+    The publisher already withdrew old occurrences; these canonical ids are fresh.
+    Its transaction and retry owner also owns this insert and the final commit.
+    """
+    identities = db.scalars(
+        text("SELECT id FROM content_chunks WHERE owner_kind='media' AND owner_id=:id"),
+        {"id": owner_id},
+    ).all()
+    if not identities:
+        return
+    db.execute(text("SET LOCAL paradedb.global_mutable_segment_rows=0"))
+    source = _PUBLISHED_CONTENT_CHUNKS.replace(
+        "/*identity_filter*/", "AND c.id=ANY(CAST(:ids AS uuid[]))"
+    )
+    for start in range(0, len(identities), _BATCH):
+        ids = identities[start : start + _BATCH]
+        db.execute(
+            text(f"INSERT INTO {TABLE} ({','.join(_COLUMNS)}) {source}"),
+            {"ids": ids, "published_owner_id": owner_id, "published_revision": revision},
+        )
 
 
 def refresh_contributor_dependents(db: Session, contributor_ids: Sequence[UUID]) -> None:

@@ -301,20 +301,19 @@ def publish_text_index(
     if batch:
         _insert_chunk_batch(db, owner, source_kind, batch)
     status = "indexing" if count else "ocr_required" if source_kind == "pdf" else "no_text"
-    _set_state(db, owner, status, reason if count else status)
-    db.execute(
+    state_revision = _set_state(db, owner, status, reason if count else status)
+    lexical_state = db.execute(
         text(
             "UPDATE content_index_states SET lexical_revision = CASE WHEN :has_text THEN revision ELSE NULL END"
             " WHERE owner_kind = :kind AND owner_id = :id"
+            " RETURNING revision, lexical_revision"
         ),
         params | {"has_text": bool(count)},
-    )
+    ).one()
+    assert lexical_state.revision == state_revision
+    assert lexical_state.lexical_revision == (state_revision if count else None)
     if owner.kind == "media":
-        new_chunk_ids = db.scalars(
-            text("SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :id"),
-            {"id": owner.id},
-        ).all()
-        projection.refresh(db, "content_chunk", new_chunk_ids)
+        projection.publish_content_chunks(db, owner_id=owner.id, revision=state_revision)
     if not count:
         _complete_media_effects(db, owner, count)
     return ContentIndexResult(owner, status, count)

@@ -251,6 +251,21 @@ else:
             after=ids(db,a)
             assert after and not before.intersection(after)
             assert projected(db,a)==projected(db,a,True)=={"content_chunk:"+str(x) for x in after}, "replacement retained old ids"
+            canonical=db.execute(text("""SELECT 'content_chunk:' || c.id::text AS ref,c.chunk_text AS body,
+                s.lexical_revision AS revision FROM content_chunks c
+                JOIN content_index_states s ON s.owner_kind=c.owner_kind AND s.owner_id=c.owner_id
+                WHERE c.owner_kind='media' AND c.owner_id=:id
+                AND c.primary_evidence_span_id IS NOT NULL AND c.chunk_text<>''"""),{"id":a}).mappings().all()
+            assert len(canonical)==len(after) and len({r["revision"] for r in canonical})==1, "canonical replacement lacks one current revision"
+            revision=canonical[0]["revision"]
+            assert revision is not None, "replacement lacks lexical readiness"
+            admission=f"content_chunk:{a}:{revision}"
+            scalar=db.execute(text("""SELECT ref,body,source_revision,admission_key FROM keyword_occurrences
+                WHERE family='content_chunk' AND owner_ref=:owner"""),{"owner":"media:"+str(a)}).mappings().all()
+            assert len(scalar)==len(canonical) and {r["ref"]:(r["body"],r["source_revision"],r["admission_key"]) for r in scalar}=={r["ref"]:(r["body"],revision,admission) for r in canonical}, "published chunks differ from canonical text or revision"
+            native=set(db.scalars(text("""SELECT ref FROM keyword_occurrences
+                WHERE search_id @@@ paradedb.term('admission_key',CAST(:admission AS text))"""),{"admission":admission}))
+            assert native=={r["ref"] for r in canonical}, "native admission missed current canonical chunks"
         with factory() as db:
             publish(db,a,f["bodies"]); db.rollback()
             assert ids(db,a)==after and projected(db,a,True)=={"content_chunk:"+str(x) for x in after}, "rollback leaked"
