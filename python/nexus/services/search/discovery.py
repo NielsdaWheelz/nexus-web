@@ -26,7 +26,6 @@ from uuid import UUID
 from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
 from provider_runtime.retry import DEFAULT_RETRY
 from provider_runtime.types import TransientExhausted
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.session import open_async_session
