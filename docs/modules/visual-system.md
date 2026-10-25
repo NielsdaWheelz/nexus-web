@@ -210,11 +210,36 @@ and refresh content sits outside the listbox. it has no search field or visible
 category heading. command menus and library membership retain their own content
 and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
 
-choice triggers have a 32px minimum height; triggers and option rows have at
-least 44px with any coarse pointer. text can increase those heights. engagement
-uses existing colour and motion tokens; reduced motion removes transitions.
-chat's three-control composition, native effort gauge/range and whole-control
-wrapping belong to [chat](chat.md#generation-selection), not this primitive.
+choice triggers and segments have a 32px minimum height; triggers, option rows
+and segments have at least 44px with any coarse pointer. text can increase those
+heights. engagement uses existing colour and motion tokens; reduced motion
+removes transitions. chat's three-control composition, native effort gauge/range
+and whole-control wrapping belong to [chat](chat.md#generation-selection), not
+this primitive.
+
+an exclusive choice shown as its options is a native radio group, `RadioGroup`:
+one fieldset named by its legend, radios sharing one `useId` name, and an
+optional description after the options that describes the fieldset. it adds no
+role. inside `role=menu` the same choice is `menuitemradio`
+([overlays](overlays.md#surfaces)). `Inline` is the default presentation.
+`Segmented` sets each option as a `ChoiceField` segment in one track of equal
+columns whose labels wrap; its visible legend takes the form-label type, and a
+`Hidden` legend names the group to assistive technology only. a choice label may
+be a node, such as a font named in its own face, beside a decorative icon.
+
+`ChoiceField.module.css` owns the one segmented recipe for both roots: the
+`.segments` track, the `.segment` option and `.segmentInput`, the transparent
+native radio covering its label. state selectors match `aria-checked` and
+`aria-disabled` on menu buttons and the input's state on native labels.
+every segment reserves a transparent 1px border inside its box. selection is an
+accent fill read in `--accent-ink`, focus an inward outline; neither changes a
+box. selection is never expressed as disabled. disabled removes tone and hover,
+never the value: a disabled checked option keeps a neutral `--surface-active`
+fill. in forced colours segments opt out of adjustment and paint system colours,
+which hover leaves alone: unchecked `CanvasText` on `Canvas`, checked
+`HighlightText` on `Highlight` with a `currentColor` border, disabled `GrayText`
+on `Canvas`, keeping that border when checked. focus is a `CanvasText` outline,
+or `HighlightText` inset two ring widths over an enabled checked fill.
 
 ## action controls
 

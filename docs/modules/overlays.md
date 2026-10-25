@@ -102,7 +102,11 @@ the react tree.
 only the topmost frame is `aria-modal` and interactive; a covered frame's panel
 is `inert` and its scrim `data-suspended="true"` (clear, no pointer events). Tab
 wraps inside the top modal's panel (a handler that prevented Tab keeps it;
-`contenteditable` counts as focusable). a frame focuses `initialFocus(panel)`,
+`contenteditable` counts as focusable). tab candidates follow native radio
+scope: a group is one name and one form owner across the document (an unnamed
+radio stands alone), and offers one stop: its checked member, or none when that
+is unfocusable; with none checked, its first focusable member. a stop outside
+the panel is not a candidate. a frame focuses `initialFocus(panel)`,
 else its first focusable, else the panel, one frame after it becomes topmost,
 once per open and `focusKey`.
 
@@ -293,8 +297,10 @@ forgets. publication owns one desktop transient or mobile modal, never both.
 desktop complete choices use menu semantics; failure and successful-empty use a
 named transient dialog. retry retains the failure surface, owner, focus and history
 while taking a fresh signal and budget. mobile uses a titled `MobileSheet` with
-ordinary buttons/links and modal tab order. touch focuses the panel, keyboard the
-requested command edge. `aria-haspopup` matches the displayed role.
+ordinary buttons/links, a segmented `RadioGroup` with a hidden legend for each
+choice, and modal tab order. touch focuses the panel, keyboard the requested
+command edge; when that edge is a choice, its checked enabled radio.
+`aria-haspopup` matches the displayed role.
 both presentations use natural content height with available-space ceilings;
 mobile selects the sheet's available-height policy. mobile admission focuses the
 panel with choices hidden, then requires 150ms without viewport/row geometry
@@ -319,8 +325,10 @@ an outside press closes without moving focus.
 published command meaning and target geometry remain stable. changed title,
 sections, labels, targets, reasons, controls or unsolicited layout close with one
 announcement; a fresh activation is required. same-geometry availability and
-handlers remain live. capture checks precede custom/native activation, including
-shifted and auxiliary links. list scrolling and header drag are deliberate movement.
+handlers remain live. a choice's names, options and reason are meaning; its
+checked value is live state and repaints in place. capture checks precede
+custom/native activation, including shifted and auxiliary links. list scrolling
+and header drag are deliberate movement.
 mobile sheets measure layout position within their fixed backdrop, independently
 of entry/drag translation. fractional dimensions and row geometry retain their
 1/64 css px comparison; compositor position samples are not subtracted. viewport facts
@@ -330,6 +338,21 @@ admission; they retire other pending or published invocations. `onOpenChange` re
 actual visibility only; preparation never starts there. `ActionMenu` owns mobile
 chrome hold. `returnFocusTo` can name the invocation context independently of the trigger;
 absent it, the trigger owns return.
+
+a `MenuChoice` is one named exclusive choice: choosing sets its value
+absolutely, and choosing the current value does nothing. a relative toggle is a
+`menuitemcheckbox` command whose pressed state is meaning; it closes. on
+desktop a choice is a `group` row named by its label, one `menuitemradio` per
+option in the [segmented recipe](visual-system.md#choice-controls), the current
+option `aria-checked`, never disabled. each option is an item for Up/Down,
+Home/End and typeahead; Left and Right move among the row's options and wrap,
+and pass through elsewhere. focus never chooses. click and Space (its native
+click) choose and keep the menu open, with focus on the chosen option; Enter
+closes, returning focus, then chooses. both read the current descriptor behind
+the same stability check as commands. a disabled row's options stay focusable,
+`aria-disabled` and described by its reason under the track; choosing one does
+nothing. in the sheet, native radios choose on arrows and stay open, Enter on a
+radio does nothing, and a disabled group's reason describes its fieldset.
 
 **FloatingActionSurface**: nonmodal selection actions, desktop passage composers,
 clicked-highlight choosers and action-bar popovers. ordinary text-selection

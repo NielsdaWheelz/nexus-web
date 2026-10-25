@@ -16,7 +16,7 @@
   --thumb: 10px;
 }
 
-.disabled {
+.root:has(> .input:disabled) {
   opacity: 0.5;
   cursor: not-allowed;
 }

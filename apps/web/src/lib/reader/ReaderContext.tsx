@@ -2,7 +2,8 @@
 
 // The reader profile: one user's seven typography preferences. Changes apply at
 // once and reach the server as one debounced PATCH (300ms), one request in
-// flight, latest wins; a failed save keeps the change and offers Retry.
+// flight, latest wins; a failed save keeps the change and offers Retry. Without
+// remote admission a change is refused with a notice, never written later.
 import {
   createContext,
   useCallback,
@@ -14,8 +15,9 @@ import {
   type ReactNode,
 } from "react";
 import { remoteReady } from "@/lib/native/admission";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
-import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { useFeedback, useWorkspaceCondition, type FeedbackOffer } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -27,6 +29,8 @@ export interface ReaderProfileCapability {
   readonly persistence:
     | { readonly state: "Clean" | "Pending" }
     | { readonly state: "SaveFailed"; readonly failure: unknown };
+  /** Whether a change is accepted; every refused change is reported. */
+  readonly editable: boolean;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
   setFocusMode(value: ReaderProfile["focus_mode"]): void;
@@ -49,6 +53,9 @@ export function ReaderProvider({
   readonly children: ReactNode;
 }) {
   const refreshSettings = useSettingsRefresh();
+  const feedback = useFeedback();
+  const editable = useRemoteAdmission() === "Ready";
+  const refused = useRef<FeedbackOffer | null>(null);
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
@@ -97,15 +104,33 @@ export function ReaderProvider({
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
-      if (!remoteReady()) return;
+      if (!remoteReady()) {
+        // A fresh offer, not a replacement: only a new entry raises attention.
+        refused.current?.withdraw();
+        refused.current = feedback.offer({
+          key: "reader-profile-refused",
+          announcement: "Polite",
+          needsAttention: true,
+          undo: null,
+          onDismiss: null,
+          content: { tone: "Neutral", title: "changing reader settings requires a connection" },
+        });
+        return;
+      }
       setProfile((current) => ({ ...current, ...patch }));
       unsent.current = { ...unsent.current, ...patch };
       setPersistence((current) => current.state === "SaveFailed" ? current : { state: "Pending" });
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void send(), SAVE_DELAY_MS);
     },
-    [send],
+    [feedback, send],
   );
+
+  useEffect(() => {
+    if (!editable) return;
+    refused.current?.withdraw();
+    refused.current = null;
+  }, [editable]);
 
   useEffect(() => {
     live.current = true;
@@ -136,6 +161,7 @@ export function ReaderProvider({
     () => ({
       profile,
       persistence,
+      editable,
       setTheme: (theme) => intend({ theme }),
       setFontFamily: (font_family) => intend({ font_family }),
       setFocusMode: (focus_mode) => intend({ focus_mode }),
@@ -145,7 +171,7 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [intend, persistence, profile, send],
+    [editable, intend, persistence, profile, send],
   );
   if (defect) throw defect.error;
   return (

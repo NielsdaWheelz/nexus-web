@@ -9,13 +9,13 @@ import { usePaneSubject } from "@/lib/panes/paneChrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
+import type { MenuContent, MenuOption, MenuSource } from "@/lib/ui/actionDescriptor";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 export interface ContextActionSection {
   readonly id: "Pane" | "Occurrence" | "View";
-  readonly actions: readonly ActionDescriptor[];
+  readonly actions: readonly MenuOption[];
 }
 
 /**

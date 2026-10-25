@@ -192,10 +192,19 @@ function visible(element: HTMLElement): boolean {
 }
 
 export function focusableElements(root: Element): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => element.tabIndex >= 0 && visible(element)
-      && !element.closest("[inert]") && !element.matches(":disabled"),
-  );
+  const focusable = (element: HTMLElement) => element.tabIndex >= 0 && visible(element)
+    && !element.closest("[inert]") && !element.matches(":disabled");
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => {
+    if (!focusable(element)) return false;
+    if (!(element instanceof HTMLInputElement) || element.type !== "radio" || !element.name) return true;
+    // Native Tab stops once per radio group (one name, one form owner): at its
+    // checked member, or nowhere when that is unfocusable; with none checked, at
+    // its first focusable member.
+    const group = [...document.getElementsByName(element.name)].filter((radio): radio is HTMLInputElement =>
+      radio instanceof HTMLInputElement && radio.type === "radio" && radio.form === element.form);
+    const checked = group.find((radio) => radio.checked);
+    return checked ? checked === element : group.find(focusable) === element;
+  });
 }
 
 // Safari never focuses a clicked button: a layer that opens with nothing

@@ -4,14 +4,10 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: var(--space-4);
-}
-
-.pair {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
+  inline-size: max-content;
+  max-inline-size: 100%;
 }
 
 .field {
@@ -22,42 +18,12 @@
 }
 
 .label {
-  padding: 0;
   color: var(--ink-muted);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
 }
 
 .range {
-  width: min(100%, 200px);
-}
-
-/* one of four as a segmented row; native radios keep radiogroup semantics */
-.segments {
-  display: flex;
-  flex-wrap: wrap;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-/* positioned: the hidden radio is placed in its label and scrolls with it */
-.segments > label {
-  position: relative;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  font-size: var(--text-sm);
-}
-
-.segments > label:has(:checked) {
-  border-color: var(--ring);
-}
-
-.segments > label:has(:focus-visible) {
-  outline: var(--focus-ring-width) solid var(--ring);
-}
-
-.segments input {
-  position: absolute;
-  opacity: 0;
+  inline-size: 100%;
+  accent-color: var(--accent);
 }

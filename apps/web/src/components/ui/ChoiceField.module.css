@@ -50,3 +50,118 @@
   column-gap: var(--space-4);
   row-gap: var(--space-1);
 }
+
+/* Segmented legends take the form-label type of the fields beside them. */
+.segmented legend {
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.groupDescription {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* One segmented recipe for native labels (`:has(> input)`) and menuitemradio
+   buttons (`aria-*`). Selection is a fill, focus an outline; neither changes a box. */
+.segments {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+}
+
+.segment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  min-block-size: var(--size-md);
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-glide), color var(--duration-fast) var(--ease-glide);
+}
+
+/* Covers its label so every press reaches the native radio. */
+.segmentInput {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.segment:hover {
+  background: var(--surface-2);
+}
+
+.segment[aria-checked="true"],
+.segment:has(> input:checked) {
+  background: var(--accent-muted);
+  color: var(--accent-ink);
+}
+
+.segment:focus-visible,
+.segment:has(> input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* After hover and checked: disabled removes tone and hover, never the value. */
+.segment[aria-disabled="true"],
+.segment:has(> input:disabled) {
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
+.segment[aria-disabled="true"][aria-checked="true"],
+.segment:has(> input:disabled:checked) {
+  background: var(--surface-active);
+}
+
+@media (any-pointer: coarse) {
+  .segment { min-block-size: var(--size-xl); }
+}
+
+/* Adjustment would draw every reserved border and backplate the checked word, so
+   segments paint system colours themselves, hover included. The border marks a
+   checked option, disabled or not; over a checked fill the ring clears it. */
+@media (forced-colors: active) {
+  .segment,
+  .segment:hover { forced-color-adjust: none; background: Canvas; color: CanvasText; border-color: transparent; }
+  .segment[aria-checked="true"],
+  .segment:has(> input:checked) { background: Highlight; color: HighlightText; border-color: currentColor; }
+  .segment[aria-disabled="true"],
+  .segment:has(> input:disabled) { background: Canvas; color: GrayText; border-color: transparent; }
+  .segment[aria-disabled="true"][aria-checked="true"],
+  .segment:has(> input:disabled:checked) { background: Canvas; border-color: currentColor; }
+  .segment:focus-visible,
+  .segment:has(> input:focus-visible) { outline-color: CanvasText; }
+  .segment[aria-checked="true"]:not([aria-disabled="true"]):focus-visible,
+  .segment:has(> input:checked:focus-visible) { outline-color: HighlightText; outline-offset: calc(-2 * var(--focus-ring-width)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment { transition: none; }
+}
