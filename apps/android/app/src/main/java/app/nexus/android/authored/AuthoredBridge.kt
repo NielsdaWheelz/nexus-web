@@ -32,7 +32,11 @@ import java.util.UUID
 
 /** Closed authored operations only. Frames reuse 24-kib raw chunks; renderer
  * inputs never select an account, file, URL or SQL. Source mainframes and all
- * subframes are excluded. The native account authority fences every callback. */
+ * subframes are excluded. The native account authority fences every callback.
+ * The process-wide preparation mutex spans the JS preparation and exact local
+ * settlement. Retirement releases its document lease; an already admitted SQL
+ * operation still finishes under the commands mutex before a new owner can read
+ * its source clock. Main-thread adoption rechecks document generation. */
 private class AuthoredStorageError(cause: java.io.IOException) : java.io.IOException("couldn’t prepare notes on this device", cause)
 
 internal class AuthoredBridge(private val webView: WebView, private val session: DeviceSession) {

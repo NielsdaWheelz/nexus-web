@@ -1,6 +1,9 @@
 "use client";
-/** A tab owns only a port. The stable worker owns database/replication; closing a
- * tab never retires an account or discards its committed pending changes. */
+/** One signed document shares one cached port per account; replacement waits for
+ * its previous owner to close. The worker owns SQL and replication. withCommand
+ * holds the account WebLock through preparation, uncertain commit and exact retry;
+ * the worker independently fences its clientId and ephemeral lease. Closing a tab
+ * never retires the account or discards committed pending changes. */
 import { prepareShell } from "./shell";
 import { openNativeAuthoredStore } from "./native";
 import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncStatus } from "@nexus/authored/types";

@@ -1,5 +1,10 @@
 /** Stable same-origin SharedWorker, named by account and format. Every SQL read,
- * local commit and incoming command passes one queue, across all browser tabs. */
+ * local commit and incoming command passes one queue, across all browser tabs.
+ * A window holds the account WebLock from preparation through exact settlement,
+ * including failed-save retry. Begin and commit recheck its authoritative clientId
+ * plus an ephemeral port lease; a delayed retired port cannot borrow a new holder.
+ * An already admitted SQL commit finishes before the next queued preparation read.
+ * This needs no cross-port ordering assumption or durable mutation ledger. */
 import { FORMAT_REVISION, type CommitFrame, type AuthoredQuery, type StateSelection } from "@nexus/authored/types";
 import { writingHints } from "./hints";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";

@@ -44,11 +44,12 @@ const PaneContent = memo(function PaneContent(props: {
   readonly isPresented: boolean;
 }) {
   const admission = useRemoteAdmission();
-  const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings"].includes(props.routeId);
+  const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings",
+    "notes", "pageNew", "page", "dailyDate", "note", "search"].includes(props.routeId);
   // Covered bodies own saved-data and coverage states; mounting grants no remote
   // capability. Other cold server panes still require credential admission.
   const catalog = ["libraries", "library", "podcasts", "podcastDetail", "lectern",
-    "notes", "conversations", "media", "page", "conversation", "note"].includes(props.routeId);
+    "conversations", "media", "conversation"].includes(props.routeId);
   const canAdmit = local || catalog || admission === "Ready";
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
