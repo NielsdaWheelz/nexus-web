@@ -25,8 +25,8 @@ local startup mounts an existing binding before remote verification. first
 provisioning imports the workspace selected by the existing server model.
 later bootstrap refreshes account/profile while local navigation remains
 authoritative. no corpus or server read results enter the startup record. the
-existing account-scoped writing journal retains its own storage and delivery
-contracts; other ephemeral forms remain with their memory owners.
+account-scoped writing owners retain unfinished text and delivery in memory;
+ordinary notes autosave and passage notes save explicitly.
 
 state/file access is serialized off the main thread, never locked over networking
 or cookie callbacks. a workspace commit merges into the current record and
@@ -78,4 +78,5 @@ admission and retires credential effects. native checkpoints/stops playback,
 persists null binding and completes local purge/credential clearing. interrupted
 cleanup repeats before another account is exposed. remote revocation is bounded
 best effort; offline sign-out does not wait for a server. downloads navigation
-remains a guarded document exit.
+opens an ordinary workspace pane. opening a non-episode reading copy exits to
+the isolated shelf through the writing guard.

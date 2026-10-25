@@ -17,6 +17,7 @@ import { readSharedValue } from "@/lib/api/serverState";
 import { watchWritingResource, type WritingWatch } from "@/lib/api/writingReceive";
 import { captureResourceOutlineRead, isResourceOutlineReadCurrent } from "@/lib/resourceGraph/useResourceOutline";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
+import { sameAnchor } from "@/lib/documentReader/anchors";
 import type {
   Decorations,
   DraftAnchor,
@@ -90,10 +91,6 @@ function wireAnchor(anchor: DraftAnchor) {
     ? { kind: "text" as const, unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end }
     : { kind: "pdf" as const, page_number: anchor.page, quads: [...anchor.quads], exact: anchor.exact };
 }
-
-/** The same painted extent (a draft's `exact` aside). */
-const sameAnchor = (a: MarkAnchor, b: MarkAnchor) =>
-  JSON.stringify({ ...a, exact: undefined }) === JSON.stringify({ ...b, exact: undefined });
 
 type CanonicalStore = Omit<AnnotationStore, "bind" | "source" | "prepareCreate" | "rebound"> & {
   generation(value: number): void;
