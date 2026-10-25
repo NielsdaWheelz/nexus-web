@@ -5,9 +5,11 @@ import android.net.Uri
 import android.os.SystemClock
 import android.os.Handler
 import android.os.HandlerThread
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.DefaultRendererCapabilitiesList
@@ -119,6 +121,7 @@ internal suspend fun fetchAudio(
  * registration and release. Future waits and codec capability probes stay off
  * the app/player looper; this private looper never owns playback or focus.
  */
+@OptIn(UnstableApi::class)
 private suspend fun inspectAudio(context: Context, file: File): AudioMeta {
     val thread = HandlerThread("nexus-audio-inspection").apply { start() }
     val dispatcher = Handler(thread.looper).asCoroutineDispatcher()

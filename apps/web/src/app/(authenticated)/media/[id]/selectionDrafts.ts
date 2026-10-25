@@ -1,5 +1,6 @@
 import type { Schema } from "@/lib/api/wire";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
+import { sameAnchor } from "@/lib/documentReader/anchors";
 import type { Publication, WriteHandle } from "@/lib/notes/writes";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
@@ -91,8 +92,7 @@ export function createSelectionDrafts() {
 export type SelectionDrafts = ReturnType<typeof createSelectionDrafts>;
 
 export function samePassage(a: Passage, b: Passage): boolean {
-  return a.identity === b.identity &&
-    JSON.stringify({ ...a.anchor, exact: undefined }) === JSON.stringify({ ...b.anchor, exact: undefined });
+  return a.identity === b.identity && sameAnchor(a.anchor, b.anchor);
 }
 
 /** Text projection cannot distinguish empty text from images, breaks or code. */

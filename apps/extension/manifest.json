@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Nexus Capture",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Save the current article, or a linked PDF or EPUB, to your Nexus.",
   "icons": {
     "16": "icons/16.png",
