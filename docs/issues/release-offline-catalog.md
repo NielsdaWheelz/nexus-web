@@ -9,8 +9,9 @@ before release, qualify the signed installed upgrade against production: save a
 complete catalog for the actual account, force-stop, enter airplane mode and open
 previously unvisited library/podcast/note/chat indexes and detail boundaries.
 verify foreground/manual refresh, retained freshness after failure, and sign-out
-cleanup. preserve installed downloads, pending progress and the writing journal
-through upgrade; save memory-only drafts before replacing the apk.
+cleanup. preserve installed downloads and pending progress through upgrade;
+save memory-only drafts before replacing the apk. retire old writing stores
+through the exact procedure in `release-online-first-writing.md`.
 
 old catalog format/wire is rebuilt online, never migrated through a compatibility
 reader. catalog failure must leave the shell and unrelated stores usable. full
