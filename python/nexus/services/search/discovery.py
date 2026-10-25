@@ -141,14 +141,9 @@ async def _embedding(
 
 
 def _snapshot[T](db: Session, deadline: float, read: Callable[[Session], T]) -> T:
-    def bounded(db: Session) -> T:
-        # Browser reads are short; compiling these visibility relations costs seconds.
-        db.execute(text("SET LOCAL jit = 'off'"))
-        return read(db)
-
     logger.info("search.snapshot.begin", mono_ns=time.monotonic_ns())
     try:
-        return read_snapshot(db, bounded, deadline=deadline)
+        return read_snapshot(db, read, deadline=deadline)
     finally:
         logger.info("search.snapshot.end", mono_ns=time.monotonic_ns())
 

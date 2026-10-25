@@ -586,6 +586,10 @@ discipline (this is the single most important backend invariant):
   not borrow the session. phase-owned stream sessions retain their own lifetime.
 - **Server-side prepared statements are disabled** (`prepare_threshold=None`) for
   pooler safety.
+- **jit is disabled on application engine connections**, sync and async, including
+  workers. this favors interactive reads over compilation of expanded visibility
+  plans. longer corpus-wide worker ranking may lose compilation gains; its cost
+  still needs qualification for that workload.
 - **SERIALIZABLE** isolation is opt-in through `db/retries.py`
   (`retry_serializable`, or `retry_read_committed` for a locked set re-checked
   against a newer snapshot): the helper selects the isolation, reruns a

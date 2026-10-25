@@ -3,6 +3,9 @@
 Every connection runs without server-side prepared statements (a transaction-pooling proxy may
 route successive transactions to different backends) and with the role's timeouts: statement
 and idle-in-transaction from settings (0 omits one), and a lock wait of at most 10 s.
+JIT is disabled: expanded visibility plans can spend seconds compiling millisecond
+reads. This favors interactive operations over possible compilation gains in longer
+worker ranking queries, whose execution cost remains workload-specific.
 """
 
 from functools import lru_cache
@@ -21,7 +24,7 @@ def _connect_args() -> dict[str, object]:
         ("lock_timeout", 10_000),
         ("idle_in_transaction_session_timeout", settings.database_idle_in_tx_timeout_ms),
     )
-    options = " ".join(f"-c {key}={value}" for key, value in timeouts if value)
+    options = "-c jit=off " + " ".join(f"-c {key}={value}" for key, value in timeouts if value)
     return {"prepare_threshold": None, "options": options}
 
 
