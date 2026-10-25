@@ -1,20 +1,29 @@
-# every resource menu keeps its own local query subscription
+# local query subscriptions multiply serialized native reads
 
-`components/resources/ContextualActionMenu.tsx` calls `useAuthoredActions(resourceRef)`, which subscribes a local
-`resource` query for that ref while the menu trigger is mounted, open or not. outline rows already subscribe the same
-ref (`ResourceOutlineRow` `AuthoredRow`), so a list of N authored rows holds about 2N subscriptions, and every local
-commit or status broadcast re-runs them in the authored worker (`lib/authored/client.ts` change fan-out).
+resource rows, their menus and live documents each subscribe to local resource
+queries. `useAuthoredQuery` also starts an explicit query after subscribing;
+both browser and native subscriptions already perform their own initial query.
+each corpus commit refreshes every subscription. on native, these reads share
+one serial queue, and each logical call has at least four sequential bridge
+frames (`begin`, `chunk`, `invoke`, `read`).
 
-impact: unmeasured. possible typing latency or worker load on long outlines and daily pages (spec budget: typing
-paint <= 50 ms, 100,000 blocks).
+`lib/authored/native.ts` calls `changed(true)` inside commit before returning its
+receipt. that queues the existing subscribers' reads before a newly mounted
+note's `runtime.loadDocument` can read its canonical state. document refresh
+itself queries the projection and then reads state. `LocalOutline.focusResource`
+may add binding, link-state and resource reads before opening the document.
+there is no fixed four-second delay in these owners; the 250 ms native hints
+loop wakes network sync, not local document hydration.
 
-evidence: independent review of the local authored verbs, 2026-10-25; `lib/notes/hooks.ts` `useAuthoredQuery` (one
-store subscription per call).
+native15 measured one tiny-corpus save-to-render at **4573 ms**, with canonical
+commit/body confirmed. native14's five-second mutable-row wait raced that
+hydration. this is functional evidence, not proof that subscription fanout
+caused the delay, and not a 100,000-block capacity result.
 
-proposed fix: settle the menu publication contract first (local verbs published at open, see
-`/tmp/nexus-localfirst-resource-ui-status.md` "OPEN — needs ownership grant"); then either let the row pass its
-projection to the menu or subscribe only from menu preparation. a menu opened before its local read resolves offline
-currently shows only "requires a connection" and closes with "actions changed" when the read lands.
-
-resolved when: the scale case measures typing paint and worker time on a 100+ row outline with menus mounted, within
-budget, or the subscription is shared/deferred and the same case passes.
+measure at the responsible owners before changing architecture: commit ack;
+`changed(true)` subscriber count; native queue enqueue/start/end and bridge-frame
+durations; adjacency receipt; document state-read start/end; hydrate/history
+attachment; editor binding and first paint. preserve the existing target budgets.
+resolved when target-device capacity measurements attribute the delay and meet
+those budgets, or a measured narrow change removes the redundant work while
+preserving local menu availability and canonical document identity.

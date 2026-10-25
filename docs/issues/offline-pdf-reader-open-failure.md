@@ -34,3 +34,19 @@ canonical Vite task without the lab's `R2_S3_API_ORIGIN`, although
 variable. the pending ignored builder now supplies the context's storage origin.
 this does not establish the cause of the older offline occurrence; retain that
 separate unresolved evidence until the actual cold saved-copy journey passes.
+
+current saved-copy occurrence: source `c20ebe7b6`, Samsung SM-S906W/android16,
+run `20261025-154927-241fa518388f`. after repairing the separate shelf render
+environment, the real ready copy reaches the pdf reader but paints neither
+canvas nor text. a strictly offline installed-qa follow-up observed the same
+state for 59 seconds. two local `document.pdf` requests answer200 then abort
+after about4 ms, before teardown. direct fetch of that exact local file returns
+all597 bytes; PyMuPDF opens them unrepaired as one page with the expected text.
+no `pdf_open_failed` or page exception was captured. this occurrence is not
+explained by corrupt bytes, missing native storage or a five-second test wait.
+
+next isolate the already-loaded pdf.js module with those actual bytes and then
+the exact local url, distinguishing task rejection/retry from surface cleanup.
+no transport fallback, csp change or speculative lifetime repair is authorized
+by this evidence. the installed cold-copy and annotation journey remains the
+resolution condition.
