@@ -16,3 +16,21 @@ retain the existing `pdf_open_failed` error argument and failed-resource details
 on the next occurrence. resolve by identifying and repairing that failure at its
 reader/asset owner, then proving the same cold journey. do not loosen csp, add
 alternate loading paths or claim the intermittent failure fixed from one pass.
+
+current online installed-shell occurrence: source `e65541648`, Samsung
+SM-S906W/android16/WebView155, run `20261025-145003-4e77c998e144`. canonical
+reader API answered200; `/media/01a1750c-87af-729d-9377-07fdc1f65a26` displayed
+“couldn’t open this pdf” before downloading. screenshot/body are retained under
+that run's `artifacts/native-localfirst`; the driver lacked console arguments,
+so no cause is established. ten native local-writing/offline/reconnect checks
+passed first. next invocation records actual `pdf_open_failed` arguments and
+failed resource paths with query strings removed.
+
+that current occurrence has a concrete qualification-build cause: retained
+Chromium console for QA pid21109 reports the original.pdf presigned request
+blocked by document `connect-src 'self'`. the ignored APK builder reran the
+canonical Vite task without the lab's `R2_S3_API_ORIGIN`, although
+`vite.android.config.ts` already derives its exact storage allowlist from that
+variable. the pending ignored builder now supplies the context's storage origin.
+this does not establish the cause of the older offline occurrence; retain that
+separate unresolved evidence until the actual cold saved-copy journey passes.

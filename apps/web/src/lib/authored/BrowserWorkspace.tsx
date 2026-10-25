@@ -1,7 +1,7 @@
 "use client";
 /** Desktop adapter for the shared installed shell. A confirmed local binding
  * opens without credentials; first provisioning requires verified server data. */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { FeedbackState } from "@/components/feedback/Feedback";
@@ -21,13 +21,14 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   const [retiring, setRetiring] = useState(false);
   const [failure, setFailure] = useState<Error | null>(null);
   const [attempt, retry] = useState(0);
+  const retiredReceipt = useRef(false);
   useEffect(() => {
     let live = true;
     let handlingRetirement = false;
     const finishRetirement = async () => {
       handlingRetirement = true;
       if (live) { setBinding(null); setRetiring(true); setFailure(null); }
-      await finishBrowserRetirement();
+      await finishBrowserRetirement(retiredReceipt.current);
       if (live) { setRetiring(false); setSignedOut(true); }
     };
     void (async () => {
@@ -60,6 +61,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
       else setFailure(error instanceof Error ? error : new Error("couldn’t open your workspace"));
     });
     const retired = () => {
+      retiredReceipt.current = true;
       if (handlingRetirement) return;
       void finishRetirement().catch(error => { if (live) setFailure(error instanceof Error ? error : new Error("local notes could not be removed")); });
     };

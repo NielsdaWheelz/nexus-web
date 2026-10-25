@@ -26,3 +26,17 @@ element-send-keys places its caret outside prosemirror's body. trusted click
 before typing works; an independent bare-editor control also passes keyboard
 tab plus trusted key actions. the driver now clicks first. this is not evidence
 of remaining product input loss; the full save/reopen case still must pass.
+
+static finding (2026-10-25, review of the revised draft case; not yet observed in a mounted run): the fix keeps the
+minted id only while the page body stays mounted. `PageAccount` mints `createdId` with `useState`, and the body remounts
+whenever the pane leaves its `/pages/new` visit and returns through history (the mount key changes to the other route's
+and back). the returned visit then mints a new latent page, so the composer key `local:<page ref>:insert` misses the
+draft retained under the old ref, and the draft disappears without a prompt (the old visit stays reachable in history,
+so the work guard never asks). owner: `pages/[pageId]/PagePaneBody.tsx` keeps the latent id in that visit's retained
+memory. evidence will come from the revised case below; the product fix waits for that mounted red.
+
+case: `apps/web/.nexus-lab/cases/resource-ui-local-first.spec.ts`, "an unsent composer draft is loss-guarded…". it picks a
+rail destination no pane shows (from this device's saved workspace session), asserts the same pane id after the click (a
+new visit, no prompt), goes back, then asserts the same latent page ref and exact draft, then title promotion to
+`/pages/<id>` with the canonical title, then save: exactly one linked note. if every rail destination is already open it
+fails with that reason instead of passing.

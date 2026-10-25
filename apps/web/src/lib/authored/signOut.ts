@@ -19,8 +19,10 @@ async function control(accountId: string, op: "pause_commands" | "retire", pause
     worker.port.start(); worker.port.postMessage(op === "retire" ? { id: 2, op, account_id: accountId, format_revision: FORMAT_REVISION } : { id: 1, op: "hello", account_id: accountId, format_revision: FORMAT_REVISION });
   });
 }
-async function purgeBrowser(accountId: string): Promise<void> {
-  await control(accountId, "retire");
+async function purgeBrowser(accountId: string, alreadyRetired: boolean): Promise<void> {
+  // A live retired receipt follows database close. Reopening that dying worker
+  // cannot add a fence; only interrupted startup needs a fresh retirement.
+  if (!alreadyRetired) await control(accountId, "retire");
   await discardWritingRuntime(accountId);
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase(`nexus-authored-${accountId}`);
@@ -29,10 +31,10 @@ async function purgeBrowser(accountId: string): Promise<void> {
   });
   await clearBrowserRetiring();
 }
-export async function finishBrowserRetirement(): Promise<boolean> {
+export async function finishBrowserRetirement(alreadyRetired = false): Promise<boolean> {
   const account = await readBrowserRetiring();
   if (account === null) return false;
-  await purgeBrowser(account);
+  await purgeBrowser(account, alreadyRetired);
   // The shell retirement owner outlives the account menu that requested exit.
   try { await fetch("/auth/signout", { method: "POST", credentials: "same-origin", redirect: "manual" }); }
   catch { /* Offline removal is enforced by the durable signed-out marker. */ }

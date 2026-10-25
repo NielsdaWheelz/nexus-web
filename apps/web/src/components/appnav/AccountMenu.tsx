@@ -18,7 +18,7 @@ import { useImports } from "@/lib/imports/ImportsProvider";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import { unbindNativePlayer } from "@/lib/player/nativeEngine";
-import { localContentAvailable, localCall } from "@/lib/offline/localContent";
+import { localContentAvailable } from "@/lib/offline/localContent";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -39,7 +39,6 @@ class SignOutDeclined extends Error {}
  * account retired before the session ends; declining leaves everything intact. */
 export function SignOutProvider({ children }: { children: ReactNode }) {
   const { accountId } = useAuthenticatedAccount();
-  const form = useRef<HTMLFormElement>(null);
   const guardedSignOut = useGuardedSignOut();
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
@@ -74,13 +73,9 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
           if (live.current) publishAdmission("SignInRequired");
           return;
         }
-        message = "offline data couldn’t be fully removed. your session is still open. retry sign out.";
-        if (localContentAvailable) await localCall("purge");
-        message = "sign out couldn’t finish. your session is still open.";
+        // BrowserWorkspace owns purge and session clearing beyond this unmount.
       }, () => {
-        if (installedApp) { if (live.current) refreshDevice(); return; }
-        if (!live.current || !form.current?.isConnected) throw new Error("Sign-out form is no longer available");
-        form.current.submit();
+        if (installedApp && live.current) refreshDevice();
       });
     } catch (error) {
       if (error instanceof SignOutDeclined) return;
@@ -118,7 +113,6 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
           <Button onClick={() => setFailure(null)}>close</Button>
         </div>
       </Dialog>}
-      <form ref={form} action="/auth/signout" method="post" hidden />
     </SignOutContext>
   );
 }
