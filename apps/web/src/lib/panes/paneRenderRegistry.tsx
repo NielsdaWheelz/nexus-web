@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
+import { Suspense, useDeferredValue, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { ServerSeedsSpent } from "@/lib/api/serverState";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
@@ -8,8 +8,8 @@ import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Module = { default: ComponentType };
 
-// Pane bodies are lazy chunks; the server and the always-loaded shell never
-// import them. Two bodies serve two routes each: chats, and pages/daily pages.
+// Bodies remain separate chunks; the shell owns their readiness. Server rendering
+// and hydration suspend until code arrives, preserving streamed body markup.
 const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   downloads: () => import("@/app/(authenticated)/downloads/DownloadsPaneBody"),
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
@@ -56,35 +56,67 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
     import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };
 
-// One import and one lazy body per route, shared by rendering. A failed
-// import identifies its stage; recovery is an explicit document reload.
-const modules = new Map<PaneRouteId, Promise<Module>>();
-const bodies = new Map<PaneRouteId, ComponentType>();
+type ModuleSnapshot =
+  | { readonly kind: "Pending" }
+  | { readonly kind: "Ready"; readonly Body: ComponentType }
+  | { readonly kind: "Failed"; readonly error: PaneModuleLoadError };
+interface ModuleEntry {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): ModuleSnapshot;
+  getServerSnapshot(): ModuleSnapshot;
+}
 
-function load(id: PaneRouteId): Promise<Module> {
-  let loaded = modules.get(id);
-  if (!loaded) {
-    loaded = LOADERS[id]().catch((error: unknown) => {
-      throw new PaneModuleLoadError(error);
-    });
-    modules.set(id, loaded);
-  }
-  return loaded;
+// One import and terminal code outcome per route, without account or read data.
+// Failures retain their stage and recover only through an explicit document reload.
+const modules = new Map<PaneRouteId, ModuleEntry>();
+
+function load(id: PaneRouteId): ModuleEntry {
+  const loaded = modules.get(id);
+  if (loaded) return loaded;
+  let snapshot: ModuleSnapshot = { kind: "Pending" };
+  const listeners = new Set<() => void>();
+  const publish = (next: ModuleSnapshot) => {
+    snapshot = next;
+    for (const listener of listeners) listener();
+  };
+  // Both outcomes settle this same promise; failures are thrown from the cached
+  // snapshot, so a retired consumer leaves no unhandled import rejection.
+  const promise = LOADERS[id]().then(
+    ({ default: Body }) => publish({ kind: "Ready", Body }),
+    (error: unknown) => publish({ kind: "Failed", error: new PaneModuleLoadError(error) }),
+  );
+  const entry: ModuleEntry = {
+    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    getSnapshot: () => snapshot,
+    getServerSnapshot() {
+      if (snapshot.kind === "Pending") throw promise;
+      return snapshot;
+    },
+  };
+  modules.set(id, entry);
+  return entry;
+}
+
+function PaneBody({ id }: { readonly id: PaneRouteId }) {
+  const entry = load(id);
+  const current = useSyncExternalStore(entry.subscribe, entry.getSnapshot, entry.getServerSnapshot);
+  // Client module arrival starts interruptible rendering, rather than a Suspense
+  // retry's minimum fallback delay. No initial value: SSR must keep its ready body.
+  const snapshot = useDeferredValue(current);
+  if (current.kind === "Failed") throw current.error;
+  if (snapshot.kind === "Pending") return <PaneLoadingState label="Loading pane…" announcement="None" />;
+  if (snapshot.kind === "Failed") throw snapshot.error;
+  const Body = snapshot.Body;
+  return <><Body /><ServerSeedsSpent /></>;
 }
 
 export function renderPane(id: PaneRouteId): ReactNode {
   if (id === "pageNew") id = "page";
-  let Body = bodies.get(id);
-  if (!Body) {
-    Body = lazy(() => load(id));
-    bodies.set(id, Body);
-  }
   return (
     <Suspense
       fallback={<PaneLoadingState label="Loading pane…" announcement="None" />}
     >
-      <Body />
-      <ServerSeedsSpent />
+      <PaneBody key={id} id={id} />
     </Suspense>
   );
 }
