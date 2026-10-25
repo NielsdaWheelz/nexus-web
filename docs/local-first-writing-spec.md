@@ -587,7 +587,12 @@ fault injection, permanent scenario suite or test-only product seams.
 | migration/cutover | representative current data preserves canonical content/relations/ids; unsupported data refuses; old write routes gone; both paired clients cold-open and exchange edits |
 
 performance numbers are target budgets, not measured results. cold startup
-excludes first provisioning. cases declare sample counts/percentiles before
+excludes first provisioning and uses a fresh process with the same provisioned
+profile. measure firefox from navigation start to usable writing; measure android
+from the launch intent to usable writing, including native initialization.
+report automation attachment separately; never add percentile summaries or
+substitute renderer-only timing for android launch timing.
+cases declare sample counts/percentiles before
 measurement and record actual handset/browser versions. qualify actual
 released sqlite binaries for fts5 and durable commit, and the shared node helper
 under the current server memory envelope. stop for a concrete failed contract;

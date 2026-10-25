@@ -40,6 +40,10 @@ annotation notes are ordinary independent notes and links, including multiple
 notes and independently overlapping highlights. pdf resizing keeps the exact
 highlight id and its note links.
 
+source stubs retain literal references when a source disappears, including a
+deleted conversation. source deletion does not unlink the authored graph; a
+captured label grants no source access.
+
 ## merge and local commit
 
 resource visibility is any touch component greater than the corresponding
