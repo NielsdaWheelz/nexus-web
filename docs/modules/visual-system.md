@@ -243,6 +243,8 @@ enabled links retain native navigation. no action is inferred from styling.
 
 help, busy and selection changes preserve the native root. tooltip composition
 retains actual refs, react callback cleanup, caller handlers and description ids.
+an explicit caller description owns complete spoken help; the tooltip supplies
+a description only when none is provided. visual tooltip text stays independent.
 disabled paint overrides every tone/selection state; focus stays visible.
 forced colors use system colors; reduced motion stops color transitions and busy
 rotation. colors, type and spacing use existing tokens; no geometry animation.

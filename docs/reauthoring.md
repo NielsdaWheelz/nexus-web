@@ -1,6 +1,6 @@
 # reauthoring campaign
 
-status: active · 2026-10-25, release source `c5cf4bc27` · production `c5cf4bc27` (schema 0316, wire 15; verified 2026-10-25 utc) · the campaign's one list of areas: the PR that changes an area updates its row.
+status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45e` (schema 0317, wire 16; verified 2026-10-25 utc) · the campaign's one list of areas: the PR that changes an area updates its row.
 
 ## goal
 
@@ -40,7 +40,9 @@ replace browser ranking and redundant route queries; canonical publication,
 authorized reading and shared admission retain their owners. static and local
 boundary checks pass. bounded integrated keyword/related delivery, publication,
 durable edits, updated-note searchability and canonical literal/link checks pass;
-rollout and explicit acceptance deferrals remain in `docs/issues/release-search.md`. migrations, scripts, docs, generated files and
+coordinated rollout is complete, including signed android0.3.8/firefox1.0.2 and
+live phone search, catalog, reader and committed-autosave checks. explicit
+acceptance deferrals remain in `docs/issues/release-search.md`. migrations, scripts, docs, generated files and
 locks are outside this runtime count. earlier area totals retain their stated bases.
 
 imports under account against `e2e55b36f` adds 16 authored runtime lines

@@ -11,6 +11,6 @@ export default function PodcastActions({ subject, density, returnFocus, afterRem
   readonly afterRemoval: () => HTMLElement | null;
 }) {
   const actions = usePodcastActions(subject);
-  return <ActionButtons actions={actions} title={subject.title} density={density}
+  return <ActionButtons actions={actions} density={density}
     returnFocus={returnFocus} afterRemoval={afterRemoval} />;
 }

@@ -108,11 +108,15 @@ selection scope while execution keeps the same catalog command ids.
   libraries receives the actual trigger and owning-pane focus fallback. relationship
   menus retain their occurrence principal; media quick actions retain the media id.
 - `resourceActions` is the finite media/podcast subject contract shared by pane
-  chrome and collection rows. domain hooks own command projection; `ActionButtons`
+  chrome and collection rows. domain hooks supply complete `accessibleLabel`
+  values for inline controls and short `menuLabel` values for menu adapters.
+  descriptors retain their own menu labels.
+  `ActionButtons` does not assemble names or know domain state. it
   owns only button anatomy, disabled explanations, event isolation and focus
   recovery. podcast subscription keeps one control key while its verb changes.
   show indexes, discovery rows and headers expose subscription, libraries and
-  one complete more menu; compact hosts demote both shortcuts at 479px. library
+  one complete more menu; rows demote shortcuts below their 32em boundary and
+  headers at 479px. library
   cards retain their scoped single-shortcut policy. shows receive no playback controls.
   live search/chat rows receive explicit subjects matching their own podcast ref;
   captured evidence and editable references receive none.

@@ -1105,7 +1105,7 @@ def main() -> int:
             shared_cwd_prepared = True
             shared_host.prepare_run(run_id)
         command(
-            compose + ["up", "-d", "--no-deps", "--no-build", *worker_services],
+            compose + ["up", "-d", "--no-build", "--no-deps", *worker_services],
             env=compose_env,
             log=run_dir / "workers-start.log",
         )

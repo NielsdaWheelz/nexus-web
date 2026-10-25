@@ -5,7 +5,6 @@
 // A selected scope owns its label read independently of the closed choices.
 
 import { useCallback, useId, useMemo, useState } from "react";
-import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { viewHref } from "@/lib/collections/view";
@@ -135,10 +134,6 @@ export default function PodcastsPaneBody() {
     ...rawList, source: saved.source, status: "ready", items: saved.items, fresh: false,
     metadata: null, current: true, complete: true, orderRevision: null,
   }, [group.live, rawList, saved]);
-  const actionFacts = (id: string): PodcastActionSubject["facts"] => list.failure !== null
-    ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
-    : list.source.kind !== "live" || !remoteReady() || !list.fresh || list.running !== null
-      ? { kind: "Resolving" } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: id, subscribed: true } };
   const libraries = useServerList<Library>({
     catalog: savedLibraries,
     key: "podcasts:member-libraries",
@@ -298,7 +293,11 @@ export default function PodcastsPaneBody() {
         returnScope="Podcasts.Subscriptions"
         rows={visible.map((row) =>
           presentPodcast({
-            facts: actionFacts(row.id),
+            facts: list.failure !== null
+              ? { kind: "Failed", observedSubscribed: list.source.kind === "live" ? true : null, error: list.failure.error, retry: list.retry, retrying: list.running !== null }
+              : list.source.kind !== "live" || !remoteReady() || !list.fresh || list.running !== null
+                ? { kind: "Resolving", observedSubscribed: list.source.kind === "live" ? true : null }
+                : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: row.id, subscribed: true } },
             id: row.id,
             title: row.title,
             imageUrl: row.image_url,

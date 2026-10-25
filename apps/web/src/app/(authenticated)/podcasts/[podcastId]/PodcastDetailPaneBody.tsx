@@ -363,9 +363,9 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     resourceActions: !live || !remoteReady() || podcast === undefined ? undefined : { kind: "Podcast", subject: {
       target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title,
       facts: headError !== null
-        ? { kind: "Failed", error: headError, retry: head.refetch, retrying: head.status === "failed" ? head.retrying : head.status === "ready" && head.refreshing }
+        ? { kind: "Failed", observedSubscribed: ready?.source.kind === "live" ? following : null, error: headError, retry: head.refetch, retrying: head.status === "failed" ? head.retrying : head.status === "ready" && head.refreshing }
         : head.status !== "ready" || head.refreshing || head.generation === authority.current.generation
-          ? { kind: "Resolving" } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: podcastId, subscribed: following } },
+          ? { kind: "Resolving", observedSubscribed: ready?.source.kind === "live" ? following : null } : { kind: "Ready", resolution: { kind: "Canonical", podcast_id: podcastId, subscribed: following } },
     } },
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:

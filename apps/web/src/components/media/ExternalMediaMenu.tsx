@@ -20,7 +20,7 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
   const commands: ActionDescriptor[] = actions.map(action => {
     return {
       kind: "command", id: action.id,
-      label: action.id === "LibraryPlacement" ? ACTION_CATALOG.LibraryPlacement.label : action.label,
+      label: action.id === "LibraryPlacement" ? ACTION_CATALOG.LibraryPlacement.label : action.menuLabel,
       icon: action.icon,
       disabled: action.disabled || undefined,
       disabledReason: action.disabledReason ?? undefined,
