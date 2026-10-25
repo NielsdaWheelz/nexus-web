@@ -1,6 +1,4 @@
 .list {
-  container: indexRow / inline-size;
-  font-size: var(--text-base);
   display: flex;
   min-width: 0;
   flex-direction: column;

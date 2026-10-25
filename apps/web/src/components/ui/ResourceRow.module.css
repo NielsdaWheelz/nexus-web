@@ -11,18 +11,6 @@
   transition: background-color var(--duration-fast) var(--ease-glide);
 }
 
-/* Retain row isolation separately from the shared query context.
-   Direct rows are flex items; wrapped rows need their own formatting context. */
-:global([data-resource-list]) > .row,
-:global([data-resource-list]) > :global([data-sortable-row-id]) > .row {
-  container: none;
-  contain: inline-size style;
-}
-
-:global([data-resource-list]) > :global([data-sortable-row-id]) > .row {
-  display: flow-root;
-}
-
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
