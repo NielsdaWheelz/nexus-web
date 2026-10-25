@@ -24,9 +24,9 @@ its bytes. offline/media/player stores carry namespace tags, not account authori
 local startup mounts an existing binding before remote verification. first
 provisioning imports the workspace selected by the existing server model.
 later bootstrap refreshes account/profile while local navigation remains
-authoritative. no corpus or server read results enter the startup record. the
-account-scoped writing owners retain unfinished text and delivery in memory;
-ordinary notes autosave and passage notes save explicitly.
+authoritative. no corpus or server read results enter the startup record.
+[authored writing](notes.md) owns its separate account database, pending changes
+and local autosave; unsubmitted annotation composers remain ephemeral.
 
 state/file access is serialized off the main thread, never locked over networking
 or cookie callbacks. a workspace commit merges into the current record and

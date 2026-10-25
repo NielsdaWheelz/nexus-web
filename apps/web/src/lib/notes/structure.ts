@@ -195,11 +195,11 @@ export class OutlineHistory {
     return new_ref;
     } finally { if(!retained){manager.clear();manager.destroy();clone.destroy();} }
   }
-  async join(destination_ref: string, source_ref: string): Promise<void> {
+  async join(destination_ref: string, source_ref: string, displayed: {source?:import("./runtime").WritingSnapshot;destination?:import("./runtime").WritingSnapshot} = {}): Promise<void> {
     if (destination_ref === source_ref) throw new Error("A note cannot be joined to itself");
     this.stopTyping();
     const destination = await this.runtime.openDocument(destination_ref), source = await this.runtime.openDocument(source_ref);
-    const [shownDestination, shownSource] = await Promise.all([destination.capture(), source.capture()]);
+    const [shownDestination, shownSource] = await Promise.all([displayed.destination??destination.capture(), displayed.source??source.capture()]);
     const clone = hydrateNote(shownDestination.body_state), sourceClone = hydrateNote(shownSource.body_state);
     const origin = Symbol("join destination");
     const manager = new Y.UndoManager(bodyInline(clone), { trackedOrigins: new Set([origin]), captureTimeout: 0 });

@@ -151,6 +151,16 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
     const parent = ancestors.filter(ref => ref !== rootRef).at(-1);
     if (parent && history) act(history.relink(link, rootRef, parent));
   },[ancestors,rootRef,history,act]);
+  const adjacentNote=useCallback(async(link:LinkState,side:"before"|"after"):Promise<string|null>=>{
+    if(!runtime)return null;
+    const store=await runtime.store;
+    const neighbors=await store.query({kind:"positions",ref:rootRef,exclude_link_id:null,at:{kind:"neighbors",link_id:link.link_id,side}});
+    const previous=neighbors.positions.find(item=>item.link_id!==link.link_id);
+    if(!previous)return null;
+    const ref=previous.endpoint_a===rootRef?previous.endpoint_b:previous.endpoint_a;
+    const result=await store.query({kind:"resource",ref});
+    return result.rows[0]?.resource.kind==="note"?ref:null;
+  },[runtime,rootRef]);
   const publication=useMemo(()=>{
     if(!active||!history||filter.trim())return null;
     const row=rows.find(row=>row.link?.link_id===selected);
@@ -160,7 +170,7 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
       if(command==="undo")enabled=history.canUndo();
       else if(command==="redo")enabled=history.canRedo();
       else if(command==="outdent")enabled=!!row&&ancestors.some(ref=>ref!==rootRef);
-      else if(command==="indent")enabled=!!row&&rows[rows.indexOf(row)-1]?.resource.kind==="note";
+      else if(command==="indent")enabled=!!row&&(rows.indexOf(row)>0?rows[rows.indexOf(row)-1]?.resource.kind==="note":current.cursor!==null||read.data?.previous_cursor!==null);
       else if(command==="move_up"||command==="move_down")enabled=!!row;
       return {enabled,reason:enabled?null:"no item available"};
     };
@@ -172,12 +182,12 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
         else if(command==="insert")act(history.create(rootRef,row?.link?.link_id??null,undefined,prelude).then(focus));
         else if(row?.link){
           if(command==="outdent")outdent(row.link);
-          else if(command==="indent")act(history.relink(row.link,rootRef,rows[rows.indexOf(row)-1]!.resource.ref));
+          else if(command==="indent")act((async()=>{const parent=await adjacentNote(row.link!,"before");if(parent)await history.relink(row.link!,rootRef,parent);})());
           else act(history.moveAdjacent(row.link,rootRef,command==="move_up"?"before":"after"));
         }
       },done:()=>{(surface.current?.ownerDocument.activeElement as HTMLElement|null)?.blur();setActive(false);},
     };
-  },[active,history,filter,rows,selected,ancestors,rootRef,occurrencePrefix,prelude,act,focus,outdent,selection.state.keys]);
+  },[active,history,filter,rows,selected,ancestors,rootRef,occurrencePrefix,prelude,act,focus,outdent,selection.state.keys,adjacentNote,current.cursor,read.data]);
   usePaneOutlineCommands(publication);
   if (!runtime || !history) return null;
   return <BlockSelectionContext value={selection}><HistoryContext value={history}><div ref={surface} data-local-outline="true"
@@ -190,14 +200,13 @@ export default function LocalOutline({ rootRef, ancestors = EMPTY_REFS, prelude 
         const link = row.link!;
         const ref = row.resource.ref;
         const key=`${occurrencePrefix}/${link.link_id}`;
-        const previous = rows[index - 1];
-        const indent = () => { if (previous?.resource.kind === "note") act(history.relink(link, rootRef, previous.resource.ref)); };
+        const indent = () => act((async()=>{const parent=await adjacentNote(link,"before");if(parent)await history.relink(link,rootRef,parent);})());
         const move = (direction: number) => act(history.moveAdjacent(link,rootRef,direction<0?"before":"after"));
-        const join = () => { if (previous?.resource.kind === "note" && ref !== previous.resource.ref) act(history.join(previous.resource.ref, ref).then(() => focus(previous.resource.ref))); };
+        const join = (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => act((async()=>{const [neighbor,shown]=await Promise.all([adjacentNote(link,direction==="backward"?"before":"after"),displayed]);if(neighbor&&neighbor!==ref){const destination=direction==="backward"?neighbor:ref;await history.join(destination,direction==="backward"?ref:neighbor,direction==="backward"?{source:shown}:{destination:shown});await focus(destination);}})());
         if(filter.trim() && ![row.resource.title,row.resource.body_text,row.resource.selection?.quote_exact].some(value=>value?.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())))return null;
         return <ResourceOutlineRow key={link.link_id} resourceRef={ref} occurrenceKey={`${occurrencePrefix}/${link.link_id}`}
           incoming={{ kind: "link", linkId:link.link_id,parentLabel:rootRef,unlink:()=>act(history.unlink(link)) }} editable={!filter.trim()}
-          body={row.resource.kind === "note" ? <BoundNoteEditor noteRef={ref} session={history} editable={!filter.trim()} onSplit={position => act(history.split(ref, position, rootRef, link.link_id).then(focus))} onJoinPrevious={join}
+          body={row.resource.kind === "note" ? <BoundNoteEditor noteRef={ref} session={history} editable={!filter.trim()} onSplit={position => act(history.split(ref, position, rootRef, link.link_id).then(focus))} onJoin={join}
             reference={{source_ref:rootRef,label:rootRef,onSelected:(target,item)=>{
               const accept=async()=>{const endpoint=await prepareTarget(runtime,target);await history.paste(rootRef,link.link_id,[{kind:"resource",ref:endpoint.ref,label:item.label,parent:null}],endpoint.intents);};
               setRetryReference(()=>accept);

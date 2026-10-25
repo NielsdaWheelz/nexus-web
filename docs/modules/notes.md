@@ -75,7 +75,7 @@ restore an old body snapshot or overwrite an intervening scalar owner.
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format1`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-1`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.

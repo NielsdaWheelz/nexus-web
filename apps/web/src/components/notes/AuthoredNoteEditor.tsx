@@ -8,10 +8,10 @@ import type { WritingDocument } from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys } from "./NoteEditor";
 import NoteEditor from "./NoteEditor";
-export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoinPrevious, history, structuralKeys, inspection, reference }: {
+export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoin, history, structuralKeys, inspection, reference }: {
   reference?: import("@/lib/resourceGraph/useReferenceInput").ReferenceInputHost | null;
   document: WritingDocument; label: string; editable?: boolean;
-  onSplit?: (displayed: import("@/lib/notes/editorTypes").DisplayedSplit) => void; onJoinPrevious?: () => void;
+  onSplit?: (displayed: import("@/lib/notes/editorTypes").DisplayedSplit) => void; onJoin?: (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => void;
   history?: EditorHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;
 }) {
   const [body, setBody] = useState(() => readBody(document.doc));
@@ -32,6 +32,6 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
   return <NoteEditor reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable} compact
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}
-    keys={{ ...structuralKeys, ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoinPrevious ? { join: direction => { if (direction === "backward") onJoinPrevious(); }, emptyBackspace: onJoinPrevious } : {}) }}
+    keys={{ ...structuralKeys, ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoin ? { join: direction => onJoin(direction,document.capture()), emptyBackspace: ()=>onJoin("backward",document.capture()) } : {}) }}
     onEdit={() => history?.record()} />;
 }
