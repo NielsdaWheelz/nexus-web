@@ -55,7 +55,7 @@ const PaneContent = memo(function PaneContent(props: {
   if (!admitted && !props.isPresented) return null;
   if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
   if (props.routeId !== "unsupported") return renderPane(props.routeId);
-  return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this destination is unavailable" }} announcement="Polite" /></div>;
+  return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "nexus has no view for this address" }} announcement="Polite" /></div>;
 });
 
 /**

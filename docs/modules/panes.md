@@ -1,15 +1,18 @@
-# panes and tabs
+# panes
 
 ## Scope
 
 primary panes are workspace-owned route containers. the desktop strip owns
-switching and tab management; the store owns order, visibility and selection.
+switching and pane management; the store owns order, visibility and selection.
+pane names the workspace object, its strip chip and its management; tab means
+only a browser tab, an aria tab/tablist (inspector tabs, `ui/Tabs`) or the Tab
+key.
 
 ## Desktop Pane Strip
 
 `WorkspacePaneStrip` renders one toolbar in workspace order, including minimized
 panes. each chip has a title and three stable control slots: visibility, layout,
-close. active, in-view, focused and minimized are separate facts. there is no tab
+close. active, in-view, focused and minimized are separate facts. there is no chip
 menu. [visual system](visual-system.md#workspace-strip) owns target geometry.
 
 plain left/right wrap focus through every title and control; home/end reach the
@@ -17,7 +20,7 @@ ends. one roving stop records pane id and slot. ordinary title activation select
 and unminimizes that exact pane, then enters its content within the current
 viewing mode. shift-click or shift-enter forks its current visit into a fresh pane
 immediately after it, preserving the clicked pane even when inactive or minimized.
-there is no tab menu or replacement touch-duplication control.
+there is no touch-duplication control.
 tab exits the toolbar. delete/backspace close once per press, and shift+m toggles
 maximize once per press for the focused pane. repeated or composing enter/space
 cannot dispatch management again or activate a changing slot.
@@ -26,7 +29,7 @@ there are no global shift-letter commands.
 
 `lib/workspace/paneControls.ts` projects ordered slots, commands, icons, accessible
 names, help and disabled reasons from live workspace state, the resolved title,
-desktop mode and viewport composition. strip and manage-tabs render shared
+desktop mode and viewport composition. strip and manage-panes render shared
 `Button` controls and dispatch through their command owners. keys and refs use
 stable slots; a glyph change retains the focused node.
 
@@ -42,7 +45,7 @@ companion sheet takes modal focus. accepted close focuses the next surviving
 title, else the previous or replacement; refused close retains the initiator.
 focused chips reveal only inside the strip, never under a held pointer.
 
-manage-tabs uses ordinary tab order. mobile visible rows offer minimize/close;
+manage-panes uses ordinary tab order. mobile visible rows offer minimize/close;
 minimized titles restore through ordinary activation, alongside close. minimizing
 focuses that same row's title and keeps nexus open. mobile has no layout control
 or reorder. desktop management adopts returned selections without dismissing nexus.
@@ -77,10 +80,11 @@ click/tap alternative. this deliberately gives up accessible dragging parity.
 
 header back/forward use the shared gesture classifier and an explicit store
 disposition. ordinary activation traverses; shifted activation opens the exact
-adjacent visit in a fresh pane. pane menus expose “open previous page in new pane”
-and “open next page in new pane”, with disabled reasons for empty stacks.
-selection rechecks the captured current and adjacent visit ids, including
-equal-href occurrences, before admission; refusal preserves the source and menu.
+adjacent visit in a fresh pane. history forking is gesture-only (see
+[workspace](workspace.md#target-activation)). each tooltip names the adjacent
+visit's presentation `name`, truncated to 60 code points:
+`back to {name} · NEW_PANE_HINT` (forward alike), or the hint alone while that
+name is null. accessible names stay stable.
 
 ## Sequential Traversal
 
@@ -158,20 +162,20 @@ path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.
 
-mobile nexus opens to a keyboard-down workspace overview. its tab preview is
+mobile nexus opens to a keyboard-down workspace overview. its pane preview is
 a contiguous window of up to three visible panes around the current pane, in
-workspace order. `all tabs` always exposes the manager and counts every open
+workspace order. `all panes` always exposes the manager and counts every open
 pane, including minimized panes. search is entered explicitly and retains its
 query when returning to the overview within the same opening. desktop nexus
-keeps its compact open-pane preview and direct `Manage tabs…` row.
+keeps its compact open-pane preview and direct `Manage panes…` row.
 
 the manager renders all primary panes and delegates activation, minimize and
 close to the shared workspace commands. desktop adds maximize/restore-canvas;
-mobile restores through title activation. closing a tab
+mobile restores through title activation. closing a pane
 keeps nexus open and adopts the exact committed close selection, including the
-replacement when the final pane closes. focus moves to the next tab, otherwise
-the previous tab or replacement; a root close returns to the surviving row or
-search/all-tabs control. recently closed panes use the workspace provider's
+replacement when the final pane closes. focus moves to the next pane, otherwise
+the previous pane or replacement; a root close returns to the surviving row or
+search/all-panes control. recently closed panes use the workspace provider's
 five-entry session-local stack. pane count has no cap or recovery workflow;
 history and recently-closed bounds remain owned by
 [workspace](workspace.md#persisted-workspace-sessions). mobile never recreates

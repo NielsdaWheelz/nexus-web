@@ -47,9 +47,13 @@ interface TitleResult {
 
 export type PanePresentation = {
   title: string;
+  /** The real name `title` shows; null while `title` is a placeholder (kind noun, loading, unavailable, untitled). */
+  name: string | null;
   detail: string | null;
   status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed";
 };
+
+export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 
 interface Presentations {
   forVisit(visit: PaneVisit): PanePresentation;
@@ -266,9 +270,9 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   const status = read.key === requestKey ? read.status : "Loading";
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
-    if (route.labelMode === "static") return { title: route.defaultLabel, detail: null, status: "Ready" };
+    if (route.labelMode === "static") return { title: route.defaultLabel, name: route.defaultLabel, detail: null, status: "Ready" };
     let kind = kindOf(route, route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null);
-    if (!route.titleKey) return { title: `unavailable ${kind}`, detail: "unavailable", status: "Unavailable" };
+    if (!route.titleKey) return { title: `unavailable ${kind}`, name: null, detail: "unavailable", status: "Unavailable" };
     const current = retained.has(route.titleKey);
     const canonical = current ? read.facts.get(route.titleKey) : undefined;
     // Saved titles are display evidence only: never canonical facts, versions or
@@ -288,34 +292,38 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
     const live = text && !text.gone && text.unsettled ? text : null;
     const settled = settledTitle(canonical, text);
     const title = live?.title ?? settled ?? savedTitle ?? visit.title_hint;
-    const named = title === null ? null : title.trim() ? title : `untitled ${kind}`;
+    const name = title?.trim() ? title : null;
+    const named = title === null ? null : name ?? `untitled ${kind}`;
     if (live && live.acknowledged === null) {
-      return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
+      return { title: named ?? `untitled ${kind}`, name, detail: "unsaved", status: "Unsaved" };
     }
     if (!current) {
       return named
-        ? { title: named, detail: live ? "unsaved" : kind, status: live ? "Unsaved" : "Ready" }
-        : { title: kind, detail: "open to load title", status: "Unresolved" };
+        ? { title: named, name, detail: live ? "unsaved" : kind, status: live ? "Unsaved" : "Ready" }
+        : { title: kind, name: null, detail: "open to load title", status: "Unresolved" };
     }
-    if (savedTitle !== null) return { title: named ?? `untitled ${kind}`, detail: kind, status: "Ready" };
+    if (savedTitle !== null) return { title: named ?? `untitled ${kind}`, name, detail: kind, status: "Ready" };
     if (status === "Failed") return {
       title: named ?? kind,
+      name,
       detail: named ? "couldn’t refresh title" : "couldn’t load title",
       status: "Failed",
     };
     if (status === "Loading") return {
       title: named ?? "loading title…",
+      name,
       detail: named ? "loading title…" : kind,
       status: "Loading",
     };
     if (canonical === null) return {
       title: live ? live.title.trim() ? live.title : `untitled ${kind}`
         : visit.title_hint ?? `unavailable ${kind}`,
+      name: live ? name : visit.title_hint,
       detail: live || visit.title_hint ? "removed or no longer accessible" : "unavailable",
       status: "Unavailable",
     };
-    if (live) return { title: named ?? `untitled ${kind}`, detail: "unsaved", status: "Unsaved" };
-    return { title: named ?? `untitled ${kind}`, detail: canonical ? metadata(canonical, kind) : kind, status: "Ready" };
+    if (live) return { title: named ?? `untitled ${kind}`, name, detail: "unsaved", status: "Unsaved" };
+    return { title: named ?? `untitled ${kind}`, name, detail: canonical ? metadata(canonical, kind) : kind, status: "Ready" };
   }, [read.facts, retained, dailyRefs, status, catalog]);
   const resourceRefForVisit = useCallback((visit: PaneVisit): string | null => {
     const route = resolvePaneRouteModel(visit.href);

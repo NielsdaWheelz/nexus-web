@@ -68,9 +68,11 @@ selection scope while execution keeps the same catalog command ids.
   therefore survive an action defect.
 - a row ellipsis supplies `action_ref` in either family. when it differs from the
   displayed passage, management appears in `source: {label}`. row composition
-  omits loaded open/fork; `any-pointer: coarse` adds exactly one local fork from
-  displayed activation, preserving location. that activation participates in menu
-  subject identity, so a changed route retires the open menu.
+  omits loaded open/fork, as do menus on the subject their pane publishes
+  ([workspace](workspace.md#target-activation) rule 3); `any-pointer: coarse`
+  adds exactly one local fork from displayed activation, preserving location.
+  that activation participates in menu subject identity, so a changed route
+  retires the open menu.
 - a bullet relationship menu supplies no resource ref/fork. right-click,
   context-menu key, shift-f10 and stationary touch hold use the shared context
   anchor. native title link menus stay native. movement, scroll, cancellation,

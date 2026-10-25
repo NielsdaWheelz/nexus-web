@@ -223,7 +223,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
 });
 
 const UNSUPPORTED: PaneRouteTraits = {
-  defaultLabel: "Tab",
+  defaultLabel: "Unavailable destination",
   labelMode: "static",
   icon: Globe,
   section: null,

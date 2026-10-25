@@ -580,7 +580,7 @@ export function projectResourceActions(
         resource.scheme !== "media" ? triggerEl : focused instanceof HTMLElement && focused !== document.body
           ? focused
           : triggerEl,
-      fallback: returnFocus ?? (() => findPaneChromeFocusTarget(pane)),
+      fallback: returnFocus ?? (() => findPaneChromeFocusTarget(pane) ?? findPaneLandmarkFocusTarget(pane)),
     });
   };
 

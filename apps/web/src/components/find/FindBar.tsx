@@ -1,11 +1,10 @@
 "use client";
 
-import { forwardRef, useId, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, RotateCcw, TextSearch, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
-import ActionMenu from "@/components/ui/ActionMenu";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -191,9 +190,7 @@ export function FindResults({
   const runtime = usePaneRuntime();
   const [refusal, setRefusal] = useState<string | null>(null);
   const { result } = find;
-  const matched = result.kind === "Rows" ? result.rows : null;
-  const publication = useMemo(() => matched === null ? "" : crypto.randomUUID(), [matched]);
-  const open = (row: FindRow<unknown>, href: string | null, event: TargetActivationEvent, fork: boolean): TargetLinkActivationResult => {
+  const open = (row: FindRow<unknown>, href: string | null, event: TargetActivationEvent): TargetLinkActivationResult => {
     const activation = workspaceTargetActivationIntent(event, href === null ? "activate" : "native");
     if (activation.kind === "Unowned") return "unhandled";
     if (activation.kind === "Consume") { event.preventDefault(); return "consumed"; }
@@ -206,18 +203,15 @@ export function FindResults({
     };
     if (currentHref === null) {
       event.preventDefault();
-      if (!fork && activation.intent === "default") { local(); return "handled-default"; }
+      if (activation.intent === "default") { local(); return "handled-default"; }
       setRefusal("this match is no longer available");
       return "consumed";
     }
     if (currentHref !== href) { event.preventDefault(); setRefusal("this match is no longer available"); return "consumed"; }
-    const handled = activateTargetLink({ event, runtime: fork && runtime ? {
-      activateTarget: (request) => runtime.activateTarget({ ...request, disposition: { kind: "Fork" } }),
-    } : runtime, target: { href: currentHref }, onDefault: fork ? undefined : local });
-    if (handled === "handled-new-pane" || fork && handled === "handled-default") { setRefusal(null); onPreviewed(); }
+    const handled = activateTargetLink({ event, runtime, target: { href: currentHref }, onDefault: local });
+    if (handled === "handled-new-pane") { setRefusal(null); onPreviewed(); }
     return handled;
   };
-  const controls: Record<string, ReactNode> = {};
   const rows = result.kind === "Rows" ? result.rows.map((row, index): CollectionRowView => {
     const text = row.snippet.map((segment) => segment.text).join("");
     const current = index === result.active;
@@ -228,13 +222,6 @@ export function FindResults({
       text,
     ];
     const href = find.targetHref(row);
-    controls[String(index)] = <ActionMenu label={`more actions for match ${index + 1}`} source={{
-      kind: "Immediate", subjectKey: `find:${publication}:${index}`, title: `match ${index + 1}`,
-      content: { sections: [{ id: "Open", label: null, options: [{ kind: "link", id: "OpenInPane", label: "open in new pane",
-        ...(href === null ? { href: null, disabled: true as const } : { href }),
-        disabledReason: href === null ? "opening this match in a new pane is unavailable" : undefined,
-        onActivate: (event) => open(row, href, event, true) }] }] },
-    }} />;
     return {
       id: String(index),
       kind: "search_result",
@@ -244,7 +231,7 @@ export function FindResults({
         kind: "link",
         href,
         label: label.filter(Boolean).join(": "),
-        onActivate: (event) => open(row, href, event, false),
+        onActivate: (event) => open(row, href, event),
       },
       title: { text, segments: row.snippet },
       context:
@@ -278,7 +265,6 @@ export function FindResults({
             status="ready"
             ariaLabel="Search results"
             rowActionsAvailable={false}
-            rowControls={controls}
             surface={false}
           />
         </>

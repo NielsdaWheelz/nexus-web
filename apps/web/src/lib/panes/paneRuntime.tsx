@@ -41,7 +41,6 @@ export interface PaneRouterOptions {
 }
 export interface PaneScopedRouter {
   readonly canGoBack: boolean;
-  readonly canGoForward: boolean;
   push(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
   replace(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
   back(options: PaneHistoryOptions): WorkspaceNavigationResult;
@@ -134,9 +133,6 @@ export function PaneRuntimeProvider(props: {
     const router: PaneScopedRouter = {
       get canGoBack() {
         return now().pane.history.back.length > 0;
-      },
-      get canGoForward() {
-        return now().pane.history.forward.length > 0;
       },
       push: (target, options) => go(target, false, options),
       replace: (target, options) => go(target, true, options),
