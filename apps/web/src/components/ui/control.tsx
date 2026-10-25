@@ -102,7 +102,7 @@ export function controlTriggerProps({ help, attributes, blocked }: {
   };
   return {
     ref: help.ref,
-    "aria-describedby": cx(help["aria-describedby"], attributes["aria-describedby"]) || undefined,
+    "aria-describedby": attributes["aria-describedby"] ?? help["aria-describedby"],
     onPointerEnter: (event: PointerEvent<Trigger>) => { help.onPointerEnter(event); attributes.onPointerEnter?.(event); },
     onPointerLeave: (event: PointerEvent<Trigger>) => { help.onPointerLeave(event); attributes.onPointerLeave?.(event); },
     onPointerDown: (event: PointerEvent<Trigger>) => { help.onPointerDown(event); attributes.onPointerDown?.(event); },
