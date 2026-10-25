@@ -73,7 +73,7 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
   if (startup?.binding && initial.current !== null) {
     const binding = startup.binding;
     return <DeviceWorkspaceContext value={{ initial: initial.current, revision }}>
-      <AuthenticatedWorkspaceErrorBoundary>
+      <AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}>
         <CatalogProvider key={binding.account.account_id} accountId={binding.account.account_id}><AuthenticatedShell
           account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
           readerProfile={binding.reader_profile}

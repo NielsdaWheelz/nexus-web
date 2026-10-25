@@ -28,12 +28,22 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
 function changed() { for (const port of ports) port.postMessage({ kind: "changed", status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.last_error ?? null }); }
 async function response(path: string, body: unknown | null, signal: AbortSignal) {
   let result: Response;
-  try { result = await fetch(path, { signal, method: body === null ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: { "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Account": account!, ...(body === null ? {} : { "Content-Type": "application/json" }) }, body: body === null ? null : JSON.stringify(body) }); }
-  catch (error) { throw Object.assign(new Error("authored network unavailable", { cause: error }), { status: 0 }); }
+  const deadline = AbortSignal.timeout(path === "/api/authored/snapshot" ? 280_000 : 30_000);
+  const requestSignal = AbortSignal.any([signal, deadline]);
+  try { result = await fetch(path, { signal: requestSignal, method: body === null ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: { "X-Nexus-Wire": String(WIRE_REVISION), "X-Nexus-Account": account!, ...(body === null ? {} : { "Content-Type": "application/json" }) }, body: body === null ? null : JSON.stringify(body) }); }
+  catch (error) { throw Object.assign(new Error("authored network unavailable", { cause: error }), { status: deadline.aborted && !signal.aborted ? 504 : 0 }); }
   if (!result.ok) throw Object.assign(new Error(`authored request failed (${result.status})`), { status: result.status });
   return result;
 }
 async function operation(port: MessagePort, op: string, input: Record<string, unknown>) {
+  if (op === "retire") {
+    if (input.format_revision !== FORMAT_REVISION || typeof input.account_id !== "string" || account !== null && account !== input.account_id) throw new Error("authored retirement account or format mismatch");
+    retired = true; sync?.close(); hints?.close();
+    await persistence?.db.close();
+    for (const current of ports) current.postMessage({ kind: "retired" });
+    for (const current of ports) current.close();
+    ports.clear(); scope.close(); return null;
+  }
   if (op === "hello") {
     if (input.format_revision !== FORMAT_REVISION || typeof input.account_id !== "string") throw new Error("authored worker format mismatch");
     if (account !== null && account !== input.account_id) throw new Error("authored worker account mismatch");
@@ -78,6 +88,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       if (BigInt(String(input.command_seq)) > BigInt(state.command_seq)) throw new Error("unknown authored source command");
       return (await persistence.db.all("SELECT command_seq FROM pending_changes WHERE command_seq=?", [BigInt(String(input.command_seq))])).length === 0;
     }
+    case "read_snapshot": return persistence.readSnapshot(input.selection as unknown as StateSelection);
     case "replica": return persistence.replica();
     case "states": return persistence.states(input.selection as unknown as StateSelection);
     case "query": {
@@ -100,12 +111,6 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     }
     case "wake": sync!.facts.online = input.online !== false; sync!.wake(); hints?.start(); return null;
     case "close": ports.delete(port); port.close(); return null;
-    case "retire":
-      retired = true; sync?.close(); hints?.close();
-      await persistence.db.close();
-      for (const current of ports) current.postMessage({ kind: "retired" });
-      for (const current of ports) current.close();
-      ports.clear(); scope.close(); return null;
     default: throw new Error("unknown authored operation");
   }
 }

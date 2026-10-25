@@ -24,6 +24,8 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
+import styles from "./page.module.css";
+
 type ResolvedPage = { ref: string; prelude: Intent[] };
 
 export default function PagePaneBody() {
@@ -143,10 +145,10 @@ function PageContent({ writing, pageId, localDate }: { writing: WritingRuntime; 
   return <div ref={surface}>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
     {localError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
-      actions={[{ label: "retry saving", onClick: () => { void writing.retry(); } }, { label: "copy text", onClick: () => { void navigator.clipboard.writeText(titleInput.current?.value ?? ""); } }]} /> : null}
+      actions={[{ label: "retry saving", onClick: () => { void writing.retry().catch(setEntryError); } }, { label: "copy text", onClick: () => { void navigator.clipboard.writeText(titleInput.current?.value ?? "").catch(setEntryError); } }]} /> : null}
     {entryError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
     {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
-    <BoundPageTitleEditor pageRef={ref} prelude={prelude} initialTitle={initialTitle} placeholder={pageTitle("", date)} inputRef={titleInput} onEnter={enterTitle} />
+    <div className={styles.title}><BoundPageTitleEditor pageRef={ref} prelude={prelude} initialTitle={initialTitle} placeholder={pageTitle("", date)} inputRef={titleInput} onEnter={enterTitle} /></div>
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} />
   </div>;

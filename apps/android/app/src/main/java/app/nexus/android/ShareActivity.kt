@@ -15,6 +15,8 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -57,7 +59,10 @@ class ShareActivity : AppCompatActivity() {
                 finish()
             }
         }
-        showStatus("connecting…", "", checking = true)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { requestExit { finish() } }
+        })
+        showStatus("opening capture…", "", checking = true)
     }
 
     override fun onResume() {
@@ -70,7 +75,7 @@ class ShareActivity : AppCompatActivity() {
 
     private fun admit() {
         val generation = ++resumeGeneration
-        if (webView == null) showStatus("connecting…", "", checking = true)
+        if (webView == null) showStatus("opening capture…", "", checking = true)
         lifecycleScope.launch {
             try {
                 device.initialize()
@@ -102,17 +107,19 @@ class ShareActivity : AppCompatActivity() {
 
     private fun createWebView(): WebView = WebView(this).apply {
         NexusWebView.configure(this)
-        authored = app.nexus.android.authored.AuthoredBridge(this, device).also { check(it.install()); it.setForeground(true) }
+        authored = app.nexus.android.authored.AuthoredBridge(this, device).also { if (!it.install()) throw LocalStateError("E_AUTHORED_UNAVAILABLE", "update Android System WebView to save notes on this device"); it.setForeground(true) }
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 if (view !== webView || request?.isForMainFrame != true) return false
                 val uri = request.url
                 if (isHandledShareCallback(uri)) {
-                    if (uri.host == "open") {
-                        uri.getQueryParameter("path")?.takeIf { it.startsWith("/") && !it.startsWith("//") }
-                            ?.let { openMain(Uri.parse(BuildConfig.NEXUS_BASE_URL.trimEnd('/') + it)) }
+                    requestExit {
+                        if (uri.host == "open") {
+                            uri.getQueryParameter("path")?.takeIf { it.startsWith("/") && !it.startsWith("//") }
+                                ?.let { openMain(Uri.parse(BuildConfig.NEXUS_BASE_URL.trimEnd('/') + it)) }
+                        }
+                        finish()
                     }
-                    finish()
                     return true
                 }
                 if (request.method == "GET" && isCapture(uri)) return false
@@ -138,6 +145,22 @@ class ShareActivity : AppCompatActivity() {
                     device.remoteAdmission in setOf("Ready", "Unavailable")) device.requestCheck()
             }
         }
+    }
+
+    private fun requestExit(exit: () -> Unit) {
+        val view = webView ?: return exit()
+        val generation = resumeGeneration
+        val failed = {
+            AlertDialog.Builder(this).setTitle("couldn’t check unsaved writing")
+                .setMessage("keep this capture open. retry saving or copy any unfinished text before leaving.")
+                .setNegativeButton("keep open", null).show()
+        }
+        try {
+            view.evaluateJavascript("(function(){try{var escape=new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});document.dispatchEvent(escape);if(escape.defaultPrevented)return true;var event=new Event('nexus:request-exit',{cancelable:true});document.dispatchEvent(event);return event.defaultPrevented;}catch(error){return null;}})()") { blocked ->
+                if (generation != resumeGeneration || isFinishing || isDestroyed) return@evaluateJavascript
+                when (blocked) { "false" -> exit(); "true" -> Unit; else -> failed() }
+            }
+        } catch (_: RuntimeException) { failed() }
     }
 
     private fun openMain(uri: Uri) {

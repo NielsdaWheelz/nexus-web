@@ -40,7 +40,8 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   const entries = context.status === "ready" ? context.data.items : [];
   const actionFacts = usePodcastActionFacts({ scope: `Chat.Context:${conversationId}`,
     targets: entries.flatMap(entry => entry.item.ref.startsWith("podcast:") && entry.item.preview.body.kind === "named" && !entry.item.missing ? [{ kind: "Canonical" as const, podcast_id: entry.item.ref.slice(8) }] : []),
-    refresh: `${refreshKey}:${revision}:${metadata}:${context.status === "ready" ? context.generation : ""}`,
+    // facts follow each read of the server-owned context; no local graph change alters that list before upload.
+    refresh: `${refreshKey}:${metadata}:${context.status === "ready" ? context.generation : ""}`,
   });
   const factsError = actionFacts.status === "loading" ? null : actionFacts.error;
   const failure = context.status === "loading" ? null : context.error;

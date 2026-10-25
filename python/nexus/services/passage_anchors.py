@@ -132,13 +132,14 @@ def materialize_or_reuse(
     resolver; empty, ambiguous, or unmatched quotes are a typed refusal, and locator
     geometry never disambiguates identity. The semantic owner resolves the permanent
     binding or mints its identity and stamps the literal quote capture; its projection
-    writes the ``passage_anchors`` row. Flush-only inside the caller's transaction,
-    after the caller's conversation and media locks.
+    writes the ``passage_anchors`` row. Flush-only inside the caller's transaction:
+    the account head precedes the post's media family lock, as in every authored writer.
     """
     if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
         raise AssertionError(  # justify-defect: callers pass the closed media|note_block set
             f"Invalid passage-anchor owner scheme: {owner_scheme!r}"
         )
+    authored.lock_account(db, user_id)
 
     if (
         owner_scheme == "media"

@@ -1,5 +1,7 @@
 "use client";
 
+import { DeviceSettingsStatus } from "@/lib/native/settingsRefresh";
+
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useId } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
@@ -35,6 +37,7 @@ export default function SettingsReaderPaneBody() {
 
   return (
     <PaneSurface>
+      <DeviceSettingsStatus />
       <PaneSection title="Appearance">
         <fieldset className={styles.form} aria-label="reader settings" disabled={!ready}>
           <div className={styles.pair}>

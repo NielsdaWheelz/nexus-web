@@ -299,7 +299,7 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
     { key: "inside", label: "inside sources", rows: results.filter(row => "section" in row && row.section === "inside") },
   ];
   return <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={interact}>
-    {localApplies ? <LocalResults local={local} more={() => setLocalPages(value => value + 1)} /> : null}
+    {localApplies ? <LocalResults local={local} remote={results} more={() => setLocalPages(value => value + 1)} /> : null}
     <div key={visit.adopted?.key ?? key}>
       {query.view === "resources" ? sections.filter(section => section.rows.length > 0).map(section => <section className={styles.section} key={section.key} aria-label={section.label}>
         <h2 className={styles.sectionHeading}>{section.label}</h2>
@@ -325,24 +325,32 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   </div>;
 }
 
-/** Literal local matches: canonical label, exact excerpt, exact target. */
-function LocalResults({ local, more }: { local: ReturnType<typeof useLocalSearch>; more: () => void }) {
+const LOCAL_KIND_LABELS: Record<LocalMatch["kind"], string> = {
+  notes: "note", highlights: "highlight", saved_passages: "saved passage", documents: "source", conversations: "chat",
+  people: "author", libraries: "library", readings: "reading", web: "web",
+};
+
+/** Literal local matches: canonical label, exact excerpt, exact target. A retained source label
+ * yields to the server's own row for the same ref; authored rows are only ever local. */
+function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
   const runtime = usePaneRuntime();
-  if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search notes on this device" }} announcement="Polite"
+  if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search this device" }} announcement="Polite"
     actions={[{ label: "retry", onClick: local.retry }]} />;
-  if (!local.matches?.length) return null;
-  return <section className={styles.section} aria-label="your notes">
-    <h2 className={styles.sectionHeading}>your notes</h2>
-    <ResourceList ariaLabel="your notes">
-      {local.matches.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}
+  const remoteRefs = new Set(remote.map(row => row.item.ref));
+  const shown = (local.matches ?? []).filter(match => AUTHORED_REF.test(match.resource.ref) || !remoteRefs.has(match.resource.ref));
+  if (!shown.length) return null;
+  return <section className={styles.section} aria-label="on this device">
+    <h2 className={styles.sectionHeading}>on this device</h2>
+    <ResourceList ariaLabel="on this device">
+      {shown.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}
     </ResourceList>
-    {!local.complete ? <Button onClick={more}>show more of your notes</Button> : null}
+    {!local.complete ? <Button onClick={more}>show more from this device</Button> : null}
   </section>;
 }
 
 function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnType<typeof usePaneRuntime> }) {
   const { href, label, excerpt, resource } = match;
-  const kind = resource.kind === "note" ? "note" : resource.kind === "page" ? "page" : "highlight";
+  const kind = resource.kind === "page" ? "page" : LOCAL_KIND_LABELS[match.kind];
   const activate = (event: Parameters<typeof activateTargetLink>[0]["event"]) => href ? activateTargetLink({ event, runtime, target: { href, labelHint: label } }) : undefined;
   return <li className={styles.localResult} data-resource-ref={resource.ref}>
     {href ? <a href={href} data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{label}</a> : <span>{label}</span>}

@@ -7,6 +7,7 @@ import { localCall } from "@/lib/offline/localContent";
 import { bindApiAccount } from "@/lib/api/client";
 import { bindBrowserAdmission, installedApp } from "@/lib/native/admission";
 import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime } from "@/lib/notes/runtime";
+import { discardFailedAuthoredSetup } from "./signOut";
 import { SIGN_IN_SYNC_DETAIL, UPDATE_SYNC_DETAIL } from "./status";
 import { openAuthoredStore } from "./client";
 import { FeedbackState, type FeedbackActions } from "@/components/feedback/Feedback";
@@ -44,6 +45,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
     const retired = () => { explicitlyRetired = true; };
     window.addEventListener("nexus:authored-retired", retired);
     let live = true;
+    let publishedReady = false;
     let opened: AuthoredStore | null = null;
     let unsubscribe: (() => void) | null = null;
     setStore(null); setReady(false); setDetail(null); setFailure(null); setStatus("preparing");
@@ -53,14 +55,24 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
       unsubscribe = value.sync_status((next, cause) => {
         if (!live) return;
         setStatus(next); setDetail(cause);
-        if (next === "preparing") { setReady(false); return; }
-        void value.readReplica().then(replica => { if (live) setReady(replica.provisioning_complete); }, error => { if (live) setFailure(error); });
+        if (publishedReady || next === "preparing") return;
+        void value.readReplica().then(replica => {
+          if (!live || publishedReady) return;
+          publishedReady = replica.provisioning_complete; setReady(publishedReady);
+        }, error => { if (live && !publishedReady) setFailure(error); });
       });
       setStore(value);
     }, error => { if (live) setFailure(error instanceof Error ? error : new Error("couldn’t open your notes on this device")); });
     return () => { window.removeEventListener("nexus:authored-retired", retired); releaseAccount(); releaseAdmission(); live = false; unsubscribe?.(); if (opened) void (explicitlyRetired ? discardWritingRuntime(accountId) : closeWritingRuntime(accountId)).then(() => opened?.close()).catch(reportError); };
   }, [accountId, attempt, host]);
-  if (failure) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your notes on this device", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }]} />;
+  if (failure) {
+    const leave = () => {
+      if (host === "shelf") void localCall("open_hosted", { path: "/downloads" }).catch(error => setFailure(error));
+      else if (host === "share") window.location.assign("nexus-share://open?path=%2Fdownloads");
+      else void discardFailedAuthoredSetup(accountId).catch(error => setFailure(error));
+    };
+    return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your notes on this device", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: host === "workspace" ? "sign out on this device" : "open workspace", onClick: leave }]} />;
+  }
   if (!store || !ready) {
     const signIn = () => {
       if (host === "shelf") {

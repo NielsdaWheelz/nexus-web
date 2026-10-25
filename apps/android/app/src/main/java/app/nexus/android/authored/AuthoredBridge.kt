@@ -203,7 +203,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                 }
                 JSONObject().put("ok", true).put("result", result)
             } catch (error: Exception) {
-                JSONObject().put("ok", false).put("error", JSONObject().put("message", error.message ?: "couldn’t save on this device").put("code", if (error is AuthoredStorageError || error is androidx.sqlite.SQLiteException || error is java.io.IOException && !remoteOperation) "E_AUTHORED_LOCAL" else "E_AUTHORED").put("status", if (error is NexusOriginError) error.status else if (error is NexusNetworkError) 0 else 500))
+                JSONObject().put("ok", false).put("error", JSONObject().put("message", error.message ?: "couldn’t save on this device").put("code", if (error is AuthoredStorageError || error is androidx.sqlite.SQLiteException || error is java.io.IOException && !remoteOperation) "E_AUTHORED_LOCAL" else "E_AUTHORED").put("status", if (error is NexusOriginError) error.status else if (error is NexusNetworkError) { if (error.cause is java.io.InterruptedIOException) 504 else 0 } else 500))
             }
             if (current(message, account)) message.replyProxy.postMessage(reply.put("id", id).toString())
             } finally { if (requests[id] === job) requests.remove(id) }
@@ -214,8 +214,9 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         require(current(message, account))
         return when (request.getString("op")) {
             "hello", "replica" -> store!!.replica()
+            "read_snapshot" -> store!!.readSnapshot(request.getJSONObject("selection"))
             "states" -> store!!.states(request.getJSONObject("selection"))
-            "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("params"))
+            "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("params"), request.getString("plan_key"))
             "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame")) }
             "uploaded" -> JSONObject().put("uploaded", store!!.uploaded(request.getString("command_seq")))
             "pending" -> JSONObject().put("changes", store!!.pending())

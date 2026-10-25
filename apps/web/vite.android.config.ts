@@ -5,7 +5,8 @@ import { cpSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } f
 import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { compileQuery } from "../../node/authored/src/queries";
+import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "../../node/authored/src/queries";
+import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
 import { DEVICE_SCHEMA } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
@@ -29,7 +30,7 @@ export default defineConfig({
     react(),
     {
       name: "installed-assets",
-      writeBundle() {
+      async writeBundle() {
         for (const directory of ["brand", "oracle-plates"])
           cpSync(path.resolve(__dirname, "public", directory), path.join(outDir, directory), { recursive: true });
         copyPdfJsRuntime(path.join(outDir, "pdfjs"));
@@ -41,8 +42,29 @@ export default defineConfig({
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
-        const samples: AuthoredQuery[] = [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }, { kind: "resource", ref: "" }, { kind: "daily", local_date: "" }, { kind: "pages", cursor: null, limit: 100 }, { kind: "annotations", source_ref: "", cursor: null, limit: 100 }, { kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }, { kind: "backlinks", ref: "", cursor: null, limit: 100 }, { kind: "search", text: "", cursor: null, limit: 100 }, { kind: "adjacency", ref: "", cursor: null, limit: 100 }, ...Array.from({ length: 101 }, (_, count): AuthoredQuery => ({ kind: "resolve", refs: Array(count).fill("") }))];
-        writeFileSync(path.join(outDir, "authored-queries.json"), JSON.stringify(Object.fromEntries(samples.map(query => [query.kind === "resolve" ? `resolve_${query.refs.length}` : query.kind === "binding" ? `binding_${query.key.kind}` : query.kind, compileQuery(query).sql]))));
+        const cursor = JSON.stringify(["a0", ""]);
+        const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
+          binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
+          resource: [{ kind: "resource", ref: "" }],
+          daily: [{ kind: "daily", local_date: "" }],
+          pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
+          annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
+          annotation_notes: [{ kind: "annotation_notes", source_ref: "", cursor: null, limit: 100 }],
+          backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
+          search: [{ kind: "search", text: "", cursor: null, limit: 100 }],
+          adjacency: [null, cursor].map(cursor => ({ kind: "adjacency", ref: "", cursor, limit: 100 })),
+          adjacency_window: [null, cursor].map(cursor => ({ kind: "adjacency_window", ref: "", link_id: "", cursor, limit: 100 })),
+          positions: [{ kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tail" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "before" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "after" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "bounds", position: "a0" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tie", position: "a0", cursor: null, limit: 100 } }],
+          resolve: Array.from({ length: 101 }, (_, count) => ({ kind: "resolve", refs: Array(count).fill("") })),
+        };
+        const statements: Record<string, string> = { search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL };
+        for (const query of Object.values(samples).flat()) {
+          const { plan_key } = await nativeQueryPlan(query);
+          const sql = compileQuery(query).sql;
+          if (statements[plan_key] !== undefined && statements[plan_key] !== sql) throw new Error("native query plan collision");
+          statements[plan_key] = sql;
+        }
+        writeFileSync(path.join(outDir, "authored-queries.json"), JSON.stringify(statements));
         rmSync(nativeOutDir, { recursive: true, force: true });
         mkdirSync(nativeOutDir, { recursive: true });
         cpSync(outDir, nativeOutDir, { recursive: true });
@@ -69,6 +91,6 @@ self.addEventListener("activate",event=>event.waitUntil((async()=>{for(const key
 self.addEventListener("message",event=>{if(event.data?.op==="ready")event.waitUntil((async()=>{const cache=await caches.open(CACHE);const ready=(await Promise.all(ASSETS.map(asset=>cache.match(asset)))).every(Boolean);event.ports[0]?.postMessage({ready});})());});
 self.addEventListener("fetch",event=>{const request=event.request,url=new URL(request.url);if(request.method!=="GET"||url.origin!==self.location.origin)return;
 if(ASSETS.includes(url.pathname)){event.respondWith((async()=>{const cache=await caches.open(CACHE);return await cache.match(url.pathname)||fetch(request);})());return;}
-if(request.mode!=="navigate"||!(/^\/(?:$|notes(?:\/[^/]+)?$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
+if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
 event.respondWith((async()=>{const cached=await(await caches.open(CACHE)).match("/_nexus/app/index.html");if(!cached)throw Error("offline workspace shell incomplete");const nonce=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));const html=(await cached.text()).replaceAll("__NEXUS_NONCE__",nonce);return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Content-Security-Policy":POLICY.replaceAll("__NEXUS_NONCE__",nonce),"Cache-Control":"no-store"}});})());});`;
 }

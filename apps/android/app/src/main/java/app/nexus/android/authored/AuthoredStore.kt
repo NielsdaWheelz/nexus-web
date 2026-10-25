@@ -12,6 +12,7 @@ import java.util.UUID
  * transactions, never CRDT merging. Every projection accompanies merged states
  * from the signed shared kernel. FULL commits precede all saved receipts. */
 internal class AuthoredStore(private val context: Context, val account: UUID) {
+    private val queries = JSONObject(context.assets.open("app/authored-queries.json").bufferedReader().use { it.readText() })
     private val connection: SQLiteConnection
     init {
         val directory = context.filesDir.resolve("authored").also { check(it.exists() || it.mkdirs()) }
@@ -62,6 +63,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         row.put("provisioning_complete", row.getString("provisioning_complete") == "1")
         return row
     }
+    fun readSnapshot(selection: JSONObject): JSONObject = JSONObject().put("replica", replica()).put("states", states(selection))
     fun states(selection: JSONObject): JSONObject {
         val result = JSONObject()
         for ((table, key, selector) in listOf(Triple("resources", "ref", "refs"), Triple("links", "link_id", "link_ids"), Triple("passages", "anchor_id", "anchor_ids"), Triple("source_stubs", "source_ref", "source_refs"))) {
@@ -91,8 +93,6 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             val encoded = when (resource.getString("kind")) { "note" -> resource.remove("body_state") as String; "page" -> resource.remove("title_state") as String; else -> null }
             val bytes = encoded?.let { Base64.decode(it, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) }
             run("INSERT INTO resources(ref,kind,state_json,merge_bytes,projection_json,visible,body_text,title,local_date,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ref) DO UPDATE SET state_json=excluded.state_json,merge_bytes=excluded.merge_bytes,projection_json=excluded.projection_json,visible=excluded.visible,body_text=excluded.body_text,title=excluded.title,local_date=excluded.local_date,source_ref=excluded.source_ref", ref, resource.getString("kind"), resource.toString(), bytes, projection.toString(), projection.getBoolean("visible"), projection.opt("body_text"), projection.opt("title"), projection.opt("local_date"), projection.opt("source_ref"))
-            run("DELETE FROM search_fts WHERE ref=?", ref)
-            if (projection.getBoolean("visible")) run("INSERT INTO search_fts(ref,text) VALUES(?,?)", ref, listOf("title", "body_text").firstNotNullOfOrNull { key -> projection.opt(key)?.takeUnless { it == JSONObject.NULL } } ?: projection.optJSONObject("selection")?.optString("quote_exact") ?: "")
             run("DELETE FROM reference_index WHERE owner_ref=?", ref)
             val refs = projection.getJSONArray("embedded_refs")
             for (at in 0 until refs.length()) run("INSERT OR IGNORE INTO reference_index VALUES(?,?)", ref, refs.getString(at))
@@ -112,6 +112,13 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         }
         val stubs = states.getJSONArray("source_stubs")
         for (index in 0 until stubs.length()) { val state = stubs.getJSONObject(index); run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", state.getString("source_ref"), state.toString()) }
+        val indexed = mutableSetOf<String>()
+        for (index in 0 until resources.length()) indexed.add(resources.getJSONObject(index).getString("ref"))
+        for (index in 0 until passages.length()) indexed.add("passage_anchor:${passages.getJSONObject(index).getString("anchor_id")}")
+        for (index in 0 until stubs.length()) indexed.add(stubs.getJSONObject(index).getString("source_ref"))
+        val searchSql = queries.getString("search_index")
+        val removeSql = queries.getString("search_remove")
+        for (ref in indexed) { run(removeSql, ref); run(searchSql, ref) }
     }
     fun commit(frame: JSONObject): JSONObject = transaction {
         val current = replica(); val change = frame.getJSONObject("change")
@@ -152,21 +159,26 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, entries.length(), lamport)
         replica()
     }
-    fun resetProvisioning() = transaction { for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_fts")) run("DELETE FROM $table") }
+    fun resetProvisioning() = transaction { for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents")) run("DELETE FROM $table") }
     fun stage(states: JSONObject) = transaction { require(!replica().getBoolean("provisioning_complete")); write(states) }
     fun finishProvisioning(cursor: String, counts: JSONObject, lamport: String) = transaction {
         for (table in listOf("resources", "links", "passages", "source_stubs")) require(rows("SELECT COUNT(*) AS count FROM $table").getJSONObject(0).getString("count").toLong() == counts.getLong(table))
         run("UPDATE replica_state SET provisioning_complete=1,server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", cursor.toLong(), lamport.toLong())
     }
-    fun query(query: JSONObject, params: JSONArray): JSONObject {
+    fun query(query: JSONObject, params: JSONArray, planKey: String): JSONObject {
         require(replica().getBoolean("provisioning_complete"))
         val kind = query.getString("kind")
-        val key = if (kind == "resolve") "resolve_${query.getJSONArray("refs").length()}" else if (kind == "binding") "binding_${query.getJSONObject("key").getString("kind")}" else kind
-        val queries = JSONObject(context.assets.open("app/authored-queries.json").bufferedReader().use { it.readText() })
-        require(queries.has(key) && params.length() <= 100)
-        val sql = queries.getString(key)
+        require(planKey.startsWith("$kind:") && queries.has(planKey) && params.length() <= 100)
+        val sql = queries.getString(planKey)
         val records = rows(sql, *Array(params.length()) { params.opt(it) })
-        if (kind == "binding") return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("next_cursor", JSONObject.NULL).put("binding_id", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).getString("binding_id"))
+        if (kind == "binding") return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL).put("positions", JSONArray()).put("binding_id", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).getString("binding_id"))
+        if (kind == "positions") {
+            val positions = JSONArray()
+            for (index in 0 until records.length()) positions.put(JSONObject(records.getJSONObject(index).getString("position_json")))
+            val at = query.getJSONObject("at")
+            val cursor: Any = if (at.getString("kind") == "tie" && positions.length() == minOf(100, at.getInt("limit")) && positions.length() > 0) records.getJSONObject(records.length() - 1).getString("cursor_json") else JSONObject.NULL
+            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("positions", positions).put("next_cursor", cursor).put("previous_cursor", JSONObject.NULL).put("binding_id", JSONObject.NULL)
+        }
         val output = JSONArray()
         for (index in 0 until records.length()) {
             val row = records.getJSONObject(index)
@@ -178,7 +190,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             val record = records.getJSONObject(records.length() - 1)
             cursor = if (record.has("cursor_json")) record.getString("cursor_json") else last.getJSONObject("resource").getString("ref")
         }
-        return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("next_cursor", cursor).put("binding_id", JSONObject.NULL)
+        return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("next_cursor", cursor).put("previous_cursor", if (records.length() > 0 && records.getJSONObject(0).has("previous_cursor")) records.getJSONObject(0).opt("previous_cursor") else JSONObject.NULL).put("positions", JSONArray()).put("binding_id", JSONObject.NULL)
     }
     fun close() { connection.close() }
     companion object {

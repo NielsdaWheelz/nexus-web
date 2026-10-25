@@ -160,10 +160,7 @@ export function parseBody(json: unknown): NoteBody {
   return bodyFromNode(block);
 }
 
-export const emptyBody = (): NoteBody => ({
-  body_pm_json: { type: "body" },
-  body_text: "",
-});
+export const emptyBody = (): NoteBody => bodyText("");
 
 export function bodyText(text: string): NoteBody {
   const paragraph = noteBodySchema.nodes.body!;

@@ -3064,9 +3064,10 @@ export interface paths {
         };
         /**
          * Stream Writing
-         * @description Listen first, then read the account's authored feed head in every fresh snapshot.
+         * @description Listen first, then read the authored head and annotation token in every fresh snapshot.
          *
-         *     A hint only: clients catch up through ``GET /authored/changes`` from their cursor.
+         *     A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
+         *     refetch document maps whose ``annotations_version`` moved.
          */
         get: operations["stream_writing_stream_writing_get"];
         put?: never;
@@ -3718,11 +3719,6 @@ export interface components {
             /** Remaining Seconds */
             remaining_seconds: number | null;
             summary: components["schemas"]["MediaSummaryOut"];
-        };
-        /** CatalogNoteOut */
-        CatalogNoteOut: {
-            order: components["schemas"]["UpdatedTitleOrder"];
-            value: components["schemas"]["NotePageSummaryOut"];
         };
         /** CatalogPodcastIndexOut */
         CatalogPodcastIndexOut: {
@@ -7854,21 +7850,6 @@ export interface components {
              */
             type: "note_block_offsets";
         };
-        /** NotePageSummaryOut */
-        NotePageSummaryOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Title */
-            title: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
         /** NotePatch */
         NotePatch: {
             /** Body Update */
@@ -7950,8 +7931,6 @@ export interface components {
             library_shows: components["schemas"]["CatalogLibraryShowsOut"][];
             /** Media */
             media: components["schemas"]["CatalogMediaOut"][];
-            /** Notes */
-            notes: components["schemas"]["CatalogNoteOut"][];
             /** Shows */
             shows: components["schemas"]["CatalogShowOut"][];
             /**
@@ -9930,8 +9909,11 @@ export interface components {
         /**
          * ReaderDocumentMapOut
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
+         *     ``annotations_version`` moves when the viewer's readable annotations of it change.
          */
         ReaderDocumentMapOut: {
+            /** Annotations Version */
+            annotations_version: number;
             diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
@@ -12129,9 +12111,9 @@ export interface components {
             /** Exact */
             exact: string;
             /** Prefix */
-            prefix?: string;
+            prefix?: string | null;
             /** Suffix */
-            suffix?: string;
+            suffix?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -12980,9 +12962,13 @@ export interface components {
         };
         /**
          * WritingState
-         * @description ``revision`` is the account's ``authored_heads.head_seq`` as a decimal counter.
+         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``annotations_revision`` changes
+         *     whenever any of the viewer's media ``annotations`` lanes is bumped (a peer's or grant's
+         *     highlight change), so a mounted reader refetches its document map. Decimal counters.
          */
         WritingState: {
+            /** Annotations Revision */
+            annotations_revision: string;
             /** Revision */
             revision: string;
         };

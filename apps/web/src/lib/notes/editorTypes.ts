@@ -6,3 +6,5 @@ export interface NoteEdit { editBase?: TextEditBase; before: NoteBody; after: No
 export type FocusSelection = { anchor: number; head: number; direction?: "forward" | "backward" | "none" } | "end";
 export type OutlineCommand = "insert" | "indent" | "outdent" | "move_up" | "move_down" | "undo" | "redo";
 export interface OutlineCommandState { enabled: boolean; reason: string | null }
+
+export interface DisplayedSplit { body_state:string; from:number; to:number }

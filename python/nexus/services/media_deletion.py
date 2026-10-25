@@ -18,7 +18,7 @@ removal marker so automatic acquisition cannot restore the episode.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -106,6 +106,7 @@ def _references(db: Session, media_id: UUID) -> bool:
         UNION
         SELECT h.anchor_media_id FROM resource_grants g
         JOIN highlights h ON g.subject_scheme = 'highlight' AND g.subject_id = h.id
+        WHERE h.authored_visible
         UNION
         SELECT media_id FROM ({retained_x_post_roots_sql()}) retained
     """
@@ -156,6 +157,31 @@ def claim_document_teardown_if_unreferenced_locked(db: Session, media_id: UUID) 
         return False
     _claim_teardown(db, media_id)
     return True
+
+
+def lock_highlight_sources(db: Session, highlight_ids: Sequence[UUID]) -> list[UUID]:
+    """Lock the source families of highlights about to become hidden; return their media.
+
+    The authored projection calls this under the account head and before it writes those
+    highlights or publishes keywords: a live highlight on an X post, or a live highlight
+    carrying a grant, is a teardown root. Flush-free; may raise ``TransactionRestart``.
+    """
+    media_ids = db.scalars(
+        text(
+            "SELECT DISTINCT anchor_media_id FROM highlights"
+            " WHERE id = ANY(:ids) AND anchor_media_id IS NOT NULL"
+        ),
+        {"ids": list(highlight_ids)},
+    ).all()
+    return library_entries.lock_media_rows_in_order(db, list(media_ids)) if media_ids else []
+
+
+def release_highlight_sources(db: Session, media_ids: Sequence[UUID]) -> None:
+    """After the projection hid the highlights: claim each source whose final retainer they
+    were. Another library entry, grant, live highlight or passage root keeps the bytes;
+    the caller still holds the locks taken by ``lock_highlight_sources``."""
+    for media_id in sorted(set(media_ids)):
+        claim_document_teardown_if_unreferenced_locked(db, media_id)
 
 
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:

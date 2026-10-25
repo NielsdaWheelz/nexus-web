@@ -3,15 +3,17 @@
  * daily titles display a placeholder; the date default is never authored text. */
 import { useEffect, useRef, useState } from "react";
 import * as Y from "yjs";
+import { textReplacement } from "@nexus/authored/documents";
 import type { Intent } from "@nexus/authored/commands";
 import { useWritingDocument } from "@/lib/notes/hooks";
+import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 export default function BoundPageTitleEditor({ pageRef, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, prelude = [], initialTitle = "" }: {
   prelude?: readonly Intent[]; initialTitle?: string;
   pageRef: string; label?: string; editable?: boolean; placeholder?: string;
   onEnter?: () => void; inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  const { document, error } = useWritingDocument(pageRef, prelude);
+  const { document, error, retry } = useWritingDocument(pageRef, prelude);
   const ownRef = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? ownRef;
   const baseline = useRef<Y.Doc | null>(null);
@@ -57,21 +59,19 @@ export default function BoundPageTitleEditor({ pageRef, label = "page title", ed
     const doc = baseline.current;
     if (!doc || !document) return;
     const text = doc.getText("title"), old = text.toString();
-    let first = 0, oldEnd = old.length, newEnd = next.length;
-    while (first < oldEnd && first < newEnd && old[first] === next[first]) first++;
-    while (oldEnd > first && newEnd > first && old[oldEnd - 1] === next[newEnd - 1]) { oldEnd--; newEnd--; }
+    const edit=textReplacement(old,next);
     applying.current = true;
-    doc.transact(() => { text.delete(first, oldEnd - first); text.insert(first, next.slice(first, newEnd)); }, origin.current);
+    doc.transact(() => { text.delete(edit.from, edit.to - edit.from); text.insert(edit.from, edit.text); }, origin.current);
     Y.applyUpdate(document.doc, Y.encodeStateAsUpdate(doc, Y.encodeStateVector(document.doc)), origin.current);
     applying.current = false;
     setValue(next);
   };
-  if (error) return <p role="alert">couldn’t open this title on this device.</p>;
-  return <Textarea ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
+  if (error) return <div role="alert"><p>couldn’t open this title on this device.</p><Button onClick={retry}>retry</Button></div>;
+  return <Textarea bare autoGrow={{minRows:1,maxRows:6}} ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
     onCompositionStart={() => { composing.current = true; manager.current?.stopCapturing(); }}
     onChange={event => change(event.target.value)}
     onKeyDown={event => {
-      if (event.isComposing) return;
+      if (event.nativeEvent.isComposing) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) manager.current?.redo(); else manager.current?.undo(); }
       else if (event.key === "Enter") { event.preventDefault(); onEnter?.(); }
     }} />;

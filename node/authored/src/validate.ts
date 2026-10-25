@@ -79,9 +79,10 @@ function selection(value: SelectionCapture, source_ref: string): void {
   if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
   if (value.publication !== null && value.publication.kind !== "reader") throw new TypeError("Highlight publication must identify a reader generation");
   if (value.locator.type === "pdf_page_geometry") {
-    const canonical = canonicalQuads(value.locator.quads);
+    const quads=value.locator.quads;
+    const canonical = canonicalQuads(quads);
     const keys = ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"] as const;
-    if (canonical.some((quad, index) => keys.some(key => quad[key] !== value.locator.quads[index]![key]))) throw new TypeError("PDF selection geometry must be canonical before commit");
+    if (canonical.some((quad, index) => keys.some(key => quad[key] !== quads[index]![key]))) throw new TypeError("PDF selection geometry must be canonical before commit");
     if ([...value.quote_exact].length > 2000) throw new TypeError("PDF quote exceeds 2000 codepoints");
   }
   publication(value.publication);

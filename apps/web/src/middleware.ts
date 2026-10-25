@@ -53,7 +53,7 @@ export async function middleware(request: NextRequest) {
   // Normal browser startup uses the exact same asset shell as the APK. An
   // expired remote session cannot evict its confirmed local account.
   if ((request.method === "GET" || request.method === "HEAD") &&
-      (pathname === "/" || pathname === "/daily" || resolvePaneRouteModel(`${pathname}${search}`).id !== "unsupported")) {
+      (pathname === "/" || pathname === "/daily" || pathname === "/share" || resolvePaneRouteModel(`${pathname}${search}`).id !== "unsupported")) {
     return NextResponse.rewrite(new URL("/workspace-shell", request.url));
   }
   if (pathname === "/workspace-shell" || pathname === "/workspace-sw.js" || pathname.startsWith("/_nexus/")) {

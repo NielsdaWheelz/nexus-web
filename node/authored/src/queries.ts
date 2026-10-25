@@ -25,13 +25,55 @@ const READABLE = `WITH readable AS (
   SELECT ref,projection_json FROM resources WHERE visible=1
   UNION ALL
   SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
-  FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE 'passage_anchor:'||p.anchor_id=source_stubs.source_ref)
+  FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||anchor_id AS ref,json_object('ref','passage_anchor:'||anchor_id,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json FROM passages
 )`;
+/** Rebuild one FTS row from canonical presented content, on either SQLite host. */
+export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
+export const SEARCH_INDEX_SQL = `${READABLE}, indexed AS (
+  SELECT ref,projection_json,json_extract(projection_json,'$.kind') AS kind,
+  json_extract(projection_json,'$.title') AS title,json_extract(projection_json,'$.local_date') AS local_date FROM readable
+) INSERT INTO search_documents(ref,text) SELECT ref,CASE kind
+  WHEN 'page' THEN COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')
+  WHEN 'note' THEN COALESCE(json_extract(projection_json,'$.body_text'),'')
+  WHEN 'highlight' THEN COALESCE(json_extract(projection_json,'$.selection.quote_exact'),'')
+  ELSE COALESCE(title,'') END FROM indexed WHERE ref=? ON CONFLICT(ref) DO UPDATE SET text=excluded.text WHERE search_documents.text IS NOT excluded.text`;
+export const SEARCH_REMOVE_SQL = `${READABLE} DELETE FROM search_documents WHERE ref=?1 AND NOT EXISTS(SELECT 1 FROM readable WHERE readable.ref=?1)`;
+
+function live(ref: string): string {
+  return `(EXISTS(SELECT 1 FROM resources r WHERE r.ref=${ref} AND r.visible=1) OR (NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=${ref}) AND (EXISTS(SELECT 1 FROM source_stubs s WHERE s.source_ref=${ref}) OR (substr(${ref},1,15)='passage_anchor:' AND EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(${ref},16))))))`;
+}
+const INCIDENT = `
+  SELECT l.link_id,l.endpoint_a,l.endpoint_b,l.position_a AS position,l.state_json AS position_json,l.endpoint_b AS other_ref
+  FROM links l INDEXED BY links_a WHERE l.endpoint_a=?1 AND l.visible=1 AND l.link_id<>COALESCE((SELECT exclude_link_id FROM bound),'') AND ${live("?1")} AND ${live("l.endpoint_b")}
+  UNION ALL
+  SELECT l.link_id,l.endpoint_a,l.endpoint_b,l.position_b AS position,l.state_json AS position_json,l.endpoint_a AS other_ref
+  FROM links l INDEXED BY links_b WHERE l.endpoint_b=?1 AND l.visible=1 AND l.link_id<>COALESCE((SELECT exclude_link_id FROM bound),'') AND ${live("?1")} AND ${live("l.endpoint_a")}`;
+const BOUNDED_READABLE = `
+  SELECT r.ref,r.projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
+  UNION ALL
+  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
+  UNION ALL
+  SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  FROM wanted w CROSS JOIN passages p ON p.anchor_id=substr(w.ref,16) WHERE w.ref='passage_anchor:'||p.anchor_id`;
+function positions(query: Extract<AuthoredQuery,{kind:"positions"}>):CompiledQuery {
+  const base=`WITH bound(ref,exclude_link_id) AS (VALUES(?,?)),incident AS NOT MATERIALIZED (${INCIDENT})`;
+  const params:(string|number|null)[]=[query.ref,query.exclude_link_id];
+  const at=query.at;
+  if(at.kind==='tail')return {sql:`${base} SELECT position_json FROM incident ORDER BY position DESC,link_id DESC LIMIT 1`,params};
+  if(at.kind==='tie')return {sql:`${base} SELECT position_json,link_id AS cursor_json FROM incident WHERE position=? AND link_id>? ORDER BY link_id LIMIT ?`,params:[...params,at.position,at.cursor??'',Math.max(1,Math.min(100,Math.floor(at.limit)))]};
+  if(at.kind==='bounds')return {sql:`${base},lo AS (SELECT * FROM incident WHERE position<? ORDER BY position DESC,link_id DESC LIMIT 1),hi AS (SELECT * FROM incident WHERE position>? ORDER BY position,link_id LIMIT 1) SELECT position_json FROM (SELECT * FROM lo UNION ALL SELECT * FROM hi) ORDER BY position,link_id`,params:[...params,at.position,at.position]};
+  const direction=at.side==='before'?'DESC':'ASC';
+  const comparison=at.side==='before'?'<':'>';
+  return {sql:`${base},anchor AS (SELECT * FROM incident WHERE link_id=?),neighbor AS (SELECT i.* FROM incident i,anchor a WHERE (i.position,i.link_id) ${comparison} (a.position,a.link_id) ORDER BY i.position ${direction},i.link_id ${direction} LIMIT 1) SELECT position_json FROM (SELECT * FROM anchor UNION ALL SELECT * FROM neighbor) ORDER BY position,link_id`,params:[...params,at.link_id]};
+}
+
 export function compileQuery(query: AuthoredQuery): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
+    case "positions":return positions(query);
     case "binding": {
       const key = query.key;
       if (key.kind === "daily") return { sql: "SELECT ref AS binding_id FROM resources WHERE local_date=?", params: [key.local_date] };
@@ -45,8 +87,9 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
     }
     case "daily": return { sql: "SELECT projection_json,NULL AS link_json FROM resources WHERE local_date=? AND visible=1", params: [query.local_date] };
     case "pages": {
-      const cursor = readAdjacencyCursor(query.cursor);
-      return { sql: `WITH pages AS (SELECT projection_json,ref,COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page') AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages WHERE (? IS NULL OR display_title>? OR (display_title=? AND ref>?)) ORDER BY display_title,ref LIMIT ?`, params: [cursor?.[0]??null,cursor?.[0]??"",cursor?.[0]??"",cursor?.[1]??"",limit] };
+      const cursor=readAdjacencyCursor(query.cursor);
+      const where=cursor===null?'':`WHERE(display_title,ref)>(?,?)`;
+      return {sql:`WITH pages AS(SELECT projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[1]]:[],limit]};
     }
     case "annotation_notes": {
       let cursor: [string,string,string] | null = null;
@@ -68,18 +111,17 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
     }
     case "annotations": return { sql: "SELECT projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
     case "backlinks": return { sql: "SELECT r.projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
-    case "search": return { sql: "SELECT r.projection_json,NULL AS link_json FROM search_fts f JOIN resources r ON r.ref=f.ref WHERE search_fts MATCH ? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [searchExpression(query.text) || '""', query.cursor ?? "", limit] };
+    case "search": return { sql: `${READABLE} SELECT r.projection_json,NULL AS link_json FROM search_fts f JOIN search_documents d ON d.rowid=f.rowid JOIN readable r ON r.ref=d.ref WHERE search_fts MATCH ? AND r.ref>? ORDER BY r.ref LIMIT ?`, params: [searchExpression(query.text) || '""', query.cursor ?? "", limit] };
     case "adjacency": {
-      const cursor = readAdjacencyCursor(query.cursor);
-      return {
-        sql: `${READABLE}, adjacent AS (
-          SELECT r.projection_json,l.state_json AS link_json,l.link_id,
-          CASE WHEN l.endpoint_a=? THEN l.position_a ELSE l.position_b END AS position
-          FROM links l JOIN readable r ON r.ref=CASE WHEN l.endpoint_a=? THEN l.endpoint_b ELSE l.endpoint_a END
-          WHERE (l.endpoint_a=? OR l.endpoint_b=?) AND l.visible=1 AND EXISTS(SELECT 1 FROM readable WHERE ref=?)
-        ) SELECT projection_json,link_json,json_array(position,link_id) AS cursor_json FROM adjacent WHERE (? IS NULL OR position>? OR (position=? AND link_id>?)) ORDER BY position,link_id LIMIT ?`,
-        params: [query.ref, query.ref, query.ref, query.ref, query.ref, cursor?.[0] ?? null, cursor?.[0] ?? "", cursor?.[0] ?? "", cursor?.[1] ?? "", limit],
-      };
+      const cursor=readAdjacencyCursor(query.cursor);
+      const where=cursor===null?'':`WHERE (position,link_id)>(?,?)`;
+      return {sql:`WITH bound(ref,exclude_link_id) AS (VALUES(?,NULL)),incident AS NOT MATERIALIZED (${INCIDENT}),selected AS MATERIALIZED (SELECT * FROM incident ${where} ORDER BY position,link_id LIMIT ?),wanted(ref) AS (SELECT other_ref FROM selected),readable AS NOT MATERIALIZED (${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,...cursor?[cursor[0],cursor[1]]:[],limit]};
+    }
+    case "adjacency_window": {
+      const cursor=readAdjacencyCursor(query.cursor);
+      if(cursor!==null)return compileQuery({kind:'adjacency',ref:query.ref,cursor:query.cursor,limit});
+      const before=Math.floor(limit/2),after=limit-before;
+      return {sql:`WITH bound(ref,exclude_link_id) AS (VALUES(?,NULL)),incident AS NOT MATERIALIZED (${INCIDENT}),anchor AS (SELECT * FROM incident WHERE link_id=?),earlier AS (SELECT i.* FROM incident i,anchor a WHERE (i.position,i.link_id)<(a.position,a.link_id) ORDER BY i.position DESC,i.link_id DESC LIMIT ?),later AS (SELECT i.* FROM incident i,anchor a WHERE(i.position,i.link_id)>=(a.position,a.link_id) ORDER BY i.position,i.link_id LIMIT ?),selected AS MATERIALIZED (SELECT * FROM earlier UNION ALL SELECT * FROM later),first AS (SELECT position,link_id FROM selected ORDER BY position,link_id LIMIT 1),wanted(ref) AS (SELECT other_ref FROM selected),readable AS NOT MATERIALIZED (${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json,(SELECT CASE WHEN EXISTS(SELECT 1 FROM incident i,first f WHERE (i.position,i.link_id)<(f.position,f.link_id)) THEN (SELECT link_id FROM first) ELSE NULL END) AS previous_cursor FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,query.link_id,before,after]};
     }
   }
 }
@@ -91,4 +133,13 @@ export function bindingQueries(change: import("./types.ts").Change): { query: Au
     ...change.links.map(link => ({ query: { kind: "binding" as const, key: { kind: "link" as const, endpoint_a: link.endpoint_a, endpoint_b: link.endpoint_b } }, selector: "link_ids" as const })),
     ...change.passages.map(passage => ({ query: { kind: "binding" as const, key: { kind: "passage" as const, source_ref: passage.source_ref, normalized_exact: passage.normalized_exact, prefix: passage.prefix, suffix: passage.suffix } }, selector: "anchor_ids" as const })),
   ];
+}
+
+/** Index exactly the presented canonical label/words, including a latent stored
+ * daily title's date label. This changes no authored text or capture. */
+export function searchText(resource: import("./types.ts").ResourceProjection): string {
+  if (resource.kind === "page") return pageTitle(resource.title ?? "", resource.local_date);
+  if (resource.kind === "note") return resource.body_text ?? "";
+  if (resource.kind === "highlight") return resource.selection?.quote_exact ?? "";
+  return resource.title ?? "";
 }

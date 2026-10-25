@@ -5,8 +5,8 @@ credentials, database or network capability supplied by this owner.
 """
 
 import json
-import shutil
 import subprocess
+from functools import cache
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -19,6 +19,14 @@ _package_root = Path(__file__).resolve().parents[3]
 SCRIPT = (
     _package_root.parent if _package_root.name == "python" else _package_root
 ) / "node/authored/helper.mjs"
+
+
+@cache
+def node_binary() -> str:
+    """Resolve the installed runtime behind a trusted toolchain shim, once."""
+    return subprocess.run(
+        ["node", "-p", "process.execPath"], text=True, capture_output=True, timeout=30, check=True
+    ).stdout.strip()
 
 
 def merge(account_id: UUID, states: Corpus, changes: list[Change]) -> MergeResult:
@@ -41,7 +49,7 @@ def call(value: dict[str, Any]) -> Any:
         ensure_ascii=False,
     )
     result = subprocess.run(
-        [shutil.which("node") or "node", "--max-old-space-size=128", str(SCRIPT)],
+        [node_binary(), "--max-old-space-size=128", str(SCRIPT)],
         input=payload,
         text=True,
         capture_output=True,

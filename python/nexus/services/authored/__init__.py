@@ -30,6 +30,7 @@ from nexus.schemas.authored import (
     UploadChanges,
 )
 from nexus.services.authored import helper
+from nexus.services.resource_graph.refs import require_ref
 
 MAX_CHANGE_BYTES = 2 * 1024 * 1024
 MAX_ENVELOPE_BYTES = 3 * 1024 * 1024
@@ -332,6 +333,22 @@ def _persist(db: Session, account_id: UUID, result: MergeResult) -> None:
 
 def _persist_unchecked(db: Session, account_id: UUID, result: MergeResult) -> None:
     for table, identities in (
+        (
+            "note_blocks",
+            [str(require_ref(item.ref).id) for item in result.resources if item.kind == "note"],
+        ),
+        (
+            "pages",
+            [str(require_ref(item.ref).id) for item in result.resources if item.kind == "page"],
+        ),
+        (
+            "highlights",
+            [
+                str(require_ref(item.ref).id)
+                for item in result.resources
+                if item.kind == "highlight"
+            ],
+        ),
         ("resource_edges", [str(item.link_id) for item in result.links]),
         ("passage_anchors", [str(item.anchor_id) for item in result.passages]),
     ):
@@ -662,7 +679,8 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
         for state in db.scalars(
             text(f"SELECT {_state_sql(table)} FROM {table} WHERE account_id=:a ORDER BY {key}"),
             {"a": account_id},
-            execution_options={"yield_per": 100},
+            # Bound buffering by one encoded state, even for heavily edited notes.
+            execution_options={"yield_per": 1},
         ):
             count += 1
             yield _json({"type": kind, "state": state}) + "\n"

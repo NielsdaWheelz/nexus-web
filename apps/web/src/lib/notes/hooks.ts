@@ -18,19 +18,27 @@ export function useAuthoredQuery(query: AuthoredQuery | null): { data: QueryResu
   useEffect(() => {
     if (query === null || accountId === null) return;
     let retired = false;
-    let unsubscribe: (() => void) | null = null;
-    unsubscribe = store.subscribe(query, data => { if (!retired) setState({ key, accountId, data, error: null }); });
-    void store.query(query).then(data => { if (!retired) setState({ key, accountId, data, error: null }); }).catch(error => { if (!retired) setState({ key, accountId, data: null, error }); });
-    return () => { retired = true; unsubscribe?.(); };
+    let latestRevision: bigint | null = null;
+    const receive = (data:QueryResult) => {
+      const revision=BigInt(data.store_revision);
+      if(retired || latestRevision!==null && revision<latestRevision)return;
+      latestRevision=revision;
+      setState({key,accountId,data,error:null});
+    };
+    const unsubscribe = store.subscribe(query, receive);
+    void store.query(query).then(receive).catch(error => { if (!retired && latestRevision===null) setState({ key, accountId, data: null, error }); });
+    return () => { retired = true; unsubscribe(); };
     // The serialized closed query is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, key, attempt, store]);
   const retry = useCallback(() => setAttempt(n => n + 1), []);
   return { data: state.key === key && state.accountId === accountId ? state.data : null, error: state.key === key && state.accountId === accountId ? state.error : null, retry };
 }
-export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []): { document: WritingDocument | null; error: unknown | null } {
+export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []): { document: WritingDocument | null; error: unknown | null; retry():void } {
   const runtime = useWritingRuntime();
   const preludeKey = JSON.stringify(prelude);
+  const [attempt,setAttempt]=useState(0);
+  const retry=useCallback(()=>setAttempt(value=>value+1),[]);
   const [state, setState] = useState<{ ref: string | null; runtime: WritingRuntime | null; document: WritingDocument | null; error: unknown | null }>({ ref, runtime, document: null, error: null });
   useEffect(() => {
     if (!runtime || !ref) return;
@@ -44,8 +52,8 @@ export function useWritingDocument(ref: string | null, prelude: readonly Intent[
     return () => { retired = true; release?.(); };
     // The serialized prelude is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime, ref, preludeKey]);
-  return state.ref === ref && state.runtime === runtime ? state : { document: null, error: null };
+  }, [runtime, ref, preludeKey, attempt]);
+  return {...(state.ref === ref && state.runtime === runtime ? state : { document: null, error: null }),retry};
 }
 
 /** Read a bounded prefix from one local revision. A newer subscription delivery
@@ -61,8 +69,12 @@ export function useAuthoredPages(query: Extract<AuthoredQuery, { cursor: string 
   useEffect(() => {
     let generation = 0;
     let active = true;
+    let latestRevision:bigint|null=null;
     const firstQuery = { ...query, cursor: null };
     const receive = (first: QueryResult) => {
+      const revision=BigInt(first.store_revision);
+      if(!active || latestRevision!==null && revision<latestRevision)return;
+      latestRevision=revision;
       const current = ++generation;
       void (async () => {
         const rows = [...first.rows];
@@ -76,7 +88,7 @@ export function useAuthoredPages(query: Extract<AuthoredQuery, { cursor: string 
       })().catch(error => { if (active && current === generation) setState(old => ({ key, data: old.key === key ? old.data : null, error })); });
     };
     const stop = store.subscribe(firstQuery, receive);
-    void store.query(firstQuery).then(receive).catch(error => { if (active) setState({ key, data: null, error }); });
+    void store.query(firstQuery).then(receive).catch(error => { if (active && latestRevision===null) setState({ key, data: null, error }); });
     return () => { active = false; generation++; stop(); };
     // The serialized query is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps

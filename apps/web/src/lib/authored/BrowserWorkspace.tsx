@@ -14,7 +14,6 @@ import { enterWorkspace } from "@/lib/workspace/model";
 import { beginBrowserSignIn, browserSignedOut, readBrowserBinding, writeBrowserBinding, type BrowserBinding } from "./binding";
 import { admitAuthoredAccount } from "./client";
 import { finishBrowserRetirement } from "./signOut";
-import { prepareShell } from "./shell";
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<BrowserBinding | null>(null);
@@ -24,7 +23,6 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   useEffect(() => {
     let live = true;
     void (async () => {
-      await prepareShell();
       await finishBrowserRetirement();
       if (await browserSignedOut()) { if (live) setSignedOut(true); return; }
       let saved = await readBrowserBinding();
@@ -53,7 +51,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   if (signedOut) return <FeedbackState content={{ tone: "Neutral", title: "signed out on this device", message: failure?.message }} announcement="None" actions={[{ label: "sign in", onClick: signIn }]} />;
   if (failure) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your workspace", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: "sign in", onClick: signIn }]} />;
   if (!binding) return <FeedbackState content={{ tone: "Neutral", title: "opening your workspace…" }} announcement="None" />;
-  return <AuthenticatedWorkspaceErrorBoundary><AuthenticatedShell
+  return <AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
     readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}
     seeds={{}} entryFailure={null} locationLinkFailure={locationFailure}

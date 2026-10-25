@@ -5,7 +5,7 @@ import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA } from "@nexus/authored/schema";
-import { bindingQueries, compileQuery } from "@nexus/authored/queries";
+import { bindingQueries, compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 
@@ -16,6 +16,9 @@ export class Persistence {
     await this.db.run("INSERT OR IGNORE INTO replica_state VALUES (1,?,?,0,0,0,0,?,0)", [accountId, crypto.randomUUID(), FORMAT_REVISION]);
     const state = await this.replica();
     if (state.account_id !== accountId || state.format_revision !== FORMAT_REVISION) throw new Error("authored account or format mismatch");
+  }
+  async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {
+    return { replica: await this.replica(), states: await this.states(selection) };
   }
   async replica(): Promise<ReplicaState> {
     const [row] = await this.db.all("SELECT account_id,replica_id,CAST(command_seq AS TEXT) AS command_seq,CAST(store_revision AS TEXT) AS store_revision,CAST(lamport AS TEXT) AS lamport,CAST(server_cursor AS TEXT) AS server_cursor,format_revision,provisioning_complete FROM replica_state WHERE singleton=1");
@@ -49,7 +52,11 @@ export class Persistence {
   async query(query: AuthoredQuery): Promise<QueryResult> {
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null, binding_id: raw[0] ? String(raw[0].binding_id) : null };
+    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null };
+    if (query.kind === "positions") {
+      const positions = raw.map(row => JSON.parse(String(row.position_json)));
+      return { store_revision: (await this.replica()).store_revision, rows: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null };
+    }
     const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)) }));
     const last = rows.at(-1);
     let next: string | null = null;
@@ -57,7 +64,7 @@ export class Persistence {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, binding_id: null };
+    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: typeof raw[0]?.previous_cursor === "string" ? raw[0].previous_cursor : null, binding_id: null, positions: [] };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {
@@ -66,8 +73,6 @@ export class Persistence {
       const { body_state: body, title_state: title, ...metadata } = { body_state: null, title_state: null, ...state };
       const bytes = body ?? title;
       await this.db.run("INSERT INTO resources(ref,kind,state_json,merge_bytes,projection_json,visible,body_text,title,local_date,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ref) DO UPDATE SET state_json=excluded.state_json,merge_bytes=excluded.merge_bytes,projection_json=excluded.projection_json,visible=excluded.visible,body_text=excluded.body_text,title=excluded.title,local_date=excluded.local_date,source_ref=excluded.source_ref", [state.ref, state.kind, JSON.stringify(metadata), bytes === null ? null : decodeBytes(bytes), JSON.stringify(projection), Number(projection.visible), projection.body_text, projection.title, projection.local_date, projection.source_ref]);
-      await this.db.run("DELETE FROM search_fts WHERE ref=?", [state.ref]);
-      if (projection.visible) await this.db.run("INSERT INTO search_fts(ref,text) VALUES(?,?)", [state.ref, projection.title ?? projection.body_text ?? projection.selection?.quote_exact ?? ""]);
       await this.db.run("DELETE FROM reference_index WHERE owner_ref=?", [state.ref]);
       for (const ref of new Set(projection.embedded_refs)) await this.db.run("INSERT INTO reference_index(owner_ref,target_ref) VALUES(?,?)", [state.ref, ref]);
     }
@@ -77,6 +82,11 @@ export class Persistence {
     }
     for (const state of states.passages) await this.db.run("INSERT INTO passages VALUES(?,?,?,?) ON CONFLICT(anchor_id) DO UPDATE SET state_json=excluded.state_json", [state.anchor_id, state.source_ref, JSON.stringify([state.source_ref, state.normalized_exact, state.prefix, state.suffix]), JSON.stringify(state)]);
     for (const state of states.source_stubs) await this.db.run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", [state.source_ref, JSON.stringify(state)]);
+    const indexed = new Set([...states.resources.map(state => state.ref), ...states.passages.map(state => `passage_anchor:${state.anchor_id}`), ...states.source_stubs.map(state => state.source_ref)]);
+    for (const ref of indexed) {
+      await this.db.run(SEARCH_REMOVE_SQL, [ref]);
+      await this.db.run(SEARCH_INDEX_SQL, [ref]);
+    }
   }
   async commit(frame: CommitFrame): Promise<CommitResult> {
     const bytes = JSON.stringify(frame.change);
@@ -114,7 +124,7 @@ export class Persistence {
   }
   async resetProvisioning() {
     await this.db.transaction(async () => {
-      for (const table of ["resources", "links", "passages", "source_stubs", "reference_index", "search_fts"]) await this.db.run(`DELETE FROM ${table}`);
+      for (const table of ["resources", "links", "passages", "source_stubs", "reference_index", "search_documents"]) await this.db.run(`DELETE FROM ${table}`);
     });
   }
   async stage(states: MergeResult) { await this.db.transaction(() => this.write(states)); }

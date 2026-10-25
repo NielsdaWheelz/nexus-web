@@ -1,14 +1,16 @@
 /** Native adapter uses the same shared semantic kernel. Kotlin admits only
  * closed SQL transactions and fixed foreground transport operations. */
-import { bindingQueries, compileQuery } from "@nexus/authored/queries";
+import { bindingQueries } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import type { AuthoredStore, Change, FeedChange, ReplicaState, StateSelection, QueryResult, SyncStatus } from "@nexus/authored/types";
 import { selectionFor } from "./persistence";
+import { nativeQueryPlan } from "./nativeQuery";
 import { Sync } from "./sync";
 import { syncStatus } from "./status";
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: string }) => void) | null };
 let nextId = 0;
+let installedPort: Port | null = null;
 const hints = new Set<() => void>();
 const foregroundListeners = new Set<(active: boolean) => void>();
 let nativeForeground = false;
@@ -22,7 +24,9 @@ const pending = new Map<number, { resolve(value: Record<string, unknown>): void;
 function nativePort(): Port {
   const port = (window as Window & { nexusAuthored?: Port }).nexusAuthored;
   if (!port) throw new Error("native authored storage unavailable");
-  if (port.onmessage === null) port.onmessage = ({ data }) => {
+  if (installedPort !== port) {
+  installedPort = port;
+  port.onmessage = ({ data }) => {
     const reply = JSON.parse(data);
     if (reply.kind === "authored_foreground") { receiveForeground(reply.active, reply.revision); return; }
     if (reply.kind === "authored_hint") { for (const wake of hints) wake(); return; }
@@ -30,6 +34,7 @@ function nativePort(): Port {
     if (reply.ok) waiting?.resolve(reply.result);
     else waiting?.reject(Object.assign(new Error(reply.error.message), { status: reply.error.status, code: reply.error.code }));
   };
+  }
   return port;
 }
 async function frame<T>(op: string, input: Record<string, unknown> = {}, signal?: AbortSignal, timeout = 30_000): Promise<T> {
@@ -74,15 +79,17 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
   const queries = new Set<() => void>();
+  const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
   const changed = () => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(); };
+  const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => call("query", { query, ...await nativeQueryPlan(query) });
   const changeStates = async (changes: Change[]) => {
     const selection: StateSelection = { refs: [], link_ids: [], anchor_ids: [], source_refs: [] };
     for (const change of changes) {
       const touched = selectionFor(change);
       for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) selection[key].push(...touched[key]);
       for (const binding of bindingQueries(change)) {
-        const known = await call<QueryResult>("query", { query: binding.query, params: compileQuery(binding.query).params });
+        const known = await queryLocal(binding.query);
         if (known.binding_id !== null) selection[binding.selector].push(known.binding_id);
       }
     }
@@ -137,15 +144,22 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     },
     whenUploaded: (commandSeq, signal) => new Promise<void>((resolve, reject) => {
       let done = false;
-      const finish = (error: unknown | null) => { if (done) return; done = true; queries.delete(check); signal.removeEventListener("abort", aborted); if (error !== null) reject(error); else resolve(); };
-      const aborted = () => finish(signal.reason ?? new DOMException("cancelled", "AbortError"));
-      const check = () => { void call<{ uploaded: boolean }>("uploaded", { command_seq: commandSeq }).then(result => { if (result.uploaded) finish(null); }, finish); };
+      const finish = (error: unknown | null) => { if (done) return; done = true; queries.delete(check); signal.removeEventListener("abort", aborted); closedWaiters.delete(aborted); if (error !== null) reject(error); else resolve(); };
+      const aborted = () => finish(signal.reason ?? new DOMException("authored store closed", "AbortError"));
+      const check = () => { void call<{ uploaded: boolean }>("uploaded", { command_seq: commandSeq }).then(result => {
+        if (result.uploaded) finish(null);
+        else {
+          const status = syncStatus(sync.facts);
+          if (["offline", "sign_in_required", "update_required", "sync_error", "local_error"].includes(status) || status === "preparing" && sync.last_error !== null) finish(new Error(sync.last_error ?? (status === "offline" ? "changes are saved on this device. connect to sync before continuing." : "changes are saved on this device but haven’t synced. retry syncing before continuing.")));
+        }
+      }, finish); };
       if (signal.aborted) { aborted(); return; }
-      queries.add(check); signal.addEventListener("abort", aborted, { once: true }); check();
+      queries.add(check); closedWaiters.add(aborted); signal.addEventListener("abort", aborted, { once: true }); check();
     }),
+    readSnapshot: selection => serialize(() => call("read_snapshot", { selection })),
     readReplica: () => serialize(persistence.replica),
     readStates: selection => serialize(() => call("states", { selection })),
-    query: query => serialize(() => call("query", { query, params: compileQuery(query).params })),
+    query: query => serialize(() => queryLocal(query)),
     commit: frame => serialize(async () => {
       sync.facts.saving = true; changed();
       try {
@@ -158,11 +172,17 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     }),
     subscribe: (query, listener) => {
       let live = true;
-      const read = () => { void serialize(() => call<QueryResult>("query", { query, params: compileQuery(query).params })).then(result => { if (live) listener(result); }, error => { if (live && sync.facts.ready) reportError(error); }); };
+      const read = () => { void serialize(() => queryLocal(query)).then(result => { if (live) listener(result); }, error => { if (live && sync.facts.ready) reportError(error); }); };
       queries.add(read); read(); return () => { live = false; queries.delete(read); };
     },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.last_error); return () => { statuses.delete(listener); }; },
-    close: async () => { closed = true; sync.close(); await sync.stopped(); hints.delete(wake); foregroundListeners.delete(nativeVisibility); window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", foreground); queries.clear(); statuses.clear(); await queue; },
+    close: async () => {
+      closed = true; sync.close();
+      for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
+      queries.clear(); statuses.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
+      window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", foreground);
+      await sync.stopped(); await queue;
+    },
   };
 }
 /** Shelf derives the provider identity from native authority, never its URL. */

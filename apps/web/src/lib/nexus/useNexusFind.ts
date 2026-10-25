@@ -20,7 +20,7 @@ import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { searchProgress } from "@/lib/search/progress";
 import { fetchSearchPreview, type PreviewPhase } from "@/lib/search/searchApi";
 import { searchQueryToParams } from "@/lib/search/searchParams";
-import { AUTHORED_REF, localMatch, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
+import { AUTHORED_REF, localResult, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import type { NexusRecent, NexusSource } from "./model";
 import type { NexusQuery } from "./query";
@@ -68,7 +68,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const localRead = useAuthoredQuery(open && authoredRef ? { kind: "resource", ref: authoredRef } : null);
   const localRow = localRead.data?.rows[0]?.resource ?? null;
   // stable while its row is unchanged; the launcher merges rows on identity.
-  const localReference = useMemo(() => authoredRef && localRow ? localMatch(localRow, "") : null, [authoredRef, localRow]);
+  const localReference = useMemo(() => authoredRef && localRow ? localResult(localRow, "") : null, [authoredRef, localRow]);
   const local = useLocalSearch(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, LOCAL_PAGES);
   const reference = usePaneFreeServerValue<ResourceItem>({
     key: open && referenceRef && !authoredRef ? `${accountId}:nexus-ref:${referenceRef}` : null,
@@ -147,6 +147,11 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     resources: remotePreview.resources.filter(row => !AUTHORED_REF.test(row.item.ref)).map(withoutAuthoredPassage),
     saved: remotePreview.saved.filter(row => !AUTHORED_REF.test(row.item.ref)).map(withoutAuthoredPassage),
     passages: remotePreview.passages.filter(row => !AUTHORED_REF.test(row.item.ref)) }, [remotePreview]);
+  const localShown = useMemo(() => {
+    if (!local.matches) return EMPTY_LOCAL;
+    const remote = new Set([...preview?.resources ?? [], ...preview?.saved ?? [], ...preview?.passages ?? []].map(row => row.item.ref));
+    return local.matches.filter(match => AUTHORED_REF.test(match.resource.ref) || !remote.has(match.resource.ref));
+  }, [local.matches, preview]);
   const remoteBusy = identityKey !== null && shown?.phase !== "hybrid" && ((shown?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
     || (open && referenceRef !== null && !authoredRef && reference.status === "loading");
   useEffect(() => {
@@ -215,8 +220,9 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     preview,
     reference: !authoredRef && referenceRef !== null && reference.status === "ready" ? reference.data : null,
     referenceFailed: !authoredRef && referenceRef !== null && reference.status === "failed",
-    /** Local authored matches for the typed text; the launcher places them before remote rows. */
-    local: local.matches ?? EMPTY_LOCAL,
+    /** Local matches for the typed text; the launcher places them before remote rows. A retained
+     * source label yields to the server's row for the same ref. */
+    local: localShown,
     /** An exact authored ref resolved on this device; null while reading or when absent. */
     localReference,
     /** The local read finished and this device has no such resource. */

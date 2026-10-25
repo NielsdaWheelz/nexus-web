@@ -44,7 +44,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const metadata = useChangeStamp("Metadata");
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
-  const remote = useRemoteConnections(selfRef, `${refreshKey}:${refreshTick}:${metadata}`);
+  const remote = useRemoteConnections(selfRef, `connections:${selfRef}`, `${refreshKey}:${refreshTick}:${metadata}`);
   const readFeedback = useCollectionReadFeedback({
     list: remote, unit: { singular: "connection", plural: "connections" }, waiting: false, outcome: null,
     returnFocus: () => section.current,

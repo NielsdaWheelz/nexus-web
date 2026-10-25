@@ -53,3 +53,15 @@ provable current owner/member admission paths. a source reached only through a
 more complex grant/containment path may seed its literal ref as unavailable label
 until a new legitimate capture refreshes it. lingering references never authorize
 new private metadata. canonical writing and captures remain intact.
+
+current merge includes indexed-search revision 0317; local-first conversion is
+revision 0318 after that head. satisfy the native pg_search 0.26.2 binary/preload
+and publication prerequisites in [the search release](release-search.md) before
+running the chain. both pending breaking changes ride wire 16 while production
+remains wire 15; do not bump it again before this paired release.
+
+0318 republishes every note keyword occurrence with its exact canonical text
+sha256 admission token. only notes whose text projection changes get a new
+revision-fenced reindex intent; old active/unclaimed intents for those notes
+settle superseded. unchanged lexical/materialized evidence remains available.
+no canonical content/id, chunk or vector is dropped merely to reset the corpus.

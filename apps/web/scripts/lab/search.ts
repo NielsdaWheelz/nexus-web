@@ -39,11 +39,10 @@ from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.reader_document import read_reader_document
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.media import get_media_for_viewer, read_processing_snapshot
-from nexus.services import highlights, library_entries, library_members, libraries
+from nexus.services import authored, highlights, library_entries, library_members, libraries
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.services.media_parts import create_part
-from nexus.schemas.highlights import EnsureMediaHighlightRequest, TextHighlightAnchorIn
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.library_members import CreateInvitationRequest
 from nexus.schemas.media_parts import PartCreate, PartPrepare, SectionSelection
@@ -94,6 +93,16 @@ def await_current_text(owner, *, witness):
         time.sleep(.25)
     raise AssertionError("source lexical revision, witness or partition did not publish")
 
+def create_highlight(db, viewer, *, highlight_id, media_id, fragment_id, start, end, words, prefix, suffix, publication):
+    """One canonical authored highlight; its projection owns rows and search publication."""
+    selection = {"publication": publication, "quote_exact": words, "prefix": prefix, "suffix": suffix, "passage_ref": None,
+                 "locator": {"type": "web_text_offsets", "media_id": str(media_id), "fragment_id": str(fragment_id),
+                             "start_offset": start, "end_offset": end, "media_kind": "web_article",
+                             "text_quote_selector": {"exact": words, "prefix": prefix, "suffix": suffix}}}
+    authored.server_command(db, viewer, command={"kind": "create_highlight", "ref": "highlight:" + str(highlight_id),
+                            "source_ref": "media:" + str(media_id), "selection": selection, "color": "yellow"},
+                            resource_refs=[], link_ids=[])
+
 if mode == "seed":
     print("seed_stage=fixture_rows", file=sys.stderr, flush=True)
     viewer = UUID(context["seed"]["user_id"])
@@ -132,15 +141,15 @@ if mode == "seed":
         replace_media_apparatus(db,media_id=source,note_groups=[])
         advance_reader_publications(db,media_ids=[source])
         assert read_reader_document(db,viewer,source).units[0].canonical_text==source_body
-        # A persisted quote can outlive its locator. Public creation correctly cannot make this state.
-        db.execute(text("INSERT INTO highlights(id,user_id,anchor_kind,anchor_media_id,color,exact,prefix,suffix) VALUES (:id,:viewer,'fragment_offsets',:source,'yellow',:quote,'','')"), {"id":stale,"viewer":viewer,"source":source,"quote":stale_quote})
+        # A persisted quote can outlive its locator: its captured fragment no longer exists.
+        create_highlight(db, viewer, highlight_id=stale, media_id=source, fragment_id=uuid4(), start=0, end=len(stale_quote),
+                         words=stale_quote, prefix="", suffix="", publication=None)
         person = create_contributor(db, display_name="fixture writer")
         for media in (a,b):
             db.execute(text("INSERT INTO contributor_credits(contributor_id,media_id,credited_name,role,ordinal,source) VALUES (:person,:media,'fixture writer','author',0,'user')"), {"person":person.contributor_id,"media":media})
         # Only fixture initialization refreshes manually. Changed writers below must own it.
         projection.refresh(db,"media",[a,b,hidden,source])
         projection.refresh(db,"fragment",db.scalars(text("SELECT id FROM fragments WHERE media_id=ANY(:ids)"), {"ids":[a,b,hidden,source]}).all())
-        projection.refresh(db,"highlight",[stale])
         db.commit()
     print("seed_stage=section_choice", file=sys.stderr, flush=True)
     with factory() as db:
@@ -159,11 +168,13 @@ if mode == "seed":
     highlight_start=source_body.index("small section.",start,end)
     highlight_end=highlight_start+len("small section.")
     with factory() as db:
-        highlights.ensure_highlight(db,viewer,source,EnsureMediaHighlightRequest(
-            id=crossing_highlight,anchor=TextHighlightAnchorIn(kind="text",unit_id=source_fragment,start_offset=highlight_start,end_offset=highlight_end),
-            color="yellow",expected_reader_generation=generation,initial_note=None))
+        create_highlight(db, viewer, highlight_id=crossing_highlight, media_id=source, fragment_id=source_fragment,
+                         start=highlight_start, end=highlight_end, words=source_body[highlight_start:highlight_end],
+                         prefix=source_body[max(0,highlight_start-64):highlight_start], suffix=source_body[highlight_end:highlight_end+64],
+                         publication={"kind":"reader","generation":generation})
+        db.commit()
     with factory() as db:
-        saved=highlights.get_highlight(db,viewer,crossing_highlight)
+        saved=next(h for h in highlights.list_highlights_for_media(db,viewer,source,mine_only=False) if h.id==crossing_highlight)
         assert neighbour in saved.suffix and saved.exact=="small section.", "source highlight lacks crossing context"
     print("seed_stage=prepare_parts", file=sys.stderr, flush=True)
     with factory() as db:

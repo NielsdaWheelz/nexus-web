@@ -43,7 +43,8 @@ export function useConnectionAttachments(selfRef: string) {
   const subscribeWorkspace = useSubscribeWorkspace();
   const owner = useResourceDraft<{ task: Task | null; defect: { error: unknown } | null }>(`ConnectionAttachments:${selfRef}`, () => ({ task: null, defect: null }), value => {
     const task = value.task;
-    const remaining = task !== null && (task.mediaId === null || task.index < task.files.length - 1);
+    // Work remains until the last file is linked, including its link commit and any held retry.
+    const remaining = task !== null && task.index < task.files.length;
     return { changed: remaining || task?.failure != null, unconfirmed: task?.unconfirmed ?? false, stopsBrowserWork: task?.running === true && remaining };
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,9 +99,10 @@ export function useConnectionAttachments(selfRef: string) {
       }
       if (!controller.signal.aborted && owner.read().task === task) owner.set({ task: null, defect: null });
     } catch (error) {
+      // A failed commit keeps its frozen retry even when this visit's browser work stops.
+      if (error instanceof LocalCommitError) task.retryLink = error.retry;
       if (account.aborted || owner.read().task !== task || controller.signal.aborted) return;
-      if (error instanceof LocalCommitError || task.retryLink !== null) {
-        if (error instanceof LocalCommitError) task.retryLink = error.retry;
+      if (task.retryLink !== null) {
         task.failure = { tone: "Warning", title: "file saved; couldn’t link it on this device", message: "keep this page open. retry saving." };
         return;
       }

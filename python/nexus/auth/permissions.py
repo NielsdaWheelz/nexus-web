@@ -60,6 +60,7 @@ def retained_x_post_roots_sql() -> str:
     return """
         SELECT h.anchor_media_id AS media_id, h.user_id
         FROM highlights h JOIN x_post_sources xp ON xp.media_id = h.anchor_media_id
+        WHERE h.authored_visible
         UNION
         SELECT pa.owner_id, pa.user_id
         FROM passage_anchors pa JOIN x_post_sources xp ON xp.media_id = pa.owner_id

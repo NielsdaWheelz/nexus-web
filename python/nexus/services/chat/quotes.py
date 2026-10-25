@@ -36,7 +36,7 @@ def build_snapshot(
 
     missing = ApiErrorCode.E_READER_SELECTION_NOT_FOUND
     highlight = db.get(Highlight, key.highlight_id)
-    if highlight is None:
+    if highlight is None or not highlight.authored_visible:
         raise ApiError(missing, "Highlight not found")
     if not can_read_highlight(db, viewer_id, key.highlight_id):
         raise ApiError(ApiErrorCode.E_READER_SELECTION_FORBIDDEN, "Highlight not readable")

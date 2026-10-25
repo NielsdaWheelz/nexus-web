@@ -19,7 +19,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, ResourceEdge, ResourceViewState, XPostSource
+from nexus.db.models import Conversation, Highlight, ResourceEdge, ResourceViewState, XPostSource
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
 from nexus.services import authored
@@ -83,6 +83,27 @@ def _invalid(message: str) -> NoReturn:
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
 
 
+def _pin_note_owners(db: Session, refs: Sequence[ResourceRef]) -> None:
+    """Hold each note a fact touches, directly or through its derived span or chunk.
+
+    The reindex job locks the note row before replacing those rows, so a key-share pin
+    taken before the visibility gate keeps a fact from naming a span already replaced.
+    """
+    ids: set[UUID] = set()
+    for ref in refs:
+        if ref.scheme == "note_block":
+            ids.add(ref.id)
+        elif ref.scheme in ("evidence_span", "content_chunk"):
+            owner = db.execute(
+                text(f"SELECT owner_kind, owner_id FROM {ref.scheme}s WHERE id = :id"),
+                {"id": ref.id},
+            ).one_or_none()
+            if owner is not None and owner.owner_kind == "note_block":
+                ids.add(owner.owner_id)
+    for note_id in sorted(ids):
+        db.execute(text("SELECT 1 FROM note_blocks WHERE id = :id FOR KEY SHARE"), {"id": note_id})
+
+
 def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
     """The shape law of every fact, then the endpoint visibility gate."""
     if edge.origin not in _ENDPOINTS:
@@ -119,6 +140,7 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
         or not 1 <= len(edge.source_order_key) <= 64
     ):
         _invalid("Only conversation context facts carry a 1-64 character order key")
+    _pin_note_owners(db, [edge.source, edge.target])
     # External snapshots outlive what they captured; a citation's source is the
     # in-flight output minting it, not yet read-visible.
     if edge.ordinal is None and edge.target.scheme != "external_snapshot":
@@ -242,6 +264,17 @@ def create_link(
         for item in resource_items_out(db, viewer_id=viewer_id, refs=[a, b])
         if not item.missing
     }
+    # Only the viewer's own notes, pages and highlights are their authored resources; a
+    # library peer's highlight is a source the devices know only by its captured label.
+    own = {
+        ref
+        for ref in (a, b)
+        if ref.scheme in ("note_block", "page")
+        or (
+            ref.scheme == "highlight"
+            and db.scalar(select(Highlight.user_id).where(Highlight.id == ref.id)) == viewer_id
+        )
+    }
     intents: list[dict[str, object]] = [
         {
             "kind": "capture_source",
@@ -249,7 +282,7 @@ def create_link(
             "capture": {"kind": ref.scheme, "label": labels[ref.uri], "publication": None},
         }
         for ref in (a, b)
-        if ref.scheme not in ("note_block", "page", "highlight")
+        if ref not in own
     ]
     intents.append(
         {
@@ -261,12 +294,11 @@ def create_link(
             "position_b": None,
         }
     )
-    authored_refs = [ref.uri for ref in (a, b) if ref.scheme in ("note_block", "page", "highlight")]
     result = authored.server_command(
         db,
         viewer_id,
         command={"kind": "batch", "intents": intents},
-        resource_refs=authored_refs,
+        resource_refs=[ref.uri for ref in own],
         link_ids=[],
     )
     (link,) = result.links
@@ -351,9 +383,6 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
         from nexus.services.search import projection
 
         projection.refresh_viewer_contributors(db, [viewer_id])
-        from nexus.services.search import projection
-
-        projection.refresh_viewer_contributors(db, [viewer_id])
 
 
 def existing_link_pair(
@@ -368,14 +397,6 @@ def existing_link_pair(
             text(edge_live_sql("resource_edges")),
         )
     )
-
-
-def link_pair(edge: ResourceEdge | EdgeOut) -> frozenset[Pair]:
-    if isinstance(edge, EdgeOut):
-        return frozenset(
-            {(edge.source.scheme, edge.source.id), (edge.target.scheme, edge.target.id)}
-        )
-    return frozenset({(edge.source_scheme, edge.source_id), (edge.target_scheme, edge.target_id)})
 
 
 def source_is(ref: ResourceRef):

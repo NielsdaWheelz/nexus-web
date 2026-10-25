@@ -28,7 +28,7 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import { installedApp } from "@/lib/native/admission";
 import { accountEmailChange } from "@/lib/native/client";
-import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
+import { useSettingsRefresh, DeviceSettingsStatus } from "@/lib/native/settingsRefresh";
 import type { EmailChangeResult } from "@/lib/account/settingsWire";
 import AssistantWrites from "./AssistantWrites";
 import styles from "./page.module.css";
@@ -236,6 +236,7 @@ export default function SettingsAccountPaneBody() {
   const loadError = account.status === "loading" ? null : account.error;
   return (
     <PaneSurface>
+      <DeviceSettingsStatus />
       {loadError ? (
         <FeedbackNotice
           content={

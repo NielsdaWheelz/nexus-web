@@ -67,7 +67,7 @@ export class Sync {
     const status = error && typeof error === "object" && "status" in error ? Number(error.status) : null;
     this.last_error = status === 401 || status === 403 ? SIGN_IN_SYNC_DETAIL
       : status === 426 ? UPDATE_SYNC_DETAIL
-      : status === 0 ? "connect to finish preparing your notes."
+      : status === 0 ? this.facts.ready ? "changes are saved on this device." : "connect to finish preparing your notes."
       : "your notes could not finish syncing. retry; saved changes remain on this device.";
     if (status === 401 || status === 403) this.facts.admission = "auth";
     else if (status === 426) this.facts.admission = "format";

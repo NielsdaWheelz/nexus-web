@@ -1,10 +1,11 @@
 "use client";
 
-import { Component, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { FeedbackNotice, FeedbackState, type FeedbackActions } from "@/components/feedback/Feedback";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
-import { getWritingRuntime, hasUncommittedWriting } from "@/lib/notes/runtime";
+import { getWritingRuntime, hasUncommittedWriting, writingStoreStopped } from "@/lib/notes/runtime";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import styles from "./layout.module.css";
 
 /**
@@ -15,7 +16,8 @@ import styles from "./layout.module.css";
  * containment.
  */
 export class AuthenticatedWorkspaceErrorBoundary extends Component<
-  { children: ReactNode },
+  /** A boundary above the account provider names the account whose writing it guards. */
+  { children: ReactNode; accountId?: string },
   { failed: boolean; stale: boolean }
 > {
   state = { failed: false, stale: false };
@@ -29,21 +31,26 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
   }
 
   render() {
-    return this.state.failed ? <StoppedWorkspace stale={this.state.stale} /> : this.props.children;
+    return this.state.failed ? <StoppedWorkspace stale={this.state.stale} accountId={this.props.accountId ?? null} /> : this.props.children;
   }
 }
 
 const LOSS = "some writing couldn’t be saved on this device and will be lost.\n\nleave anyway?";
 const SAVE_FAILURE = { tone: "Danger" as const, title: "couldn’t save on this device", message: "keep this page open. retry saving." };
+/** A stopped local store refuses every call; retrying is futile, so copy then restart. */
+const STORE_STOPPED = { tone: "Danger" as const, title: "couldn’t save on this device",
+  message: "the local notes store stopped. keep this page open and copy unfinished writing before restarting nexus." };
 const noRuntime = () => () => {};
+// A failed retry republishes its error into the runtime state this surface shows.
+const retry = (runtime: { retry(): Promise<void> }) => ({ label: "retry saving", onClick: () => { void runtime.retry().catch(() => {}); } });
 
 /** Stopping the workspace unmounts its editors and possibly their loss guard; the
  * writing runtime still holds any uncommitted words. This surface keeps guarding exit
- * and reload while they remain, and retries through the runtime when this account
- * owns them. It adds no recovery of its own. */
-function StoppedWorkspace({ stale }: { stale: boolean }) {
-  const account = useOptionalAuthenticatedAccount();
-  const runtime = account === null ? null : getWritingRuntime(account.accountId);
+ * and reload while they remain and, when this account owns them, offers the runtime's
+ * retry and a copy of exactly those words. It adds no recovery of its own. */
+function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: string | null }) {
+  const owner = useOptionalAuthenticatedAccount()?.accountId ?? accountId;
+  const runtime = owner === null ? null : getWritingRuntime(owner);
   const saveState = useSyncExternalStore(runtime?.subscribe ?? noRuntime, () => runtime?.snapshot() ?? null, () => null);
   const leaving = useRef(false);
   useEffect(() => {
@@ -52,7 +59,8 @@ function StoppedWorkspace({ stale }: { stale: boolean }) {
       event.preventDefault();
       event.returnValue = "";
     };
-    const exit = (event: Event) => { if (hasUncommittedWriting() && !window.confirm(LOSS)) event.preventDefault(); };
+    // A loss guard still mounted above may already have kept the document open.
+    const exit = (event: Event) => { if (!event.defaultPrevented && hasUncommittedWriting() && !window.confirm(LOSS)) event.preventDefault(); };
     window.addEventListener("beforeunload", unload);
     document.addEventListener("nexus:request-exit", exit);
     return () => {
@@ -67,6 +75,25 @@ function StoppedWorkspace({ stale }: { stale: boolean }) {
   };
   // An in-flight save is guarded above but is not yet a failure; only a failed one is shown.
   const failed = saveState !== null && saveState.error !== null;
+  const [retained, setRetained] = useState("");
+  const [manual, setManual] = useState(false);
+  useEffect(() => {
+    if (!failed || runtime === null) return;
+    let live = true;
+    void runtime.uncommittedText().then(text => { if (live) setRetained(text); }, reportError);
+    return () => { live = false; };
+  }, [failed, runtime, saveState]);
+  const copyable = failed ? retained : "";
+  const stopped = failed && writingStoreStopped(saveState?.error);
+  const saveActions = (owner: { retry(): Promise<void> }): FeedbackActions => {
+    const copyAction = { label: "copy unsaved writing", onClick: () => { void copy(); } };
+    // the restart passes through the same loss confirmation as any other exit.
+    const next = stopped ? { label: "restart nexus", onClick: reload } : retry(owner);
+    return copyable === "" ? [next] : stopped ? [copyAction, next] : [next, copyAction];
+  };
+  const copy = () => copyText(copyable).then(() => setManual(false), (error: unknown) => {
+    if (error instanceof ClipboardWriteUnavailableError) setManual(true); else reportError(error);
+  });
   return (
     <main
       id="entry-failure"
@@ -89,9 +116,11 @@ function StoppedWorkspace({ stale }: { stale: boolean }) {
           announcement="None"
         />
       </div>
-      {failed && runtime !== null ? <FeedbackNotice content={SAVE_FAILURE} announcement="Polite"
-        // A failed retry republishes its error into the runtime state shown here.
-        actions={[{ label: "retry saving", onClick: () => { void runtime.retry().catch(() => {}); } }]} /> : null}
+      {failed && runtime !== null ? <FeedbackNotice content={stopped ? STORE_STOPPED : SAVE_FAILURE} announcement="Polite" actions={saveActions(runtime)} /> : null}
+      {manual && copyable !== "" ? <>
+        <p>copying is unavailable here. select the text and copy it.</p>
+        <textarea className={styles.retained} readOnly value={copyable} aria-label="unsaved writing" />
+      </> : null}
     </main>
   );
 }

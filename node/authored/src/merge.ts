@@ -39,7 +39,7 @@ export function projectResource(state:ResourceState):ResourceProjection {
       const {body}=mergeNote(state.body_state,null);
       const embedded_refs:string[]=[];
       const content=body.body_pm_json.content;
-      if(Array.isArray(content)) for(const node of content) if(node.type==="resource_embed") embedded_refs.push(node.attrs.resource_ref);
+      if(Array.isArray(content)) for(const node of content) if(node.type==="resource_embed" && typeof node.attrs?.resource_ref==="string") embedded_refs.push(node.attrs.resource_ref);
       return {...common,...body,embedded_refs:[...new Set(embedded_refs)]};
     }
     case "page": return {...common,title:mergeTitle(state.title_state,null).title,local_date:state.local_date};

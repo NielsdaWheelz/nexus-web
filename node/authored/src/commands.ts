@@ -4,7 +4,7 @@ import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import type { Change, Corpus, HighlightColor, PassageCapture, SourceCapture, LinkState, ResourcePatch, ResourceState, SelectionCapture, Stamp, Vector } from "./types.ts";
 import { createNote, createTitle } from "./documents.ts";
 import { canonicalSelection } from "./geometry.ts";
-import { mergeChanges, counter } from "./merge.ts";
+import { mergeChanges, counter, isVisible } from "./merge.ts";
 import { sortedEndpoints } from "./identity.ts";
 import type { NoteBody } from "./body.ts";
 export interface CommandContext { replica_id:string; command_seq:string; lamport:string }
@@ -38,7 +38,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
   const stamp={lamport:context.lamport,replica_id:context.replica_id};
   const dot:Vector={[context.replica_id]:context.command_seq};
   const resource=(ref:string):ResourceState=>{const r=mergeChanges(states,[change]).resources.find(r=>r.ref===ref);if(!r)throw new TypeError(`Unknown resource ${ref}`);return r;};
-  const link=(id:string):LinkState=>{const l=states.links.find(l=>l.link_id===id);if(!l)throw new TypeError(`Unknown link ${id}`);return l;};
+  const link=(id:string):LinkState=>{const l=mergeChanges(states,[change]).links.find(l=>l.link_id===id);if(!l)throw new TypeError(`Unknown link ${id}`);return l;};
   const register=<T>(value:T)=>({value,stamp});
   const add=(action:Intent):void=>{
     switch(action.kind) {
@@ -60,6 +60,8 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       case "add_link": {
         const [a,b]=sortedEndpoints(action.endpoint_a,action.endpoint_b);
         if(a!==action.endpoint_a||b!==action.endpoint_b)throw new TypeError("Link endpoints and positions must be sorted");
+        const known=mergeChanges(states,[change]).links.find(link=>link.link_id===action.link_id);
+        if(known && isVisible(known.add_vv,known.remove_vv))return;
         change.links.push({link_id:action.link_id,endpoint_a:a,endpoint_b:b,add_vv:dot,remove_vv:{},position_a:register(action.position_a),position_b:register(action.position_b)});return;
       }
       case "restore_link":change.links.push({...link(action.link_id),add_vv:dot,remove_vv:{},position_a:null,position_b:null});return;

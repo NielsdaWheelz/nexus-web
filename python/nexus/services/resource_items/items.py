@@ -53,7 +53,6 @@ from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.locations import ScopedMediaPassage, media_passages
 from nexus.services.resource_items.routing import (
     _activations_from_resolved_passages,
-    resource_activations_for_refs,
 )
 
 _VISIBLE = f"({visible_media_ids_cte_sql()})"

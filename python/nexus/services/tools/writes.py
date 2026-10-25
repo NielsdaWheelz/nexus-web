@@ -9,8 +9,8 @@ holdings survive undo; historical null-revision entries confer no undo authority
 Notes, highlights and their placement links are authored: one server command per
 call, inside the fenced call transaction, through the semantic owner that feeds every
 device. Their ids derive from the call id and the call row's single completion stops a
-retry from minting a second touch. Locks follow the authored order: fence, viewer,
-media, then the account head, which also fences the baseline each command observes.
+retry from minting a second touch. Locks follow the authored order: viewer, fence, the
+account head (which also fences the baseline each command observes), then media.
 Assistant edges stay directed machine facts with their kind and rationale. There is
 no delete, overwrite or rewrite tool; undo deletes a created resource observing its
 current state, and an unseen device edit may revive it. Effects and exact source-clock
@@ -309,6 +309,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
 
     db, viewer = call.db, call.principal
     media = _ref(value.media_uri, ("media",))
+    authored.lock_account(db, viewer)
     library_entries.lock_media_for_reference(db, media.id)
     assert_ref_visible(db, viewer_id=viewer, ref=media)
     generation = lock_publication_generation(db, media_id=media.id)

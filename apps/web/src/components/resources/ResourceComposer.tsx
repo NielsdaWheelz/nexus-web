@@ -27,8 +27,8 @@ type Composer = {
   /** Minted once per draft; a retried commit keeps it. */
   noteRef: string;
   state: "editing" | "saving" | "saved";
-  /** `retry` re-persists a failed local commit's frozen command until it lands, then finishes as that command would. */
-  failure: { content: FeedbackContent; retry: (() => void) | null } | null;
+  /** A failed local commit's frozen retry, held until it lands; `kind` picks how the current render finishes it. */
+  failure: { content: FeedbackContent; retry: { kind: "save" | "link"; attempt: () => Promise<unknown> } | null } | null;
 };
 type Props = {
   destinationRef: string; occurrenceKey: string; label: string;
@@ -59,39 +59,44 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
     const local = await (await writing.store).query({ kind: "resource", ref: destinationRef });
     return local.rows[0]?.resource.title ?? destinationRef;
   };
-  const commit = async (attempt: () => Promise<unknown>, after: () => void, frozen: (() => Promise<unknown>) | null = null) => {
+  /** Finishing reads this render's props, so a retry after a pane return calls the live owner. */
+  const finish = (kind: "save" | "link") => {
+    if (kind === "link") { draft.set(current => ({ ...current, state: "editing" })); return; }
+    draft.set(current => afterSave === "keep" ? { ...current, state: "saved" } : fresh(current.revision + 1));
+    onSaved?.();
+  };
+  const commit = async (kind: "save" | "link", attempt: () => Promise<unknown>, frozen: (() => Promise<unknown>) | null = null) => {
     draft.set(current => ({ ...current, state: "saving", failure: null }));
     try {
       await attempt();
-      after();
     } catch (error) {
       const retry = error instanceof LocalCommitError ? error.retry : frozen;
       draft.set(current => ({ ...current, state: "editing", failure: retry
-        ? { content: LOCAL_FAILURE, retry: () => void commit(retry, after, retry) }
+        ? { content: LOCAL_FAILURE, retry: { kind, attempt: retry } }
         : { content: { tone: "Warning", title: "couldn’t save this note", message: error instanceof Error ? error.message : undefined }, retry: null } }));
+      return;
     }
+    finish(kind);
   };
   const save = () => {
     const submitted = draft.read();
     if (writing === null || submitted.state !== "editing") return;
-    if (submitted.failure?.retry) { submitted.failure.retry(); return; }
+    const retry = submitted.failure?.retry;
+    if (retry) { void commit(retry.kind, retry.attempt, retry.attempt); return; }
     if (submitted.searching || !bodyHasContent(submitted.body)) return;
-    void commit(async () => createLink(writing, {
+    void commit("save", async () => createLink(writing, {
       source_ref: destinationRef, target_ref: submitted.noteRef, source_label: await sourceLabel(), target_label: null,
       after: null, prelude: [...prelude, { kind: "create_note", ref: submitted.noteRef, body: submitted.body }],
-    }), () => {
-      draft.set(current => afterSave === "keep" ? { ...current, state: "saved" } : fresh(current.revision + 1));
-      onSaved?.();
-    });
+    }));
   };
   /** A picked reference links to the destination now; the draft note stays unsent. */
   const linkReference = (target: LinkTarget, item: ResourceItem) => {
     if (writing === null) return;
-    void commit(async () => {
+    void commit("link", async () => {
       const endpoint = await prepareTarget(writing, target);
       return createLink(writing, { source_ref: destinationRef, target_ref: endpoint.ref, source_label: await sourceLabel(),
         target_label: item.label, after: null, prelude: [...prelude, ...endpoint.intents] });
-    }, () => draft.set(current => ({ ...current, state: "editing" })));
+    });
   };
   const edit = (change: NoteEdit) => draft.set(current => ({ ...current, body: change.after,
     history: recordNoteBodyEdit(current.history, change), focus: null, revision: current.revision + 1 }));

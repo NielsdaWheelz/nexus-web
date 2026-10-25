@@ -34,7 +34,7 @@ def query_connections(
 def remove_fact(edge_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
     """Idempotent: an absent fact is 204 again. Only discovery and assistant facts."""
     if links.remove_machine_fact(db, viewer_id=viewer.user_id, edge_id=edge_id):
-        record_input_change(db)
+        record_input_change(db, owners=(f"link:{edge_id}",))
     db.commit()
     return Response(status_code=204)
 

@@ -61,6 +61,6 @@ export default function NotePaneBody() {
     <BoundNoteEditor noteRef={ref} label="edit note" session={history ?? undefined}
       inspection={inspection?.text === resource.body_text ? inspection.view : null}
       onSplit={position => { if (history) void history.split(ref, position, ref, null).catch(setError); }} />
-    <LocalOutline rootRef={ref} />
+    <LocalOutline rootRef={ref} session={history ?? undefined} />
   </div>;
 }

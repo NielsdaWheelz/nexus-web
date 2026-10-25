@@ -10,9 +10,9 @@ retains literal captures with null publication rather than invent a generation.
 import base64
 import hashlib
 import json
-import shutil
 import subprocess
 from datetime import date
+from functools import cache
 from pathlib import Path
 from uuid import UUID, uuid5
 
@@ -29,10 +29,21 @@ def _json(value: object) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
 
 
+@cache
+def _node_binary() -> str:
+    return subprocess.run(
+        ["node", "-p", "process.execPath"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=True,
+    ).stdout.strip()
+
+
 def _helper(value: object) -> dict:
     result = subprocess.run(
         [
-            shutil.which("node") or "node",
+            _node_binary(),
             "--max-old-space-size=128",
             str(Path(__file__).with_name("0318_authored_seed.mjs")),
         ],
@@ -80,6 +91,9 @@ def _insert(
 
 def upgrade() -> None:
     connection = op.get_bind()
+    op.execute(
+        "CREATE TEMP TABLE authored_changed_note_text(id uuid PRIMARY KEY) ON COMMIT DROP"
+    )
     op.execute("""CREATE TABLE authored_heads (
         account_id uuid PRIMARY KEY REFERENCES users(id), head_seq bigint NOT NULL CHECK(head_seq>=0),
         lamport bigint NOT NULL DEFAULT 1 CHECK(lamport>0))""")
@@ -142,6 +156,7 @@ def upgrade() -> None:
     op.execute("DROP INDEX uix_resource_view_states_endpoint_order")
     # Equal positions are legal. Their link ids provide a deterministic tie break.
     _seed(connection)
+    _publish_note_search(connection)
     op.drop_table("authored_identities")
 
 
@@ -181,7 +196,7 @@ def _seed(connection) -> None:
         )
         note_rows = connection.execute(
             sa.text(
-                "SELECT id,body_pm_json FROM note_blocks WHERE user_id=:a ORDER BY id"
+                "SELECT id,body_pm_json,body_text FROM note_blocks WHERE user_id=:a ORDER BY id"
             ),
             {"a": account},
         ).mappings()
@@ -196,6 +211,7 @@ def _seed(connection) -> None:
                     "pages": [],
                 }
             )["notes"]
+            before = {str(row["id"]): row["body_text"] for row in batch}
             for seed in seeds:
                 ref = f"note_block:{seed['id']}"
                 state = {
@@ -206,6 +222,11 @@ def _seed(connection) -> None:
                     "body_state": seed["body_state"],
                 }
                 _insert(connection, "authored_resources", "ref", account, ref, state)
+                if seed["body_text"] != before[seed["id"]]:
+                    connection.execute(
+                        sa.text("INSERT INTO authored_changed_note_text VALUES (:id)"),
+                        {"id": UUID(seed["id"])},
+                    )
                 connection.execute(
                     sa.text(
                         "UPDATE note_blocks SET body_pm_json=CAST(:body AS jsonb),body_text=:words WHERE id=:id"
@@ -255,6 +276,67 @@ def _seed(connection) -> None:
         _passages(connection, account, stamp)
         _links(connection, account, dot, stamp)
         _stubs(connection, account, stamp)
+
+
+def _publish_note_search(connection) -> None:
+    """Freeze the new exact-text token; invalidate only changed text publications."""
+    connection.execute(sa.text("SET LOCAL paradedb.global_mutable_segment_rows=0"))
+    previous = None
+    while True:
+        after = "WHERE id>:p" if previous is not None else ""
+        ids = list(
+            connection.scalars(
+                sa.text(f"SELECT id FROM note_blocks {after} ORDER BY id LIMIT 256"),
+                {"p": previous},
+            )
+        )
+        if not ids:
+            break
+        refs = [f"note_block:{identity}" for identity in ids]
+        connection.execute(
+            sa.text(
+                "DELETE FROM keyword_occurrences WHERE family='note_block' AND ref=ANY(:refs)"
+            ),
+            {"refs": refs},
+        )
+        connection.execute(
+            sa.text("""INSERT INTO keyword_occurrences
+            (doc_key,ref,owner_ref,family,admission_key,source_revision,body)
+            SELECT 'note_block:'||id::text,'note_block:'||id::text,'note_block:'||id::text,
+                'note_block','note_block:'||id::text||':'||encode(digest(convert_to(body_text,'UTF8'),'sha256'),'hex'),
+                NULL,body_text FROM note_blocks WHERE id=ANY(:ids) AND body_text<>''"""),
+            {"ids": ids},
+        )
+        previous = ids[-1]
+    connection.execute(
+        sa.text("""INSERT INTO content_index_states
+        (owner_kind,owner_id,status,status_reason,active_embedding_provider,active_embedding_model,revision)
+        SELECT 'note_block',id,'pending','local_first_writing',NULL,NULL,1 FROM authored_changed_note_text
+        ON CONFLICT ON CONSTRAINT uq_content_index_states_owner DO UPDATE SET
+            status='pending',status_reason='local_first_writing',active_embedding_provider=NULL,
+            active_embedding_model=NULL,revision=content_index_states.revision+1,updated_at=now()""")
+    )
+    connection.execute(
+        sa.text("""UPDATE background_jobs j SET status='succeeded',result='{"status":"superseded"}',
+        finished_at=now(),updated_at=now(),execution_id=NULL,claimed_by=NULL,lease_expires_at=NULL
+        WHERE j.kind='note_reindex_job' AND j.status IN ('pending','failed','running')
+          AND EXISTS (SELECT 1 FROM authored_changed_note_text changed WHERE changed.id::text=j.payload->>'note_block_id')""")
+    )
+    connection.execute(
+        sa.text("""INSERT INTO background_jobs(kind,payload,max_attempts)
+        SELECT 'note_reindex_job',jsonb_build_object('note_block_id',changed.id::text,
+            'revision',state.revision,'reason','local_first_writing'),3
+        FROM authored_changed_note_text changed JOIN content_index_states state
+          ON state.owner_kind='note_block' AND state.owner_id=changed.id""")
+    )
+    connection.execute(
+        sa.text("""INSERT INTO suggestion_inputs(id,revision)
+        SELECT 'note_block:'||id::text,1 FROM authored_changed_note_text ORDER BY id
+        ON CONFLICT(id) DO UPDATE SET revision=suggestion_inputs.revision+1""")
+    )
+    connection.execute(
+        sa.text("SELECT pg_notify('nexus_background_jobs','note_reindex_job')")
+    )
 
 
 def _highlights(connection, account, dot, stamp) -> None:

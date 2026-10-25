@@ -7,7 +7,7 @@
 // The occurrence owns only its relationship menu (its outline's unlink, server-fact
 // removal); structure keys, selection and ordering belong to the outline's rootProps.
 // Expanded, it shows its local links beside its separately failable server facts.
-import {useCallback, useContext, useEffect, useId, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
+import {useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode, type Ref} from "react";
 import {ChevronRight, CornerLeftUp} from "lucide-react";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
@@ -16,7 +16,6 @@ import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
 import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
-import type {ResourceProjection} from "@nexus/authored/types";
 import {useChangeStamp} from "@/lib/api/changes";
 import {isApiError} from "@/lib/api/client";
 import {assertNever} from "@/lib/assertNever";
@@ -31,6 +30,7 @@ import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
 import {connectionMutationErrorMessage, mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
 import {parseResourceRef, resourceTypeLabel} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
+import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {resourceMetadata} from "@/lib/resources/metadata";
 import {classifyOutlineOccurrence, enterOutlineOccurrence} from "@/lib/resources/outlineProjection";
 import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
@@ -45,6 +45,9 @@ import styles from "./ResourceOutline.module.css";
 import factualStyles from "./ResourceContent.module.css";
 
 type Item = Schema<"ResourceItemOut">;
+const NO_SUBSCRIPTION = () => () => {};
+const IDLE = {saving: false, error: null as unknown, error_refs: [] as string[], revision: 0};
+const IDLE_SAVE = () => IDLE;
 type PlacementBranch = {expanded: boolean; toggle(): void; children: ReactNode};
 /** How the occurrence entered its branch: a local user link, a server fact, or a root.
  * The outline rendering a local link owns its unlink: execution, undo, focus, and any
@@ -95,34 +98,6 @@ interface Presentation {
 }
 
 const AUTHORED = /^(note_block|page|highlight):/u;
-const ROUTES: Partial<Record<string, string>> = {
-  page: "/pages", note_block: "/notes", media: "/media", conversation: "/conversations",
-  library: "/libraries", podcast: "/podcasts", oracle_reading: "/oracle",
-};
-const routeFor = (ref: string): string | null => {
-  const parsed = parseResourceRef(ref);
-  const prefix = parsed ? ROUTES[parsed.scheme] : undefined;
-  return parsed && prefix ? `${prefix}/${parsed.id}` : null;
-};
-
-/** Where a local projection opens: its own route, or a highlight's place in its media. */
-export function localResourceHref(resource: ResourceProjection): string | null {
-  if (resource.kind !== "highlight") return routeFor(resource.ref);
-  const source = resource.source_ref ? parseResourceRef(resource.source_ref) : null;
-  const own = parseResourceRef(resource.ref);
-  return source?.scheme === "media" && own ? `/media/${source.id}#highlight-${own.id}` : resource.source_ref ? routeFor(resource.source_ref) : null;
-}
-
-/** The literal label a local projection supplies for menus, links and parents. */
-export function localResourceLabel(resource: ResourceProjection): string {
-  switch (resource.kind) {
-    case "note": return resource.body_text?.split("\n")[0]?.trim() || "empty note";
-    case "page": return resource.title?.trim() || resource.local_date || "untitled page";
-    case "highlight": return resource.selection?.quote_exact.trim() || "highlight";
-    case "source": return resource.title?.trim() || resource.ref;
-  }
-}
-
 /** A server fact's removal, when its owner offers one; local links unlink through their outline. */
 function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: WritingRuntime): {id: string; label: string; run(): Promise<unknown>} | null {
   const mutation = incoming.mutation;
@@ -181,14 +156,16 @@ function ReferenceRow(props: Shared & {subject: string}) {
   const local = useAuthoredQuery(remote.status === "ready" ? null : {kind: "resource", ref: props.subject});
   const stub = local.data?.rows[0]?.resource ?? null;
   const parsed = parseResourceRef(props.subject);
-  const label = stub ? localResourceLabel(stub) : "unavailable resource";
-  return <Occurrence {...props} presentation={remote.status === "ready" ? remotePresentation(remote.data, props, runtime) : {
+  // Absent locally and still being read remotely is not yet "unavailable": show the literal ref.
+  const settled = props.historical || remote.status === "failed";
+  const label = stub ? localResourceLabel(stub) : settled ? "unavailable resource" : props.subject;
+  return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props, runtime), ref: props.subject} : {
     ref: props.subject, label, identity: parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "resource",
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
     primary: <span data-resource-primary className={factualStyles.named}>{label}</span>,
     status: local.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
       announcement="Polite" actions={[{label: "retry", onClick: local.retry}]}/>
-      : !stub && local.data ? <p className={styles.status}>not available on this device</p> : null,
+      : !stub && local.data && settled ? <p className={styles.status}>not available on this device</p> : null,
   }}/>;
 }
 
@@ -197,6 +174,8 @@ function AuthoredRow(props: Shared & {subject: string}) {
   const resource = read.data?.rows[0]?.resource ?? null;
   const source = useAuthoredQuery(resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
   const runtime = usePaneRuntime();
+  const writing = useWritingRuntime();
+  const saving = useSyncExternalStore(writing?.subscribe ?? NO_SUBSCRIPTION, writing?.snapshot ?? IDLE_SAVE, IDLE_SAVE);
   const branch = useContext(ResourceBranch);
   const parsed = parseResourceRef(props.subject)!;
   const label = resource ? localResourceLabel(resource) : parsed.scheme === "note_block" ? "unavailable note"
@@ -224,8 +203,14 @@ function AuthoredRow(props: Shared & {subject: string}) {
   return <Occurrence {...props} presentation={{
     ref: props.subject, label, identity, href, item: null, primary,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
-    status: read.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
-      announcement="Polite" actions={[{label: "retry", onClick: read.retry}]}/> : null,
+    status: <>
+      {read.error ? <FeedbackNotice content={{tone: "Warning", title: "couldn’t read this on this device"}}
+        announcement="Polite" actions={[{label: "retry", onClick: read.retry}]}/> : null}
+      {/* a note's own editor shows its failed commit; pages and highlights show theirs here. */}
+      {resource?.kind !== "note" && saving.error !== null && saving.error_refs.includes(props.subject) ?
+        <FeedbackNotice content={{tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving."}}
+          announcement="Assertive" actions={[{label: "retry saving", onClick: () => void writing?.retry().catch(() => undefined)}]}/> : null}
+    </>,
   }}/>;
 }
 
@@ -278,8 +263,10 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
     let handle = requestAnimationFrame(function attempt() {
       const target = childrenSection.current?.querySelector<HTMLElement>(
         `[data-composer-destination="${CSS.escape(ref)}"] [contenteditable="true"]`);
-      if (target) { target.focus(); latest.current.onAnnotationClose?.(); }
-      else if (++frames < 30) handle = requestAnimationFrame(attempt);
+      // Found or given up, the request is consumed so a later remount does not replay it.
+      if (target) target.focus();
+      if (target || ++frames >= 30) latest.current.onAnnotationClose?.();
+      else handle = requestAnimationFrame(attempt);
     });
     return () => cancelAnimationFrame(handle);
   }, [focusToken, ref]);
@@ -375,7 +362,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
           displayedActivation={item?.activation} showSourceSubject={item !== null && item.action_ref !== item.ref}
           commandDisabledReason={commandDisabledReason} sections={[]} label={`more actions for ${label}`}/></div>
       </div>
-      {nestedContent || open ? <div className={styles.children}>{nestedContent}{open ?
+      {nestedContent || open ? <div className={styles.children} data-outline-children="true">{nestedContent}{open ?
         <section ref={childrenSection} id={childrenId} aria-label="linked resources">{placement?.children ??
           <Children ownerRef={ref} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/>}</section> : null}</div> : null}
     </li>
@@ -384,9 +371,10 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
 
 /** An expanded occurrence: its local links, then its separately failable server facts. */
 function Children({ownerRef, occurrenceKey, ancestors}: {ownerRef: string; occurrenceKey: string; ancestors: readonly string[]}) {
-  const remote = useRemoteConnections(ownerRef, useChangeStamp("Metadata"));
+  const remote = useRemoteConnections(ownerRef, occurrenceKey, useChangeStamp("Metadata"));
   return <>
     <LocalOutline rootRef={ownerRef} ancestors={ancestors} occurrencePrefix={occurrenceKey}/>
-    <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote} onChanged={remote.revalidate}/>
+    <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
+      onChanged={() => void remote.refetch().catch(() => undefined)}/>
   </>;
 }

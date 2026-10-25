@@ -1,7 +1,7 @@
 """The sole materializer of authored relational rows; canonical state is retained.
 
-Semantic deletion hides rows with authored_visible. No resource teardown runs:
-independent notes, anchors and incident canonical links survive revival.
+Semantic deletion hides rows with authored_visible. Independent notes, anchors and
+canonical links survive revival; sources lose retention only after their last root.
 """
 
 import hashlib
@@ -25,16 +25,42 @@ from nexus.services.resource_graph.refs import require_ref
 
 
 def project(db: Session, account_id: UUID, result: MergeResult) -> None:
+    from nexus.services.media_deletion import lock_highlight_sources, release_highlight_sources
+
+    hiding = [
+        require_ref(item.ref).id
+        for item in result.projections
+        if item.kind == "highlight" and not item.visible
+    ]
+    previously_visible = (
+        list(
+            db.scalars(
+                text(
+                    "SELECT id FROM highlights WHERE user_id=:a AND authored_visible AND id=ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"a": account_id, "ids": hiding},
+            )
+        )
+        if hiding
+        else []
+    )
+    locked_sources = lock_highlight_sources(db, previously_visible)
+    visibility_changes = []
+    changed_notes = []
     for item in result.projections:
         ref = require_ref(item.ref)
-        existing = db.scalar(
+        scalar = "body_text" if item.kind == "note" else "NULL"
+        previous = db.execute(
             text(
-                "SELECT user_id FROM "
+                f"SELECT user_id,authored_visible,{scalar} FROM "
                 + {"note": "note_blocks", "page": "pages", "highlight": "highlights"}[item.kind]
                 + " WHERE id=:id"
             ),
             {"id": ref.id},
-        )
+        ).one_or_none()
+        existing = previous[0] if previous is not None else None
+        if (bool(previous[1]) if previous is not None else False) != item.visible:
+            visibility_changes.append(item.ref)
         if existing is not None and existing != account_id:
             from nexus.errors import ApiErrorCode, ConflictError
 
@@ -42,6 +68,9 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Resource id belongs to another account"
             )
         if item.kind == "note":
+            words_changed = previous is None or previous[2] != item.body_text
+            if words_changed or item.ref in visibility_changes:
+                changed_notes.append(ref.id)
             db.execute(
                 text(
                     "INSERT INTO note_blocks(id,user_id,body_pm_json,body_text,authored_visible) "
@@ -62,14 +91,14 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
             project_note_embeds(
                 db, viewer_id=account_id, note_id=ref.id, embedded_refs=item.embedded_refs
             )
-            if item.visible:
+            if item.visible and (words_changed or item.ref in visibility_changes):
                 from nexus.services.note_indexing import enqueue_note_reindex
 
                 enqueue_note_reindex(db, note_block_id=ref.id, reason="authored_merge")
-            else:
-                from nexus.services.content_indexing import IndexOwner, delete_content_index
+            elif not item.visible and item.ref in visibility_changes:
+                from nexus.services.note_indexing import hide_note_index
 
-                delete_content_index(db, owner=IndexOwner("note_block", ref.id))
+                hide_note_index(db, note_block_id=ref.id)
         elif item.kind == "page":
             db.execute(
                 text(
@@ -151,19 +180,118 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
                 "selector": json.dumps({"quote": quote, "locator_hint": hint}),
             },
         )
-    touched = [item.ref for item in result.projections]
-    ids = [str(item.link_id) for item in result.links]
-    rows = db.execute(
+    highlight_ids = _project_links(db, account_id, result, visibility_changes)
+    highlight_ids |= {
+        require_ref(item.ref).id for item in result.projections if item.kind == "highlight"
+    }
+    if changed_notes:
+        highlight_ids.update(
+            db.scalars(
+                text("""SELECT DISTINCT h.id FROM resource_edges e
+            JOIN highlights h ON (e.source_scheme='highlight' AND e.source_id=h.id)
+                OR (e.target_scheme='highlight' AND e.target_id=h.id)
+            WHERE e.user_id=:a AND e.authored_visible AND e.origin IN ('user','highlight_note','link_note')
+                AND ((e.source_scheme='note_block' AND e.source_id=ANY(:ids))
+                    OR (e.target_scheme='note_block' AND e.target_id=ANY(:ids)))"""),
+                {"a": account_id, "ids": changed_notes},
+            )
+        )
+    if highlight_ids:
+        from nexus.services.highlights import annotations_changed
+
+        annotations_changed(db, highlight_ids)
+    from nexus.services.search import projection
+    from nexus.services.suggestion_changes import record_input_change
+
+    families = {"note": "note_block", "page": "page", "highlight": "highlight"}
+    for kind, family in families.items():
+        projection.refresh(
+            db,
+            family,
+            changed_notes
+            if kind == "note"
+            else [require_ref(item.ref).id for item in result.projections if item.kind == kind],
+        )
+    projection.refresh(db, "passage_anchor", [passage.anchor_id for passage in result.passages])
+    contributor_link = any(
+        endpoint.startswith("contributor:")
+        for link in result.links
+        for endpoint in (link.endpoint_a, link.endpoint_b)
+    )
+    captures = [
+        item.source_ref
+        for item in result.projections
+        if item.kind == "highlight" and item.ref in visibility_changes
+    ]
+    captures += [passage.source_ref for passage in result.passages]
+    retained_x_source = bool(captures) and db.scalar(
         text(
-            "SELECT state FROM authored_links WHERE account_id=:a AND "
-            "(link_id=ANY(:ids) OR state->>'endpoint_a'=ANY(:refs) "
-            "OR state->>'endpoint_b'=ANY(:refs))"
+            "SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=ANY(CAST(:ids AS uuid[])))"
         ),
-        {"a": account_id, "ids": ids, "refs": touched},
-    ).scalars()
-    conversation_links = []
-    for value in rows:
+        {
+            "ids": [
+                require_ref(ref).id
+                for ref in captures
+                if ref is not None and ref.startswith("media:")
+            ]
+        },
+    )
+    visibility_notes = [
+        require_ref(ref).id for ref in visibility_changes if ref.startswith("note_block:")
+    ]
+    contributor_note = bool(visibility_notes) and db.scalar(
+        text("""SELECT EXISTS (SELECT 1 FROM resource_edges e WHERE e.user_id=:a
+            AND ((e.source_scheme='note_block' AND e.source_id=ANY(CAST(:ids AS uuid[])) AND e.target_scheme='contributor')
+                OR (e.target_scheme='note_block' AND e.target_id=ANY(CAST(:ids AS uuid[])) AND e.source_scheme='contributor')))"""),
+        {"a": account_id, "ids": visibility_notes},
+    )
+    if contributor_link or retained_x_source or contributor_note:
+        projection.refresh_viewer_contributors(db, [account_id])
+    owners = {item.ref for item in result.projections}
+    owners |= {endpoint for link in result.links for endpoint in (link.endpoint_a, link.endpoint_b)}
+    owners |= {f"passage_anchor:{passage.anchor_id}" for passage in result.passages}
+    if owners:
+        record_input_change(db, owners=owners)
+    release_highlight_sources(db, locked_sources)
+
+
+def _project_links(
+    db: Session, account_id: UUID, result: MergeResult, visibility_changes: list[str]
+) -> set[UUID]:
+    """Project explicit link edits; bulk-propagate only changed endpoint liveness."""
+    ids = [str(item.link_id) for item in result.links]
+    conversation_links: list[tuple[UUID, bool | None, bool]] = []
+    highlight_ids: set[UUID] = set()
+    if visibility_changes:
+        changed = db.execute(
+            text("""WITH old AS MATERIALIZED (
+            SELECT e.id,e.authored_visible AS before,l.state,
+                EXISTS (SELECT 1 FROM jsonb_each_text(l.state->'add_vv') dot
+                    WHERE dot.value::bigint>COALESCE((l.state->'remove_vv'->>dot.key)::bigint,0))
+                AND NOT EXISTS (SELECT 1 FROM authored_resources r WHERE r.account_id=:a AND NOT r.visible
+                    AND r.ref IN (l.state->>'endpoint_a',l.state->>'endpoint_b')) AS visible
+            FROM authored_links l JOIN resource_edges e ON e.id=l.link_id::uuid AND e.user_id=:a
+            WHERE l.account_id=:a AND NOT l.link_id=ANY(:ids)
+              AND (l.state->>'endpoint_a'=ANY(:refs) OR l.state->>'endpoint_b'=ANY(:refs))
+        ), changed AS (
+            UPDATE resource_edges e SET authored_visible=old.visible FROM old
+            WHERE e.id=old.id AND e.authored_visible IS DISTINCT FROM old.visible
+            RETURNING e.id,old.before,e.authored_visible AS after,old.state
+        ) SELECT id,before,after,state->>'endpoint_a',state->>'endpoint_b' FROM changed
+            WHERE state->>'endpoint_a' LIKE 'conversation:%' OR state->>'endpoint_b' LIKE 'conversation:%'
+                OR state->>'endpoint_a' LIKE 'highlight:%' OR state->>'endpoint_b' LIKE 'highlight:%'"""),
+            {"a": account_id, "ids": ids, "refs": visibility_changes},
+        ).tuples()
+        for identity, before, after, left, right in changed:
+            if left.startswith("conversation:") or right.startswith("conversation:"):
+                conversation_links.append((identity, before, after))
+            highlight_ids.update(
+                require_ref(ref).id for ref in (left, right) if ref.startswith("highlight:")
+            )
+    for link in result.links:
+        value = link.model_dump(mode="json")
         a, b = require_ref(value["endpoint_a"]), require_ref(value["endpoint_b"])
+        highlight_ids.update(endpoint.id for endpoint in (a, b) if endpoint.scheme == "highlight")
         visible = any(
             int(seq) > int(value["remove_vv"].get(replica, "0"))
             for replica, seq in value["add_vv"].items()
@@ -219,6 +347,7 @@ def project(db: Session, account_id: UUID, result: MergeResult) -> None:
         from nexus.services.resource_graph.context import project_conversation_links
 
         project_conversation_links(db, viewer_id=account_id, links=conversation_links)
+    return highlight_ids
 
 
 def _highlight(db: Session, account_id: UUID, item: ResourceProjection) -> None:

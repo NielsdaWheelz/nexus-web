@@ -99,7 +99,7 @@ export interface NoteInspection {
 
 /** What an outline row does with the keys that change structure. */
 export interface StructuralKeys {
-  split?(left: NoteBody, right: NoteBody): void;
+  split?(left: NoteBody, right: NoteBody, displayed: import("@/lib/notes/editorTypes").DisplayedSplit | null): void;
   emptyBackspace?(): void;
   join?(direction: "backward" | "forward"): void;
   indent?(at: { anchor: number; head: number }): void;
@@ -301,20 +301,16 @@ function NoteEditorContent(props: NoteEditorProps) {
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   const warn = useCallback(
     (title: string, message: string) =>
-      feedback.offer({ needsAttention: true, undo: null, onDismiss: null,
-        key: "note-attachment",
-        announcement: "Polite",
-        content: { tone: "Warning", title, message },
-      }),
+      feedback.receipt({ tone: "Warning", title, message }),
     [feedback],
   );
 
-  const reportEdit = (edit: NoteEdit) => {
+  const reportEdit = useCallback((edit: NoteEdit) => {
     try {
       bindingRef.current?.handoff(edit.before, edit.after);
       latest.current.onEdit(edit);
     } catch (error) { warn("insertion needs review", error instanceof Error ? error.message : "your existing writing is kept."); }
-  };
+  }, [warn]);
   const refreshMarks = useCallback((state: EditorState) => {
     const stored = state.storedMarks ?? state.selection.$from.marks();
     const { from, to, empty } = state.selection;
@@ -501,7 +497,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (!task?.body || !props.editable || paused || !referenceReady || viewRef.current?.composing || !sameBody(props.body, task.base)) return;
     reportEdit({ before: props.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
     setAttachment(null);
-  }, [attachmentValue, setAttachment, props, paused, referenceReady]);
+  }, [attachmentValue, setAttachment, props, paused, referenceReady, reportEdit]);
 
   useLayoutEffect(() => {
     // Fresh reference ownership is installed by the hook's preceding layout
@@ -940,14 +936,14 @@ function NoteEditorContent(props: NoteEditorProps) {
         const offset = state.selection.$from.parentOffset;
         const left = bodyFromNode(body.copy(body.content.cut(0, offset)));
         const right = bodyFromNode(body.copy(body.content.cut(offset)));
-        return act(() => keys.split!(left, right));
+        return act(() => keys.split!(left, right, binding ? {body_state:binding.bodyState(),from:selection.from-1,to:selection.to-1} : null));
       },
       dispatchTransaction(tr) {
-        if (tr.docChanged && tr.getMeta(SOURCE) !== "external" && false) return;
         if (binding && tr.docChanged && tr.getMeta(SOURCE) !== "external" && referenceRef.current.getState() === null) {
           try { binding.apply(tr); }
           catch (error) { warn("edit couldn’t be applied", error instanceof Error ? error.message : "your existing writing is kept."); return; }
         }
+        if(binding && referenceRef.current.getState()===null)tr.setMeta("addToHistory",false);
         const before = view.state;
         const after = before.apply(tr);
         view.updateState(after);
@@ -1019,7 +1015,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (props.writingDocument || !view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
       return;
     replaceDoc(view, docFromBody(props.body));
-  }, [props.body, props.revision]);
+  }, [props.body, props.revision, props.writingDocument]);
 
   useLayoutEffect(() => {
     const raw = reference.state?.raw;
@@ -1200,6 +1196,14 @@ function NoteEditorContent(props: NoteEditorProps) {
               onClick={() => format(name)}
             />
           ))}
+          <Button iconOnly icon={<Code2 size={16} aria-hidden="true" />} aria-label="Code presentation"
+            aria-pressed={props.body.body_pm_json.attrs?.presentation==="code"}
+            tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
+              const view=viewRef.current;if(!view||view.composing)return;
+              const block=view.state.doc.firstChild!,before=bodyFromNode(block);
+              const after=bodyFromNode(block.type.create({presentation:block.attrs.presentation==="code"?"prose":"code"},block.content));
+              reportEdit({before,after,selectionBefore:{anchor:view.state.selection.anchor,head:view.state.selection.head},selectionAfter:{anchor:view.state.selection.anchor,head:view.state.selection.head},source:"format"});
+            }} />
           <Button
             iconOnly
             icon={<Link2 size={16} aria-hidden="true" />}
@@ -1357,7 +1361,7 @@ function EmbeddedResource({
   supplied,
   scope,
   branch,
-  containingNoteRef,
+  containingNoteRef: _containingNoteRef,
   atomic,
   onRevealRoot,
 }: {

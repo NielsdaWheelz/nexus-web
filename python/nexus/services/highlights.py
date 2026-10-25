@@ -37,12 +37,12 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
 )
 from nexus.services import note_bodies
-from nexus.services.resource_grants import invalidate_annotation_visibility
 from nexus.services.media_text_scope import (
     highlight_in_reading_scope_sql,
     read_media_text_scope,
     text_scope_rows_sql,
 )
+from nexus.services.resource_grants import invalidate_annotation_visibility
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 

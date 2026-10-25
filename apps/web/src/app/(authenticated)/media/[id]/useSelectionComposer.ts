@@ -467,12 +467,17 @@ export function useSelectionComposer(input: {
       // The server derives the quote from its own copy of this highlight. Its creation, resize
       // or recolour may be any committed local command, so wait for the local prefix committed
       // now (uploads are prefix-ordered); later commits and downloads do not hold the question.
-      if (!navigator.onLine) {
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", message: "connect to ask about this passage. the highlight is saved on this device." } }));
+      // an upload that cannot proceed (offline, sign-in, update, sync or local failure) names its
+      // cause; the highlight stays saved here and the question may be asked again later.
+      try {
+        const committed = (await (await writing!.store).readReplica()).command_seq;
+        await writing!.whenUploaded(committed, account);
+      } catch (error) {
+        if (account.aborted) return null;
+        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed",
+          message: error instanceof Error ? error.message : "couldn’t send this highlight to nexus yet. try again later." } }));
         return null;
       }
-      const committed = (await (await writing!.store).readReplica()).command_seq;
-      await writing!.whenUploaded(committed, account);
       const key = assumeReaderSelectionKey({ mediaId: entry.sourceMediaId, highlightId: ensured.id });
       let preview;
       try { preview = await getReaderQuotePreview({ key, signal: account }); }

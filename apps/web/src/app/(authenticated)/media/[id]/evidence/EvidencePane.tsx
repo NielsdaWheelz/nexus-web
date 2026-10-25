@@ -7,6 +7,9 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { useWritingRuntime } from "@/lib/notes/hooks";
+import { LocalCommitError } from "@/lib/notes/runtime";
+import { deleteLink } from "@/lib/resourceGraph/links";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
@@ -68,6 +71,24 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const switchAnchor = useRef<{ element: HTMLElement; offset: number } | null>(null);
   const alignedPosition = useRef<{ position: string; outerScrollTop: number } | null>(null);
   const [preparedRequest, setPreparedRequest] = useState<EvidenceOpenRequest | null>(null);
+  const writing = useWritingRuntime();
+  // the pane outlives the unlinked row: it holds the frozen commit's retry and moves focus on.
+  const [unlinkFailure, setUnlinkFailure] = useState<{ readonly retry: (() => void) | null } | null>(null);
+  const unlink = useCallback((linkId: string, row: HTMLElement | null) => {
+    if (!writing) return;
+    const groups = [...list.current?.querySelectorAll<HTMLElement>("[data-group]:not([hidden])") ?? []];
+    const index = row ? groups.indexOf(row) : -1;
+    const neighbour = index < 0 ? null : groups[index + 1] ?? groups[index - 1] ?? null;
+    const settled = () => {
+      setUnlinkFailure(null);
+      const target = neighbour?.isConnected ? neighbour.querySelector<HTMLElement>("a[href], button:not([disabled]), [tabindex]") ?? neighbour : list.current;
+      target?.focus({ preventScroll: true });
+    };
+    setUnlinkFailure(null);
+    void deleteLink(writing, { linkId }).then(settled, (error: unknown) => {
+      setUnlinkFailure(error instanceof LocalCommitError ? { retry: () => { void error.retry().then(settled, () => {}); } } : { retry: null });
+    });
+  }, [writing]);
   const viewport = useReaderState(reader, (s) => s.viewport);
   const document = useReaderState(reader, (s) => s.document);
   const placement = useReaderState(reader, (s) => s.placement);
@@ -235,6 +256,10 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
 
   if (state.local.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failures = <>
+    {unlinkFailure ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t save on this device",
+      message: unlinkFailure.retry ? "keep this page open. retry saving." : "nothing was unlinked. try again." }} announcement="Assertive"
+      actions={unlinkFailure.retry ? [{ label: "retry", onClick: unlinkFailure.retry }] : undefined} onDismiss={unlinkFailure.retry ? undefined : () => setUnlinkFailure(null)}
+      returnFocus={() => list.current} /> : null}
     {state.local.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t read highlights on this device" }} announcement={paneActive ? "Polite" : "None"}
       actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
     {state.links.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t read links on this device" }} announcement={paneActive ? "Polite" : "None"}
@@ -255,7 +280,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     return <EvidenceRow key={entry.key} entry={entry} actions={actions} active={active === entry.key} visible={shown}
       className={styles.group} displaced={place?.displaced ?? false} style={place ? { position: "absolute", top: place.top, width: "100%" } : undefined}
       unresolvedText={doc?.kind === "text"}
-      openRequest={delivery && entryMatches(entry, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} />;
+      openRequest={delivery && entryMatches(entry, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} onUnlink={unlink} />;
   };
   const shownWhole = whole.some((entry) => visible.has(entry.key));
   const shownUnavailable = unavailable.some((entry) => visible.has(entry.key));

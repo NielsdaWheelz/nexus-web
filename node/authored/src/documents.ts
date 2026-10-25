@@ -141,24 +141,6 @@ export function mergeTitle(state: string | null, update: string | null): { title
     return { title_state: encodeBytes(Y.encodeStateAsUpdate(doc)), title: doc.getText("title").toString() };
   } finally { doc.destroy(); }
 }
-/** Frozen migration-only converter; removed from runtime after migration freezes it. */
-export function importBody(json: unknown): NoteBody {
-  if (!json || typeof json !== "object" || Array.isArray(json)) throw new TypeError("Invalid imported body");
-  const old = Object.fromEntries(Object.entries(json));
-  if (Object.keys(old).some(key => !["type", "attrs", "content", "marks", "text"].includes(key))) throw new TypeError("Unsupported imported body fields");
-  if (old.type === "body") return parseBody(old);
-  if (old.type === "object_embed") {
-    if (!old.attrs || typeof old.attrs !== "object" || Array.isArray(old.attrs)) throw new TypeError("Invalid imported embed");
-    const a = Object.fromEntries(Object.entries(old.attrs));
-    if (Object.keys(a).some(key => !["objectType", "objectId", "label", "relationType", "displayMode"].includes(key))) throw new TypeError("Unsupported imported embed attributes");
-    if (a.relationType != null && a.relationType !== "embeds") throw new TypeError("Unsupported embed relation");
-    return parseBody({ type: "body", attrs: { presentation: "prose" }, content: [{ type: "resource_embed", attrs: { resource_ref: `${a.objectType}:${a.objectId}`, label: typeof a.label === "string" ? a.label : null } }] });
-  }
-  if (old.type !== "paragraph" && old.type !== "code_block") throw new TypeError("Unsupported imported body");
-  if (old.attrs != null && Object.keys(old.attrs).length > 0) throw new TypeError("Unsupported imported body attributes");
-  return parseBody({ ...old, type: "body", attrs: { presentation: old.type === "code_block" ? "code" : "prose" } });
-}
-
 /** Structural preparation freezes the displayed suffix/content and emits only
  * incremental deletes/inserts. Unseen source insertions are never moved/deleted. */
 export function splitBody(state: string, offset: number): { source_update: string; suffix: NoteBody } {
@@ -191,4 +173,16 @@ export function sliceInline(doc: Y.Doc, from: number, to: number): InlineNode[] 
   }
   parseBody({ type: "body", content });
   return content;
+}
+
+/** Minimal replacement boundaries in utf16 offsets, expanded to whole codepoints. */
+export function textReplacement(old:string,next:string):{from:number;to:number;text:string} {
+  let first=0,oldEnd=old.length,newEnd=next.length;
+  while(first<oldEnd && first<newEnd && old[first]===next[first])first++;
+  while(oldEnd>first && newEnd>first && old[oldEnd-1]===next[newEnd-1]){oldEnd--;newEnd--;}
+  const split=(value:string,index:number)=>index>0 && index<value.length && /[\uD800-\uDBFF]/u.test(value[index-1]!) && /[\uDC00-\uDFFF]/u.test(value[index]!);
+  if(split(old,first)||split(next,first))first--;
+  if(split(old,oldEnd))oldEnd++;
+  if(split(next,newEnd))newEnd++;
+  return {from:first,to:oldEnd,text:next.slice(first,newEnd)};
 }

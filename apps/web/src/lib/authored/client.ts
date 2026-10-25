@@ -1,6 +1,7 @@
 "use client";
 /** A tab owns only a port. The stable worker owns database/replication; closing a
  * tab never retires an account or discards its committed pending changes. */
+import { prepareShell } from "./shell";
 import { openNativeAuthoredStore } from "./native";
 import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncStatus } from "@nexus/authored/types";
 
@@ -35,32 +36,51 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
 async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
   if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new Error("persistent storage is required to make your notes available offline. allow persistent storage for nexus, then retry.");
+  await prepareShell();
   if (typeof SharedWorker === "undefined") throw new Error("this browser cannot open the shared authored store");
   const worker = new SharedWorker("/_nexus/authored/worker.js", { type: "module", name: `nexus-authored-${accountId}-format-${FORMAT_REVISION}` });
   const port = worker.port;
   let sequence = 0;
   let closed = false;
+  let terminalFailure: Error | null = null;
+  let unresponsive = 0;
   let commandLease: string | null = null;
   let detail: string | null = null;
   let status: SyncStatus = "preparing";
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   const queries = new Set<() => void>();
+  const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
+  function failPort(message: string) {
+    terminalFailure = Object.assign(new Error(message), { code: "E_AUTHORED_WORKER_STOPPED" });
+    detail = terminalFailure.message; status = "local_error";
+    for (const listener of statuses) listener(status, detail);
+    for (const pending of waiting.values()) pending.reject(terminalFailure);
+    waiting.clear();
+  }
   function call<T>(op: string, input: Record<string, unknown> = {}): Promise<T> {
     if (closed) return Promise.reject(new Error("authored store closed"));
+    if (terminalFailure !== null) return Promise.reject(terminalFailure);
     const id = ++sequence;
     return new Promise<T>((resolve, reject) => {
-      waiting.set(id, { resolve: value => resolve(value as T), reject });
+      const timer = setTimeout(() => {
+        waiting.delete(id); unresponsive++;
+        if (unresponsive >= 2) failPort("the local notes store isn’t responding. keep this page open and copy unfinished writing before restarting nexus.");
+        reject(terminalFailure ?? new Error("local notes did not acknowledge completion. keep this page open and retry saving."));
+      }, 30_000);
+      waiting.set(id, { resolve: value => { clearTimeout(timer); unresponsive = 0; resolve(value as T); }, reject: error => { clearTimeout(timer); reject(error); } });
       port.postMessage({ id, op, ...input });
     });
   }
   port.onmessage = ({ data }) => {
     if (data.kind === "changed") {
+      if (terminalFailure !== null) return;
       status = data.status; detail = data.detail ?? null;
       for (const listener of statuses) listener(status, detail);
       for (const query of queries) query();
     } else if (data.kind === "retired") {
       window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
+      for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
       queries.clear(); statuses.clear();
       retiredAccounts.add(accountId);
       accounts.delete(accountId);
@@ -75,12 +95,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       else pending?.reject(new Error(data.error));
     }
   };
-  worker.onerror = () => {
-    status = "local_error";
-    for (const listener of statuses) listener(status, detail);
-    for (const pending of waiting.values()) pending.reject(new Error("authored worker could not open. keep this page open. retry saving."));
-    waiting.clear();
-  };
+  worker.onerror = () => failPort("the local notes store stopped. keep this page open and copy unfinished writing before restarting nexus.");
   port.start();
   const hello = await call<{ status: SyncStatus; detail: string | null }>("hello", { account_id: accountId, format_revision: FORMAT_REVISION });
   status = hello.status; detail = hello.detail;
@@ -102,12 +117,16 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     }),
     whenUploaded: (commandSeq, signal) => new Promise<void>((resolve, reject) => {
       let done = false;
-      const finish = (error: unknown | null) => { if (done) return; done = true; queries.delete(check); signal.removeEventListener("abort", aborted); if (error !== null) reject(error); else resolve(); };
-      const aborted = () => finish(signal.reason ?? new DOMException("cancelled", "AbortError"));
-      const check = () => { void call<boolean>("uploaded", { command_seq: commandSeq }).then(uploaded => { if (uploaded) finish(null); }, finish); };
+      const finish = (error: unknown | null) => { if (done) return; done = true; queries.delete(check); signal.removeEventListener("abort", aborted); closedWaiters.delete(aborted); if (error !== null) reject(error); else resolve(); };
+      const aborted = () => finish(signal.reason ?? new DOMException("authored store closed", "AbortError"));
+      const check = () => { void call<boolean>("uploaded", { command_seq: commandSeq }).then(uploaded => {
+        if (uploaded) finish(null);
+        else if (["offline", "sign_in_required", "update_required", "sync_error", "local_error"].includes(status) || status === "preparing" && detail !== null) finish(new Error(detail ?? (status === "offline" ? "changes are saved on this device. connect to sync before continuing." : "changes are saved on this device but haven’t synced. retry syncing before continuing.")));
+      }, finish); };
       if (signal.aborted) { aborted(); return; }
-      queries.add(check); signal.addEventListener("abort", aborted, { once: true }); check();
+      queries.add(check); closedWaiters.add(aborted); signal.addEventListener("abort", aborted, { once: true }); check();
     }),
+    readSnapshot: selection => call("read_snapshot", { selection }),
     readReplica: () => call("replica"),
     readStates: selection => call("states", { selection }),
     query: query => call("query", { query }),
@@ -126,7 +145,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       port.postMessage({ id: ++sequence, op: "close" });
       closed = true;
       for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
-      waiting.clear(); queries.clear(); statuses.clear(); port.close();
+      waiting.clear(); for (const cancel of closedWaiters) cancel(); closedWaiters.clear(); queries.clear(); statuses.clear(); port.close();
     },
   };
 }

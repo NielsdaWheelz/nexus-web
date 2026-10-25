@@ -23,7 +23,6 @@ import type {
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isStaleBuild } from "@/lib/api/client";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   openConversationAbout,
@@ -515,7 +514,7 @@ export function projectResourceActions(
       if (outcome.kind === "Gone") {
         settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
       } else if (outcome.kind === "Failed") {
-        ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
+        ctx.feedback.receipt(outcome.feedback);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id, title: facts.label, owner, present });
       }
@@ -530,7 +529,7 @@ export function projectResourceActions(
     const present = (outcome: CommandOutcome) => {
       if (!ctx.isActive()) return;
       if (outcome.kind === "Failed") {
-        ctx.feedback.offer({ needsAttention: true, undo: null, onDismiss: null, key: `chat-command-result:${conversationId}`, content: outcome.feedback, announcement: "Polite" });
+        ctx.feedback.receipt(outcome.feedback);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
           retry: requested => {
@@ -663,6 +662,8 @@ export function projectResourceActions(
       highlightId: id,
     }),
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
+    // attached notes are independent: the reader composes a new one; no singleton note id.
+    HighlightNote: entry({ kind: "EditHighlightNote", highlightId: id, noteBlockId: null }),
     ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
     RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
     RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],
@@ -848,19 +849,6 @@ export function projectResourceActions(
         return make(action.offer.kind, blocked, () =>
           recoverMedia(id, action.offer),
         );
-      case "HighlightNote": {
-        const noteBlockId = action.note_block_id;
-        const states = ACTION_CATALOG.HighlightNote.states;
-        const [execute, options] = entry({
-          kind: "EditHighlightNote",
-          highlightId: id,
-          noteBlockId,
-        });
-        return make("HighlightNote", blocked, execute, {
-          ...options,
-          state: noteBlockId === null ? states.Absent : states.Present,
-        });
-      }
       default: {
         const [execute, options] = verbs[action.kind];
         const descriptor = make(action.kind, blocked, execute, options);

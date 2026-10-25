@@ -6,7 +6,7 @@ import { Fragment, Slice } from "prosemirror-model";
 import { TextSelection, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { docFromBody, noteBodySchema, sameBody, type InlineNode, type NoteBody } from "@nexus/authored/body";
-import { applyBodyEdits, bodyInline, readBody, LOCAL_EDIT, type BodyEdit } from "@nexus/authored/documents";
+import { applyBodyEdits, bodyInline, readBody, encodeBytes, LOCAL_EDIT, type BodyEdit } from "@nexus/authored/documents";
 import type { WritingDocument } from "./runtime";
 export class InlineBinding {
   readonly baseline = new Y.Doc();
@@ -15,6 +15,7 @@ export class InlineBinding {
   private updating = false;
   private readonly receive = () => this.refresh();
   constructor(private readonly document: WritingDocument, private readonly origin: unknown = LOCAL_EDIT) { Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(document.doc)); }
+  bodyState():string {return encodeBytes(Y.encodeStateAsUpdate(this.baseline));}
   body(): NoteBody { return readBody(this.baseline); }
   attach(view: EditorView, deferred: () => boolean): void {
     this.view = view; this.deferred = deferred;

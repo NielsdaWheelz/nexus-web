@@ -4,19 +4,20 @@
 import * as Y from "yjs";
 import { applyBodyEdits, bodyInline, encodeBytes, hydrateNote, readBody, sliceInline } from "@nexus/authored/documents";
 import { emptyBody, parseBody } from "@nexus/authored/body";
-import { insertionPositions, type Intent } from "@nexus/authored/commands";
+import { type Intent } from "@nexus/authored/commands";
 import type { LinkState, Vector } from "@nexus/authored/types";
-import { prepareLink } from "@/lib/resourceGraph/links";
+import { preparePosition, prepareLink } from "@/lib/resourceGraph/links";
 import { LocalCommitError, type LocalCommit, type WritingDocument, type WritingRuntime } from "./runtime";
 export interface EditorHistory {
   origin: unknown;
+  retain(): () => void;
   undo(): void;
   redo(): void;
   boundary(): void;
   record(): void;
 }
 interface Group { refs: string[]; bytes: number; undo(): Promise<void>; redo(): Promise<void>; release(): void }
-interface TextHistory { document: WritingDocument; manager: Y.UndoManager; origin: symbol; latest: object | null }
+interface TextHistory { document: WritingDocument; manager: Y.UndoManager; origin: symbol; latest: object | null; active: number; groups: number }
 export class OutlineHistory {
   private readonly past: Group[] = [];
   private readonly future: Group[] = [];
@@ -29,23 +30,40 @@ export class OutlineHistory {
     if (!entry || entry.document !== document) {
       entry?.manager.destroy();
       const origin = Symbol("outline typing");
-      entry = { document, origin, manager: new Y.UndoManager([document.doc.getXmlFragment("body"), bodyInline(document.doc)], { trackedOrigins: new Set([origin]), captureTimeout: 500 }), latest: null };
+      entry = { document, origin, manager: new Y.UndoManager([document.doc.getXmlFragment("body"), bodyInline(document.doc)], { trackedOrigins: new Set([origin]), captureTimeout: 500 }), latest: null,active:0,groups:0 };
       this.texts.set(document.ref, entry);
     }
     const history = entry;
     return {
       origin: history.origin,
+      retain:()=>{history.active++;return()=>{history.active--;this.pruneText(history);};},
       undo: () => this.undo(), redo: () => this.redo(), boundary: () => history.manager.stopCapturing(),
       record: () => {
         const item = history.manager.undoStack.at(-1) ?? null;
         if (!item || history.latest === item) return;
         history.latest = item;
-        const release = document.retain();
+        let ownedItem=item;
+        const unpin = document.retain();
+        history.groups++;
+        const release=()=>{
+          unpin();history.groups--;history.manager.stopCapturing();
+          const undo=history.manager.undoStack.filter(item=>item!==ownedItem);
+          const redo=history.manager.redoStack.filter(item=>item!==ownedItem);
+          history.manager.undoStack=history.manager.undoStack.filter(item=>item===ownedItem);
+          history.manager.redoStack=history.manager.redoStack.filter(item=>item===ownedItem);
+          history.manager.clear();
+          history.manager.undoStack=undo;history.manager.redoStack=redo;
+          if(history.latest===item)history.latest=null;
+          this.pruneText(history);
+        };
         this.push({ refs: [document.ref], bytes: Y.encodeStateAsUpdate(document.doc).byteLength,
-          undo: async () => { history.manager.undo(); history.latest = null; await document.capture(); },
-          redo: async () => { history.manager.redo(); history.latest = history.manager.undoStack.at(-1) ?? null; await document.capture(); }, release });
+          undo: async () => { history.manager.undo(); ownedItem=history.manager.redoStack.at(-1)??ownedItem; history.latest = null; await document.capture(); },
+          redo: async () => { history.manager.redo(); ownedItem=history.manager.undoStack.at(-1)??ownedItem; history.latest = history.manager.undoStack.at(-1) ?? null; await document.capture(); }, release });
       },
     };
+  }
+  private pruneText(history:TextHistory):void {
+    if(history.active===0 && history.groups===0 && this.texts.get(history.document.ref)===history){history.manager.clear();history.manager.destroy();this.texts.delete(history.document.ref);}
   }
   private async commit(intent: Intent): Promise<LocalCommit> {
     try { return await this.runtime.run(intent); }
@@ -81,19 +99,21 @@ export class OutlineHistory {
     let restored: LocalCommit | null = null;
     this.push({ refs: [ref], bytes: 0,
       undo: async () => { await this.commit({kind:"batch",intents:[{kind:"delete_resource",ref,observed_touch:mergeDots(creation.touch_vv,restored?.change.resources.find(r=>r.ref===ref)?.touch_vv??{})},{kind:"unlink",link_id:placement.link_id,observed_add:mergeDots(addition.add_vv,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]}); },
-      redo: async () => { restored=await this.commit({kind:"batch",intents:[{kind:"restore_resource",ref},{kind:"restore_link",link_id:placement.link_id}]}); }, release:()=>{},
+      redo: async () => { restored=await this.commit({kind:"batch",intents:[{kind:"restore_resource",ref},...addition?[{kind:"restore_link" as const,link_id:placement.link_id}]:[]]}); }, release:()=>{},
     });
     return ref;
   }
-  async split(source_ref: string, position: number, parent_ref: string, occurrence_link: string | null): Promise<string> {
+  async split(source_ref: string, displayed: import("./editorTypes").DisplayedSplit, parent_ref: string, occurrence_link: string | null): Promise<string> {
     this.stopTyping();
     const source = await this.runtime.openDocument(source_ref);
-    const observed = await source.capture();
-    const clone = hydrateNote(observed.body_state);
+    await source.capture();
+    const clone = hydrateNote(displayed.body_state);
     const origin = Symbol("split source");
     const manager = new Y.UndoManager(bodyInline(clone), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
-    const inline = bodyInline(clone), offset = position - 1;
-    const suffix = parseBody({ type: "body", attrs: readBody(clone).body_pm_json.attrs, content: sliceInline(clone, offset, inline.length) });
+    let retained=false;
+    try {
+    const inline = bodyInline(clone), offset = displayed.from;
+    const suffix = parseBody({ type: "body", attrs: readBody(clone).body_pm_json.attrs, content: sliceInline(clone, displayed.to, inline.length) });
     const baseline = Y.encodeStateVector(clone);
     applyBodyEdits(clone, [{ kind: "replace", from: offset, to: inline.length, content: [] }], origin);
     const update = encodeBytes(Y.encodeStateAsUpdate(clone, baseline));
@@ -113,9 +133,11 @@ export class OutlineHistory {
     this.push({ refs: [source_ref, new_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength,
       undo: async () => { await this.commit({ kind: "batch", intents: [await textInverse(false), { kind: "delete_resource", ref: new_ref, observed_touch: mergeDots(creation.touch_vv, restored?.change.resources.find(r => r.ref === new_ref)?.touch_vv ?? {}) }, { kind: "unlink", link_id: placement.link_id, observed_add: mergeDots(addition.add_vv, restored?.change.links.find(l => l.link_id === placement.link_id)?.add_vv ?? {}) }] }); },
       redo: async () => { restored = await this.commit({ kind: "batch", intents: [await textInverse(true), { kind: "restore_resource", ref: new_ref }, { kind: "restore_link", link_id: placement.link_id }] }); },
-      release: () => { release(); manager.destroy(); clone.destroy(); },
+      release: () => { release(); manager.clear(); manager.destroy(); clone.destroy(); },
     });
+    retained=true;
     return new_ref;
+    } finally { if(!retained){manager.clear();manager.destroy();clone.destroy();} }
   }
   async join(destination_ref: string, source_ref: string): Promise<void> {
     if (destination_ref === source_ref) throw new Error("A note cannot be joined to itself");
@@ -125,6 +147,8 @@ export class OutlineHistory {
     const clone = hydrateNote(shownDestination.body_state), sourceClone = hydrateNote(shownSource.body_state);
     const origin = Symbol("join destination");
     const manager = new Y.UndoManager(bodyInline(clone), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
+    let retained=false;
+    try {
     const before = Y.encodeStateVector(clone);
     applyBodyEdits(clone, [{ kind: "replace", from: bodyInline(clone).length, to: bodyInline(clone).length, content: sliceInline(sourceClone, 0, bodyInline(sourceClone).length) }], origin);
     sourceClone.destroy();
@@ -140,9 +164,12 @@ export class OutlineHistory {
     this.push({ refs: [destination_ref, source_ref], bytes: Y.encodeStateAsUpdate(clone).byteLength,
       undo: async () => { restored = await this.commit({ kind: "batch", intents: [await inverse(false), { kind: "restore_resource", ref: source_ref }] }); },
       redo: async () => { await this.commit({ kind: "batch", intents: [await inverse(true), { kind: "delete_resource", ref: source_ref, observed_touch: mergeDots(shownSource.observed_touch, restored?.change.resources.find(r => r.ref === source_ref)?.touch_vv ?? {}) }] }); },
-      release: () => { release(); manager.destroy(); clone.destroy(); },
+      release: () => { release(); manager.clear(); manager.destroy(); clone.destroy(); },
     });
+    retained=true;
+    } finally { sourceClone.destroy();if(!retained){manager.clear();manager.destroy();clone.destroy();} }
   }
+
   async unlink(link: LinkState): Promise<void> {
     this.stopTyping();
     await this.commit({ kind: "unlink", link_id: link.link_id, observed_add: link.add_vv });
@@ -152,14 +179,21 @@ export class OutlineHistory {
       redo: async () => { await this.commit({ kind: "unlink", link_id: link.link_id, observed_add: mergeDots(link.add_vv, restored?.change.links.find(l => l.link_id === link.link_id)?.add_vv ?? {}) }); }, release: () => {},
     });
   }
+  async moveAdjacent(link:LinkState, endpoint_ref:string, direction:"before"|"after"):Promise<void> {
+    const neighbors=(await (await this.runtime.store).query({kind:"positions",ref:endpoint_ref,exclude_link_id:null,at:{kind:"neighbors",link_id:link.link_id,side:direction}})).positions;
+    const neighbor=neighbors.find(item=>item.link_id!==link.link_id);
+    if(!neighbor)return;
+    await this.move(link,endpoint_ref,direction==="before"?[neighbor,link]:[link,neighbor],direction==="before"?0:1);
+  }
   async move(link: LinkState, endpoint_ref: string, siblings: readonly LinkState[], index: number): Promise<void> {
     this.stopTyping();
-    const remaining = siblings.filter(sibling => sibling.link_id !== link.link_id).map(sibling => ({ link_id: sibling.link_id, position: (sibling.endpoint_a === endpoint_ref ? sibling.position_a : sibling.position_b)!.value }));
-    const positions = insertionPositions(remaining, index, link.link_id);
-    const intents: Intent[] = positions.map(position => ({ kind: "move_link", link_id: position.link_id, endpoint_ref, position: position.position }));
+    const remaining = siblings.filter(sibling => sibling.link_id !== link.link_id);
+    const anchor = remaining[index]?.link_id ?? null;
+    const placement = await preparePosition(this.runtime, endpoint_ref, link.link_id, anchor===null?remaining.at(-1)?.link_id??null:null, anchor);
+    const intents: Intent[] = [...placement.moves, {kind:"move_link",link_id:link.link_id,endpoint_ref,position:placement.value}];
     const saved = await this.commit({ kind: "batch", intents });
     let current = saved;
-    const previous = new Map(siblings.map(sibling => [sibling.link_id, (sibling.endpoint_a === endpoint_ref ? sibling.position_a : sibling.position_b)!]));
+    const previous = new Map([...placement.previous,link].map(sibling => [sibling.link_id, (sibling.endpoint_a === endpoint_ref ? sibling.position_a : sibling.position_b)!]));
     const undoMove = async (redo: boolean) => {
       const inverse: Intent[] = [];
       for (const changed of current.change.links) {
@@ -177,18 +211,18 @@ export class OutlineHistory {
     const target_ref = link.endpoint_a === from_ref ? link.endpoint_b : link.endpoint_a;
     const placement = await prepareLink(this.runtime, { source_ref: destination_ref, target_ref, source_label: null, target_label: null, after: null });
     const saved=await this.commit({ kind: "batch", intents: [{ kind: "unlink", link_id: link.link_id, observed_add: link.add_vv }, ...placement.intents] });
-    const addition=saved.change.links.find(l=>l.link_id===placement.link_id)!;
+    const addition=saved.change.links.find(l=>l.link_id===placement.link_id);
     let restored:LocalCommit|null=null;
     this.push({refs:[from_ref,destination_ref,target_ref],bytes:0,
-      undo:async()=>{restored=await this.commit({kind:"batch",intents:[{kind:"restore_link",link_id:link.link_id},{kind:"unlink",link_id:placement.link_id,observed_add:mergeDots(addition.add_vv,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]});},
-      redo:async()=>{restored=await this.commit({kind:"batch",intents:[{kind:"unlink",link_id:link.link_id,observed_add:mergeDots(link.add_vv,restored?.change.links.find(l=>l.link_id===link.link_id)?.add_vv??{})},{kind:"restore_link",link_id:placement.link_id}]});},release:()=>{},
+      undo:async()=>{restored=await this.commit({kind:"batch",intents:[{kind:"restore_link",link_id:link.link_id},...addition?[{kind:"unlink" as const,link_id:placement.link_id,observed_add:mergeDots(addition.add_vv,restored?.change.links.find(l=>l.link_id===placement.link_id)?.add_vv??{})}]:[]]});},
+      redo:async()=>{restored=await this.commit({kind:"batch",intents:[{kind:"unlink",link_id:link.link_id,observed_add:mergeDots(link.add_vv,restored?.change.links.find(l=>l.link_id===link.link_id)?.add_vv??{})},...addition?[{kind:"restore_link" as const,link_id:placement.link_id}]:[]]});},release:()=>{},
     });
   }
 
   close(): void {
     this.closed = true;
     for (const group of [...this.past, ...this.future]) group.release();
-    for (const history of this.texts.values()) history.manager.destroy();
+    for (const history of this.texts.values()) {history.manager.clear();history.manager.destroy();}
     this.past.length = 0; this.future.length = 0; this.texts.clear();
   }
 }

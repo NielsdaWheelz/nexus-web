@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -23,7 +23,7 @@ from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import LinkEndpoint
 from nexus.services import passage_anchors
 from nexus.services.resource_graph import edges
-from nexus.services.resource_graph.liveness import edge_live_sql
+from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
@@ -99,10 +99,15 @@ def remove_machine_fact(db: Session, *, viewer_id: UUID, edge_id: UUID) -> bool:
 def count_retained_neutral_links(
     db: Session, *, viewer_id: UUID, start: datetime | None, end: datetime
 ) -> int:
-    """Live user links created in the window whose two endpoints are still visible."""
+    """Live authored links created in the window whose two endpoints are still visible,
+    excluding highlight-note annotations (migrated or new, whatever their origin)."""
     window = [ResourceEdge.created_at < end]
     if start is not None:
         window.append(ResourceEdge.created_at >= start)
+    annotation = or_(
+        (ResourceEdge.source_scheme == "highlight") & (ResourceEdge.target_scheme == "note_block"),
+        (ResourceEdge.source_scheme == "note_block") & (ResourceEdge.target_scheme == "highlight"),
+    )
     rows = db.execute(
         select(
             ResourceEdge.source_scheme,
@@ -111,7 +116,8 @@ def count_retained_neutral_links(
             ResourceEdge.target_id,
         ).where(
             ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "user",
+            ResourceEdge.origin.in_(AUTHORED_LINK_ORIGINS),
+            ~annotation,
             text(edge_live_sql("resource_edges")),
             *window,
         )

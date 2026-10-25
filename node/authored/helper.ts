@@ -1,10 +1,9 @@
 /** One-shot semantic process. The platform owns admission and SQL publication. */
 import { mergeChanges, isVisible } from "./src/merge.ts";
 import { prepareChange, type Intent } from "./src/commands.ts";
-import { createNote, createTitle, importBody } from "./src/documents.ts";
 import { parseBody } from "./src/body.ts";
 import { dailyId, linkId, normalizeQuote, passageId, passageKey, validateBindings } from "./src/identity.ts";
-import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
+import { generateKeyBetween } from "fractional-indexing";
 import type { Corpus } from "./src/types.ts";
 let input = "";
 for await (const chunk of process.stdin) {
@@ -13,10 +12,6 @@ for await (const chunk of process.stdin) {
 }
 const request = JSON.parse(input);
 let result;
-const seedNote = (body_pm_json: unknown) => {
-  const body = importBody(body_pm_json);
-  return { body_state: createNote(body), ...body };
-};
 async function serverIntent(command: Record<string, unknown>, states: Corpus, account_id: string): Promise<Intent> {
   if (command.kind === "batch") {
     const intents: Intent[] = [];
@@ -68,13 +63,6 @@ switch (request.op) {
     break;
   }
   case "merge": await validateBindings(request.account_id, request.states, request.changes); result = mergeChanges(request.states, request.changes); break;
-  case "seed_note": result = seedNote(request.body_pm_json); break;
-  case "seed_title": result = { title_state: createTitle(request.title), title: request.title }; break;
-  case "seed_many": result = {
-    notes: request.notes.map((note: { id: string; body_pm_json: unknown }) => ({ id: note.id, ...seedNote(note.body_pm_json) })),
-    pages: request.pages.map((page: { id: string; title: string }) => ({ ...page, title_state: createTitle(page.title) })),
-  }; break;
-  case "positions": result = { positions: generateNKeysBetween(null, null, request.count) }; break;
   default: throw new TypeError("Unknown semantic operation");
 }
 process.stdout.write(JSON.stringify(result));

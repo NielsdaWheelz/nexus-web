@@ -34,7 +34,7 @@ export function passageId(account_id:string,source_ref:string,anchor_key:string)
 /** Permanent bindings preserve seeded ids. A previously unseen key has exactly
  * one derivation. Callers must include existing same-key bindings in the closure. */
 export async function validateBindings(account_id: string, states: import("./types.ts").Corpus, changes: readonly import("./types.ts").Change[]): Promise<void> {
-  const days = new Map(states.resources.filter(r => r.kind === "page" && r.local_date !== null).map(r => [r.local_date!, r.ref]));
+  const days = new Map(states.resources.flatMap(r => r.kind === "page" && r.local_date !== null ? [[r.local_date, r.ref] as const] : []));
   const links = new Map(states.links.map(l => [linkKey(l.endpoint_a, l.endpoint_b), l.link_id]));
   const passages = new Map(states.passages.map(p => [JSON.stringify([p.source_ref, p.normalized_exact, p.prefix, p.suffix]), p.anchor_id]));
   for (const change of changes) {

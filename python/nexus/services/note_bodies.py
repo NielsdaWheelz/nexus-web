@@ -83,7 +83,9 @@ def project_note_embeds(
     Called by the authored projection for every merged note, visible or not: a hidden
     note's facts are hidden by endpoint liveness and return with revival. Unparseable,
     self and non-embeddable refs derive no fact; a ref the viewer cannot read still
-    derives one and stays unreadable to every reader.
+    derives one and stays unreadable to every reader. A viewer-owned fact to a
+    contributor admits that contributor, so only an added or removed contributor fact
+    refreshes the viewer's contributor search text; an unchanged set writes nothing.
     """
     source = note_ref(note_id)
     wanted: dict[ResourceRef, None] = {}
@@ -106,10 +108,12 @@ def project_note_embeds(
             )
         )
     }
-    stale = [row.id for ref, row in existing.items() if ref not in wanted]
+    stale = {ref: row.id for ref, row in existing.items() if ref not in wanted}
+    added = [target for target in wanted if target not in existing]
     if stale:
-        db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(stale)))
-        db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(stale)))
+        ids = list(stale.values())
+        db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
+        db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(ids)))
     db.add_all(
         ResourceEdge(
             user_id=viewer_id,
@@ -120,7 +124,10 @@ def project_note_embeds(
             target_scheme=target.scheme,
             target_id=target.id,
         )
-        for target in wanted
-        if target not in existing
+        for target in added
     )
     db.flush()
+    if any(ref.scheme == "contributor" for ref in [*stale, *added]):
+        from nexus.services.search import projection
+
+        projection.refresh_viewer_contributors(db, [viewer_id])

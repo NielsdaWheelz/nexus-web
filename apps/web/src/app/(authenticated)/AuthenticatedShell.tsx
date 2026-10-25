@@ -12,7 +12,6 @@ import {
 } from "react";
 import { installedApp } from "@/lib/native/admission";
 import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
-import { DeviceSessionNotice } from "@/lib/native/DeviceSessionNotice";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
 import { SyncFailureReceipt } from "@/components/appnav/SyncStatus";
@@ -82,7 +81,6 @@ export default function AuthenticatedShell(props: {
               <FeedbackProvider returnFocus={returnWorkspaceFocus}>
                 <DeviceSettingsProvider><WorkProvider>
                   <SyncFailureReceipt />
-                  {installedApp ? <DeviceSessionNotice /> : null}
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                     <ActivityCapture />
                     <ServerSeedsProvider seeds={props.seeds}>

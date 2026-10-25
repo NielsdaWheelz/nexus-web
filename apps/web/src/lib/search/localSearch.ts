@@ -1,39 +1,60 @@
 "use client";
 
-// Local authored discovery. The account database answers for notes, pages and
-// highlights online and offline; remote search never supplies or replaces those
-// rows. Excerpts are literal slices of canonical text; matching never rewrites it.
+// Local discovery. The account database answers for authored notes, pages, highlights
+// and saved passages online and offline; remote search never supplies or replaces those
+// rows. It also finds retained source labels (a stub's literal capture, no reading
+// authority), which yield to the server's own row for the same ref when it has one.
+// Excerpts are literal slices of canonical text; matching never rewrites it.
 import { useCallback, useEffect, useState } from "react";
 import type { QueryResult, ResourceProjection } from "@nexus/authored/types";
 import { useAuthoredStore } from "@/lib/authored/provider";
-import { localResourceHref, localResourceLabel } from "@/components/resources/ResourceOutlineRow";
+import { localResourceHref, localResourceLabel } from "@/lib/resources/localResource";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { SearchKind } from "./kinds";
 import type { SearchQuery } from "./query";
 
-export const AUTHORED_REF = /^(note_block|page|highlight):/u;
+/** Refs whose canonical state is authored locally; remote search rows for them are dropped. */
+export const AUTHORED_REF = /^(note_block|page|highlight|passage_anchor):/u;
+/** The server's discovery families (`services/search/query.py` `DISCOVERY_FAMILIES`) for local refs. */
+const FAMILIES: Partial<Record<string, SearchKind>> = {
+  note_block: "notes", page: "notes", highlight: "highlights", passage_anchor: "saved_passages",
+  media: "documents", podcast: "documents", conversation: "conversations", contributor: "people",
+  library: "libraries", oracle_reading: "readings",
+};
+const kindOf = (resource: ResourceProjection): SearchKind | null => FAMILIES[parseResourceRef(resource.ref)?.scheme ?? ""] ?? null;
 const PAGE = 50;
 const CONTEXT = 60;
 
-/** Authored writing has no format, author, role or library scope; those filters exclude it. */
+/** Local rows carry no format, author, role or library scope; those filters exclude them. */
 export function localSearchApplies(query: SearchQuery): boolean {
   const kinds = query.requestedKinds;
   return query.text.trim() !== "" && query.formats.length + query.authors.length + query.roles.length === 0 && query.scope === "all" &&
-    (kinds === null || kinds.has("notes") || kinds.has("highlights"));
+    (kinds === null || Object.values(FAMILIES).some(kind => kind !== undefined && kinds.has(kind)));
 }
 
 export interface LocalMatch {
   readonly resource: ResourceProjection;
+  /** Its discovery family, for the row's type and the kind filter. */
+  readonly kind: SearchKind;
   readonly label: string;
   readonly href: string | null;
   /** A literal slice of the matched text and the matched token spans within it. */
   readonly excerpt: { readonly text: string; readonly marks: readonly (readonly [number, number])[]; readonly before: boolean; readonly after: boolean } | null;
 }
 
-export function localMatch(resource: ResourceProjection, text: string): LocalMatch {
-  const body = resource.kind === "highlight" ? resource.selection?.quote_exact ?? "" : resource.kind === "page" ? resource.title ?? "" : resource.body_text ?? "";
+/** One local row's match; null when its ref names no discovery family (e.g. a fragment stub). */
+export function localResult(resource: ResourceProjection, text: string): LocalMatch | null {
+  const kind = kindOf(resource);
+  return kind === null ? null : localMatch(resource, kind, text);
+}
+
+export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string): LocalMatch {
+  const body = resource.kind === "highlight" ? resource.selection?.quote_exact ?? "" : resource.kind === "note" ? resource.body_text ?? ""
+    : resource.title ?? resource.local_date ?? "";
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();
   const first = Math.min(...tokens.map(token => { const at = lower.indexOf(token); return at < 0 ? Infinity : at; }));
-  if (!body || first === Infinity) return { resource, label: localResourceLabel(resource), href: localResourceHref(resource), excerpt: null };
+  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource), excerpt: null };
   const start = Math.max(0, first - CONTEXT), end = Math.min(body.length, first + CONTEXT * 2);
   const slice = body.slice(start, end);
   const sliceLower = slice.toLowerCase();
@@ -43,7 +64,7 @@ export function localMatch(resource: ResourceProjection, text: string): LocalMat
   // overlapping token spans keep the earliest; each character renders once.
   const kept: [number, number][] = [];
   for (const mark of marks) if (!kept.length || mark[0] >= kept.at(-1)![1]) kept.push(mark);
-  return { resource, label: localResourceLabel(resource), href: localResourceHref(resource),
+  return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource),
     excerpt: { text: slice, marks: kept, before: start > 0, after: end < body.length } };
 }
 
@@ -74,8 +95,11 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
           cursor = result.next_cursor;
           if (cursor === null) break;
         }
-        const wanted = rows.filter(({ resource }) => kinds === null || (resource.kind === "highlight" ? kinds.has("highlights") : kinds.has("notes")));
-        if (live) setState({ key, matches: wanted.map(row => localMatch(row.resource, text)), complete: cursor === null, error: null });
+        const matches = rows.flatMap(({ resource }) => {
+          const kind = kindOf(resource);
+          return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text)] : [];
+        });
+        if (live) setState({ key, matches, complete: cursor === null, error: null });
       } catch (error) {
         if (live) setState(current => ({ ...current, key, error }));
       } finally {

@@ -381,16 +381,17 @@ def _branch_anchor(
 def _quote(
     db: Session, viewer_id: UUID, conversation_id: UUID, selection: ReaderSelectionInput
 ) -> dict[str, object]:
-    """Snapshot the highlight under the account head; link it and its media into the chat.
+    """Snapshot the highlight; link it and its media into the chat's context.
 
-    The head, after the chat and media locks, fences the highlight projection: only the
-    head-locked authored projection writes it, so no projection row is locked here."""
+    The viewer's account head comes before the media family, as in every authored
+    writer; no projection row is locked. The immutable snapshot is compared with the
+    previewed revision, so a concurrent change refuses rather than quoting unseen text."""
 
     from nexus.services.library_entries import lock_media_for_reference
 
     key = selection.key
-    lock_media_for_reference(db, key.media_id)
     authored.lock_account(db, viewer_id)
+    lock_media_for_reference(db, key.media_id)
     snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, key=key)
     if quotes.revision(snapshot) != selection.revision:
         raise ApiError(

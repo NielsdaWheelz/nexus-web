@@ -10,8 +10,6 @@ import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import type { ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useInteractionOwner } from "@/lib/ui/overlay";
-import { useWritingRuntime } from "@/lib/notes/hooks";
-import { deleteLink } from "@/lib/resourceGraph/links";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
 import type { LocalLink } from "../annotations";
 import SourceNote from "./SourceNote";
@@ -37,7 +35,7 @@ export type EvidenceEntry =
   | { readonly kind: "link"; readonly key: string; readonly link: LocalLink }
   | { readonly kind: "remote"; readonly key: string; readonly root: EvidenceRoot };
 
-export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className, displaced }: {
+export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, onUnlink, style, className, displaced }: {
   readonly entry: EvidenceEntry;
   readonly actions: EvidenceActions;
   readonly active: boolean;
@@ -46,13 +44,14 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   readonly openRequest: EvidenceOpenRequest | null;
   readonly reader: Reader;
   readonly revealInSidebar: (element: HTMLElement) => void;
+  /** The pane owns an unlink's commit, failure, retry and focus; the row only asks. */
+  readonly onUnlink: (linkId: string, row: HTMLElement | null) => void;
   readonly style?: CSSProperties;
   readonly className?: string;
   readonly displaced: boolean;
 }) {
   const row = useRef<HTMLLIElement>(null);
   const interactionOwner = useInteractionOwner();
-  const writing = useWritingRuntime();
   const occurrenceKey = `evidence/${entry.key}`;
   useLayoutEffect(() => {
     if (!visible || !openRequest?.isCurrent()) return;
@@ -88,7 +87,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   if (entry.kind === "link") {
     const { resource, link } = entry.link;
     return <ResourceOutlineRow resourceRef={resource.ref} occurrenceKey={occurrenceKey} rowRef={row} rootProps={rootProps} onChanged={actions.refresh}
-      incoming={link && writing ? { kind: "link", linkId: link.link_id, parentLabel: actions.mediaLabel, unlink: () => deleteLink(writing, { linkId: link.link_id }) } : null}
+      incoming={link ? { kind: "link", linkId: link.link_id, parentLabel: actions.mediaLabel, unlink: () => onUnlink(link.link_id, row.current) } : null}
       occurrenceLabel={link ? undefined : "mentions this document"} />;
   }
   const { root } = entry;

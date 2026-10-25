@@ -47,7 +47,14 @@ export type SemanticKey =
   | { kind: "daily"; local_date: string }
   | { kind: "link"; endpoint_a: string; endpoint_b: string }
   | { kind: "passage"; source_ref: string; normalized_exact: string; prefix: string; suffix: string };
+export type PositionQuery =
+  | { kind: "tail" }
+  | { kind: "neighbors"; link_id: string; side: "before" | "after" }
+  | { kind: "tie"; position: string; cursor: string | null; limit: number }
+  | { kind: "bounds"; position: string };
 export type AuthoredQuery =
+  | { kind: "positions"; ref: ResourceRef; exclude_link_id: string | null; at: PositionQuery }
+  | { kind: "adjacency_window"; ref: ResourceRef; link_id: string; cursor: string | null; limit: number }
   | { kind: "binding"; key: SemanticKey }
   | { kind: "resource"; ref: ResourceRef }
   | { kind: "adjacency"; ref: ResourceRef; cursor: string | null; limit: number }
@@ -59,12 +66,13 @@ export type AuthoredQuery =
   | { kind: "search"; text: string; cursor: string | null; limit: number }
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null }
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; binding_id: string | null }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; positions: LinkState[] }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }
 export interface AuthoredStore {
   withCommand<T>(work: () => Promise<T>): Promise<T>;
+  readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }>;
   readReplica(): Promise<ReplicaState>;
   readStates(selection: StateSelection): Promise<Corpus>;
   whenUploaded(commandSeq: Counter, signal: AbortSignal): Promise<void>;
