@@ -24,3 +24,25 @@ for selected hits. prove small source/piece/neighbour parity and a completed bou
 count on the verified317 clone; then qualify the affected active related journey.
 the separate2.225s indexed-stage observation remains a latency concern, not a
 claim of steady-state cost. keep ranking, hardware and failure deadlines fixed.
+
+on frozen `dbc919b5d`, boolean membership completes the actual hybrid diagnostic:
+extra neighbours complete in 3.727s (captured count 2.634s, ann 1.075s), indexed
+work in 2.391s, presentation in 8.601s. instrumentation rewrites its whole private
+json before and after every sql statement; these are instrumented observations,
+not api phase costs. no recall, publication or browser acceptance ran.
+
+a separate exact count `explain analyze buffers timing false` completes with
+1,538ms server execution. the plan still scans 437 admitted readings on each of
+25,002 candidate loops because a candidate union mixes invariant admitted readings
+with chunk-correlated exact frozen refs. private evidence is
+`membership-diagnostics/remote/count-plan.private.json` (sql digest `340952d2`),
+with the completed trace beside it. the runtime closed normally before this edit;
+the historical full preservation proof is reused, not rerun.
+
+the current candidate splits membership into parenthesized admitted-or-exact
+existence predicates, each retaining the canonical published reading bounds and
+reading filters. preferred-owner hydration, ranking, readiness and caps stay fixed.
+mechanism acceptance remains pending: the new actual plan must eliminate the
+437-reading rescan per candidate, small source/piece/frozen-ref/mixed-scope parity
+must pass, and the affected active related journey must qualify. source shape
+alone establishes no performance improvement.

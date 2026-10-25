@@ -197,14 +197,12 @@ _CHUNK_OWNER = _requested_owner(
 # Semantic eligibility needs an admitted reading, not its preferred presentation
 # owner. The same published chunk bounds admit both the count and vector reads;
 # the selected window resolves its reading through _CHUNK_OWNER afterward.
-_CHUNK_CANDIDATES = (
-    "SELECT media_id FROM admitted_media UNION ALL SELECT media_id FROM ("
-    + _exact_candidates(_CHUNK_EXACT)
-    + ") exact"
-)
-_CHUNK_MEMBER = f"""EXISTS (SELECT 1 FROM ({reading_chunks_sql(_CHUNK_CANDIDATES)}) member
+_CHUNK_MEMBER = f"""(EXISTS (SELECT 1 FROM ({reading_chunks_sql(_ADMITTED)}) member
     JOIN media m ON m.id=member.reading_media_id
-    WHERE member.chunk_id=cc.id {{where}})"""
+    WHERE member.chunk_id=cc.id {{where}})
+    OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
+    JOIN media m ON m.id=member.reading_media_id
+    WHERE member.chunk_id=cc.id {{where}}))"""
 _HIGHLIGHT_OWNER = _requested_owner(
     "ref.scheme='highlight' AND ref.id=h.id",
     lambda candidates: reading_owner_sql(f"""SELECT candidate.media_id AS reading_media_id
