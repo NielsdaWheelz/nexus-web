@@ -9,12 +9,20 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, ColumnExpressionArgument, delete, exists, func, or_, select, text
+from sqlalchemy import (
+    ColumnElement,
+    ColumnExpressionArgument,
+    delete,
+    exists,
+    func,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Highlight, ResourceGrant, User
-from nexus.db.retries import TransactionRestart, retry_read_committed
-from nexus.db.session import transaction
+from nexus.db.retries import TransactionRestart, retry_serializable
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import new_share_token
 from nexus.services.suggestion_changes import record_input_change
@@ -318,32 +326,31 @@ def delete_grant(db: Session, *, viewer_user_id: UUID, grant_id: UUID) -> None:
     """Revoke a grant the viewer created, or decline one they received. Absent or not the
     viewer's: success.
 
-    READ COMMITTED: the grant is read before the subject lock wait and again after it,
-    so a dedupe repoint that won the wait restarts the attempt.
+    The grant and subject locks conflict with dedupe repointing. A changed grant
+    tuple restarts the serializable snapshot before its dependency is removed.
     """
     by_id = select(ResourceGrant.__table__).where(ResourceGrant.id == grant_id)
 
     def attempt() -> None:
-        with transaction(db):
-            found = db.execute(by_id).one_or_none()
-            if found is None or viewer_user_id not in (
-                found.created_by_user_id,
-                found.grantee_user_id,
-            ):
-                return
-            media_id = lock_subject(db, ResourceRef(found.subject_scheme, found.subject_id))
-            grant = db.execute(by_id.with_for_update()).one_or_none()
-            if media_id is None or grant is None:
-                return
-            if grant.subject_id != found.subject_id:
-                raise TransactionRestart("resource grant subject moved before delete")
-            _delete(db, ResourceGrant.id == grant_id)
-            from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+        found = db.execute(by_id).one_or_none()
+        if found is None or viewer_user_id not in (
+            found.created_by_user_id,
+            found.grantee_user_id,
+        ):
+            return
+        media_id = lock_subject(db, ResourceRef(found.subject_scheme, found.subject_id))
+        grant = db.execute(by_id.with_for_update()).one_or_none()
+        if media_id is None or grant is None:
+            return
+        if grant.subject_id != found.subject_id:
+            raise TransactionRestart("resource grant subject moved before delete")
+        _delete(db, ResourceGrant.id == grant_id)
+        from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
-            claim_document_teardown_if_unreferenced_locked(db, media_id)
-            record_input_change(db)
+        claim_document_teardown_if_unreferenced_locked(db, media_id)
+        record_input_change(db, owners=[f"{grant.subject_scheme}:{grant.subject_id}"])
 
-    retry_read_committed(db, "delete_resource_grant", attempt)
+    retry_serializable(db, "delete_resource_grant", attempt)
 
 
 def link_grant(db: Session, token: str) -> ResourceGrant | None:

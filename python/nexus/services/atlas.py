@@ -85,7 +85,7 @@ def project_all(db: Session) -> int:
             SELECT cc.owner_id, CAST(avg(ce.embedding_vector) AS real[])
             FROM content_chunks cc
             JOIN content_index_states cis ON cis.owner_kind = 'media'
-                AND cis.owner_id = cc.owner_id AND cis.status = 'ready'
+                AND cis.owner_id = cc.owner_id AND cis.status = 'ready' AND cis.lexical_revision = cis.revision
                 AND cis.active_embedding_provider = :provider
                 AND cis.active_embedding_model = :model
             JOIN content_embeddings ce ON ce.chunk_id = cc.id

@@ -36,7 +36,7 @@ import {
 import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
-import { getWritingRuntime } from "@/lib/notes/runtime";
+import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
@@ -79,6 +79,7 @@ export function useNexusController() {
   const interactionLayer = useRef<Layer | null>(null);
   const [openingSources, setOpeningSources] = useState<ReadonlySet<string>>(() => new Set());
   const { accountId, calendarTimeZone } = useAuthenticatedAccount();
+  const captureAttempt = useRef<{ noteId: string; promise: Promise<string>; retry: (() => Promise<unknown>) | null } | null>(null);
   const guard = useWorkGuard();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
@@ -93,6 +94,7 @@ export function useNexusController() {
 
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
+  const [composing, setComposing] = useState(false);
   const [page, writePage] = useState<NexusPage>({ kind: "Root" });
   const currentPage = useRef(page);
   const [pageListeners] = useState(() => new Set<() => void>());
@@ -119,6 +121,7 @@ export function useNexusController() {
   visible.current = open;
   const [rootMode, setRootMode] = useState<NexusRootMode>("Overview");
   const [focusRevision, setFocusRevision] = useState(0);
+  const [searchRefreshRevision, setSearchRefreshRevision] = useState(0);
   const [list, setList] = useState(EMPTY_LIST);
   const [announcement, setAnnouncement] = useState("");
   const latestRequestExit = useRef(requestExit);
@@ -150,7 +153,7 @@ export function useNexusController() {
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const listIdentity = JSON.stringify([query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
-  const find = useNexusFind({ open: finding, query: parsed });
+  const find = useNexusFind({ open: finding && !composing, query: parsed });
   const panes = useMemo<NexusPane[]>(
     () =>
       state.panes.map((pane) => ({
@@ -171,7 +174,7 @@ export function useNexusController() {
       local: find.local, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing,
       retained: previous.identity === listIdentity ? previous.rows : [],
     })));
-  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing]);
+  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, find.local, find.localReference, find.localReferenceMissing, searchRefreshRevision]);
 
   // Navigation from outside the launcher's own tab commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
@@ -434,11 +437,18 @@ export function useNexusController() {
    * launcher keeps the text with Retry, under the same note id, when it fails). */
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
     void openCreated(running, async () => {
-      await captureToday(getWritingRuntime(accountId), running.localDate, running.noteId, running.text);
-      return { target: { href: `/daily/${running.localDate}` }, title: "note kept on this device; queued for today", openLabel: "open today",
+      if (captureAttempt.current?.noteId !== running.noteId) captureAttempt.current = {noteId:running.noteId,promise:captureToday(getWritingRuntime(accountId),running.localDate,running.noteId,running.text),retry:null};
+      else if (captureAttempt.current.retry) { captureAttempt.current.promise=captureAttempt.current.retry().then(()=>"");captureAttempt.current.retry=null; }
+      await captureAttempt.current.promise;
+      return { target: { href: `/daily/${running.localDate}` }, title: "note saved on this device", openLabel: "open today",
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
+        if (error instanceof LocalCommitError) {
+          if(captureAttempt.current?.noteId===running.noteId)captureAttempt.current.retry=error.retry;
+          setPage({...running,submit:{kind:"Retryable",content:{tone:"Warning",title:"couldn’t save on this device",message:"keep this page open. retry saving."},unconfirmed:false}});
+          return;
+        }
         const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
       });
@@ -553,9 +563,11 @@ export function useNexusController() {
     if (next !== query) rootScroll.current.Search = 0;
   }
 
-  function setActive(key: string) {
+  function setActive(key: string, deliberate = true) {
+    if (deliberate) find.interact();
     setList((current) => current.active?.context === searchContext && current.active.key === key && current.moved
       ? current : { ...current, active: { context: searchContext, key }, moved: true });
+
   }
 
   function back() {
@@ -660,8 +672,20 @@ export function useNexusController() {
     textActions: queryActions(parsed, false).slice(0, 4),
     explicitIntent: parsed.intent.kind !== "Search",
     failures: find.failures,
-    semanticUnavailable: find.semanticUnavailable,
+    searchProgress: find.progress,
     searchUnavailable: find.searchUnavailable,
+    searchRefreshRevision,
+    interact: find.interact,
+    setComposing,
+    refreshResults: () => {
+      find.refresh();
+      setSearchRefreshRevision(current => current + 1);
+      setList(EMPTY_LIST);
+      setFocusRevision(current => current + 1);
+      rootScroll.current.Search = 0;
+    },
+    retrySearch: find.retrySearch,
+    retryRelated: find.retryRelated,
     retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,

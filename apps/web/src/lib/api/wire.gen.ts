@@ -6156,7 +6156,7 @@ export interface components {
             /** Source Issues */
             source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"] | components["schemas"]["TooManyNotes"])[];
         };
-        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
+        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_EMBEDDING_NOT_CONFIGURED" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
         ImportItem: {
             /**
@@ -6188,6 +6188,8 @@ export interface components {
             source_issue_count: number;
             /** Source Label */
             source_label: string | null;
+            /** Text Search Ready */
+            text_search_ready: boolean;
             /** Title */
             title: string;
             /**
@@ -6209,7 +6211,7 @@ export interface components {
              */
             classification: "Active" | "NeedsAttention" | "Complete";
             /** Failure Code */
-            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_EMBEDDING_NOT_CONFIGURED" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
             /** Next Retry At */
             next_retry_at: string | null;
             /** Progress */
@@ -7143,6 +7145,8 @@ export interface components {
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
+            /** Text Search Ready */
+            text_search_ready: boolean;
             /** Title */
             title: string;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
@@ -7183,6 +7187,8 @@ export interface components {
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
+            /** Text Search Ready */
+            text_search_ready: boolean;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
             /** Transcript Reader Key */
             transcript_reader_key: string | null;
@@ -11309,13 +11315,18 @@ export interface components {
         /** SearchPassagesResponse */
         SearchPassagesResponse: {
             page: components["schemas"]["SearchPageInfo"];
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "lexical" | "hybrid";
             /** Results */
             results: components["schemas"]["SearchOccurrenceOut"][];
             /**
              * Semantic Status
              * @enum {string}
              */
-            semantic_status: "not_requested" | "used" | "unavailable";
+            semantic_status: "not_requested" | "used";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11326,6 +11337,11 @@ export interface components {
         SearchPreviewResponse: {
             /** Passages */
             passages: components["schemas"]["SearchOccurrenceOut"][];
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "direct" | "lexical" | "hybrid";
             /** Resources */
             resources: components["schemas"]["SearchResourceOut"][];
             /** Saved */
@@ -11334,7 +11350,7 @@ export interface components {
              * Semantic Status
              * @enum {string}
              */
-            semantic_status: "not_requested" | "used" | "unavailable";
+            semantic_status: "not_requested" | "used";
         };
         /** SearchRepairAdmission */
         SearchRepairAdmission: {
@@ -11392,13 +11408,18 @@ export interface components {
         /** SearchResourcesResponse */
         SearchResourcesResponse: {
             page: components["schemas"]["SearchPageInfo"];
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "lexical" | "hybrid";
             /** Results */
             results: components["schemas"]["SearchResourceOut"][];
             /**
              * Semantic Status
              * @enum {string}
              */
-            semantic_status: "not_requested" | "used" | "unavailable";
+            semantic_status: "not_requested" | "used";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11760,7 +11781,7 @@ export interface components {
              */
             outcome: "Succeeded" | "Failed" | "InFlight";
             /** Outcome Code */
-            outcome_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+            outcome_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_EMBEDDING_NOT_CONFIGURED" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
             /**
              * Source Attempt Id
              * Format: uuid
@@ -18789,7 +18810,8 @@ export interface operations {
     };
     search_search_get: {
         parameters: {
-            query?: {
+            query: {
+                phase: "lexical" | "hybrid";
                 view?: "resources" | "passages";
                 cursor?: string | null;
                 limit?: number;
@@ -18835,7 +18857,7 @@ export interface operations {
     search_preview_search_preview_get: {
         parameters: {
             query: {
-                phase: "direct" | "content";
+                phase: "direct" | "lexical" | "hybrid";
                 /** @description Search query string */
                 q?: string;
                 /** @description all, media:<id>, library:<id> or conversation:<id> */

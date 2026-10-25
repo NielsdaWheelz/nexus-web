@@ -173,14 +173,32 @@ def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str
     )"""
 
 
-def visible_content_credit_rows_sql() -> str:
-    """Contributor-credit rows whose credited content is visible."""
+def visible_content_credit_rows_sql(
+    *, visible_media: str | None = None, visible_podcasts: str | None = None
+) -> str:
+    """Contributor-credit rows whose credited content is visible.
+
+    A composing read may supply both owned, duplicate-free relations, with columns
+    ``media_id`` and ``podcast_id``. Joins reuse their membership once instead of
+    rescanning an inline recursive set per credit. Other consumers remain standalone.
+    """
+    assert (visible_media is None) == (visible_podcasts is None)
+    joins = ""
+    if visible_media is None:
+        media = f"cc.media_id IN ({visible_media_ids_cte_sql()})"
+        podcasts = f"cc.podcast_id IN ({visible_podcast_ids_cte_sql()})"
+    else:
+        joins = f"""
+        LEFT JOIN {visible_media} credit_media ON credit_media.media_id = cc.media_id
+        LEFT JOIN {visible_podcasts} credit_podcast ON credit_podcast.podcast_id = cc.podcast_id"""
+        media = "credit_media.media_id IS NOT NULL"
+        podcasts = "credit_podcast.podcast_id IS NOT NULL"
     return f"""
         SELECT cc.*
-        FROM contributor_credits cc
+        FROM contributor_credits cc{joins}
         WHERE cc.project_gutenberg_catalog_ebook_id IS NOT NULL
-           OR cc.media_id IN ({visible_media_ids_cte_sql()})
-           OR cc.podcast_id IN ({visible_podcast_ids_cte_sql()})
+           OR {media}
+           OR {podcasts}
     """
 
 

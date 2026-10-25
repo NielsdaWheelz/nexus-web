@@ -3,7 +3,7 @@
 highlights are independently identified authored selections. the shared authored
 kernel owns their state and merge; device sqlite owns durable local commands;
 python `services/authored` owns replication and relational projection. existing
-`highlights.py`, `pdf_highlights.py`, location resolution and schemas expose the
+`highlights.py`, location resolution and schemas expose the
 server read/tool contracts. reader surfaces own paint, hit-testing and selection
 presentation. chat owns quotation context and run assembly.
 
@@ -40,6 +40,15 @@ device remain annotatable without a network publication lookup. retained source
 stubs/quotes/labels do not grant access to unavailable bytes. direct native source
 mainframes and subframes receive no authored bridge authority.
 
+the passive mobile row retains the shared highlighter and overflow controls with
+notebook/pen and question openers. names describe the next action, and unavailable
+controls remain focusable with their reason. copy uses the frozen nonblank quote
+unchanged, independently of note saving or remote action reads. desktop copy/share
+remain direct commands; mobile keeps copy/share, colors and existing-chat choices
+in overflow. closing an unused menu returns focus to the reader; completed commands
+retain their own focus transfers. the sheet keeps its native close handle and
+fixed toolbar above the scrolling editor.
+
 ## locations and source generations
 
 reflowable locations use canonical codepoint offsets. dom provenance maps source
@@ -71,7 +80,7 @@ their existing permission/fencing boundary. no direct highlight projection write
 or whole-body annotation-note endpoint remains. server reads honor semantic
 liveness and keep captured writing available independently of source access.
 
-revision 0317 freezes old grammar conversion and preserves current highlight,
+revision 0318 freezes old grammar conversion and preserves current highlight,
 note, link and passage ids. old annotations without proved publication provenance
 seed `publication:null`; their literal quotes and locators survive. unsupported
 records and conflicting live semantic bindings refuse the transaction. paired

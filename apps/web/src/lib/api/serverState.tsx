@@ -4,7 +4,7 @@
 // useServerValue holds one resource: it loads on key, refetches when `stale`
 // changes, coalesces refetches (one queued at most, never adopting the superseded
 // run), restores this pane visit's snapshot, paints a server seed for its
-// key without fetching, retries GETs and throws defects in render.
+// key without fetching, retries GETs unless manual and throws defects in render.
 // usePaneFreeServerValue is the same read for code no pane visit owns (the
 // shell above the panes, a dialog, a read that restores nothing). Lists live in
 // useServerList.
@@ -26,6 +26,7 @@ import {
   ApiError,
   isApiError,
   isSameSystemApiDefect,
+  requestWithDeadline,
 } from "@/lib/api/client";
 import {
   handleUnauthenticatedApiError,
@@ -43,6 +44,10 @@ export interface Visit<T> {
   readonly key: string;
   readonly data: T;
   readonly source: ReadSource;
+}
+export interface ReadPolicy {
+  readonly retry?: "manual";
+  readonly timeoutMs?: number;
 }
 type Unready =
   | { readonly status: "loading" }
@@ -218,32 +223,37 @@ export function useReadOwner(key: string | null, policy: string, stale: string, 
 export async function requestWithRetry<T>(
   request: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
+  policy: ReadPolicy = {},
 ): Promise<T> {
-  for (let attempt = 1; ; attempt += 1) {
-    signal.throwIfAborted();
-    try {
-      return await request(signal);
-    } catch (error) {
-      const retryable =
-        !signal.aborted && remoteReady() &&
-        isApiError(error) &&
-        (error.code === "E_NETWORK" ||
-          (!isSameSystemApiDefect(error) && error.status >= 500));
-      if (!retryable || attempt === 3) throw error;
-      const delay = Math.min(250 * 2 ** (attempt - 1), 2000);
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        };
-        const timer = setTimeout(() => {
-          signal.removeEventListener("abort", abort);
-          resolve();
-        }, delay * (0.75 + Math.random() * 0.5));
-        signal.addEventListener("abort", abort, { once: true });
-      });
+  const run = async (ownedSignal: AbortSignal): Promise<T> => {
+    for (let attempt = 1; ; attempt += 1) {
+      ownedSignal.throwIfAborted();
+      try {
+        return await request(ownedSignal);
+      } catch (error) {
+        const retryable =
+          !ownedSignal.aborted && remoteReady() && policy.retry !== "manual" &&
+          isApiError(error) &&
+          (error.code === "E_NETWORK" ||
+            (!isSameSystemApiDefect(error) && error.status >= 500));
+        if (!retryable || attempt === 3) throw error;
+        const delay = Math.min(250 * 2 ** (attempt - 1), 2000);
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            clearTimeout(timer);
+            reject(ownedSignal.reason);
+          };
+          const timer = setTimeout(() => {
+            ownedSignal.removeEventListener("abort", abort);
+            resolve();
+          }, delay * (0.75 + Math.random() * 0.5));
+          ownedSignal.addEventListener("abort", abort, { once: true });
+        });
+      }
     }
-  }
+  };
+  return policy.timeoutMs === undefined ? run(signal)
+    : requestWithDeadline({ request: run, signal, timeoutMs: policy.timeoutMs });
 }
 
 /** Rethrows an async defect during the next render, at the pane boundary. */
@@ -340,6 +350,7 @@ function useServerState<D>(
   restored: Visit<D> | null,
   load: Load<D>,
   readPolicy: string,
+  policy: ReadPolicy,
   catalog?: CatalogRead<D>,
   onDefect?: (defect: Defect) => void,
 ) {
@@ -371,8 +382,8 @@ function useServerState<D>(
   heldRef.current = held;
   const loadRef = useRef(load);
   loadRef.current = load;
-  const latest = useRef({ key, stale, accountId, catalog });
-  latest.current = { key, stale, accountId, catalog };
+  const latest = useRef({ key, stale, accountId, catalog, policy });
+  latest.current = { key, stale, accountId, catalog, policy };
   const flight = useRef<{ controller: AbortController; queued: boolean }>(null);
 
   const queueRead = () => {
@@ -426,7 +437,7 @@ function useServerState<D>(
               continue;
             }
             const load = loadRef.current;
-            const next = await owner.read("value", signal => requestWithRetry(load, signal), controller.signal);
+            const next = await owner.read("value", signal => requestWithRetry(load, signal, reading.policy), controller.signal);
             if (controller.signal.aborted) return;
             if (current.queued || generation !== owner.generation || reading.accountId !== latest.current.accountId || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
             setState((h) => ({
@@ -508,7 +519,7 @@ function valueOf<T>(held: Held<T>, refetch: () => void): ServerValue<T> {
   };
 }
 
-export function useServerValue<T>(input: {
+export function useServerValue<T>(input: ReadPolicy & {
   readonly key: string | null;
   readonly stale: string;
   readonly visit: PaneVisitDataKey<Visit<T>>;
@@ -522,7 +533,8 @@ export function useServerValue<T>(input: {
     input.key,
     useCallback(() => shown.current, []),
   );
-  const value = useServerState(input.key, input.stale, restored, input.load, input.readPolicy ?? "value:retry3", input.catalog);
+  const policyName = JSON.stringify([input.readPolicy ?? "value:retry3", input.retry ?? null, input.timeoutMs ?? null]);
+  const value = useServerState(input.key, input.stale, restored, input.load, policyName, input, input.catalog);
   shown.current =
     input.key !== null && value.status === "ready"
       ? { key: input.key, data: value.data, source: value.source }
@@ -530,7 +542,7 @@ export function useServerValue<T>(input: {
   return value;
 }
 
-export function usePaneFreeServerValue<T>(input: {
+export function usePaneFreeServerValue<T>(input: ReadPolicy & {
   readonly key: string | null;
   readonly stale: string;
   readonly load: Load<T>;
@@ -539,7 +551,8 @@ export function usePaneFreeServerValue<T>(input: {
   /** An account owner relays defects below its retained command state. */
   readonly onDefect?: (defect: Defect) => void;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input.catalog, input.onDefect);
+  const policyName = JSON.stringify([input.readPolicy ?? "value:retry3", input.retry ?? null, input.timeoutMs ?? null]);
+  return useServerState(input.key, input.stale, null, input.load, policyName, input, input.catalog, input.onDefect);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

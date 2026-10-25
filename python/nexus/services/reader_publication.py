@@ -65,6 +65,7 @@ def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> No
     the existing media stream observes even an otherwise idle parent's new generation.
     """
     from nexus.services.media_parts import require_unpinned_source
+    from nexus.services.search import projection
 
     for media_id in sorted(set(media_ids)):
         require_unpinned_source(db, media_id=media_id)
@@ -82,6 +83,7 @@ def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> No
             publication.changed_at = db.scalar(text("SELECT now()"))
         db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     db.flush()
+    projection.refresh(db, "media", sorted(set(media_ids)))
 
 
 def read_publication_source_issues(
@@ -154,6 +156,7 @@ def replace_reader_publication[T](
     """Lock media, then the publication row, then install the source pointer and bump."""
     from nexus.services import library_entries
     from nexus.services.media_parts import require_unpinned_source
+    from nexus.services.search import projection
 
     library_entries.lock_media_rows_in_order(db, [media_id])
     require_unpinned_source(db, media_id=media_id)
@@ -208,11 +211,15 @@ def replace_reader_publication[T](
         publication.source_issues = payload
     db.flush()
     db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
+    projection.refresh(db, "media", [media_id])
+    projection.refresh_source_highlights(db, media_id)
     return result
 
 
 def replace_reader_document_title(db: Session, *, media: Media, title: str) -> bool:
     """Update the label without changing content identity; false without a publication."""
+    from nexus.services.search import projection
+
     kind = str(media.kind)
     if kind not in _SOURCE_KINDS:
         return False
@@ -225,11 +232,14 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
         return False
     media.title = title
     db.flush()
+    projection.refresh(db, "media", [media.id])
     return True
 
 
 def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
     """Publish one eligible ready document at generation 1; an existing row is left as is."""
+    from nexus.services.search import projection
+
     media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
     if media is None or str(media.kind) not in _SOURCE_KINDS:
         return False
@@ -243,6 +253,7 @@ def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
     db.add(ReaderPublication(id=new_uuid7(), media_id=media_id, generation=1, source_issues=[]))
     db.flush()
     db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
+    projection.refresh(db, "media", [media_id])
     return True
 
 

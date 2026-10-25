@@ -5,9 +5,12 @@ overlay, the processing snapshot the live stream; a media the viewer cannot read
 (I1). The displayed processing status is ``suspended`` while the latest source attempt is
 repairable and no publication is readable (``publication_readable``), whatever the source:
 a readable document stays ready, and downloadable, beside its source remedy. The displayed
-retrieval status is ``suspended`` while the current index revision's job is dead (I2);
-capabilities and metadata eligibility read the persisted status, and a document reads from
-its ready reader publication.
+retrieval status preserves completed ready/no-text/ocr outcomes ahead of queue
+settlement; otherwise a dead current job reads ``suspended`` (I2). Current lexical
+publication independently derives ``text_search_ready``. A piece uses its source's
+current lexical index and partition; repair remains an action on the source. Capabilities
+and metadata eligibility read the persisted status, and a document reads from its
+ready reader publication.
 """
 
 from __future__ import annotations
@@ -94,10 +97,16 @@ _ROWS_SQL = f"""
         attempt.error_code AS attempt_error_code, attempt.source_type,
         attempt.job_id AS attempt_job_id,
         mcis.revision AS index_revision, mcis.status AS index_status,
+        COALESCE(mcis.lexical_revision = mcis.revision
+            AND (m.kind <> 'text_part' OR
+                 (part_definition.source_media_id IS NOT NULL AND mcis.section_bounds_key IS NOT NULL)),
+            FALSE) AS text_search_ready,
         mcis.status_reason AS index_reason,
         (SELECT dead.id FROM background_jobs dead
          WHERE dead.kind = 'media_content_reindex_job' AND dead.status = 'dead'
-           AND dead.payload @> jsonb_build_object('media_id', m.id::text, 'revision', mcis.revision)
+           AND dead.payload @> jsonb_build_object(
+               'media_id', COALESCE(part_definition.source_media_id,m.id)::text,
+               'revision', mcis.revision)
          ORDER BY dead.id LIMIT 1) AS dead_index_job_id,
         mts.transcript_state, mts.transcript_coverage, mts.transcript_origin,
         pls.position_ms, pls.duration_ms AS listened_ms, pe.duration_seconds AS feed_seconds,
@@ -113,7 +122,8 @@ _ROWS_SQL = f"""
     ) attempt ON true
     LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
     LEFT JOIN reader_publications rp ON rp.media_id = m.id
-    LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
+    LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+        AND mcis.owner_id = COALESCE(part_definition.source_media_id,m.id)
     LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
     LEFT JOIN podcast_listening_states pls ON pls.media_id = m.id AND pls.user_id = :viewer_id
     WHERE m.id = ANY(:media_ids)
@@ -142,6 +152,10 @@ def _status(row: Row[Any]) -> MediaProcessingStatus:
 
 
 def _retrieval_status(row: Row[Any]) -> str:
+    if row.index_status in ("no_text", "ocr_required") or (
+        row.index_status == "ready" and row.text_search_ready
+    ):
+        return row.index_status
     return "suspended" if row.dead_index_job_id is not None else (row.index_status or "pending")
 
 
@@ -256,11 +270,14 @@ def _recovery(
         )
         source = source_recovery(facts)
         refreshable = source_refreshable(facts) and not row.source_pinned
-    if row.index_revision is not None:
+    # A piece inherits its source index; only the source's own media id can repair its job.
+    if row.kind != "text_part" and row.index_revision is not None:
         search = search_recovery(
             SearchRecoveryFacts(
                 revision=row.index_revision,
-                dead_job_id=row.dead_index_job_id,
+                dead_job_id=None
+                if _retrieval_status(row) in ("ready", "no_text", "ocr_required")
+                else row.dead_index_job_id,
                 is_creator=is_creator,
                 ready_for_reading=row.persisted_status == "ready_for_reading",
             )
@@ -423,6 +440,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         transcript_origin=row.transcript_origin,
         retrieval_status=_retrieval_status(row),
         retrieval_status_reason=row.index_reason,
+        text_search_ready=row.text_search_ready,
         last_error_code=row.last_error_code,
         playback_source=derive_playback_source(
             kind=row.kind,
@@ -497,6 +515,7 @@ def read_processing_snapshot(
         last_error_code=row.last_error_code,
         retrieval_status=retrieval,
         retrieval_status_reason=row.index_reason,
+        text_search_ready=row.text_search_ready,
         capabilities=_capabilities(
             row,
             _pdf_readiness(db, rows),

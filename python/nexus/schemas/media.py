@@ -93,6 +93,7 @@ class MediaOut(BaseModel):
     transcript_origin: Literal["Publisher", "Imported", "Generated"] | None
     retrieval_status: str | None
     retrieval_status_reason: str | None
+    text_search_ready: bool
     last_error_code: str | None
     playback_source: PlaybackSourceOut | None
     listening_state: ListeningStateOut | None
@@ -127,6 +128,7 @@ class MediaProcessingSnapshotOut(BaseModel):
     last_error_code: str | None
     retrieval_status: str | None
     retrieval_status_reason: str | None
+    text_search_ready: bool
     capabilities: CapabilitiesOut
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None

@@ -13,6 +13,7 @@ import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import ContributorFilter, {
   useContributorFilterLabels,
 } from "@/components/contributors/ContributorFilter";
+import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
 import RadioGroup from "@/components/ui/RadioGroup";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
@@ -45,10 +46,11 @@ export default function SearchControls(props: {
   readonly query: SearchQuery;
   readonly commit: (next: SearchQuery) => void;
   readonly inputRef: RefObject<HTMLInputElement | null>;
-  readonly status: { readonly text: string; readonly announce: boolean };
+  readonly status: { readonly text: string; readonly detail?: string; readonly announce: boolean; readonly action?: { label: string; onClick: () => void; busy: boolean } };
 }) {
   const { query, commit, inputRef, status } = props;
   const [draft, setDraft] = useState(query.text);
+  const [composing, setComposing] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const paneActive = usePaneIsActive();
   const written = useRef(query.text);
@@ -83,10 +85,10 @@ export default function SearchControls(props: {
   );
   // only edits settle: the url's own text is never mined for operators
   useEffect(() => {
-    if (draft === written.current) return;
+    if (composing || draft === written.current) return;
     const timer = setTimeout(() => apply(false), SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [apply, draft]);
+  }, [apply, composing, draft]);
   // another writer (Nexus, pane history, a restored visit) replaces the box
   useEffect(() => {
     if (query.text === written.current) return;
@@ -161,9 +163,11 @@ export default function SearchControls(props: {
           setDraft(value);
         },
         onClear: clearText,
+        onCompositionStart: () => setComposing(true),
+        onCompositionEnd: () => setComposing(false),
         keyShortcuts: "Enter Escape",
         onKeyDown: (event) => {
-          if (event.key === "Enter" && !event.nativeEvent.isComposing) apply(true);
+          if (event.key === "Enter" && !event.repeat && !composing && !event.nativeEvent.isComposing) apply(true);
         },
       }}
       actions={
@@ -248,7 +252,7 @@ export default function SearchControls(props: {
       status={{
         placement: "Details",
         id: statusId,
-        visible: status.text !== "",
+        visible: true,
         content: (
           <>
             <span
@@ -257,8 +261,9 @@ export default function SearchControls(props: {
               aria-live={status.announce ? "polite" : undefined}
               aria-atomic={status.announce ? true : undefined}
             >
-              {status.text}
+              <span>{status.text}</span>{status.detail ? ` ${status.detail}` : null}
             </span>
+            {status.action ? <Button onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
           </>
         ),
       }}

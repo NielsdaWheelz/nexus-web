@@ -19,6 +19,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_job, lock_running_job_claim
@@ -169,7 +170,8 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobR
             raise ApiError(
                 ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast chapters are unavailable"
             ) from exc
-        with transaction(db):
+
+        def publish() -> JobResult:
             if not _lock_owner(db, context=context, media_id=media_id, url=url):
                 return {"status": "Stale"}
             replace_rows(db, media_id=media_id, rows=rows)
@@ -180,8 +182,10 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobR
             """),
                 {"id": media_id},
             )
-            record_input_change(db)
+            record_input_change(db, owners=(f"media:{media_id}",))
             return {"status": "Complete"}
+
+        return retry_serializable(db, "podcast.chapters.publish", publish)
 
 
 def _first(entry: dict[str, Any], *names: str) -> Any:

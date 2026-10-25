@@ -1,8 +1,8 @@
 """The fence every write of a source run passes, its progress, and its terminal failure.
 
-I1: a run writes only inside ``run_source_publication_phase``, which locks source
-identities first, media rows ascending, then the attempt, and requires that it is this job's,
-nonterminal and its media's latest, and that the queue claim is still live.
+I1: a run writes only inside a fresh serializable ``run_source_publication_phase``.
+It locks source identities, media rows ascending, and the attempt.
+it requires this job's nonterminal, latest attempt and a live queue claim.
 I3: a terminal failure writes the attempt's ``error_code`` and the media's
 ``last_error_code`` in one transaction.
 
@@ -19,10 +19,11 @@ from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import MediaSourceAttempt, ProcessingStatus
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.jobs.queue import JobExecutionContext, JobRow, lock_running_job_claim
 from nexus.logging import get_logger
@@ -131,8 +132,12 @@ def run_source_publication_phase[T](
             raise SourcePublicationSuperseded("newer_source_attempt_exists")
         if lock_running_job_claim(db, context=fence) is None:
             raise SourcePublicationSuperseded("queue_claim_lost")
-        result = mutate(db, attempt)
-        db.commit()
+        try:
+            result = mutate(db, attempt)
+        except IntegrityError as exc:
+            if integrity_constraint_name(exc) != "uix_media_x_provider_id":
+                raise
+            raise TransactionRestart from exc
         return result
 
     try:

@@ -32,6 +32,11 @@ server components: callFastAPI ────────────────�
   shows it through `apiTransportFeedback`; one that throws it (`isStaleBuild`)
   reaches the pane or workspace boundary, which shows it and reports no client
   defect. The workspace save keeps the workspace up.
+  structured api calls assign `X-Request-ID` before dispatch, preserve a supplied
+  id and enforce `cache: "no-store"`. independent application read owners are not
+  coordinated by the browser http cache. search manual reads have one aggregate
+  operation deadline; an owned expiry remains distinct from caller cancellation.
+
 - `serverState.tsx`: the one owner of keyed async reads.
   `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
   pane visit) answer `loading | failed | ready {data, source, generation, error,

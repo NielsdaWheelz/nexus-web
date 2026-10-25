@@ -13,7 +13,9 @@ retry from minting a second touch. Locks follow the authored order: fence, viewe
 media, then the account head, which also fences the baseline each command observes.
 Assistant edges stay directed machine facts with their kind and rationale. There is
 no delete, overwrite or rewrite tool; undo deletes a created resource observing its
-current state, and an unseen device edit may revive it.
+current state, and an unseen device edit may revive it. Effects and exact source-clock
+invalidations join the tool receipt's one serializable attempt; participants never
+commit or repeat external calls.
 """
 
 from __future__ import annotations
@@ -52,6 +54,8 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible
+from nexus.services.search import projection
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools.contract import (
     WRITE_CAP,
     WRITES,
@@ -121,12 +125,30 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
         if live >= WRITE_CAP:
             refuse("WriteCapReached")
         try:
-            return effect(value, call)
+            result = effect(value, call)
         except ApiError as exc:
             declared = _REFUSALS.get(call.tool_id, {}).get(exc.code)
             if declared is None and exc.code not in _UNAVAILABLE:
                 raise
             refuse(declared or "ResourceUnavailable")
+        if call.tool_id == "nexus.library.add":
+            projection.refresh_viewer_contributors(
+                call.db,
+                list(
+                    call.db.scalars(
+                        text("SELECT user_id FROM memberships WHERE library_id=:id"),
+                        {"id": value.library_id},
+                    )
+                ),
+            )
+        owners = {
+            uri
+            for item in (value, result)
+            for key in (*_URIS, "note_uri", "highlight_uri", "library_uri")
+            if (uri := getattr(item, key, None)) is not None
+        }
+        record_input_change(call.db, owners=owners)
+        return result
 
     return run
 
@@ -448,8 +470,8 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     if kind in ("note_block", "highlight"):
         uri = f"{kind}:{target}"
         authored.lock_account(db, viewer_id)
-        projection = db.get(NoteBlock if kind == "note_block" else Highlight, target)
-        if projection is None or projection.user_id != viewer_id or not projection.authored_visible:
+        row = db.get(NoteBlock if kind == "note_block" else Highlight, target)
+        if row is None or row.user_id != viewer_id or not row.authored_visible:
             return
         (state,) = authored.read_states(db, viewer_id, resource_refs=[uri], link_ids=[]).resources
         authored.server_command(

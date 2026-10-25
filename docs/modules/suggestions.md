@@ -78,8 +78,10 @@ feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 `suggestion_shortlist_refresh` runs on the existing serial background lane with
 its normal three-attempt policy and `keep_dead=True`. its payload is `{feed_id}`.
 admission is serializable and joins existing work. a read-only repeatable-read
-snapshot captures the input revision, database time and ranking. a short
-serializable publication transaction locks the execution claim, verifies the
+snapshot captures the input revision, database time and ranking.
+ranking holds shared search admission through snapshot cleanup and physical backend
+retirement; queue wait consumes the existing database and worker timeout budgets.
+a separate short serializable publication transaction locks the execution claim, verifies the
 feed pointer and destination authority, replaces the publication, clears the
 pointer and finishes the job atomically. a newer input revision remains visibly
 dirty. workers never enqueue successors.

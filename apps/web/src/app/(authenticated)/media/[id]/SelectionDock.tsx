@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
-import { ChevronDown, Copy, MessageCircle, MessagesSquare, Move, Save, Share2, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
+import { ChevronDown, Copy, MessageCircle, MessagesSquare, Move, NotebookPen, Save, Share2, Trash2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContextValue } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
@@ -10,12 +10,14 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import { AttachedNotes, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { convertReaderQuestion } from "@/lib/chat/readerQuestion";
 import { bodyHasContent } from "@nexus/authored/body";
 import type { MediaAnnotations } from "./annotations";
@@ -28,26 +30,47 @@ function copy(feedback: FeedbackContextValue, text: string, title: string) {
   void copyText(text).catch(() => feedback.receipt({ tone: "Danger", title }));
 }
 
+type SelectionActionPresentation =
+  | { readonly action: Extract<ActionDescriptor, { kind: "command" }>; readonly unavailable?: never }
+  | { readonly action: null; readonly unavailable: {
+      readonly id: string; readonly label: string; readonly icon: ReactElement; readonly reason: string;
+      readonly hasPopup: "dialog";
+    } };
+
 /** Primary commands share the overflow's descriptors and the common button contract. */
-function SelectionAction({ action, help, busy }: {
-  readonly action: Extract<ActionDescriptor, { kind: "command" }>;
+function SelectionAction({ action, unavailable, help, busy, buttonRef }: SelectionActionPresentation & {
   readonly help: string;
   readonly busy: boolean;
+  readonly buttonRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const reasonId = useId();
-  if (!action.icon) throw new Error(`Selection action ${action.id} has no icon`);
-  const reason = action.disabled ? action.disabledReason ?? "this action is unavailable." : null;
+  const presentation = action ?? unavailable;
+  if (!presentation.icon) throw new Error(`Selection action ${presentation.id} has no icon`);
+  const reason = action ? action.disabled ? action.disabledReason ?? "this action is unavailable." : null : unavailable.reason;
   const activate = (event: MouseEvent<HTMLButtonElement> | KeyboardEvent<HTMLButtonElement>) => {
+    if (!action || action.disabled) return;
     const detail = prepareActionSelect(event, event.currentTarget);
     if (detail) action.onSelect(detail);
   };
   return <>
-    <Button aria-disabled={reason !== null || undefined} iconOnly icon={action.icon} className={styles.selectionIcon}
-      tooltip={{ text: reason ? `${help}. ${reason}` : help }} aria-label={action.label}
-      aria-describedby={reason ? reasonId : undefined} data-action-id={action.id} aria-busy={busy || undefined}
+    <Button ref={buttonRef} aria-disabled={reason !== null || undefined} iconOnly icon={presentation.icon} className={styles.selectionIcon}
+      tooltip={{ text: reason ? `${help}. ${reason}` : help }} aria-label={presentation.label}
+      aria-describedby={reason ? reasonId : undefined} data-action-id={presentation.id} aria-busy={busy || action?.busy || undefined}
+      aria-haspopup={presentation.hasPopup}
       onClick={activate} onKeyDown={activate} />
     {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
   </>;
+}
+
+/** The native invoker survives ensure; only capability absence removes it. */
+function SelectionShare({ returnFocus, ...props }: SelectionActionPresentation & {
+  readonly help: string;
+  readonly busy: boolean;
+  readonly returnFocus: () => HTMLElement | null;
+}) {
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  useActionFocusRecovery(trigger, returnFocus);
+  return <SelectionAction {...props} buttonRef={trigger} />;
 }
 
 /** A press freezes one source capture; only its native click may execute it. */
@@ -194,9 +217,8 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
       queueMicrotask(() => {
         if (menuCommand.current === closed) { menuCommand.current = null; return; }
         if (!closed || !current.current.selectionVisible || !current.current.selectionCurrent(closed)) return;
-        const live = reader.captureSelection();
         current.current.cancelSelectionActivation();
-        if (live?.kind !== "Captured") reader.focusSource();
+        reader.focusSource();
       });
     }}
     renderTrigger={(trigger) => (
@@ -209,15 +231,19 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
               onFocus={(event) => focusControl(event.currentTarget)} onClick={(event) => activate(event, verbs.applySelection)}>apply selection</Button>
             <Button size="comfortable" onClick={verbs.bounds ? verbs.cancelBounds : verbs.dismissSelection}>cancel</Button>
           </> : <>
-            <Button size="comfortable" onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => verbs.highlightSelection(captured, "yellow"))}>highlight</Button>
-            <Button size="comfortable" onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Note"))}>note</Button>
-            {canQuote ? <Button size="comfortable" onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Ask"))}>ask</Button> : null}
-            <Button {...trigger} size="comfortable" onPointerDown={pointerDown} onKeyDown={keyDown}
+            {/* every selection becomes a new independent highlight, so the command never shows a persisted colour. */}
+            <HighlightButton selected="yellow" persisted={false} disabledReason={null} busy={false}
+              onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
+              onClick={(event) => activate(event, (captured) => verbs.highlightSelection(captured, "yellow"))} />
+            <Button iconOnly icon={<NotebookPen size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="open passage note"
+              onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
+              onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Note"))} />
+            {canQuote ? <Button iconOnly icon={<MessageCircle size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="ask about passage"
+              onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
+              onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Ask"))} /> : null}
+            <OverflowMenuButton {...trigger} className={styles.selectionIcon} onPointerDown={pointerDown} onKeyDown={keyDown}
               onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => { menuCommand.current = null; setMenuSubject(captured); trigger.onClick(event); })}>more</Button>
+              onClick={(event) => activate(event, (captured) => { menuCommand.current = null; setMenuSubject(captured); trigger.onClick(event); })} />
           </>}
         </div>
       </FloatingActionSurface>
@@ -238,6 +264,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const feedback = useFeedback();
   const { draft, opening, annotation } = composer;
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
+  const copyTrigger = useRef<HTMLButtonElement | null>(null);
   const destinationTrigger = useRef<HTMLButtonElement | null>(null);
   const pickerId = useId();
   const pickerAnchor = useCallback(() => isMobile ? moreTrigger.current : destinationTrigger.current, [isMobile]);
@@ -255,7 +282,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
-  const renderComposer = (placed: boolean, unavailable: boolean, headerOnly = false, dismiss = composer.dismiss) => {
+  const renderComposer = (placed: boolean, unavailable: boolean, headerOnly = false) => {
     if (!draft || !opening) return null;
     const hasNote = bodyHasContent(draft.body);
     const failed = draft.issue?.kind === "Failed" ? draft.issue : null;
@@ -294,9 +321,14 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
     const chooseAction = { ...command("ChooseChat", "choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
-    const options: ActionDescriptor[] = [
-      command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => copy(feedback, draft.passage.quote, "passage couldn’t be copied"), null),
-    ];
+    const copyAction = command("CopyPassage", "copy passage", <Copy size={16} aria-hidden="true" />, () => copy(feedback, draft.passage.quote, "passage couldn’t be copied"),
+      draft.passage.quote.trim().length > 0 ? null : "this highlight has no text to copy");
+    // sharing a new passage first commits its highlight; an existing one shares as it is.
+    const shareAction = { ...(sharePiece !== null
+      ? command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
+      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "share highlight" : "share passage", <Share2 size={16} aria-hidden="true" />,
+        ({ triggerEl }) => verbs.share(triggerEl), draft.highlightId ? null : blockedReason)), hasPopup: "dialog" as const };
+    const options: ActionDescriptor[] = isMobile ? [copyAction] : [];
     if (isMobile) {
       options.push({ kind: "custom", id: "HighlightColours", label: "highlight colours", render: ({ closeMenu }) =>
         <Colours selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} size="comfortable"
@@ -305,20 +337,17 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         if (selected) options.push({ ...existingAction, label: `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` });
         options.push(chooseAction);
       }
+      options.push(shareAction);
     }
     if (draft.highlightId) {
       const id = draft.highlightId;
       if (annotation?.placement.kind === "placed") options.push(command("EditHighlightBounds", "edit highlight bounds", <Move size={16} aria-hidden="true" />, () => verbs.editBounds(id), blockedReason));
-      if (sharePiece === null) options.push(command("ShareHighlight", "share highlight", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => verbs.share(triggerEl), null));
       options.push({ ...command("DeleteHighlight", "delete highlight", <Trash2 size={16} aria-hidden="true" />, () => verbs.remove(id), draft.operation ? "finish the current request first." : null), tone: "danger" });
-    } else if (sharePiece === null) options.push(command("SharePassage", "share passage", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => verbs.share(triggerEl), blockedReason));
-    if (sharePiece !== null) options.push(command("SharePiece", "share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason));
-    options.push({ kind: "custom", id: "PassagePreview", label: "selected passage", render: () => <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div> });
-    options.push({ ...command("CloseComposer", "close composer", <X size={16} aria-hidden="true" />, () => dismiss(), null), restoreFocusOnClose: false });
+    }
     const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
       content: { sections: [{ id: "Passage", label: null, options }] } };
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
-      {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />
+      {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
         : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
       <SelectionAction action={saveAction} help={`${saveAction.label} · enter saves · shift-enter inserts a line`} busy={draft.operation?.kind === "Save" || draft.operation?.kind === "Ensure"} />
       {canQuote ? <>
@@ -331,7 +360,12 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             icon={<ChevronDown size={16} aria-hidden="true" />} onClick={composer.chooseChat} />
         </div> : null}
       </> : null}
-      <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} />
+      {!isMobile ? <>
+        <SelectionAction action={copyAction} help={copyAction.label} busy={false} buttonRef={copyTrigger} />
+        <SelectionShare action={shareAction} help={shareAction.label} busy={sharePiece === null && draft.operation?.kind === "Ensure"}
+          returnFocus={() => copyTrigger.current ?? returnFocus()} />
+      </> : null}
+      {options.length > 0 ? <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} /> : null}
     </div>;
     if (headerOnly) return toolbar;
     return (
@@ -387,7 +421,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     {isMobile ? <MobileSheet active={draft !== null && opening !== null}
       ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}
       heightLimit="available" onDismiss={composer.dismiss} focusKey={opening?.id}
-      renderHeader={({ requestDismiss }) => renderComposer(true, false, true, requestDismiss)}
+      handleLabel="close passage editor" renderHeader={() => renderComposer(true, false, true)}
       initialFocus={(panel) => opening?.focus ? panel.querySelector<HTMLElement>('[data-selection-composer] [role="textbox"][contenteditable="true"]') ?? panel : panel}
       returnFocusTo={() => { const element = returnFocus(); return element ? { element, preventScroll: true } : null; }}>
       {renderComposer(true, false)}

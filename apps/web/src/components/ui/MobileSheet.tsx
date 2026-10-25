@@ -11,20 +11,13 @@ const DRAG_DISMISS_PX = 96;
 const TAP_SLOP_PX = 8;
 const HEADER_CONTROLS = "a, button, input, select, textarea, summary, [role=button], [role=link], [role=tab], [contenteditable], [tabindex]";
 
-type Header =
-  | { readonly handleLabel: string; readonly renderHeader?: never }
-  | {
-      readonly handleLabel?: never;
-      readonly renderHeader?: (input: { readonly requestDismiss: () => void }) => ReactNode;
-    };
-
 /**
- * A mobile sheet with an independently scrolling body. Every exit asks the
- * frame's dismissal guard. A handle replaces the title and x with a native
- * tap/drag button; specialized headers provide their own visible exit through
- * requestDismiss. Only DOM-contained header gestures can drag; portals keep
- * their own gestures. Other header controls never drag. Moved or cancelled gestures
- * cannot click; reduced motion removes travel, not dismissal.
+ * a mobile sheet with an independently scrolling body. every exit asks the
+ * frame's dismissal guard. a native tap/drag handle and custom header compose
+ * above the body; either replaces the generated title and x. custom headers
+ * receive requestDismiss for their own exits. only the handle and noninteractive
+ * header space can drag; portals keep their own gestures. moved or cancelled
+ * gestures cannot click; reduced motion removes travel, not dismissal.
  */
 export default function MobileSheet({
   active,
@@ -36,9 +29,11 @@ export default function MobileSheet({
   handleLabel,
   renderHeader,
   ...modal
-}: Omit<ModalProps, "open"> & Header & {
+}: Omit<ModalProps, "open"> & {
   readonly active: boolean;
   readonly ariaLabel: string;
+  readonly handleLabel?: string;
+  readonly renderHeader?: (input: { readonly requestDismiss: () => void }) => ReactNode;
   /** "soft" for in-context companion sheets. */
   readonly scrim?: "default" | "soft";
   /** The panel's id; also its interaction scope. */
@@ -48,6 +43,7 @@ export default function MobileSheet({
   readonly children: ReactNode;
 }) {
   const content = useRef<HTMLDivElement>(null);
+  const handle = useRef<HTMLButtonElement>(null);
   useCollectionLayout(content, active);
   const dragStart = useRef<{
     readonly pointerId: number;
@@ -90,7 +86,7 @@ export default function MobileSheet({
               suppressClick.current = false;
               let control = event.target instanceof Element ? event.target.closest(HEADER_CONTROLS) : null;
               if (control && !event.currentTarget.contains(control)) control = null;
-              if (control && handleLabel === undefined) return;
+              if (control && control !== handle.current) return;
               (control ?? event.currentTarget).setPointerCapture(event.pointerId);
               dragStart.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
             }}
@@ -122,6 +118,7 @@ export default function MobileSheet({
               drag(event, null);
             }}
             onClickCapture={(event) => {
+              if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
               const suppress = suppressClick.current && event.detail > 0;
               suppressClick.current = false;
               if (suppress) {
@@ -132,17 +129,18 @@ export default function MobileSheet({
           >
             {handleLabel === undefined ? <div className={styles.grabber} aria-hidden="true" /> : null}
             {handleLabel !== undefined ? (
-              <button type="button" className={styles.handle} aria-label={handleLabel} onClick={requestDismiss}>
+              <button ref={handle} type="button" className={styles.handle} aria-label={handleLabel} onClick={requestDismiss}>
                 <span className={styles.grabber} aria-hidden="true" />
               </button>
-            ) : renderHeader ? renderHeader({ requestDismiss }) : (
+            ) : null}
+            {renderHeader ? renderHeader({ requestDismiss }) : handleLabel === undefined ? (
               <div className={styles.titleRow}>
                 <h2 className={styles.title}>{ariaLabel}</h2>
                 <button type="button" className={styles.close} aria-label={`close ${ariaLabel}`} onClick={requestDismiss}>
                   <X size={16} aria-hidden="true" />
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
           <div ref={content} className={styles.content}>{children}</div>
         </>

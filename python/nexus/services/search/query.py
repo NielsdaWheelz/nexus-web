@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeGuard, get_args
 from uuid import UUID
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.search import SearchView, SemanticStatus
+from nexus.schemas.search import SearchPhase, SearchView
 from nexus.schemas.search_types import ALL_RESULT_TYPES
 from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLE_SET
 from nexus.services.resource_graph.refs import ResourceRef
@@ -144,8 +144,9 @@ class DiscoveryQuery:
             f for kind in DISCOVERY_KINDS if kind in kinds for f in DISCOVERY_FAMILIES[kind]
         )
 
-    def fingerprint(self, view: SearchView, semantic_status: SemanticStatus) -> str:
+    def fingerprint(self, viewer_id: UUID, view: SearchView, phase: SearchPhase) -> str:
         payload = {
+            "viewer_id": str(viewer_id),
             "q": self.text,
             "kinds": sorted(self.kinds) if self.kinds is not None else None,
             "formats": sorted(self.formats),
@@ -153,7 +154,7 @@ class DiscoveryQuery:
             "roles": sorted(self.roles),
             "scope": [self.scope.kind, str(self.scope.id) if self.scope.id else None],
             "view": view,
-            "semantic_status": semantic_status,
+            "phase": phase,
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 

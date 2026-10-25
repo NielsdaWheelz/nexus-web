@@ -36,6 +36,7 @@ from nexus.schemas.suggestions import (
 from nexus.services import suggestion_changes, suggestions
 from nexus.services.consumption.lectern import has_capacity
 from nexus.services.resource_graph.refs import assert_resource_ref
+from nexus.services.search.admission import search_session
 
 _MAX_AGE = timedelta(minutes=15)
 _MIN_BUILD_INTERVAL = timedelta(seconds=30)
@@ -156,13 +157,11 @@ def request_suggestions_refresh(
     def attempt() -> SuggestionStateOut:
         state, publication, observed_at = _read(db, viewer_id=viewer_id, library_id=library_id)
         if state.capability == "NotApplicable" or state.work is not None:
-            db.commit()
             return state
         if publication is not None and (
             publication.ranked_revision == state.input_revision
             and observed_at < publication.ranked_at + _MAX_AGE
         ):
-            db.commit()
             return state
         feed = _feed(db, viewer_id=viewer_id, library_id=library_id)
         if feed is None:
@@ -187,7 +186,6 @@ def request_suggestions_refresh(
         db.flush()
         suggestion_changes.notify_suggestions(db)
         state = read_suggestion_state(db, viewer_id=viewer_id, library_id=library_id)
-        db.commit()
         return state
 
     return retry_serializable(db, "suggestions.refresh", attempt)
@@ -219,7 +217,7 @@ def run_suggestion_refresh_job(
 ) -> queue.JobResult:
     """Compute outside the publication transaction; only the current claim may publish."""
     feed_id = _RefreshPayload.model_validate(payload).feed_id
-    with get_session_factory()() as db:
+    with search_session() as db:
         get_repeatable_read_db(db)
         ranked_revision = suggestion_changes.input_revision(db)
         ranked_at = db.scalar(text("SELECT now()"))
@@ -240,7 +238,6 @@ def run_suggestion_refresh_job(
 
         def publish() -> Mapping[str, Any]:
             if queue.lock_running_job_claim(db, context=context) is None:
-                db.rollback()
                 return {"status": "superseded"}
             feed = db.get(SuggestionFeed, feed_id)
             result: dict[str, Any] = {"status": "superseded"}
@@ -268,7 +265,6 @@ def run_suggestion_refresh_job(
             finished = queue.finish_job(db, context=context, result=result)
             assert finished is not None  # the claim stays locked through settlement
             suggestion_changes.notify_suggestions(db)
-            db.commit()
             return result
 
         return retry_serializable(db, "suggestions.publish", publish)

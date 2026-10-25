@@ -52,6 +52,7 @@ import {
 } from "@/lib/podcasts/api";
 import { activateResource } from "@/lib/resources/activation";
 import { resourceShareTarget } from "@/lib/sharing/targets";
+import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import type {
   ActionDescriptor,
   ActionSelectDetail,
@@ -444,6 +445,7 @@ export function projectResourceActions(
       tone: entry.group === "Danger" ? "danger" : "default",
       disabled: disabledReason !== undefined || undefined,
       disabledReason,
+      hasPopup: actionId === "Share" ? "dialog" : undefined,
       onSelect: (detail) =>
         run({
           ref,
@@ -567,15 +569,6 @@ export function projectResourceActions(
     ({ triggerEl }) => ctx.overlays.open(next, invocationFocus(triggerEl ?? podcastFocus?.trigger ?? null, returnFocus)),
     { tracked: false },
   ];
-  // What had focus when the verb ran (the trigger, the menu closed first).
-  const focusReturn = () => {
-    const active = document.activeElement;
-    const anchor = active instanceof HTMLElement ? active : null;
-    return {
-      anchor: () => anchor,
-      fallback: () => findPaneLandmarkFocusTarget(originPaneId()),
-    };
-  };
   const metadata = (triggerEl: HTMLElement | null) => {
     const focused = document.activeElement;
     const pane =
@@ -628,12 +621,9 @@ export function projectResourceActions(
       { tracked: false },
     ],
     Share: [
-      () => {
-        const { anchor, fallback } = focusReturn();
-        ctx.openShare(resourceShareTarget(ref), {
-          returnFocusTo: anchor,
-          returnFocusFallback: fallback,
-        });
+      ({ triggerEl }) => {
+        const paneId = triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? originPaneId();
+        ctx.openShare(resourceShareTarget(ref), anchoredShareOpenOptions(triggerEl, () => findPaneLandmarkFocusTarget(paneId)));
       },
       { tracked: false },
     ],

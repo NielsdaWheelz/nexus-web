@@ -39,7 +39,11 @@ from nexus.services.contributor_credits import (
     contributor_fts_text_sql,
     credit_target_filter_exists_sql,
 )
-from nexus.services.media_text_scope import apparatus_scope_rows_sql, text_scope_rows_sql
+from nexus.services.media_text_scope import (
+    apparatus_scope_rows_sql,
+    highlight_in_reading_scope_sql,
+    text_scope_rows_sql,
+)
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
@@ -50,7 +54,12 @@ from nexus.services.resource_items.locations import (
     reading_owner_sql,
 )
 from nexus.services.search.query import SearchScope
-from nexus.services.search.scope import admitted_reading_media_sql, scope_predicate
+from nexus.services.search.scope import (
+    ScopeSQL,
+    admitted_reading_media_sql,
+    compose_scopes,
+    scope_predicate,
+)
 from nexus.services.search.semantic import Embedding, nearest_chunks
 from nexus.text import escape_like
 
@@ -67,7 +76,10 @@ _CTES = _BASE_CTES + ", admitted_media AS (SELECT media_id FROM visible_media)" 
 
 
 def _ctes(
-    r: Retrieval | None = None, reading_media_id: UUID | None = None
+    r: Retrieval | None = None,
+    reading_media_id: UUID | None = None,
+    *,
+    scope_sql: ScopeSQL | None = None,
 ) -> tuple[str, dict[str, Any]]:
     if reading_media_id is not None:
         return (
@@ -78,7 +90,12 @@ def _ctes(
         )
     if r is None:
         return _CTES, {}
-    admitted, params = admitted_reading_media_sql(r.scopes, r.frozen)
+    admitted, params = admitted_reading_media_sql(
+        r.scopes, r.frozen, library_media=scope_sql.library_media if scope_sql is not None else None
+    )
+    prefix = _BASE_CTES + (
+        "".join(", " + cte for cte in scope_sql.ctes) if scope_sql is not None else ""
+    )
     metadata = _filters("media", r)
     assert metadata is not None
     eligible = f"SELECT candidate.media_id FROM ({admitted}) candidate JOIN media m ON m.id=candidate.media_id WHERE TRUE {metadata}"
@@ -102,11 +119,12 @@ def _ctes(
         jsonb_to_recordset(CAST(:frozen_passages AS jsonb)) ref(scheme text,id uuid)"""
     for index, scope in enumerate(r.scopes):
         if scope.kind == "conversation":
+            params[f"scope_{index}"] = scope.id
             exact_refs += f""" UNION SELECT target_scheme AS scheme,target_id AS id
                 FROM ({context_facts_sql(f":scope_{index}")}) context
                 WHERE target_scheme IN ('highlight','passage_anchor')"""
     return (
-        _BASE_CTES
+        prefix
         + f""", admitted_media AS ({eligible}),
         frozen_passages AS ({exact_refs}),
         exact_passage_media AS (SELECT m.id AS media_id FROM visible_media visible
@@ -170,22 +188,36 @@ def _requested_owner(exact: str, owner: Callable[[str], str]) -> str:
     return f"COALESCE(({owner(_ADMITTED)}),({owner(_exact_candidates(exact))}))"
 
 
+_CHUNK_EXACT = """(ref.scheme='content_chunk' AND ref.id=cc.id)
+    OR (ref.scheme='evidence_span' AND ref.id=cc.primary_evidence_span_id)"""
 _CHUNK_OWNER = _requested_owner(
-    "(ref.scheme='content_chunk' AND ref.id=cc.id) OR (ref.scheme='evidence_span' AND ref.id=cc.primary_evidence_span_id)",
+    _CHUNK_EXACT,
     lambda candidates: reading_owner_sql(
-        f"SELECT reading_media_id FROM ({reading_chunks_sql(candidates)}) admitted WHERE admitted.chunk_id=cc.id"
+        f"SELECT reading_media_id FROM ({reading_chunks_sql(f'SELECT cc.owner_id AS media_id WHERE cc.owner_id IN ({candidates}) UNION ALL SELECT candidate_part.media_id FROM media_parts candidate_part WHERE candidate_part.source_media_id=cc.owner_id AND candidate_part.media_id IN ({candidates})')}) admitted WHERE admitted.chunk_id=cc.id"
     ),
 )
+# Semantic eligibility needs an admitted reading, not its preferred presentation
+# owner. The same published chunk bounds admit both the count and vector reads;
+# the selected window resolves its reading through _CHUNK_OWNER afterward.
+# The semantic reader's _READY already proves cc's current lexical publication.
+# Match a source reading directly; only piece candidates need canonical bounds.
+_CHUNK_MEMBER = f"""(EXISTS (SELECT 1 FROM media m
+    WHERE m.id=cc.owner_id AND m.id IN ({_ADMITTED}) {{where}})
+    OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(f"SELECT candidate_part.media_id FROM media_parts candidate_part WHERE candidate_part.source_media_id=cc.owner_id AND candidate_part.media_id IN ({_ADMITTED})")}) member
+    JOIN media m ON m.id=member.reading_media_id
+    WHERE member.chunk_id=cc.id {{where}}) OR EXISTS (SELECT 1 FROM ({reading_chunks_sql(_exact_candidates(_CHUNK_EXACT))}) member
+    JOIN media m ON m.id=member.reading_media_id
+    WHERE member.chunk_id=cc.id {{where}}))"""
 _HIGHLIGHT_OWNER = _requested_owner(
     "ref.scheme='highlight' AND ref.id=h.id",
-    lambda candidates: passage_owner_sql(
-        candidates,
-        source="h.anchor_media_id",
-        fragment="a.fragment_id",
-        start="a.start_offset",
-        end="a.end_offset",
-    ),
+    lambda candidates: reading_owner_sql(f"""SELECT candidate.media_id AS reading_media_id
+        FROM ({candidates}) candidate
+        WHERE candidate.media_id=h.anchor_media_id
+            OR (h.anchor_kind='fragment_offsets'
+                AND candidate.media_id IN (SELECT part.media_id FROM media_parts part WHERE part.source_media_id=h.anchor_media_id)
+                AND {highlight_in_reading_scope_sql("h.id", "candidate.media_id")})"""),
 )
+
 _APPARATUS_OWNER = _requested_owner(
     "ref.scheme='reader_apparatus_item' AND ref.id=rai.id",
     lambda candidates: reading_owner_sql(
@@ -269,8 +301,8 @@ SOURCES: dict[str, str] = {
         CROSS JOIN LATERAL (SELECT min(bounded.start_offset) AS lo,max(bounded.end_offset) AS hi
             FROM ({_HIGHLIGHT_INTERVAL}) bounded WHERE bounded.fragment_id=a.fragment_id) bounds
         CROSS JOIN LATERAL (SELECT
-            CASE WHEN f.id IS NULL THEN COALESCE(h.prefix,'') ELSE right(COALESCE(h.prefix,''),greatest(a.start_offset-bounds.lo,0)) END AS prefix,
-            CASE WHEN f.id IS NULL THEN COALESCE(h.suffix,'') ELSE left(COALESCE(h.suffix,''),greatest(bounds.hi-a.end_offset,0)) END AS suffix) quote
+            CASE WHEN m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.prefix,'') ELSE right(COALESCE(h.prefix,''),greatest(a.start_offset-bounds.lo,0)) END AS prefix,
+            CASE WHEN m.id=source_m.id OR f.id IS NULL THEN COALESCE(h.suffix,'') ELSE left(COALESCE(h.suffix,''),greatest(bounds.hi-a.end_offset,0)) END AS suffix) quote
         WHERE {highlight_visibility_sql("h")} {{where}}""",
     "message": """SELECT 'message' AS type, ms.id, NULL AS label, ms.content_tsv AS doc,
             ms.content AS text, ms.conversation_id, ms.seq,
@@ -397,8 +429,7 @@ CREDITED = {"media": "m.id", "podcast": "p.id", "contributor": "vc", "content_ch
 SEMANTIC = {
     "note_block": """cc.owner_kind = 'note_block' AND EXISTS (SELECT 1 FROM note_blocks nb
         WHERE nb.id = cc.owner_id AND nb.user_id = :viewer_id AND nb.authored_visible {where})""",
-    "content_chunk": f"""cc.owner_kind='media' AND EXISTS (SELECT 1 FROM media m
-        WHERE m.id=({_CHUNK_OWNER}) {{where}})""",
+    "content_chunk": f"cc.owner_kind='media' AND {_CHUNK_MEMBER}",
 }
 # A note attached to a readable highlight by any live authored link, either direction.
 _HIGHLIGHT_NOTE = f""" AND EXISTS (SELECT 1 FROM resource_edges edge
@@ -470,18 +501,15 @@ def _filters(family: str, r: Retrieval) -> str | None:
 def _saved_passages(
     db: Session,
     r: Retrieval,
-    *,
-    discovery: bool,
-    identities: Sequence[UUID] | None = None,
 ) -> list[tuple[RowMapping, UUID | None]]:
     """Read quote/id-ordered batches; live scope admission precedes the result limit.
 
     Family reach only narrows SQL candidates. Current placement and owner choice
     belong to media_passages, including historical unresolved whole-source quotes.
     """
-    cell = scope_predicate("passage_anchor", r.scopes, None if discovery else r.frozen)
+    cell = scope_predicate("passage_anchor", r.scopes, r.frozen)
     filters = _filters("passage_anchor", r)
-    if cell is None or filters is None or not r.terms or identities == []:
+    if cell is None or filters is None or not r.terms:
         return []
     ctes, scope_params = _ctes(r)
     escaped = escape_like(r.terms)
@@ -500,16 +528,13 @@ def _saved_passages(
         }
     )
     where = cell[0] + filters
-    if identities is not None:
-        where += " AND pa.id=ANY(:identities)"
-        params["identities"] = list(identities)
     relation = SOURCES["passage_anchor"].replace("{where}", where)
     lexical = f"(s.doc @@ {TSQ} OR s.label ILIKE :contains)"
     relevance = f"ts_rank_cd(s.doc,{TSQ},32)"
     score = f"""CAST(((CASE WHEN lower(s.label)=lower(:q) THEN 3
         WHEN s.label ILIKE :prefix THEN 2 WHEN s.label ILIKE :contains THEN 1 ELSE 0 END)
         + CASE WHEN s.doc @@ {TSQ} THEN 0.5+{relevance}/2 ELSE 0 END)/4 AS float8)"""
-    position = "relevance" if discovery else "score"
+    position = "score"
     cursor: tuple[float, str, str] | None = None
     accepted: list[tuple[RowMapping, UUID | None]] = []
     while len(accepted) < r.k:
@@ -523,7 +548,7 @@ def _saved_passages(
             db.execute(
                 text(f"""{ctes}, ranked AS (
                     SELECT s.*,{score} AS score,CAST({relevance} AS float8) AS relevance,
-                        {lexical} AS lexical,{"''" if discovery else "s.label"} AS sort_label
+                        {lexical} AS lexical,s.label AS sort_label
                     FROM ({relation}) s WHERE {lexical})
                     SELECT *,{position} AS position_score FROM ranked WHERE TRUE {after}
                     ORDER BY {position} DESC,sort_label COLLATE "C",id::text COLLATE "C"
@@ -594,7 +619,7 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
     if family == "passage_anchor":
         return [
             Hit("passage_anchor", row["id"], row["label"], row["score"], owner)
-            for row, owner in _saved_passages(db, r, discovery=False)
+            for row, owner in _saved_passages(db, r)
         ]
     where = (
         cell[0]
@@ -666,7 +691,7 @@ def hydrate(
         "evidence_span",
         "reader_apparatus_item",
     ):
-        identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, (SELECT v.version FROM resource_versions v WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block' AND v.resource_id=s.media_id AND v.lane='body') AS note_body_version"
+        identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, NULL::bigint AS note_body_version"
     ctes, scope_params = _ctes(reading_media_id=reading_media_id)
     sql = f"""{ctes} SELECT s.* {identity}
         FROM ({SOURCES[family].replace("{where}", _STRICT_ADMISSION.get(family, ""))}) s
@@ -682,7 +707,6 @@ def hydrate(
 
 
 GENERATED_FAMILIES = frozenset({"message", "content_chunk", "fragment", "reader_apparatus_item"})
-_PROSE_FAMILIES = GENERATED_FAMILIES | {"note_block", "highlight", "passage_anchor"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -701,8 +725,9 @@ class DiscoveryHit:
         return (-self.name_tier, -self.lexical, -self.relevance, self.sort_label, self.ref.uri)
 
 
-def _discovery_predicates(r: Retrieval, family: str) -> tuple[str, dict[str, Any]] | None:
-    cell = scope_predicate(family, r.scopes, None)
+def _discovery_predicates(
+    r: Retrieval, family: str, cell: tuple[str, dict[str, Any]] | None
+) -> tuple[str, dict[str, Any]] | None:
     filters = _filters(family, r)
     if cell is None or filters is None or not (r.terms or family in LISTABLE):
         return None
@@ -725,7 +750,7 @@ def _discovery_predicates(r: Retrieval, family: str) -> tuple[str, dict[str, Any
 
 def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[UUID, float]]:
     """One fixed chunk window, reused for ranking and selected-owner enrichment."""
-    predicates = _discovery_predicates(r, family)
+    predicates = _discovery_predicates(r, family, scope_predicate(family, r.scopes, None))
     if predicates is None or r.embedding is None:
         return []
     where, params = predicates
@@ -740,137 +765,254 @@ def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[U
     return [(chunk_id, cosine) for chunk_id, cosine in near if cosine >= 0.5]
 
 
-def rank_discovery(
-    db: Session,
-    r: Retrieval,
-    family: str,
-    *,
-    neighbours: Sequence[tuple[UUID, float]],
-    group_owners: bool,
-    owners: Sequence[UUID] | None = None,
-    excluded_owners: Sequence[UUID] = (),
-    identities: Sequence[UUID] | None = None,
-) -> list[DiscoveryHit]:
-    """Browser matches; generated owner grouping and exclusions precede the limit.
-
-    Readable text stays eligible when its location cannot resolve. Strict callers use
-    ``rank``/``hydrate`` and retain their separate placement guards.
-    """
-    predicates = _discovery_predicates(r, family)
-    if predicates is None or owners == []:
-        return []
-    if family == "passage_anchor":
-        if owners is not None or excluded_owners:
-            return []
-        return [
-            DiscoveryHit(
-                family=family,
-                ref=ResourceRef("passage_anchor", row["id"]),
-                owner=None,
-                name_tier=0,
-                lexical=bool(row["lexical"]),
-                relevance=row["relevance"],
-                sort_label=row["sort_label"],
-                reading_media_id=owner,
+def _saved_readings(
+    db: Session, r: Retrieval, where: str, params: dict[str, Any], ctes: str
+) -> str:
+    """Resolve saved passage admission before native scoring or prefix selection."""
+    source = SOURCES["passage_anchor"].replace("{where}", where)
+    rows = db.execute(
+        text(f"{ctes} SELECT s.id,s.owner_scheme,s.source_media_id FROM ({source}) s"), params
+    ).all()
+    media = [row for row in rows if row.owner_scheme == "media"]
+    requested = (
+        list(
+            db.scalars(
+                text(f"""{ctes} SELECT candidate.media_id FROM admitted_media candidate
+        LEFT JOIN media_parts part ON part.media_id=candidate.media_id
+        WHERE COALESCE(part.source_media_id,candidate.media_id)=ANY(:sources)"""),
+                params | {"sources": list({row.source_media_id for row in media})},
             )
-            for row, owner in _saved_passages(db, r, discovery=True, identities=identities)
-        ]
+        )
+        if media
+        else []
+    )
+    refs = [ResourceRef("passage_anchor", row.id) for row in media]
+    scoped = (
+        media_passages(db, viewer_id=r.viewer_id, refs=refs, admitted_reading_media_ids=requested)
+        if refs
+        else {}
+    )
+    exact_ids = set(
+        db.scalars(
+            text(f"{ctes} SELECT id FROM frozen_passages WHERE scheme='passage_anchor'"), params
+        )
+    )
+    exact_refs = [ref for ref in refs if ref.id in exact_ids and ref.uri not in scoped]
+    if exact_refs:
+        scoped.update(media_passages(db, viewer_id=r.viewer_id, refs=exact_refs))
+    admitted = [
+        {
+            "id": str(row.id),
+            "reading_media_id": str(scoped[f"passage_anchor:{row.id}"].owner.id)
+            if row.owner_scheme == "media"
+            else None,
+        }
+        for row in rows
+        if row.owner_scheme != "media" or f"passage_anchor:{row.id}" in scoped
+    ]
+    params["saved_readings"] = json.dumps(admitted)
+    return "SELECT DISTINCT id,reading_media_id FROM jsonb_to_recordset(CAST(:saved_readings AS jsonb)) r(id uuid,reading_media_id uuid)"
+
+
+def discovery_eligible(
+    db: Session, r: Retrieval, families: Sequence[str]
+) -> tuple[str, dict[str, object]]:
+    """Canonical eligibility, including the one permitted reading owner of each hit.
+
+    Whole sources keep their owner-wide admission. Piece-only passages carry an
+    exact native document identity, so a shared source key cannot admit siblings.
+    Native scoring still traverses one comparable lexical stream.
+    """
+    scopes = compose_scopes(families, r.scopes, None)
+    ctes, bindings = _ctes(r, scope_sql=scopes)
+    branches = []
+    params: dict[str, Any] = {"viewer_id": r.viewer_id} | bindings | dict(scopes.bindings)
+    prose = {"note_block", "highlight", "passage_anchor", "message"}
+    for family in families:
+        predicates = _discovery_predicates(r, family, scopes.cell(family))
+        if predicates is None:
+            continue
+        where, arguments = predicates
+        params.update(arguments)
+        if family in {"content_chunk", "fragment", "reader_apparatus_item"}:
+            state = ""
+            revision = "''"
+            if family == "content_chunk":
+                state = "JOIN content_index_states s ON s.owner_kind='media' AND s.owner_id=m.id AND s.lexical_revision=s.revision"
+                revision = "':' || s.revision::text"
+            elif family == "reader_apparatus_item":
+                state = "JOIN reader_apparatus_states s ON s.media_id=m.id AND s.status IN ('ready','partial')"
+            branches.append(f"""SELECT DISTINCT '{family}'::text AS family,
+                '{family}:' || m.id::text || {revision} AS admission_key,
+                NULL::text AS doc_key,NULL::text AS ref,'media:' || m.id::text AS owner_ref,
+                NULL::text AS name,NULL::text AS discovery_name,0 AS name_tier,
+                m.id AS reading_media_id,NULL::bigint AS native_search_id
+                FROM media m JOIN admitted_media admitted ON admitted.media_id=m.id {state}
+                WHERE m.kind<>'text_part' {where}""")
+            if family == "fragment":
+                continue
+            if family == "content_chunk":
+                source = f"""content_chunks cc
+                    JOIN content_index_states s ON s.owner_kind='media' AND s.owner_id=cc.owner_id
+                        AND s.lexical_revision=s.revision
+                    CROSS JOIN LATERAL (SELECT ({_CHUNK_OWNER}) AS media_id) reading
+                    JOIN media m ON m.id=reading.media_id
+                    JOIN media_parts part ON part.media_id=m.id
+                    JOIN keyword_occurrences p ON p.doc_key='content_chunk:' || cc.id::text"""
+                condition = "cc.owner_kind='media' AND cc.owner_id IN (SELECT part.source_media_id FROM admitted_media reading JOIN media_parts part ON part.media_id=reading.media_id)"
+            else:
+                source = f"""reader_apparatus_items rai
+                    JOIN reader_apparatus_states state ON state.id=rai.state_id
+                    CROSS JOIN LATERAL (SELECT ({_APPARATUS_OWNER}) AS media_id) reading
+                    JOIN media m ON m.id=reading.media_id
+                    JOIN media_parts part ON part.media_id=m.id
+                    JOIN keyword_occurrences p ON p.doc_key='reader_apparatus_item:' || rai.id::text"""
+                condition = "state.status IN ('ready','partial') AND rai.media_id IN (SELECT part.source_media_id FROM admitted_media reading JOIN media_parts part ON part.media_id=reading.media_id)"
+            branches.append(f"""SELECT '{family}'::text AS family,p.admission_key,p.doc_key,p.ref,
+                'media:' || m.id::text AS owner_ref,NULL::text AS name,NULL::text AS discovery_name,
+                0 AS name_tier,m.id AS reading_media_id,p.search_id AS native_search_id
+                FROM {source} WHERE {condition} {where}""")
+            continue
+        scheme = {"web_result": "external_snapshot"}.get(family, family)
+        ref = f"'{scheme}:' || s.id::text"
+        key = (
+            "'contributor:' || CAST(:viewer_id AS text) || ':' || s.id::text"
+            if family == "contributor"
+            else ref
+        )
+        if family == "highlight":
+            key = "'highlight:' || s.reading_media_id::text || ':' || s.id::text"
+        owner = "'conversation:' || s.conversation_id::text" if family == "message" else ref
+        admission = key
+        if family == "note_block":
+            admission += " || ':' || encode(digest(convert_to(s.text,'UTF8'),'sha256'),'hex')"
+        name = "NULL::text" if family in prose else "s.label"
+        tier = f"CASE WHEN lower({name})=lower(:q) THEN 3 WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"
+        reading = "s.reading_media_id" if family == "highlight" else "NULL::uuid"
+        source = SOURCES[family].replace("{where}", where)
+        if family == "passage_anchor":
+            saved = _saved_readings(db, r, where, params, ctes)
+            source = f"SELECT anchor.*,reading.reading_media_id FROM ({source}) anchor JOIN ({saved}) reading ON reading.id=anchor.id"
+            reading = "s.reading_media_id"
+        branches.append(
+            f"SELECT '{family}'::text AS family,{admission} AS admission_key,{key} AS doc_key,{ref} AS ref,{owner} AS owner_ref,{name} AS name,NULL::text AS discovery_name,{tier} AS name_tier,{reading} AS reading_media_id,NULL::bigint AS native_search_id FROM ({source}) s"
+        )
+    relation = (
+        " UNION ALL ".join(branches)
+        if branches
+        else "SELECT NULL::text AS family,NULL::text AS admission_key,NULL::text AS doc_key,NULL::text AS ref,NULL::text AS owner_ref,NULL::text AS name,NULL::text AS discovery_name,0 AS name_tier,NULL::uuid AS reading_media_id,NULL::bigint AS native_search_id WHERE FALSE"
+    )
+    # Scope cells refer to the existing once-materialized library relations.
+    return ctes + ", eligible AS MATERIALIZED (" + relation + ")", params
+
+
+def discovery_semantic_hits(
+    db: Session, r: Retrieval, family: str, neighbours: Sequence[tuple[UUID, float]]
+) -> list[DiscoveryHit]:
+    """Project one approved neighbour window under its chosen current reading owner."""
+    predicates = _discovery_predicates(r, family, scope_predicate(family, r.scopes, None))
+    if predicates is None or not neighbours:
+        return []
     where, params = predicates
     params |= {
-        "ann_ids": [chunk_id for chunk_id, _ in neighbours],
+        "ann_ids": [identity for identity, _ in neighbours],
         "ann_cos": [cosine for _, cosine in neighbours],
-        "owners": list(owners) if owners is not None else [],
-        "excluded_owners": list(excluded_owners),
-        "identities": list(identities) if identities is not None else [],
     }
-    if family == "content_chunk" and r.terms:
-        where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
-            OR cc.id = ANY(CAST(:ann_ids AS uuid[])))"""
-    name = "s.label"
-    if family in _PROSE_FAMILIES:
-        name = "NULL::text"
-    cosine = "s.cosine" if family in SEMANTIC else "NULL::float8"
-    lexical = f"(s.doc @@ {TSQ} OR s.label ILIKE :contains OR {name} ILIKE :contains)"
-    tier = f"""CASE WHEN lower({name}) = lower(:q) THEN 3
-        WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"""
-    relevance = f"""CASE WHEN {lexical} THEN ts_rank_cd(s.doc, {TSQ}, 32)
-        ELSE COALESCE({cosine}, 0) END"""
-    owner = "s.conversation_id" if family == "message" else "s.media_id"
-    if family not in GENERATED_FAMILIES:
-        owner = "NULL::uuid"
-    match = f"({lexical} OR {cosine} IS NOT NULL)" if r.terms else "TRUE"
-    if owners is not None:
-        match += f" AND {owner} = ANY(CAST(:owners AS uuid[]))"
-    if excluded_owners:
-        match += f" AND NOT ({owner} = ANY(CAST(:excluded_owners AS uuid[])))"
-    if identities is not None:
-        match += " AND s.id = ANY(CAST(:identities AS uuid[]))"
-    order = 'name_tier DESC, lexical DESC, relevance DESC, sort_label COLLATE "C"'
-    output_order = order + (
-        ', owner_id::text COLLATE "C"' if group_owners else ', id::text COLLATE "C"'
-    )
-    grouping = f""", grouped AS (SELECT matched.*,
-        row_number() OVER (PARTITION BY owner_id ORDER BY {order}, id::text COLLATE "C")
-            AS owner_rank FROM matched)"""
+    ctes, bindings = _ctes(r)
+    owner = "s.media_id" if family == "content_chunk" else "NULL::uuid"
+    reading = "s.reading_media_id" if family == "content_chunk" else "NULL::uuid"
     rows = db.execute(
-        text(f"""{_ctes(r)[0]}, matched AS (
-            SELECT s.id, {owner} AS owner_id,
-                {"s.reading_media_id" if family in {"content_chunk", "fragment", "highlight", "reader_apparatus_item", "evidence_span"} else "NULL::uuid"} AS reading_media_id,
-                {tier if r.terms else "0"} AS name_tier,
-                {f"COALESCE({lexical}, FALSE)" if r.terms else "FALSE"} AS lexical,
-                CAST({relevance if r.terms else "0"} AS float8) AS relevance,
-                {"''" if r.terms else "COALESCE(s.label, '')"} AS sort_label
-            FROM ({SOURCES[family].replace("{where}", where)}) s WHERE {match})
-            {grouping if group_owners else ""}
-            SELECT id, owner_id, name_tier, lexical, relevance, sort_label,reading_media_id
-            FROM {"grouped WHERE owner_rank = 1" if group_owners else "matched"}
-            ORDER BY {output_order} LIMIT :k"""),
-        params,
-    )
-    scheme = cast(
-        ResourceScheme,
-        {"web_result": "external_snapshot"}.get(family, family),
+        text(f"""{ctes} SELECT s.id,{owner} AS owner_id,s.cosine,{reading} AS reading_media_id
+        FROM ({SOURCES[family].replace("{where}", where)}) s WHERE s.cosine IS NOT NULL"""),
+        params | bindings,
     )
     return [
         DiscoveryHit(
-            family=family,
-            ref=ResourceRef(scheme, row.id),
-            owner=ResourceRef("conversation" if family == "message" else "media", row.owner_id)
-            if row.owner_id is not None
-            else None,
-            name_tier=row.name_tier,
-            lexical=row.lexical,
-            relevance=row.relevance,
-            sort_label=row.sort_label,
-            reading_media_id=row.reading_media_id,
+            family,
+            ResourceRef(cast(ResourceScheme, family), row.id),
+            ResourceRef("media", row.owner_id) if row.owner_id else None,
+            0,
+            False,
+            row.cosine,
+            "",
+            row.reading_media_id,
         )
         for row in rows
     ]
 
 
-def discovery_texts(db: Session, viewer_id: UUID, hits: Sequence[DiscoveryHit]) -> dict[str, str]:
-    """Matching text reopens under the same chosen reading owner, never viewer-wide."""
-    texts: dict[str, str] = {}
-    groups = dict.fromkeys((hit.family, hit.reading_media_id) for hit in hits)
-    for family, owner in groups:
-        selected = [hit for hit in hits if hit.family == family and hit.reading_media_id == owner]
-        column = (
-            "discovery_text"
-            if family in {"media", "podcast", "contributor", "oracle_reading"}
-            else "text"
+def discovery_semantic_children(
+    db: Session, r: Retrieval, neighbours: Sequence[tuple[UUID, float]], owners: Sequence[UUID]
+) -> list[DiscoveryHit]:
+    """An approved chunk window under matching named pieces; no new vector search."""
+    if not neighbours or not owners:
+        return []
+    predicate = _discovery_predicates(
+        r, "content_chunk", scope_predicate("content_chunk", r.scopes, None)
+    )
+    if predicate is None:
+        return []
+    ctes, bindings = _ctes(r)
+    params = predicate[1] | bindings
+    readings = """SELECT part.media_id FROM media_parts part
+        JOIN admitted_media admitted ON admitted.media_id=part.media_id
+        WHERE part.media_id=ANY(CAST(:named_parts AS uuid[]))"""
+    rows = db.execute(
+        text(f"""{ctes} SELECT reading.chunk_id,reading.reading_media_id,ann.cosine
+            FROM ({reading_chunks_sql(readings)}) reading
+            JOIN {_ANN} ON ann.id=reading.chunk_id
+            JOIN content_chunks cc ON cc.id=reading.chunk_id
+            JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id"""),
+        params
+        | {
+            "viewer_id": r.viewer_id,
+            "named_parts": list(owners),
+            "ann_ids": [identity for identity, _ in neighbours],
+            "ann_cos": [cosine for _, cosine in neighbours],
+        },
+    )
+    return [
+        DiscoveryHit(
+            "content_chunk",
+            ResourceRef("content_chunk", row.chunk_id),
+            ResourceRef("media", row.reading_media_id),
+            0,
+            False,
+            row.cosine,
+            "",
+            row.reading_media_id,
         )
-        ctes, params = _ctes(reading_media_id=owner)
+        for row in rows
+    ]
+
+
+def discovery_browse(db: Session, r: Retrieval, families: Sequence[str]) -> list[DiscoveryHit]:
+    """Canonical filter-only browse, restricted to listable works and people."""
+    hits: list[DiscoveryHit] = []
+    ctes, bindings = _ctes(r)
+    for family in families:
+        if family not in LISTABLE:
+            continue
+        predicates = _discovery_predicates(r, family, scope_predicate(family, r.scopes, None))
+        if predicates is None:
+            continue
+        where, params = predicates
         rows = db.execute(
-            text(f"""{ctes} SELECT s.id,s.{column} FROM
-            ({SOURCES[family].replace("{where}", "")}) s WHERE s.id=ANY(:ids)"""),
-            params
-            | {
-                "viewer_id": viewer_id,
-                "ids": [hit.ref.id for hit in selected],
-                "ann_ids": [],
-                "ann_cos": [],
-            },
+            text(f"""{ctes} SELECT s.id,COALESCE(s.label,'') AS label
+            FROM ({SOURCES[family].replace("{where}", where)}) s
+            ORDER BY COALESCE(s.label,'') COLLATE "C",s.id::text COLLATE "C" LIMIT :k"""),
+            params | bindings,
         )
-        by_id = {hit.ref.id: hit.ref.uri for hit in selected}
-        texts.update((by_id[row[0]], row[1] or "") for row in rows)
-    return texts
+        hits.extend(
+            DiscoveryHit(
+                family,
+                ResourceRef(cast(ResourceScheme, family), row.id),
+                None,
+                0,
+                False,
+                0,
+                row.label,
+            )
+            for row in rows
+        )
+    return sorted(hits, key=lambda hit: hit.order)

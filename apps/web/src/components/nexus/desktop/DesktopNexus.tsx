@@ -17,7 +17,7 @@ import { resourceMetadataText } from "@/lib/resources/metadata";
 import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
 import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "../NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
 import styles from "../Nexus.module.css";
@@ -44,6 +44,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const surfaceRef = useRef<HTMLElement | null>(null);
   useCollectionLayout(surfaceRef, controller.open && controller.page.kind === "Root");
   const composing = useRef(false);
+  const markSearchInteraction = controller.interact;
+  const refreshRevision = useRef(controller.searchRefreshRevision);
+  useLayoutEffect(() => {
+    if (refreshRevision.current === controller.searchRefreshRevision) return;
+    refreshRevision.current = controller.searchRefreshRevision;
+    if (gridRef.current) gridRef.current.scrollTop = 0;
+  }, [controller.searchRefreshRevision]);
   const menus = useRef(new Map<string, HTMLButtonElement>());
   const spacePress = useRef<SpacePress>(null);
   const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
@@ -78,21 +85,27 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   useEffect(() => {
     if (!controller.open || controller.page.kind !== "Root") return;
     const cancel = () => { if (spacePress.current) spacePress.current.target = null; };
+    const selected = () => {
+      const selection = window.getSelection();
+      if (selection !== null && !selection.isCollapsed && (gridRef.current?.contains(selection.anchorNode) || gridRef.current?.contains(selection.focusNode))) markSearchInteraction();
+    };
+    document.addEventListener("selectionchange", selected);
     document.addEventListener("pointerdown", cancel, true);
     return () => {
       document.removeEventListener("pointerdown", cancel, true);
+      document.removeEventListener("selectionchange", selected);
       spacePress.current = null;
     };
-  }, [controller.open, controller.page.kind]);
+  }, [controller.open, controller.page.kind, markSearchInteraction]);
   useLayoutEffect(() => {
     const grid = gridRef.current;
     const item = controller.activeKey === null ? null : document.getElementById(candidateId(controller.activeKey));
     if (grid && item) revealCollectionItem(grid, item);
   }, [controller.open, controller.page.kind, controller.activeKey, index]);
 
-  const select = (row: NexusRow) => {
+  const select = (row: NexusRow, deliberate = true) => {
     if (row.key !== controller.activeKey && spacePress.current) spacePress.current.target = null;
-    controller.setActive(row.key);
+    controller.setActive(row.key, deliberate);
   };
   const closeTab = (paneId: string) => {
     if (controller.closePane(paneId) !== null) inputRef.current?.focus({ preventScroll: true });
@@ -167,11 +180,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           }}
           onCompositionStart={() => {
             composing.current = true;
+            controller.setComposing(true);
             setMode("Editing");
             if (spacePress.current) spacePress.current.target = null;
           }}
           onCompositionEnd={() => {
             composing.current = false;
+            controller.setComposing(false);
           }}
           onKeyDown={(event) => {
             if (event.key !== " " && spacePress.current) spacePress.current.target = null;
@@ -247,8 +262,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this tab.</span>
-      <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} searchUnavailable={controller.searchUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
-      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} />
+      <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
+      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
       <div
         ref={node => { gridRef.current = node; surfaceRef.current = node?.parentElement ?? null; }}
         id={GRID_ID}
@@ -258,6 +273,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         aria-busy={controller.busy || undefined}
         className={`${collection.fillViewport} ${styles.grid}`}
         data-collection-viewport=""
+        onPointerDownCapture={controller.interact}
+        onFocusCapture={controller.interact}
+        onWheelCapture={controller.interact}
+        onTouchMoveCapture={controller.interact}
+        onKeyDownCapture={controller.interact}
       >
         {controller.groups.map((group) => (
           <div key={group.id} role="rowgroup" aria-labelledby={`desktop-nexus-section-${group.id}`} className={styles.group}>
@@ -295,7 +315,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                       const press = pointerPress.current;
                       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press.moved = true;
                       if (event.pointerType !== "touch" && event.buttons === 0 && (event.movementX !== 0 || event.movementY !== 0)
-                        && document.activeElement === inputRef.current) select(row);
+                        && document.activeElement === inputRef.current) select(row, false);
                     }}
                   >
                     <div
@@ -385,8 +405,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           </div>
         ))}
       </div>
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.busy ? "Searching…" : status].filter(Boolean).join(" ")}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {[controller.announcement, [controller.searchProgress.text, controller.titlesFailed ? "couldn’t refresh tab titles." : null, !controller.pending ? status : null].filter(Boolean).join(" ")].filter(Boolean).join(" ")}
       </div>
     </>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type FocusEventHandler, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Highlighter } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -42,12 +42,15 @@ export function Colours({ selected, onSelect, disabledReason = null, persisted =
 }
 
 /** The direct command shared by desktop split controls and the mobile toolbar. */
-export function HighlightButton({ selected, persisted, disabledReason, busy, onSelect }: {
+export function HighlightButton({ selected, persisted, disabledReason, busy, onClick, onPointerDown, onKeyDown, onFocus }: {
   readonly selected: HighlightColor;
   readonly persisted: boolean;
   readonly disabledReason: string | null;
   readonly busy: boolean;
-  readonly onSelect: (color: HighlightColor) => void;
+  readonly onClick: MouseEventHandler<HTMLButtonElement>;
+  readonly onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  readonly onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
+  readonly onFocus?: FocusEventHandler<HTMLButtonElement>;
 }) {
   const id = useId();
   const label = persisted ? `highlighted ${selected}` : "highlight yellow";
@@ -57,7 +60,7 @@ export function HighlightButton({ selected, persisted, disabledReason, busy, onS
       aria-label={label} aria-disabled={reason !== null || undefined}
       aria-describedby={reason ? id : undefined}
       tooltip={{ text: reason ? `${label}. ${reason}` : label }}
-      onClick={() => onSelect(selected)}
+      onClick={onClick} onPointerDown={onPointerDown} onKeyDown={onKeyDown} onFocus={onFocus}
       icon={<><Highlighter size={16} /><span className={styles.highlightColour} style={{ background: `var(--highlight-${selected})` }} /></>} />
     {reason ? <span id={id} className="sr-only">{reason}</span> : null}
   </>;
@@ -110,7 +113,7 @@ export default function HighlightColourPicker({ selected, persisted, disabledRea
   }, [open]);
 
   return <div className={styles.highlightControl}>
-    <HighlightButton selected={selected} persisted={persisted} disabledReason={disabledReason} busy={busy} onSelect={onSelect} />
+    <HighlightButton selected={selected} persisted={persisted} disabledReason={disabledReason} busy={busy} onClick={() => onSelect(selected)} />
     <Button ref={trigger} iconOnly className={styles.selectionIcon}
         aria-label="choose highlight colour" aria-expanded={open} aria-controls={open ? id : undefined}
         aria-disabled={disabledReason !== null || undefined}

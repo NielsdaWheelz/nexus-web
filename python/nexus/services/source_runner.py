@@ -44,6 +44,7 @@ from nexus.services.media_deletion import (
 )
 from nexus.services.media_processing_state import mark_ready_for_reading, mark_stage_warning
 from nexus.services.metadata_operations import enqueue_metadata_enrichment
+from nexus.services.search import projection
 from nexus.services.source_adapters import (
     PreparedFileSource,
     PreparedNativeArticle,
@@ -184,7 +185,7 @@ def _publish_file(
     def publish(db: Session, attempt: MediaSourceAttempt) -> tuple[SourceRunOutcome, list[str]]:
         outcome, cleanup = publish_prepared_file(db, media_id=media_id, prepared=prepared)
         _settle(db, attempt, media_id, outcome, request_id)
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{media_id}",))
         return outcome, cleanup
 
     return run_source_publication_phase(
@@ -223,7 +224,7 @@ def _publish_native_article(
             request_id=request_id,
         )
         _settle(db, attempt, media_id, outcome, request_id)
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{ident}" for ident in {media_id, *children}))
         return outcome
 
     return run_source_publication_phase(
@@ -260,7 +261,13 @@ def _publish_x(
         if winner_id != media_id:
             _supersede(db, attempt, loser_id=media_id, winner_id=winner_id)
         _settle(db, attempt, winner_id, outcome, request_id)
-        record_input_change(db)
+        record_input_change(
+            db,
+            owners=(
+                f"media:{ident}"
+                for ident in {media_id, winner_id, *outcome.additional_reindex_media_ids}
+            ),
+        )
         return outcome
 
     return run_source_publication_phase(
@@ -296,7 +303,7 @@ def _publish_outcome(
         if winner_id != media_id:
             _supersede(db, attempt, loser_id=media_id, winner_id=winner_id)
         _settle(db, attempt, winner_id, outcome, request_id)
-        record_input_change(db)
+        record_input_change(db, owners=(f"media:{ident}" for ident in media_ids))
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -415,6 +422,8 @@ def _settle(
         # Index requests above have already marked changed children pending. A
         # thread build is admitted only once every current primary index is ready.
         ensure_media_unit_in_tx(db, media_id=thread_id)
+    db.flush()
+    projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
 
 
 def _fail(db: Session, attempt: MediaSourceAttempt, code: str, message: str) -> None:
@@ -429,7 +438,9 @@ def _fail(db: Session, attempt: MediaSourceAttempt, code: str, message: str) -> 
         ),
     )
     _sync_embed_targets(db, attempt.media_id)
-    record_input_change(db)
+    db.flush()
+    projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+    record_input_change(db, owners=(f"media:{attempt.media_id}",))
 
 
 def _supersede(

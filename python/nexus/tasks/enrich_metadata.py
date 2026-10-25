@@ -249,9 +249,7 @@ def _settle_refusal(
                 MetadataFailedOutcome(purpose=purpose, completed_at=_now(db), reason=code)
             )
             if finish_job(db, context=context, result=result) is None:
-                db.rollback()
                 return _CLAIM_LOST
-            db.commit()
             return result
 
         return retry_serializable(db, "metadata_enrichment.reject", settle)
@@ -280,7 +278,6 @@ def _publish(
         .with_for_update()
     )
     if lock_running_job_claim(db, context=context) is None:
-        db.rollback()
         return _CLAIM_LOST
 
     def finish(outcome: MetadataOutcome) -> _Settled:
@@ -292,8 +289,7 @@ def _publish(
             )
             and outcome.changed_fields
         ):
-            record_input_change(db)
-        db.commit()
+            record_input_change(db, owners=(f"media:{job.media_id}",))
         return result
 
     def failed(code: MetadataFailureCode) -> _Settled:

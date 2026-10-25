@@ -91,6 +91,7 @@ class ImportItem(_Wire):
     source_label: str | None
     can_read: bool
     can_play: bool
+    text_search_ready: bool
     classification: Classification
     primary: Literal["source", "search", "metadata"] | None
     """The obligation that speaks for the import (under a stage or reason filter, the one

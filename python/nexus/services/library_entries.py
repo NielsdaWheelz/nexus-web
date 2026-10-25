@@ -22,7 +22,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.acquisition import DestinationGuard
@@ -34,6 +34,7 @@ from nexus.services.resource_graph.refs import (
     ResourceScheme,
     parse_resource_ref,
 )
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 # Mirrors ix_library_entries_library_order: the one entry order.
@@ -917,20 +918,28 @@ def set_item(
     """Strict replay keeps the original guards and can conflict after landing."""
 
     def attempt() -> LibraryPlacementOut:
-        with transaction(db):
-            placement, _ = set_item_in_current_transaction(
-                db,
-                viewer_id,
-                library_id,
-                target,
-                included=included,
-                expected_order_revision=expected_order_revision,
-                expected_removal_revision=expected_removal_revision,
-            )
-            record_input_change(db)
-            return placement
+        placement, _ = set_item_in_current_transaction(
+            db,
+            viewer_id,
+            library_id,
+            target,
+            included=included,
+            expected_order_revision=expected_order_revision,
+            expected_removal_revision=expected_removal_revision,
+        )
+        record_input_change(db, owners=(f"library:{library_id}", f"media:{target.id}"))
+        projection.refresh_viewer_contributors(
+            db,
+            list(
+                db.scalars(
+                    text("SELECT user_id FROM memberships WHERE library_id=:id"),
+                    {"id": library_id},
+                )
+            ),
+        )
+        return placement
 
-    return retry_read_committed(db, "set_library_item", attempt)
+    return retry_serializable(db, "set_library_item", attempt)
 
 
 def library_entry_undo_eligible(

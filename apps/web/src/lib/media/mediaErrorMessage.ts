@@ -19,7 +19,7 @@ type MediaErrorInput =
       capabilities: { can_retry: boolean };
       sourceUrl: string | null;
     }
-  | { kind: "Retrieval"; retrievalStatus: string | null };
+  | { kind: "Retrieval"; retrievalStatus: string | null; textSearchReady: boolean };
 
 export interface MediaErrorPresentation extends FeedbackContent {
   kind: MediaErrorInput["kind"];
@@ -27,34 +27,14 @@ export interface MediaErrorPresentation extends FeedbackContent {
 }
 
 const NONE = { kind: "None" } as const;
-const PREPARING: FeedbackContent = {
-  tone: "Neutral",
-  title: "search and ai are preparing",
-};
 const RETRIEVAL: Record<string, FeedbackContent | null> = {
   ready: null,
-  pending: PREPARING,
-  indexing: PREPARING,
-  failed: {
-    tone: "Warning",
-    title: "search and ai are unavailable",
-    message: "open imports to check search recovery.",
-  },
-  suspended: {
-    tone: "Warning",
-    title: "search preparation stopped",
-    message: `${ACTION_CATALOG.RepairSearch.label} in imports rebuilds search from the text already imported.`,
-  },
-  no_text: {
-    tone: "Neutral",
-    title: "search and ai need document text",
-    message: "no searchable text was found in this copy.",
-  },
-  ocr_required: {
-    tone: "Neutral",
-    title: "search and ai need text recognition",
-    message: "this copy needs ocr before its text can be searched.",
-  },
+  pending: { tone: "Neutral", title: "preparing text search" },
+  indexing: { tone: "Neutral", title: "preparing text search" },
+  failed: { tone: "Warning", title: "preparing text search", message: "open imports to continue search preparation." },
+  suspended: { tone: "Warning", title: "preparing text search", message: `${ACTION_CATALOG.RepairSearch.label} in imports continues search preparation from the imported text.` },
+  no_text: { tone: "Neutral", title: "no searchable text was found in this copy" },
+  ocr_required: { tone: "Neutral", title: "this copy needs text recognition before its text can be searched" },
 };
 
 export function mediaErrorMessage(
@@ -68,6 +48,10 @@ export function mediaErrorMessage(
       throw new Error(
         `Unsupported media retrieval status: ${input.retrievalStatus}`,
       );
+    if (input.textSearchReady && (input.retrievalStatus === "pending" || input.retrievalStatus === "indexing" || input.retrievalStatus === "failed" || input.retrievalStatus === "suspended")) {
+      const stopped = input.retrievalStatus === "failed" || input.retrievalStatus === "suspended";
+      return { kind: "Retrieval", tone: stopped ? "Warning" : "Neutral", title: stopped ? "text search is ready; related matches are unavailable" : "text search is ready; related matches are preparing", action: NONE };
+    }
     return banner && { kind: "Retrieval", ...banner, action: NONE };
   }
   if (input.processingStatus === "suspended")

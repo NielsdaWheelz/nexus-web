@@ -7,11 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from nexus.schemas.resource_items import ExcerptOut, ResourceItemOut
 from nexus.schemas.search_types import SearchPageInfo
 
-SemanticStatus = Literal["not_requested", "used", "unavailable"]
+SemanticStatus = Literal["not_requested", "used"]
 MatchMethod = Literal["lexical", "semantic"]
 NameMatch = Literal["exact", "prefix", "substring"]
 SearchView = Literal["resources", "passages"]
-PreviewPhase = Literal["direct", "content"]
+SearchPhase = Literal["lexical", "hybrid"]
+PreviewPhase = Literal["direct", "lexical", "hybrid"]
 
 
 class SearchMatchRangeOut(BaseModel):
@@ -45,6 +46,7 @@ class SearchResourceOut(BaseModel):
 
 class SearchPreviewResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    phase: PreviewPhase
     resources: list[SearchResourceOut] = Field(max_length=4)
     saved: list[SearchResourceOut] = Field(max_length=2)
     passages: list[SearchOccurrenceOut] = Field(max_length=2)
@@ -53,6 +55,7 @@ class SearchPreviewResponse(BaseModel):
 
 class SearchResourcesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    phase: SearchPhase
     view: Literal["resources"] = "resources"
     results: list[SearchResourceOut]
     page: SearchPageInfo
@@ -61,6 +64,7 @@ class SearchResourcesResponse(BaseModel):
 
 class SearchPassagesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    phase: SearchPhase
     view: Literal["passages"] = "passages"
     results: list[SearchOccurrenceOut]
     page: SearchPageInfo

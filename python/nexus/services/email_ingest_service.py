@@ -22,12 +22,12 @@ from email.utils import parseaddr, parsedate_to_datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
-from nexus.db.session import transaction
+from nexus.db.retries import integrity_constraint_name, retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.ids import new_uuid7
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
@@ -44,6 +44,7 @@ from nexus.services.contributor_taxonomy import (
 )
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import replace_observed_role_slices_batch
+from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
@@ -108,39 +109,47 @@ def accept_email_message(
     except StorageError as exc:
         raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Post Room storage is unavailable.") from exc
     now = datetime.now(UTC)
+
+    def publish() -> None:
+        media = Media(
+            id=media_id,
+            kind=MediaKind.web_article.value,
+            title=(_header(message, "Subject") or "").strip()[:255] or "Untitled",
+            provider="email",
+            provider_id=message_id,
+            processing_status=ProcessingStatus.pending,
+            created_by_user_id=owner_user_id,
+            created_at=now,
+            updated_at=now,
+            edition_published_date=_publication_date(_header(message, "Date")),
+        )
+        db.add(media)
+        db.flush()
+        projection.refresh(db, "media", [media_id])
+        attempt = sa.create_attempt(
+            db,
+            id=attempt_id,
+            media=media,
+            actor_id=owner_user_id,
+            source_type=st.EMAIL_MESSAGE,
+            requested_url=None,
+            canonical_source_url=None,
+            provider="email",
+            provider_target_ref=message_id,
+            payload={"storage_path": path},
+        )
+        library_entries.ensure_media_in_default_library(db, owner_user_id, media_id)
+        sa.enqueue_attempt(db, attempt, actor_id=owner_user_id, request_id=request_id)
+        db.flush()
+        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
+        record_input_change(db, owners=(f"media:{media_id}",))
+
     try:
-        with transaction(db):
-            media = Media(
-                id=media_id,
-                kind=MediaKind.web_article.value,
-                title=(_header(message, "Subject") or "").strip()[:255] or "Untitled",
-                provider="email",
-                provider_id=message_id,
-                processing_status=ProcessingStatus.pending,
-                created_by_user_id=owner_user_id,
-                created_at=now,
-                updated_at=now,
-                edition_published_date=_publication_date(_header(message, "Date")),
-            )
-            db.add(media)
-            db.flush()
-            attempt = sa.create_attempt(
-                db,
-                id=attempt_id,
-                media=media,
-                actor_id=owner_user_id,
-                source_type=st.EMAIL_MESSAGE,
-                requested_url=None,
-                canonical_source_url=None,
-                provider="email",
-                provider_target_ref=message_id,
-                payload={"storage_path": path},
-            )
-            library_entries.ensure_media_in_default_library(db, owner_user_id, media_id)
-            sa.enqueue_attempt(db, attempt, actor_id=owner_user_id, request_id=request_id)
-            record_input_change(db)
-    except IntegrityError:
+        retry_serializable(db, "email.accept", publish)
+    except IntegrityError as exc:
         # a concurrent delivery of this Message-ID committed first: the index decides
+        if integrity_constraint_name(exc) != "uix_media_email_provider_id":
+            raise
         if (raced := _media_for(db, message_id)) is None:
             raise
         return _credit(raced, observation, "duplicate")

@@ -36,10 +36,9 @@ from nexus.auth.permissions import (
 from nexus.db.retries import (
     TransactionRestart,
     integrity_constraint_name,
-    retry_read_committed,
     retry_serializable,
 )
-from nexus.db.session import get_session_factory, transaction
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ForbiddenError
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_job
@@ -61,6 +60,7 @@ from nexus.services.import_history import delete_processing_history_in_current_t
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.search import projection
 from nexus.services.source_types import stored_artifact_path
 from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
@@ -81,6 +81,7 @@ _CHILD_TABLES = (
     "podcast_episode_chapters",
     "media_source_supersessions",
 )
+_HIGHLIGHTS_OF_MEDIA_SQL = text("SELECT id FROM highlights WHERE anchor_media_id = :m")
 
 
 def _run(db: Session, sql: str, **params: object) -> None:
@@ -195,7 +196,7 @@ def remove_podcast_workspace_access_locked(
 def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     """Drop the media from the viewer's whole workspace (I5). Idempotent: a media the viewer
     cannot read is already removed. One reachable only through a system library is 403."""
-    retry_read_committed(db, "remove_media_for_viewer", lambda: _remove(db, viewer_id, media_id))
+    retry_serializable(db, "remove_media_for_viewer", lambda: _remove(db, viewer_id, media_id))
 
 
 def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -205,123 +206,125 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         reconcile_document_embed_parent_edges_for_viewer,
     )
 
-    with transaction(db):
-        # The lectern's lock order, as teardown takes it: the viewer before the media.
-        users.lock_viewer(db, viewer_id)
-        users.advance_removal_revision(db, viewer_id)
-        from nexus.services.podcasts import imports
+    # The lectern's lock order, as teardown takes it: the viewer before the media.
+    users.lock_viewer(db, viewer_id)
+    users.advance_removal_revision(db, viewer_id)
+    from nexus.services.podcasts import imports
 
-        parent = library_entries.lock_parent_podcast(db, media_id)
-        if parent is not None:
-            managed = list(
-                db.scalars(
-                    text("""
-                SELECT l.id FROM libraries l JOIN memberships m ON m.library_id=l.id
-                WHERE m.user_id=:viewer AND l.system_key IS NULL
-                  AND ((l.is_default AND l.owner_user_id=:viewer) OR (NOT l.is_default AND m.role='admin'))
-            """),
-                    {"viewer": viewer_id},
-                )
+    parent = library_entries.lock_parent_podcast(db, media_id)
+    if parent is not None:
+        managed = list(
+            db.scalars(
+                text("""
+            SELECT l.id FROM libraries l JOIN memberships m ON m.library_id=l.id
+            WHERE m.user_id=:viewer AND l.system_key IS NULL
+              AND ((l.is_default AND l.owner_user_id=:viewer) OR (NOT l.is_default AND m.role='admin'))
+        """),
+                {"viewer": viewer_id},
             )
-            imports.mark_processed(db, library_ids=managed, media_id=media_id)
-        kind = _lock_kind(db, media_id)
-        if kind is None or not can_read_media(db, viewer_id, media_id):
-            return
-        source_id = db.scalar(
-            text("SELECT source_media_id FROM media_parts WHERE media_id=:id"), {"id": media_id}
         )
-        source_id = media_id if source_id is None else source_id
-        family_ids = library_entries.media_family_ids(db, [media_id])
-        # A corpus the viewer reaches only through a system library is not theirs to drop.
-        controlled = db.execute(
-            text(f"""SELECT 1 WHERE {non_system_media_ref_exists_sql(":m")}
-                OR EXISTS (SELECT 1 FROM ({retained_x_post_roots_sql()}) retained
-                    WHERE retained.user_id = :viewer_id AND retained.media_id = :m)
-                OR (:source != :m AND :source IN ({visible_media_ids_cte_sql()})
-                    AND ({non_system_media_ref_exists_sql(":source")}
-                         OR {resource_grants.media_grant_path_exists_sql(":source")}))"""),
-            {"viewer_id": viewer_id, "m": media_id, "source": source_id},
-        ).first()
-        if controlled is None and not resource_grants.media_grant_path_exists(
+        imports.mark_processed(db, library_ids=managed, media_id=media_id)
+    kind = _lock_kind(db, media_id)
+    if kind is None or not can_read_media(db, viewer_id, media_id):
+        return
+    source_id = db.scalar(
+        text("SELECT source_media_id FROM media_parts WHERE media_id=:id"), {"id": media_id}
+    )
+    source_id = media_id if source_id is None else source_id
+    family_ids = library_entries.media_family_ids(db, [media_id])
+    # A corpus the viewer reaches only through a system library is not theirs to drop.
+    controlled = db.execute(
+        text(f"""SELECT 1 WHERE {non_system_media_ref_exists_sql(":m")}
+            OR EXISTS (SELECT 1 FROM ({retained_x_post_roots_sql()}) retained
+                WHERE retained.user_id = :viewer_id AND retained.media_id = :m)
+            OR (:source != :m AND :source IN ({visible_media_ids_cte_sql()})
+                AND ({non_system_media_ref_exists_sql(":source")}
+                     OR {resource_grants.media_grant_path_exists_sql(":source")}))"""),
+        {"viewer_id": viewer_id, "m": media_id, "source": source_id},
+    ).first()
+    if controlled is None and not resource_grants.media_grant_path_exists(
+        db, viewer_user_id=viewer_id, media_id=media_id
+    ):
+        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
+
+    default_id = db.scalar(
+        text("SELECT id FROM libraries WHERE owner_user_id = :u AND is_default"),
+        {"u": viewer_id},
+    )
+    library_ids = library_entries.admin_non_default_library_ids_for_media(
+        db, viewer_id=viewer_id, media_id=media_id
+    )
+    if default_id is not None:
+        library_ids.append(default_id)
+    library_ids.sort()
+    affected_viewers = db.scalars(
+        text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+        {"ids": library_ids},
+    ).all()
+    libraries.lock_library_rows_in_order(db, library_ids)
+    for library_id in library_ids:
+        library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
+    if kind == "text_part":
+        resource_grants.decline_received_media_paths(
             db, viewer_user_id=viewer_id, media_id=media_id
-        ):
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
-
-        default_id = db.scalar(
-            text("SELECT id FROM libraries WHERE owner_user_id = :u AND is_default"),
-            {"u": viewer_id},
         )
-        library_ids = library_entries.admin_non_default_library_ids_for_media(
-            db, viewer_id=viewer_id, media_id=media_id
-        )
-        if default_id is not None:
-            library_ids.append(default_id)
-        library_ids.sort()
-        libraries.lock_library_rows_in_order(db, library_ids)
-        for library_id in library_ids:
-            library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-        if kind == "text_part":
-            resource_grants.decline_received_media_paths(
-                db, viewer_user_id=viewer_id, media_id=media_id
-            )
-        else:
-            resource_grants.delete_viewer_media_paths(
-                db, viewer_user_id=viewer_id, media_id=media_id
-            )
-        # The Lectern is workspace too; like any lectern remove, an absent row still fences.
-        lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+    else:
+        resource_grants.delete_viewer_media_paths(db, viewer_user_id=viewer_id, media_id=media_id)
+    # The Lectern is workspace too; like any lectern remove, an absent row still fences.
+    lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
 
-        # Removal is personal and precedes scope recomputation. A retained piece
-        # keeps canonical authored evidence, including evidence outside today's scope.
+    # Removal is personal and precedes scope recomputation. A retained piece
+    # keeps canonical authored evidence, including evidence outside today's scope.
+    _run(
+        db,
+        "INSERT INTO user_media_deletions (user_id,media_id) VALUES (:u,:m) ON CONFLICT DO NOTHING",
+        u=viewer_id,
+        m=media_id,
+    )
+    from nexus.services.media_parts import reject_removed_part
+
+    reject_removed_part(db, viewer_id=viewer_id, media_id=media_id)
+    remaining_scope = any(can_read_media(db, viewer_id, member) for member in family_ids)
+    if not remaining_scope:
+        # The viewer's own reviews and retrieval references; the media may live on for
+        # other holders. Authored highlights and passages are independent writing that
+        # keeps its literal quotes without the source, so they stay.
+        for family_id in family_ids:
+            metadata_operations.delete_viewer_media_reviews(
+                db, viewer_id=viewer_id, media_id=family_id
+            )
         _run(
             db,
-            "INSERT INTO user_media_deletions (user_id,media_id) VALUES (:u,:m) ON CONFLICT DO NOTHING",
+            """
+            UPDATE message_retrievals mr SET media_id = NULL
+            FROM messages msg, conversations c
+            WHERE mr.assistant_message_id = msg.id AND msg.conversation_id = c.id
+              AND c.owner_user_id = :u AND mr.media_id = ANY(:family)
+            """,
+            u=viewer_id,
+            family=family_ids,
+        )
+    if kind in _DOCUMENT_KINDS and not _references(db, media_id):
+        _claim_teardown(db, media_id)
+    elif kind == "podcast_episode" or can_read_media(db, viewer_id, media_id):
+        # Episodes retain removal intent even after their last readable path goes.
+        # Other retained media need hiding when a path the viewer cannot remove stays.
+        _run(
+            db,
+            """
+            INSERT INTO user_media_deletions (user_id, media_id) VALUES (:u, :m)
+            ON CONFLICT DO NOTHING
+            """,
             u=viewer_id,
             m=media_id,
         )
-        from nexus.services.media_parts import reject_removed_part
-
-        reject_removed_part(db, viewer_id=viewer_id, media_id=media_id)
-        remaining_scope = any(can_read_media(db, viewer_id, member) for member in family_ids)
-        if not remaining_scope:
-            # The viewer's own reviews and retrieval references; the media may live on for
-            # other holders. Authored highlights and passages are independent writing that
-            # keeps its literal quotes without the source, so they stay.
-            for family_id in family_ids:
-                metadata_operations.delete_viewer_media_reviews(
-                    db, viewer_id=viewer_id, media_id=family_id
-                )
-            _run(
-                db,
-                """
-                UPDATE message_retrievals mr SET media_id = NULL
-                FROM messages msg, conversations c
-                WHERE mr.assistant_message_id = msg.id AND msg.conversation_id = c.id
-                  AND c.owner_user_id = :u AND mr.media_id = ANY(:family)
-                """,
-                u=viewer_id,
-                family=family_ids,
-            )
-        if kind in _DOCUMENT_KINDS and not _references(db, media_id):
-            _claim_teardown(db, media_id)
-        elif kind == "podcast_episode" or can_read_media(db, viewer_id, media_id):
-            # Episodes retain removal intent even after their last readable path goes.
-            # Other retained media need hiding when a path the viewer cannot remove stays.
-            _run(
-                db,
-                """
-                INSERT INTO user_media_deletions (user_id, media_id) VALUES (:u, :m)
-                ON CONFLICT DO NOTHING
-                """,
-                u=viewer_id,
-                m=media_id,
-            )
-        # Embeds are global source artifacts: reproject only what this viewer now sees.
-        reconcile_document_embed_parent_edges_for_viewer(
-            db, viewer_id=viewer_id, target_media_id=media_id
-        )
-        reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
-        record_input_change(db)
+    # Embeds are global source artifacts: reproject only what this viewer now sees.
+    reconcile_document_embed_parent_edges_for_viewer(
+        db, viewer_id=viewer_id, target_media_id=media_id
+    )
+    reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
+    projection.refresh_viewer_contributors(db, [viewer_id, *affected_viewers])
+    record_input_change(db, owners=(f"media:{member}" for member in family_ids))
 
 
 def delete_duplicate_document_media(
@@ -374,6 +377,9 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     from nexus.services.reader_publication import delete_reader_publication
 
     paths = _storage_paths(db, media_id)
+    part_source_id = db.scalar(
+        text("SELECT source_media_id FROM media_parts WHERE media_id=:id"), {"id": media_id}
+    )
     child_ids = list(
         db.scalars(
             text("SELECT media_id FROM media_parts WHERE source_media_id=:m ORDER BY media_id"),
@@ -387,6 +393,8 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     _run(db, "DELETE FROM media_part_candidates WHERE source_media_id=:m OR part_id=:m", m=media_id)
     _run(db, "DELETE FROM media_part_sets WHERE source_media_id=:m", m=media_id)
     _run(db, "DELETE FROM media_parts WHERE media_id=:m", m=media_id)
+    if part_source_id is not None:
+        projection.refresh_source_highlights(db, part_source_id)
     _run(db, "UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m", m=media_id)
     metadata_operations.delete_media_reviews(db, media_id=media_id)
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
@@ -406,9 +414,14 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     )
     # One machine-fact cleanup per destroyed ref; cited edges sourced elsewhere keep their
     # snapshots. Authored highlights, their anchor projections, passages and links are
-    # independent writing: they keep their literal captures and dangle unreadably here.
+    # independent writing: they keep their literal captures and dangle unreadably here, so
+    # only their search occurrences withdraw.
+    highlight_ids = db.scalars(_HIGHLIGHTS_OF_MEDIA_SQL, {"m": media_id}).all()
     fragment_ids = db.scalars(
         text("SELECT id FROM fragments WHERE media_id = :m"), {"m": media_id}
+    ).all()
+    apparatus_ids = db.scalars(
+        text("SELECT id FROM reader_apparatus_items WHERE media_id = :m"), {"m": media_id}
     ).all()
     for ref in (
         ResourceRef(scheme="media", id=media_id),
@@ -419,6 +432,10 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     media_intelligence_lifecycle.delete_media_unit(db, media_id=media_id)
     delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
+    projection.withdraw(db, "media", [media_id])
+    projection.withdraw(db, "fragment", fragment_ids)
+    projection.withdraw(db, "highlight", highlight_ids)
+    projection.withdraw(db, "reader_apparatus_item", apparatus_ids)
     _run(
         db,
         """DELETE FROM fragment_blocks
@@ -510,12 +527,10 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 text("SELECT id FROM media_teardown_intents WHERE media_id = :m"), {"m": media_id}
             )
             if intent != intent_id:
-                db.rollback()
                 return "Stale", []
             if _references(db, media_id):
                 _run(db, "DELETE FROM media_teardown_intents WHERE id = :i", i=intent_id)
-                record_input_change(db)
-                db.commit()
+                record_input_change(db, owners=(f"media:{member}" for member in family_ids))
                 return "Voided", []
             for family_id in family_ids:
                 lectern.delete_media_in_txn(db, media_id=family_id, locked_viewer_ids=viewer_ids)
@@ -529,8 +544,7 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 # A read-committed writer inserted for an unseen viewer after enumeration.
                 # Restart the whole attempt to lock, remove and fence that membership.
                 raise TransactionRestart from exc
-            record_input_change(db)
-            db.commit()
+            record_input_change(db, owners=(f"media:{member}" for member in family_ids))
             return "Deleted", paths
 
         disposition, paths = retry_serializable(db, "media_teardown", op)

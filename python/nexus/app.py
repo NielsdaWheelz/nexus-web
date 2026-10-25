@@ -3,7 +3,7 @@
 A request passes the edge middleware (request id, wire revision, last-resort error), then
 auth (internal secret, bearer, viewer), then the router. Every answer is the envelope of
 ``nexus.responses``. The lifespan owns the shared outbound http client, the tools and the
-generation catalog.
+generation catalog, and prepares configured embedding SDK code before readiness.
 """
 
 import re
@@ -24,6 +24,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.responses import api_error_handler, error_response, http_exception_handler
 from nexus.runtime_health import get_runtime_identity
+from nexus.services.embeddings import prepare_embeddings
 from nexus.services.generation.catalog import Catalog
 from nexus.services.generation.policy import validate_policy
 from nexus.services.tools.memory import load_memory_client_config
@@ -36,10 +37,11 @@ _SELECTION_ROUTES = re.compile(r"/chat-runs|/messages/[^/]+/(?:rerun|regenerate)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Fails fast on an incomplete generation operation table (as the worker does)."""
+    """Validate composition and prepare local embedding SDK code before serving reads."""
     settings = get_settings()
     get_runtime_identity()
     validate_policy()
+    prepare_embeddings()
     memory_config = load_memory_client_config(settings.memory_client_config_path)
     app.state.httpx_client = httpx.AsyncClient(
         timeout=httpx.Timeout(60.0, connect=10.0),

@@ -80,24 +80,22 @@
 
 /* ===== Selection dock and annotation surfaces ===== */
 
-.mobileSelectionActions {
+.mobileSelectionActions,
+.dock {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
+}
+
+.mobileSelectionActions {
+  --control-min-size: var(--size-xl);
   width: max-content;
   user-select: none;
 }
 
 .mobileSelectionActions > * {
   flex: none;
-}
-
-.dock {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
 }
 
 .composerSurface {
@@ -163,16 +161,6 @@
   background: var(--surface-2);
   box-shadow: var(--shadow-2);
   overflow: auto;
-}
-
-.passageCue {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
 }
 
 .dock[data-mobile="true"] {

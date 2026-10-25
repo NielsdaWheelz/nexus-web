@@ -113,7 +113,7 @@ export interface NexusGroup {
   readonly rows: readonly NexusRow[];
 }
 
-export type NexusSource = "Direct" | "Content" | "Reference";
+export type NexusSource = "Direct" | "Lexical" | "Hybrid" | "Reference";
 
 export interface NexusPane {
   readonly id: string;

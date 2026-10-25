@@ -12,11 +12,12 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import OracleCorpusSource, OracleReading
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
 from nexus.schemas.oracle import (
@@ -43,7 +44,10 @@ from nexus.services.resource_graph.citations import (
     replace_citations_for_output,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.search.semantic import embed_text, nearest_chunks
+from nexus.services.search import projection
+from nexus.services.search.admission import search_session
+from nexus.services.search.semantic import Embedding, embed_text, nearest_chunks
+from nexus.services.search.service import read_snapshot
 from nexus.services.suggestion_changes import record_input_change
 
 _PASSAGES = TypeAdapter(list[OracleStoredPassage])
@@ -58,33 +62,49 @@ def create_reading(
     """Retry the client id: its owner's first creation wins, another owner's id is 409.
     The viewer lock allocates the next folio; only insertion enqueues and joins corpus.
     """
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock, 0))"),
-        {"lock": f"oracle_folio:{viewer_id}"},
-    )
-    folio_number = db.scalar(
-        select(func.coalesce(func.max(OracleReading.folio_number), 0) + 1).where(
-            OracleReading.user_id == viewer_id
+
+    def attempt() -> OracleReadingCreatedOut:
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock, 0))"),
+            {"lock": f"oracle_folio:{viewer_id}"},
         )
-    )
-    inserted = db.scalar(
-        text("""
-            INSERT INTO oracle_readings (id, user_id, folio_number, question_text)
-            VALUES (:id, :viewer_id, :folio, :question)
-            ON CONFLICT (id) DO NOTHING RETURNING id
-        """),
-        {"id": reading_id, "viewer_id": viewer_id, "folio": folio_number, "question": question},
-    )
-    if inserted is not None:
+        existing = db.scalar(select(OracleReading.user_id).where(OracleReading.id == reading_id))
+        if existing is not None:
+            if existing != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reading id is taken")
+            return OracleReadingCreatedOut(reading_id=reading_id)
+        folio_number = db.scalar(
+            select(func.coalesce(func.max(OracleReading.folio_number), 0) + 1).where(
+                OracleReading.user_id == viewer_id
+            )
+        )
+        try:
+            inserted = db.scalar(
+                text("""
+                    INSERT INTO oracle_readings (id, user_id, folio_number, question_text)
+                    VALUES (:id, :viewer_id, :folio, :question)
+                    ON CONFLICT (id) DO NOTHING RETURNING id
+                """),
+                {
+                    "id": reading_id,
+                    "viewer_id": viewer_id,
+                    "folio": folio_number,
+                    "question": question,
+                },
+            )
+        except IntegrityError as exc:
+            if integrity_constraint_name(exc) != "uix_oracle_readings_user_folio":
+                raise
+            raise TransactionRestart from exc
+        if inserted is None:
+            raise TransactionRestart  # another viewer's or this viewer's id just committed
         enqueue_job(db, kind="oracle_reading_generate", payload={"reading_id": str(reading_id)})
+        projection.refresh(db, "oracle_reading", [reading_id])
         if libraries.join_system_library(db, system_key=corpus.SYSTEM_KEY, user_id=viewer_id):
-            record_input_change(db)
-    elif (
-        db.scalar(select(OracleReading.user_id).where(OracleReading.id == reading_id)) != viewer_id
-    ):
-        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reading id is taken")
-    db.commit()
-    return OracleReadingCreatedOut(reading_id=reading_id)
+            record_input_change(db, owners=(f"oracle_reading:{reading_id}",))
+        return OracleReadingCreatedOut(reading_id=reading_id)
+
+    return retry_serializable(db, "oracle.create_reading", attempt)
 
 
 def get_reading(db: Session, *, viewer_id: UUID, reading_id: UUID) -> OracleReadingOut:
@@ -242,8 +262,18 @@ def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapsh
     embedding = embed_text(question)
     if embedding is None:
         return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
-    corpus.refresh_anchors(db)
-    db.commit()
+    retry_serializable(db, "oracle.refresh_anchors", lambda: corpus.refresh_anchors(db))
+    with search_session() as search_db:
+        return read_snapshot(
+            search_db,
+            lambda db: _retrieve(db, viewer_id=viewer_id, question=question, embedding=embedding),
+        )
+
+
+def _retrieve(
+    db: Session, *, viewer_id: UUID, question: str, embedding: Embedding
+) -> synthesis.Snapshot | Failure:
+    """Materialize public and personal passages in one admitted read-only snapshot."""
     public = corpus.rank_passages(
         db, viewer_id=viewer_id, question=question, query_embedding=embedding
     )
@@ -318,7 +348,6 @@ def _publish(
         assert reading is not None
         if not lock_running_job_claim(db, context=context) or reading.status != "pending":
             status = reading.status
-            db.rollback()
             return {"status": status, "noop": True}
         final: Success | Failure = outcome
         if isinstance(outcome, Success):
@@ -333,7 +362,6 @@ def _publish(
             reading.failed_at = func.now()
             reading.error_code = final.error_code
             reading.error_detail = None if final.error_detail is None else final.error_detail[:1000]
-        db.commit()
         return {"status": "complete" if isinstance(final, Success) else "failed"}
 
     return retry_serializable(db, "oracle.publish", attempt)
@@ -379,6 +407,7 @@ def _complete(db: Session, reading: OracleReading, success: Success) -> None:
         corpus.plate(success.plate_key), from_attributes=True
     ).model_dump(mode="json")
     db.flush()
+    projection.refresh(db, "oracle_reading", [reading.id])
 
 
 def _failure(code: OracleFailureCode, detail: str) -> Failure:

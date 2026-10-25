@@ -69,7 +69,6 @@ def record(viewer_id: UUID, device_id: str, body: ActivityRecordIn) -> None:
                 ApiErrorCode.E_ACTIVITY_CAPTURE_CONFLICT,
                 "Activity capture key was reused with different facts",
             )
-        db.commit()
 
     viewer_txn("record_activity", viewer_id, run)
 
@@ -109,7 +108,6 @@ def exclude(viewer_id: UUID, exclusion_id: UUID, body: ExcludeSessionIn) -> None
             """),
             params,
         )
-        db.commit()
 
     viewer_txn("exclude_session", viewer_id, run)
 
@@ -132,6 +130,5 @@ def restore(viewer_id: UUID, exclusion_id: UUID) -> None:
                      WHERE user_id = :viewer_id AND {_SESSION} AND restored_at IS NULL"""),
             params | session._asdict(),
         )
-        db.commit()
 
     viewer_txn("restore_session", viewer_id, run)

@@ -148,7 +148,6 @@ async def _build(
         # Child index writers lock every primary parent before replacing spans.
         db.execute(text("SELECT id FROM media WHERE id = :m FOR NO KEY UPDATE"), {"m": media_id})
         if current_content_fingerprint(db, media_id=media_id) != fence["fingerprint"]:
-            db.rollback()
             return False
         updated: Any = db.execute(
             text(
@@ -158,7 +157,6 @@ async def _build(
             {**fence, "summary_md": summary_md},
         )
         if updated.rowcount == 0:  # superseded during the model call: write nothing
-            db.rollback()
             return True
         db.execute(
             text("DELETE FROM media_claims WHERE summary_id = :s"), {"s": fence["summary_id"]}
@@ -178,7 +176,6 @@ async def _build(
             ref=ResourceRef(scheme="media", id=media_id),
             reason="media_unit_ready",
         )
-        db.commit()
         return True
 
     if not retry_serializable(db, "media_unit_publish", publish):
@@ -214,7 +211,6 @@ def _fail(db: Session, fence: dict[str, Any], code: str, detail: str | None) -> 
             ),
             {**fence, "code": code, "detail": detail},
         )
-        db.commit()
 
     retry_serializable(db, "media_unit_fail", op)
     return "failed"

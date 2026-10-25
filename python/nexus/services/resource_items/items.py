@@ -3,17 +3,20 @@
 ``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
 actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
 admits; I2). Authored pages, notes and highlights admit only ``authored_visible`` rows,
-a note's chunks and spans live with its body, and a passage outlives its note. SQL bounds previews before
-they leave the database. Live media uses one canonical summary batch; narrow source
-attribution keeps its own projection. One query per scheme, plus summary and
-source-credit batches, avoids recursive reads. A media that disappears during summary
-hydration becomes unavailable before routing, so neither its old title nor a live
+a note's chunks and spans live with its body, and a passage outlives its note. SQL bounds
+previews except prefix context, whose tail needs full grapheme context. Live media uses
+one canonical summary batch; narrow source attribution keeps its own projection. One
+query per scheme, plus summary and source-credit batches, avoids recursive reads.
+Hydration returns its authorized passage facts with the rows; activation reuses them
+within the same viewer, reading context and read snapshot. A media that disappears during
+summary hydration becomes unavailable before routing, so neither its old title nor a live
 activation escapes.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections import deque
+from collections.abc import Mapping, Sequence
 from typing import Any, assert_never, cast
 from uuid import UUID
 
@@ -47,35 +50,92 @@ from nexus.services.media import media_summaries
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.liveness import ref_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.locations import media_passages
-from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.resource_items.locations import ScopedMediaPassage, media_passages
+from nexus.services.resource_items.routing import (
+    _activations_from_resolved_passages,
+    resource_activations_for_refs,
+)
 
 _VISIBLE = f"({visible_media_ids_cte_sql()})"
 
 
 def excerpt(value: str, limit: int = 600, *, tail: bool = False) -> ExcerptOut:
-    """Codepoint budget, never bisect a grapheme. Flags describe removed text."""
+    """Codepoint budget, never bisect a grapheme. Flags describe removed text.
+
+    Prefix iteration stops at the budget. Tails retain bounded spans but segment
+    forward through the source: Unicode boundaries can depend on earlier text.
+    """
     if len(value) <= limit:
         return ExcerptOut(text=value, truncated_before=False, truncated_after=False)
-    clusters = regex.findall(r"\X", value)
-    kept: list[str] = []
-    size = 0
-    for cluster in reversed(clusters) if tail else clusters:
-        if size + len(cluster) > limit:
-            break
-        kept.append(cluster)
-        size += len(cluster)
-    clipped = "".join(reversed(kept) if tail else kept)
-    boundary = regex.search(r"\s+\S*$", clipped) if not tail else regex.search(r"^\S*\s+", clipped)
-    if boundary is not None and len(clipped) > 32:
-        candidate = clipped[: boundary.start()] if not tail else clipped[boundary.end() :]
-        if len(candidate) >= len(clipped) // 2:
-            clipped = candidate
+    if tail:
+        # Skip whole grapheme blocks in the regex engine; only retain the final
+        # two block starts. Their suffix covers the budget, even across a block boundary.
+        previous = last = 0
+        for block in regex.finditer(rf"(?:\X){{1,{max(1024, limit)}}}", value):
+            previous, last = last, block.start()
+        spans: deque[tuple[int, int]] = deque()
+        size = 0
+        for match in regex.finditer(r"\X", value, pos=previous):
+            start, end = match.span()
+            spans.append((start, end))
+            size += end - start
+            while size > limit and spans:
+                first, last = spans.popleft()
+                size -= last - first
+        clipped = value[spans[0][0] :] if spans else ""
+    else:
+        return excerpt_window(value, start=0, limit=limit)[1]
     return ExcerptOut(
-        text=clipped,
+        text=_trim_excerpt(clipped, tail=tail),
         truncated_before=tail,
         truncated_after=not tail,
     )
+
+
+def excerpt_window(value: str, *, start: int, limit: int = 600) -> tuple[int, ExcerptOut]:
+    """A literal prefix window, aligned backward to the containing source grapheme.
+
+    Return its actual source start for native match offsets. Forward block scanning
+    preserves contextual boundaries without copying or retaining the source suffix.
+    """
+    assert 0 <= start <= len(value)
+    if 0 < start < len(value):
+        block_start = 0
+        seek_end = start + 1
+        for block in regex.finditer(r"(?:\X){1,1024}", value, endpos=seek_end):
+            block_start = block.start()
+            if block.end() >= start:
+                break
+        for match in regex.finditer(r"\X", value, pos=block_start, endpos=seek_end):
+            if match.end() > start:
+                start = match.start()
+                break
+    end = start
+    # The extra codepoint makes any artificially ended cluster exceed the budget.
+    for match in regex.finditer(r"\X", value, pos=start, endpos=min(len(value), start + limit + 1)):
+        if match.end() - start > limit:
+            break
+        end = match.end()
+    clipped = value[start:end]
+    truncated = end < len(value)
+    return start, ExcerptOut(
+        text=_trim_excerpt(clipped, tail=False) if truncated else clipped,
+        truncated_before=start > 0,
+        truncated_after=truncated,
+    )
+
+
+def _trim_excerpt(clipped: str, *, tail: bool) -> str:
+    # Skip word trimming when whitespace shares a grapheme with adjacent text.
+    boundary = regex.search(r"\s+\S*$", clipped) if not tail else regex.search(r"^\S*\s+", clipped)
+    if boundary is not None and len(clipped) > 32:
+        cut = boundary.start() if not tail else boundary.end()
+        candidate = clipped[:cut] if not tail else clipped[cut:]
+        if len(candidate) >= len(clipped) // 2 and (
+            cut == 0 or any(match.end() == cut for match in regex.finditer(r"\X", clipped))
+        ):
+            return candidate
+    return clipped
 
 
 def passage_body(
@@ -105,9 +165,13 @@ def resource_items_out(
     *,
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
-    reading_media_id: UUID | None = None,
+    reading_media_ids: Mapping[str, UUID] | None = None,
 ) -> list[ResourceItemOut]:
-    rows = _rows(db, viewer_id, refs, reading_media_id=reading_media_id)
+    """Batch one reading per canonical ref; absent entries use authorized preference.
+
+    A reading chooses presentation, never visibility or an additional audience.
+    """
+    rows, passages = _rows(db, viewer_id, refs, reading_media_ids=reading_media_ids)
     summaries = media_summaries(
         db,
         viewer_id=viewer_id,
@@ -117,20 +181,31 @@ def resource_items_out(
         if ref.scheme == "media" and ref.id not in summaries:
             rows.pop(ref.uri, None)
     missing = {ref.uri for ref in refs if ref.uri not in rows}
-    activations = resource_activations_for_refs(
+    activations = _activations_from_resolved_passages(
+        db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing, scoped=passages
+    )
+    owner_refs = [
+        assert_resource_ref(uri)
+        for uri in dict.fromkeys(row["owner_ref"] for row in rows.values() if row.get("owner_ref"))
+    ]
+    source_rows = {ref.uri: rows[ref.uri] for ref in owner_refs if ref.uri in rows}
+    additional_rows, source_passages = _rows(
+        db, viewer_id, [ref for ref in owner_refs if ref.uri not in rows]
+    )
+    source_rows.update(additional_rows)
+    source_passages.update(
+        {ref.uri: passages[ref.uri] for ref in owner_refs if ref.uri in passages}
+    )
+    named_refs = [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
+    credits = _credits(db, [*named_refs, *(ref for ref in owner_refs if ref.uri in source_rows)])
+    source_activations = _activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
-        refs=refs,
-        missing_ref_uris=missing,
-        reading_media_id=reading_media_id,
+        refs=owner_refs,
+        missing_ref_uris={ref.uri for ref in owner_refs if ref.uri not in source_rows},
+        scoped=source_passages,
     )
-    owner_refs = list({row["owner_ref"] for row in rows.values() if row.get("owner_ref")})
-    sources = source_attributions(
-        db, viewer_id=viewer_id, refs=[assert_resource_ref(r) for r in owner_refs]
-    )
-    credits = _credits(
-        db, [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
-    )
+    sources = _source_attributions(owner_refs, source_rows, credits, source_activations)
     out: list[ResourceItemOut] = []
     for ref in refs:
         row = rows.get(ref.uri)
@@ -142,7 +217,7 @@ def resource_items_out(
                 media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
                 source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
                 activation=activations[ref.uri],
-                reading_media_id=reading_media_id,
+                reading_media_id=(reading_media_ids or {}).get(ref.uri),
             )
         )
     return out
@@ -203,27 +278,41 @@ def resource_item_out(
     db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
 ) -> ResourceItemOut:
     return resource_items_out(
-        db, viewer_id=viewer_id, refs=[ref], reading_media_id=reading_media_id
+        db,
+        viewer_id=viewer_id,
+        refs=[ref],
+        reading_media_ids={ref.uri: reading_media_id} if reading_media_id is not None else None,
     )[0]
 
 
 def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> set[str]:
     """The uris of ``refs`` the viewer may see now."""
-    return set(_rows(db, viewer_id, refs))
+    rows, _ = _rows(db, viewer_id, refs)
+    return set(rows)
 
 
 def source_attributions(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> dict[str, SourceAttributionOut]:
     """Known current source metadata, only after the same viewer gate as resource rows."""
-    rows = _rows(db, viewer_id, refs)
+    rows, passages = _rows(db, viewer_id, refs)
     credits = _credits(db, [r for r in refs if r.uri in rows])
-    activations = resource_activations_for_refs(
+    activations = _activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=refs,
         missing_ref_uris={r.uri for r in refs if r.uri not in rows},
+        scoped=passages,
     )
+    return _source_attributions(refs, rows, credits, activations)
+
+
+def _source_attributions(
+    refs: Sequence[ResourceRef],
+    rows: dict[str, dict[str, Any]],
+    credits: dict[str, list[ContributorCreditOut]],
+    activations: dict[str, ResourceActivationOut],
+) -> dict[str, SourceAttributionOut]:
     return {
         ref.uri: SourceAttributionOut(
             ref=ref.uri,
@@ -323,8 +412,8 @@ def _rows(
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
     *,
-    reading_media_id: UUID | None = None,
-) -> dict[str, dict[str, Any]]:
+    reading_media_ids: Mapping[str, UUID] | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, ScopedMediaPassage]]:
     out: dict[str, dict[str, Any]] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
         ids = list({ref.id for ref in refs if ref.scheme == scheme})
@@ -332,7 +421,9 @@ def _rows(
             text(_QUERIES[scheme]), {"ids": ids, "viewer_id": viewer_id}
         ).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
-    passages = media_passages(db, viewer_id=viewer_id, refs=refs, reading_media_id=reading_media_id)
+    passages = media_passages(
+        db, viewer_id=viewer_id, refs=refs, reading_media_ids=reading_media_ids
+    )
     canonical_schemes = {
         "highlight",
         "fragment",
@@ -363,7 +454,7 @@ def _rows(
                 "owner_ref": passage.owner.uri,
                 "location_label": row.get("location_label") if row is not None else None,
             }
-    return out
+    return out, passages
 
 
 _NOTE_PARTS_SQL = """
