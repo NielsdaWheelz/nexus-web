@@ -166,6 +166,10 @@ headers share subscription and libraries shortcuts with their complete menus.
 global subscribe uses the actual default library; global
 unsubscribe reviews every destination and keeps arrived episodes. libraries
 manages named subscriptions, including checked, locked read-only memberships.
+subscription commands retain the rss glyph and add a monochrome check for an
+observed subscription. the check denotes recurring delivery somewhere, not feed
+health, completed import or permission. native commands open reviews; they are
+not pressed toggles. opening/cancelling a review changes no relationship.
 the detail card is named `Library Subscriptions`; its icon control names the
 show, and an empty card has no instructional body. library choice uses the shared
 search/create picker: anchored and nonmodal on desktop, a sheet on phones. search
@@ -196,6 +200,19 @@ retains disabled presentation. podcast/library changes and foreground observatio
 reread local facts without repeating directory content reads. failed or refreshing
 facts authorize no new shortcut. sealed row identity and admitted command identity
 never migrate when local resolution becomes canonical.
+
+only ready action facts carry canonical resolution. resolving/failed facts carry
+only a nullable last-observed subscription boolean from the existing matching
+read; no extra cache or remembered value exists. the containing source's gate
+retains priority over the action-facts read. retained checks stay dimmed and
+disabled, named `last known subscribed`; descriptions explain checking/failure.
+unknown never means unsubscribed. existing account/read-key/source/admission
+boundaries govern observation lifetime; changed target sets may clear marks.
+observations never settle uncertain commands. the shared subscription projector
+owns glyph, menu/state copy, complete inline names, dialog semantics and the
+activation guard, including the default-library shortcut's direct renderer.
+failed reads report busy only during an actual retry; an old observation's stale
+stamp cannot keep retry disabled after the request ends.
 
 the account action owner retains one scoped library-creation helper and loss
 guard. creation retries preserve the exact uuid/name. only the originating live

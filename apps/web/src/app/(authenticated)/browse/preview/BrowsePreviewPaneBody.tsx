@@ -145,10 +145,10 @@ export default function BrowsePreviewPaneBody() {
   const sourceError = resource.status === "loading" ? null : resource.error;
   const podcast = preview?.kind === "Podcast" ? {
     target: { kind: "Discovery" as const, target: preview.target }, title: preview.title,
-    facts: sourceError !== null
-      ? { kind: "Failed" as const, error: sourceError, retry: resource.refetch, retrying: resource.status === "failed" ? resource.retrying : resource.status === "ready" && resource.refreshing }
-      : resource.status !== "ready" || resource.refreshing ? { kind: "Resolving" as const }
-      : podcastActionFacts(actionFacts, { kind: "Discovery", target: preview.target }),
+    facts: podcastActionFacts(actionFacts, { kind: "Discovery", target: preview.target },
+      sourceError !== null
+        ? { kind: "Failed", error: sourceError, retry: resource.refetch, retrying: resource.status === "failed" ? resource.retrying : resource.status === "ready" && resource.refreshing }
+        : resource.status !== "ready" || resource.refreshing ? { kind: "Resolving" } : null),
   } : null;
   const owned = preview?.kind === "Podcast"
     ? podcast?.facts.kind === "Ready" && podcast.facts.resolution.kind === "Canonical" ? `/podcasts/${podcast.facts.resolution.podcast_id}` : null
