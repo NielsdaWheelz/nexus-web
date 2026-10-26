@@ -112,6 +112,8 @@ displayed baselines. titles use plain shared text and admit no marks or atoms.
 the projection reuses the canonical inline grammar without importing row ids or
 placement from clipboard content.
 
+the outer projection replaces complete changed rows at row boundaries. isolating
+row wrappers never enter the inline input fitter; binding owns inline diffs.
 each editor step routes through its own pre-step document to one field. generic
 cross-field joins and splits are refused; the structural intent owner performs
 them. shared-text identity preserves caret bookmarks. structural history also

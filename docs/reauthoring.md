@@ -8,10 +8,10 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-mobile editor checkpoint `3969f8c7d` against local-first `c20ebe7b6`: +3,094 authored runtime lines
+mobile editor checkpoint `f50e52f5a` against local-first `c20ebe7b6`: +3,100 authored runtime lines
 under the historical classifier, plus 39 shared `node/authored` runtime lines.
-the combined runtime change is +3,133 (4,365 added, 1,232 deleted):
-web +3,067, android +27 and shared authored +39. one flat native editing
+the combined runtime change is +3,139 (4,371 added, 1,232 deleted):
+web +3,073, android +27 and shared authored +39. one flat native editing
 host, occurrence baselines and bounded prepared windows replace insertion/finish
 controls, duplicate row reads and disposable input handoffs. canonical documents
 and real undo managers own synchronous semantic mutations; the runtime owns

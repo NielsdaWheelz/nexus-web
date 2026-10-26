@@ -625,8 +625,14 @@ export class OutlineController {
     const start = this.view.state.doc.content.findDiffStart(next.content);
     if (start === null) return;
     const end = this.view.state.doc.content.findDiffEnd(next.content)!, overlap = Math.max(0, start - Math.min(end.a, end.b));
+    // Isolating row wrappers belong to this projection. A partial cross-row
+    // slice enters the input fitter and can duplicate a wrapper's occurrence.
+    const first = this.view.state.doc.resolve(start), oldEnd = this.view.state.doc.resolve(end.a + overlap), newEnd = next.resolve(end.b + overlap);
+    const from = first.depth ? first.before(1) : start;
+    const to = oldEnd.depth ? oldEnd.after(1) : end.a + overlap;
+    const contentEnd = newEnd.depth ? newEnd.after(1) : end.b + overlap;
     const active = this.selectionRow, selection = this.selection;
-    const tr = this.view.state.tr.replace(start, end.a + overlap, next.slice(start, end.b + overlap)).setMeta(outlineTransactionSource, semantic ? "semantic" : "projection");
+    const tr = this.view.state.tr.replaceWith(from, to, next.content.cut(from, contentEnd)).setMeta(outlineTransactionSource, semantic ? "semantic" : "projection");
     const field = active ? fieldById(tr.doc, active) : null;
     if (active && this.selected.size) {
       tr.doc.forEach((node, at) => {if (node.attrs.row_id === active) tr.setSelection(NodeSelection.create(tr.doc, at));});
