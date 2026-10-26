@@ -1,7 +1,7 @@
 # qualify peer annotations and remote admission
 
-browser behavior is repaired and proved; installed-client freshness and delayed
-account/admission races remain unqualified.
+browser refresh is repaired and proved. account terminal-admission and
+retired-response races pass; wire-reload and installed-client checks remain.
 
 own highlights belong to the local authored corpus. readable peers belong to the
 server document map and never enter that corpus. previously the browser hint
@@ -29,7 +29,11 @@ run `20261025-211531-a0460035a27e` on `b1b09675f` passes real peer creation,
 cached paint through failed refresh, an actual retry request and changed color,
 then peer deletion across reconnect without losing committed offline writing.
 
-resolve after the installed client repeats peer create/edit/delete and reconnect,
-and real delayed success/failure responses cannot reopen terminal admission or
-survive account retirement. the browser result does not substitute for those
-remaining checks.
+the account terminal-admission race passes in
+`20261025-212216-4c293cc5ee65`. run `20261025-214933-7baa03b29f90`
+on `509c47d69` passes real retirement with logout still pending: a held old
+response rejects with `AbortError`. the genuine wire-reload race remains tracked
+in [its issue](local-first-wire-reload-admission.md).
+
+resolve after that check and installed-client peer create/edit/delete/reconnect.
+the browser results do not substitute for the installed-client check.

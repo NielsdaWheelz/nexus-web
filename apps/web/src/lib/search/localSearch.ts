@@ -7,6 +7,7 @@
 // Excerpts are literal slices of canonical text; matching never rewrites it.
 import { useCallback, useEffect, useState } from "react";
 import type { QueryResult, ResourceProjection } from "@nexus/authored/types";
+import { capturedHighlightText } from "@nexus/authored/queries";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { localResourceHref, localResourceLabel } from "@/lib/resources/localResource";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -49,7 +50,7 @@ export function localResult(resource: ResourceProjection, text: string): LocalMa
 }
 
 export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string): LocalMatch {
-  const body = resource.kind === "highlight" ? resource.selection?.quote_exact ?? "" : resource.kind === "note" ? resource.body_text ?? ""
+  const body = resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource.selection) : resource.kind === "note" ? resource.body_text ?? ""
     : resource.title ?? resource.local_date ?? "";
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();

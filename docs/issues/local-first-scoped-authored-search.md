@@ -58,3 +58,14 @@ candidates, ranking or label-substring behavior. local FTS uses unicode token
 prefixes. scope qualification should compare controlled literal matches and
 exact eligibility at a common metadata revision, including pending local edits;
 it must not silently expand into semantic-search parity.
+
+actual context-only red on `509c47d69`, lab
+`20261025-213945-7eaeb90c9f6d`: real canonical reader captures, exact saved-passage
+and highlight matches, and same-query positive-control passage plus exclusion of
+the original passage all passed. the first prefix-only highlight search showed
+only the whole-paragraph control highlight; the original exact-quote highlight
+was absent. the shared index now covers captured prefix/exact/suffix fields and
+the local excerpt uses the same shared ordered fields as literal captured text.
+labels and navigation remain the exact quote, and saved passages remain
+exact-only. this two-file repair awaits static and actual mounted green; it does
+not implement the pending scoped-source metadata contract.

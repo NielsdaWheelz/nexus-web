@@ -21,3 +21,12 @@ pane admission. share capture has its own canonical entry and provider.
 resolve after the sole static gate and a fresh frozen handset/browser cold run
 prove local new-page/daily/search admission, offline create/edit, process kill,
 reopen and reconnect, with actual denied transport and server-absence checks.
+
+lab54 on b1 (`20261025-212216-4c293cc5ee65`) reached canonical reader
+captures, then its first full-document offline navigation to search remained at
+“preparing your notes” through a ten-second query-status wait. the new authored
+worker script request was unfinished in the retained trace. this establishes a
+setup observation, not permanent failure or an fts result. the context-index
+case now mounts search online, then uses its real input and kind operators
+offline to isolate the intended index behavior. stock firefox cold proof is a
+separate target qualification and cannot be inferred from this chromium run.

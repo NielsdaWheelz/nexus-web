@@ -1,7 +1,16 @@
 /** Closed bounded local reads. Literal text is escaped into FTS5 phrases. Adjacency
  * pages use the exact (position,link_id) tuple, including prefix/equal keys. */
-import type { AuthoredQuery } from "./types.ts";
+import type { AuthoredQuery, SelectionCapture } from "./types.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
+const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
+/** Literal full capture for an all-scope excerpt; a reading scope must clip first. */
+export function capturedHighlightText(selection: SelectionCapture): string {
+  return HIGHLIGHT_TEXT_FIELDS.map(field => selection[field] ?? "").join("");
+}
+// Index fields separately so a selected word fragment remains independently searchable.
+const HIGHLIGHT_SEARCH_SQL = HIGHLIGHT_TEXT_FIELDS.map(field =>
+  `COALESCE(json_extract(projection_json,'$.selection.${field}'),'')`,
+).join(" || ' ' || ");
 export function searchExpression(text: string): string {
   return text.trim().split(/\s+/u).filter(Boolean).map(token => `"${token.replaceAll('"', '""')}"*`).join(" AND ");
 }
@@ -37,7 +46,7 @@ export const SEARCH_INDEX_SQL = `${READABLE}, indexed AS (
 ) INSERT INTO search_documents(ref,text) SELECT ref,CASE kind
   WHEN 'page' THEN COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')
   WHEN 'note' THEN COALESCE(json_extract(projection_json,'$.body_text'),'')
-  WHEN 'highlight' THEN COALESCE(json_extract(projection_json,'$.selection.quote_exact'),'')
+  WHEN 'highlight' THEN ${HIGHLIGHT_SEARCH_SQL}
   ELSE COALESCE(title,'') END FROM indexed WHERE ref=? ON CONFLICT(ref) DO UPDATE SET text=excluded.text WHERE search_documents.text IS NOT excluded.text`;
 export const SEARCH_REMOVE_SQL = `${READABLE} DELETE FROM search_documents WHERE ref=?1 AND NOT EXISTS(SELECT 1 FROM readable WHERE readable.ref=?1)`;
 
