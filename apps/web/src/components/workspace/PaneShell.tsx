@@ -65,7 +65,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { COMPANION_MAX_WIDTH_PX, COMPANION_MIN_WIDTH_PX, paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { useRenderEnvironment, useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
@@ -230,10 +230,11 @@ function PaneView({
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
+  const touchCapable = useTouchCapable();
   const [commandsBottom, setCommandsBottom] = useState(0);
-  const outlineCommands = isActive && !hasActiveInteractionOwner() ? state.outlineCommands : null;
+  const outlineCommands = touchCapable && isActive && !hasActiveInteractionOwner() ? state.outlineCommands : null;
   useLayoutEffect(() => {
-    if (!outlineCommands || !isMobile) {setCommandsBottom(0); return;}
+    if (!outlineCommands) {setCommandsBottom(0); return;}
     const measure = () => {
       const consumed = Math.max(0, window.innerHeight - (paneRef.current?.getBoundingClientRect().bottom ?? window.innerHeight));
       setCommandsBottom(Math.max(0, Math.max(keyboardBottomInsetPx,
@@ -241,7 +242,7 @@ function PaneView({
     };
     measure();
     return mobileViewport.subscribeContentBottomClearance(measure);
-  }, [outlineCommands, isMobile, keyboardBottomInsetPx, mobileViewport]);
+  }, [outlineCommands, keyboardBottomInsetPx, mobileViewport]);
   const identityId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
@@ -612,7 +613,7 @@ function PaneView({
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
         {outlineCommands ? <div className={styles.outlineAccessory} style={{marginBottom: commandsBottom}}>
-          <OutlineCommands publication={outlineCommands} current={() => isActive && !hasActiveInteractionOwner() ? chrome.get().outlineCommands : null}/>
+          <OutlineCommands publication={outlineCommands} current={() => touchCapable && isActive && !hasActiveInteractionOwner() ? chrome.get().outlineCommands : null}/>
         </div> : null}
         {isMobile || isMaximized ? null : (
           <ResizeHandle

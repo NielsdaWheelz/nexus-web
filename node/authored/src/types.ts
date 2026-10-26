@@ -52,9 +52,9 @@ export type PositionQuery =
   | { kind: "neighbors"; link_id: string; side: "before" | "after" }
   | { kind: "tie"; position: string; cursor: string | null; limit: number }
   | { kind: "bounds"; position: string };
-export type ChildOccurrence = { key: string; refs: ResourceRef[]; excluded_link_ids: string[] };
+export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_ids: string[] }
 export type AuthoredQuery =
-  | { kind: "children"; occurrences: ChildOccurrence[] }
+  | { kind: "outline_children"; occurrences: OutlineChildrenOccurrence[] }
   | { kind: "positions"; ref: ResourceRef; exclude_link_id: string | null; at: PositionQuery }
   | { kind: "adjacency_window"; ref: ResourceRef; link_id: string; cursor: string | null; limit: number }
   | { kind: "binding"; key: SemanticKey }
@@ -68,7 +68,7 @@ export type AuthoredQuery =
   | { kind: "search"; text: string; cursor: string | null; limit: number }
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null }
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; positions: LinkState[]; child_keys: string[] }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; positions: LinkState[]; children: (boolean | null)[] }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }

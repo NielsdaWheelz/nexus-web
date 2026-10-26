@@ -2,7 +2,7 @@
 
 // Native lists share one host visit's folds and reveal scope; ancestry follows occurrences.
 // Structure, selection and editing belong to the outline that renders the rows.
-import {createContext, useCallback, useContext, useRef, useState, type ReactNode} from "react";
+import {createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode} from "react";
 import {FeedbackNotice} from "@/components/feedback/Feedback";
 import {remoteConnectionsError} from "@/components/connections/RemoteConnections";
 import {useOutlineChildren,type OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
@@ -87,9 +87,9 @@ function RootList({
     reveal,
   };
   const base = suppliedBranch ?? inherited;
-  const branch = ancestorRef && !base.ancestors.has(ancestorRef)
+  const branch = useMemo(() => ancestorRef && !base.ancestors.has(ancestorRef)
     ? {...base, ancestors: new Map(base.ancestors).set(ancestorRef, {kind: "root"} as const)}
-    : base;
+    : base, [ancestorRef, base]);
   return <ResourceOutlineContext value={context}>
     <ResourceBranch value={branch}>
       <div ref={root} className={styles.outline} data-pane-return-scope={scope} data-outline-scope={scope}>

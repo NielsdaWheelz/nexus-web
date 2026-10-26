@@ -1,38 +1,84 @@
 // lab browsers and the real password form's continuation. callers own
 // authenticated readiness, identity checks and any scenario-specific reset.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type BrowserContext, type Page } from "@playwright/test";
+import { promisify } from "node:util";
+import { chromium, firefox, type BrowserContext, type Page } from "@playwright/test";
 import { DEFAULT_RETURN_TARGET } from "@/lib/auth/urls";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 
-/** The canonical shell opens only over a persistent store: a real temporary profile
- * with the normal durable-storage permission, pinned to the lab's TLS leaf. A non-null
- * state seeds the fresh profile. Chromium revokes the grant when its CDP session
+/** the canonical shell opens only over a persistent store: a real temporary profile
+ * with normal durable-storage permission. chromium pins the lab's TLS leaf;
+ * firefox imports the lab CA into only its temporary NSS profile and verifies TLS.
+ * a non-null state seeds the fresh profile. chromium revokes its grant when its CDP session
  * detaches, so the session stays attached to the returned page until close(); callers
- * keep that page open. close() also removes the profile. */
+ * keep that page open. firefox's macOS app-data bookkeeping also belongs to the
+ * temporary root. close() removes all browser state. */
 export async function openLabBrowser(input: {
   web_origin: string;
-  web_tls: { leaf_spki_sha256: string };
   storage_state: string | null;
-}): Promise<{ context: BrowserContext; page: Page; close(): Promise<void> }> {
-  const profile = await mkdtemp(join(tmpdir(), "nexus-lab-browser-"));
+} & (
+  | { browser?: "chromium"; web_tls: { leaf_spki_sha256: string } }
+  | { browser: "firefox"; web_tls: { ca_file: string } }
+)): Promise<{ context: BrowserContext; page: Page; close(): Promise<void> }> {
+  const directory = await mkdtemp(join(tmpdir(), "nexus-lab-browser-"));
+  const profile = join(directory, "profile");
   let context: BrowserContext | null = null;
   try {
-    context = await chromium.launchPersistentContext(profile, {
-      args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
-    });
+    await mkdir(profile);
+    if (input.browser === "firefox") {
+      const run = promisify(execFile);
+      await run("certutil", ["-N", "-d", `sql:${profile}`, "--empty-password"]);
+      await run("certutil", ["-A", "-d", `sql:${profile}`, "-n", "nexus-lab-ca", "-t", "C,,", "-i", input.web_tls.ca_file]);
+      // playwright 1.64.1's gecko bridge omits persistent-storage when applying
+      // grants. seed the normal user grant using its pinned firefox schema 13.
+      await run("sqlite3", [join(profile, "permissions.sqlite"), `
+        PRAGMA user_version=13;
+        CREATE TABLE moz_perms (id INTEGER PRIMARY KEY,origin TEXT,type TEXT,permission INTEGER,expireType INTEGER,expireTime INTEGER,modificationTime INTEGER);
+        CREATE TABLE moz_hosts (id INTEGER PRIMARY KEY,host TEXT,type TEXT,permission INTEGER,expireType INTEGER,expireTime INTEGER,modificationTime INTEGER,isInBrowserElement INTEGER);
+        CREATE TABLE moz_origin_interactions (origin TEXT PRIMARY KEY,lastInteractionTime INTEGER);
+        INSERT INTO moz_perms(origin,type,permission,expireType,expireTime,modificationTime)
+        VALUES('${input.web_origin.replaceAll("'", "''")}','persistent-storage',1,0,0,${Date.now()});
+      `]);
+      const appData = join(directory, "app-data");
+      if (process.platform === "darwin") {
+        // precreation avoids macos's deny-delete acl on automatic home folders.
+        await Promise.all(["Library/Application Support", "Library/Caches", "Downloads"].map(part => mkdir(join(appData, part), { recursive: true })));
+      }
+      context = await firefox.launchPersistentContext(profile, {
+        args: [], ignoreHTTPSErrors: false,
+        ...(process.platform === "darwin" ? { env: { ...process.env, CFFIXED_USER_HOME: appData } } : {}),
+      });
+    } else {
+      context = await chromium.launchPersistentContext(profile, {
+        args: [`--ignore-certificate-errors-spki-list=${input.web_tls.leaf_spki_sha256}`],
+      });
+    }
     if (input.storage_state !== null) await context.setStorageState(input.storage_state);
     const page = context.pages()[0] ?? await context.newPage();
-    const session = await context.newCDPSession(page);
-    await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
+    if (input.browser === "firefox") {
+      await page.goto(`${input.web_origin}/robots.txt`, { waitUntil: "domcontentloaded" });
+      await page.evaluate(async () => {
+        if ((await navigator.permissions.query({ name: "persistent-storage" })).state !== "granted")
+          throw new Error("firefox lab persistent-storage permission was not granted");
+        const persisted = await Promise.race([
+          navigator.storage.persist(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("firefox lab persistence request timed out")), 5000)),
+        ]);
+        if (!persisted || !await navigator.storage.persisted()) throw new Error("firefox lab storage is not persistent");
+      });
+    } else {
+      const session = await context.newCDPSession(page);
+      await session.send("Browser.grantPermissions", { origin: input.web_origin, permissions: ["durableStorage"] });
+    }
     const opened = context;
     return { context: opened, page, close: async () => {
-      try { await opened.close(); } finally { await rm(profile, { recursive: true, force: true }); }
+      try { await opened.close(); } finally { await rm(directory, { recursive: true, force: true }); }
     } };
   } catch (error) {
-    try { await context?.close(); } finally { await rm(profile, { recursive: true, force: true }); }
+    try { await context?.close(); } finally { await rm(directory, { recursive: true, force: true }); }
     throw error;
   }
 }

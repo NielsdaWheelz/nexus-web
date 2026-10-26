@@ -9,7 +9,7 @@ import {apiFetch} from "@/lib/api/client";
 import type {ApiJson,Schema} from "@/lib/api/wire";
 import {useChangeStamp} from "@/lib/api/changes";
 import {usePaneFreeServerValue} from "@/lib/api/serverState";
-import type {ChildOccurrence} from "@nexus/authored/types";
+import type {OutlineChildrenOccurrence} from "@nexus/authored/types";
 
 export interface OutlineChildrenDescriptor {
   identity: string;
@@ -49,27 +49,27 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[key,readyRemote]);
   const proofFor=(id:string,identity:string)=>{const incoming=readyRemote?.get(id);return incoming?.identity===identity?incoming:retainedRemote.get(id);};
-  const occurrences:ChildOccurrence[]=entries.map(([id,descriptor])=>{
+  const occurrences:(OutlineChildrenOccurrence&{key:string})[]=entries.map(([id,descriptor])=>{
     const retained=proofFor(id,descriptor.identity);
     const owner=retained?.identity===descriptor.identity?retained.proof.local_ref:null;
     return {key:id,refs:owner&&owner!==descriptor.resource_ref?[descriptor.resource_ref,owner]:[descriptor.resource_ref],excluded_link_ids:descriptor.excluded_edge_ids};
   });
   const localKey=JSON.stringify(occurrences);
-  const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:ChildOccurrence;value:boolean}>;errors:ReadonlyMap<string,unknown>}>(()=>({proofs:new Map(),errors:new Map()}));
+  const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;errors:ReadonlyMap<string,unknown>}>(()=>({proofs:new Map(),errors:new Map()}));
   useEffect(()=>{
     let active=true;const stops:(()=>void)[]=[];
     const mounted=new Set(occurrences.map(item=>item.key));
     setLocal(current=>({proofs:new Map([...current.proofs].filter(([id])=>mounted.has(id))),errors:new Map()}));
     for(let offset=0;offset<occurrences.length;offset+=100){
-      const chunk=occurrences.slice(offset,offset+100),query={kind:"children" as const,occurrences:chunk},chunkKey=JSON.stringify(chunk);
+      const chunk=occurrences.slice(offset,offset+100),query={kind:"outline_children" as const,occurrences:chunk.map(({refs,excluded_link_ids})=>({refs,excluded_link_ids}))},chunkKey=JSON.stringify(chunk);
       let revision:bigint|null=null;
       const receive=(result:Awaited<ReturnType<typeof store.query>>)=>{
         if(!active||revision!==null&&BigInt(result.store_revision)<revision)return;
         revision=BigInt(result.store_revision);
-        const positive=new Set(result.child_keys);
+        if(result.children.length!==chunk.length)throw Error("Local child proof cardinality mismatch");
         setLocal(current=>{
           const proofs=new Map(current.proofs),errors=new Map(current.errors);errors.delete(chunkKey);
-          for(const item of chunk)proofs.set(item.key,{query:item,value:positive.has(item.key)});
+          chunk.forEach((item,index)=>proofs.set(item.key,{query:item,value:result.children[index]===true}));
           return {proofs,errors};
         });
       };

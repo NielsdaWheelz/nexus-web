@@ -3,15 +3,14 @@
 import Button from "@/components/ui/Button";
 
 // The pane shell owns placement; this accessory renders the published commands.
-import { ArrowDown, ArrowUp, Check, IndentDecrease, IndentIncrease, Plus, Redo2, Undo2, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, IndentDecrease, IndentIncrease, Redo2, Undo2, type LucideIcon } from "lucide-react";
 import type { PaneOutlineCommands } from "@/lib/panes/paneChrome";
 import type { OutlineCommand } from "@/lib/notes/editorTypes";
 import styles from "./OutlineCommands.module.css";
 
 const commands: readonly [OutlineCommand, string, LucideIcon][] = [
-  ["insert", "insert item", Plus],
-  ["indent", "indent", IndentIncrease],
   ["outdent", "outdent", IndentDecrease],
+  ["indent", "indent", IndentIncrease],
   ["move_up", "move item up", ArrowUp],
   ["move_down", "move item down", ArrowDown],
   ["undo", "undo", Undo2],
@@ -35,7 +34,6 @@ export default function OutlineCommands({
     >
       {commands.map(([command, label, Icon]) => {
         const state = publication.commandState(command);
-        const commandLabel = command === "insert" ? publication.insertLabel : label;
         return (
           <Button
             key={command}
@@ -44,8 +42,8 @@ export default function OutlineCommands({
             className={styles.command}
             size="comfortable"
             disabled={!state.enabled}
-            tooltip={{text: state.reason ? `${commandLabel}: ${state.reason}` : commandLabel}}
-            aria-label={commandLabel}
+            tooltip={{text: state.reason ? `${label}: ${state.reason}` : label}}
+            aria-label={label}
             onClick={() => {
               const active = current();
               if (active === publication && active.commandState(command).enabled)
@@ -54,16 +52,6 @@ export default function OutlineCommands({
           />
         );
       })}
-      <Button
-        iconOnly
-        icon={<Check size={18} aria-hidden="true" />}
-        className={styles.command}
-        size="comfortable"
-        aria-label="done"
-        onClick={() => {
-          if (current() === publication) publication.done();
-        }}
-      />
     </div>
   );
 }

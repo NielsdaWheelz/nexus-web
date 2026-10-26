@@ -281,7 +281,7 @@ def _passage_identities(
     bindings = [{"source_ref": owner.uri, "semantic_key": key} for owner, key in keys.values()]
     anchors = (
         {
-            (row.source_ref, row.semantic_key): ResourceRef("passage_anchor", row.anchor_id)
+            (row.source_ref, row.semantic_key): ResourceRef("passage_anchor", UUID(row.anchor_id))
             for row in db.execute(
                 text("""
                     SELECT p.anchor_id,p.state->>'source_ref' AS source_ref,p.semantic_key

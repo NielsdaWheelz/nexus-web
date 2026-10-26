@@ -44,8 +44,8 @@ export default defineConfig({
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
         const cursor = JSON.stringify(["a0", ""]);
         const samples: Record<AuthoredQuery["kind"], AuthoredQuery[]> = {
-          children: [{kind:"children",occurrences:[]}],
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
+          outline_children: [{ kind: "outline_children", occurrences: [] }],
           resource: [{ kind: "resource", ref: "" }],
           daily: [{ kind: "daily", local_date: "" }],
           pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),

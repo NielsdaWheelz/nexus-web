@@ -5,7 +5,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { formatShortcut, PANE_STRIP_SHORTCUTS, SHORTCUTS } from "@/lib/shortcuts";
+import { formatShortcut, outlineShortcuts, PANE_STRIP_SHORTCUTS, SHORTCUTS } from "@/lib/shortcuts";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 export default function KeybindingsPaneBody() {
@@ -40,6 +40,15 @@ export default function KeybindingsPaneBody() {
           rows={PANE_STRIP_SHORTCUTS.map(item => presentSettingsRow({ ...item, presentation: "Details" }))}
           status="ready"
           ariaLabel="Pane strip shortcuts"
+          surface={false}
+        />
+      </PaneSection>
+      <PaneSection title="outline" description="these keys apply while editing or selecting a block. touch screens offer six buttons for indentation, movement, undo and redo.">
+        <CollectionView
+          returnScope="Settings.Keybindings.Outline"
+          rows={outlineShortcuts(platform).map(item => presentSettingsRow({...item, presentation: "Details"}))}
+          status="ready"
+          ariaLabel="outline shortcuts"
           surface={false}
         />
       </PaneSection>

@@ -83,10 +83,10 @@ function positions(query: Extract<AuthoredQuery,{kind:"positions"}>):CompiledQue
 export function compileQuery(query: AuthoredQuery): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
-    case "children": {
+    case "outline_children": {
       if(query.occurrences.length>100||query.occurrences.some(item=>item.refs.length>2||item.excluded_link_ids.length>1000))throw new RangeError("Child occurrence batch exceeds bound");
-      const arms=(["a","b"] as const).map(side=>{const other=side==="a"?"b":"a";return `EXISTS(SELECT 1 FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=endpoint.value AND l.visible=1 AND ${live("endpoint.value")} AND ${live(`l.endpoint_${other}`)} AND NOT EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id))`;}).join(" OR ");
-      return {sql:`SELECT json_extract(occurrence.value,'$.key') AS child_key FROM json_each(?) occurrence WHERE EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.refs') endpoint WHERE ${arms})`,params:[JSON.stringify(query.occurrences)]};
+      const eligible=(["a","b"] as const).map(side=>{const other=side==="a"?"b":"a";return `EXISTS(SELECT 1 FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=endpoint.value AND l.visible=1 AND ${live("endpoint.value")} AND ${live(`l.endpoint_${other}`)} AND NOT EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id))`;}).join(" OR ");
+      return {sql:`SELECT CASE WHEN EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.refs') endpoint WHERE ${live("endpoint.value")}) THEN EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.refs') endpoint WHERE ${eligible}) ELSE NULL END AS child_available FROM json_each(?) occurrence ORDER BY CAST(occurrence.key AS INTEGER)`,params:[JSON.stringify(query.occurrences)]};
     }
     case "positions":return positions(query);
     case "binding": {

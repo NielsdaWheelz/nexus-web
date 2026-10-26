@@ -1,15 +1,17 @@
 /** Account-scoped live documents and command preparation. A shared store lease
  * covers sequence allocation through durable commit, including uncertain replies
- * and local failure/retry. Unsynchronized committed work needs no loss warning. */
+ * and local failure/retry. A receipt is published only after its committed state
+ * reaches open documents, so following edits can refer to its shared identities.
+ * Unsynchronized committed work needs no loss warning. */
 import * as Y from "yjs";
 import { prepareChange, type Intent } from "@nexus/authored/commands";
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
 import { noteBodySchema, projectBody, type NoteBody } from "@nexus/authored/body";
-import { mergeChanges } from "@nexus/authored/merge";
-import type { AuthoredStore, Change, CommitFrame, StateSelection, Vector } from "@nexus/authored/types";
+import { mergeChanges, mergeVector } from "@nexus/authored/merge";
+import type { AuthoredStore, Change, CommitFrame, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
-export interface WritingDocument { ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot> }
+export interface WritingDocument { ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>; onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void }
 export class LocalCommitError extends Error {
   constructor(message: string, readonly cause: unknown, readonly retry: () => Promise<LocalCommit>, readonly completion: Promise<LocalCommit>) { super(message); this.name = "LocalCommitError"; }
 }
@@ -18,7 +20,7 @@ export function writingStoreStopped(error:unknown):boolean {
   return error instanceof Error && "code" in error && error.code === "E_AUTHORED_WORKER_STOPPED";
 }
 export interface LocalCommit { command_seq: string; store_revision: string; change: Change }
-interface CachedDocument extends WritingDocument { pins: number; bytes: number; last_used: number; pending: number; unsubscribe: () => void }
+interface CachedDocument extends WritingDocument { pins: number; bytes: number; last_used: number; pending: number; receive(resource: ResourceState): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_refs: string[]; revision: number }
 interface FailedCommit {
   intent: Intent; selection: StateSelection; change: Change | null; frame: CommitFrame | null;
@@ -140,7 +142,20 @@ export class WritingRuntime {
       if (owner.change === null) owner.change = prepareChange({ replica_id: replica.replica_id, command_seq: (BigInt(replica.command_seq) + 1n).toString(), lamport: (BigInt(replica.lamport) + 1n).toString() }, owner.intent, states);
       owner.frame = { expected_store_revision: replica.store_revision, replica_id: replica.replica_id, change: owner.change, states: mergeChanges(states, [owner.change]) };
     }
-    return this.persist(owner.frame, store);
+    const receipt = await this.persist(owner.frame, store);
+    // Subscriptions may arrive after the receipt. Install the complete committed
+    // baseline before a later edit can reference identities introduced by it.
+    for (const resource of owner.frame.states.resources) {
+      const entry = this.documents.get(resource.ref);
+      if (!entry || this.retired) continue;
+      if (entry.value) entry.value.receive(resource);
+      else void entry.promise.then(document => {
+        if (!this.retired && this.documents.get(resource.ref) === entry) document.receive(resource);
+      }, () => {
+        // Document loading owns this failure. The command is already committed.
+      });
+    }
+    return receipt;
   }
   private async persist(frame: CommitFrame, store: AuthoredStore): Promise<LocalCommit> {
     for (;;) {
@@ -229,8 +244,18 @@ export class WritingRuntime {
     if (resource.kind === "page") Y.applyUpdate(doc, decodeBytes(resource.title_state), REMOTE);
     let observed_touch = resource.touch_vv;
     const pending_edits = new Set<Promise<LocalCommit>>();
+    const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
     const cached: CachedDocument = {
       ref, doc, pins: 0, pending: 0, bytes: Y.encodeStateAsUpdate(doc).byteLength, last_used: Date.now(), unsubscribe: () => {},
+      receive: latest => {
+        if (this.retired || latest.kind === "highlight") return;
+        if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) initial_prelude=[];
+        observed_touch = mergeVector(observed_touch, latest.touch_vv);
+        Y.applyUpdate(doc, decodeBytes(latest.kind === "note" ? latest.body_state : latest.title_state), REMOTE);
+        cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
+        void this.evict();
+      },
+      onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
       capture: () => {
         const body_state = encodeBytes(Y.encodeStateAsUpdate(doc));
         const observed = { ...observed_touch };
@@ -256,18 +281,14 @@ export class WritingRuntime {
       });
       pending_edits.add(pending); cached.pending++;
       const settled=()=>{pending_edits.delete(pending);cached.pending--;void this.evict();};
-      void pending.then(settled,settled);
+      void pending.then(receipt => { for (const listener of committed) listener(receipt, origin); settled(); },settled);
     });
     cached.unsubscribe = store.subscribe({ kind: "resource", ref }, () => {
       void store.readStates(selection).then(current => {
         if (this.retired) return;
         const latest = current.resources.find(r => r.ref === ref);
         if (!latest || latest.kind === "highlight") return;
-        if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) initial_prelude=[];
-        observed_touch = latest.touch_vv;
-        Y.applyUpdate(doc, decodeBytes(latest.kind === "note" ? latest.body_state : latest.title_state), REMOTE);
-        cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
-        void this.evict();
+        cached.receive(latest);
       }).catch(error => this.publish({ error, error_refs: [ref] }));
     });
     return cached;

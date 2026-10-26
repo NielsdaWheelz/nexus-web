@@ -63,6 +63,10 @@ one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
 acknowledges saved writing. uncertain replies reconcile the same source sequence;
 stale revisions remerge the frozen intent without allocating another touch.
+before returning a local receipt, the runtime merges its committed state into
+already open writing documents. subsequent edits therefore see the shared-text
+identities they reference; subscription delivery is not a commit barrier. incoming
+receipt state does not create another write or text-history item.
 
 ordinary and attached-note editing autosave locally. annotation creation retains
 its explicit-save composer; unsubmitted composer text is ephemeral. uncommitted
@@ -75,6 +79,64 @@ covers the observed source liveness; it never redirects independent source links
 concurrent source edits can revive that source while copied words remain in the
 destination. undo/redo uses local-origin crdt and graph inverses; it does not
 restore an old body snapshot or overwrite an intervening scalar owner.
+
+## outline interaction
+
+the outline owns visible occurrence selection, structural commands, history and
+focus across disclosed branches. editors expose selection bookmarks and input
+capabilities; they do not own graph placement. caret bookmarks use shared text
+identity through moves and remounts. pane edit/append entries use the same focus
+owner and wait for the actual field; newer input cancels both focus and delayed
+window changes. append uses the proven absolute tail. browser keys and native
+semantic input enter the same return/deletion grammar after composition and
+reference input have had their own admission.
+
+return splits prose at the selection; an empty nested item outdents. an empty
+top-level item stays empty. backward/forward deletion at a boundary joins adjacent
+notes; deleting an empty item unlinks its occurrence. code return remains an
+in-note break. explicit block removal unlinks exactly the selected relationships.
+text and structure share one session undo order. reference-query text retains its
+local editing history while the query owns input.
+
+one retained input owns typing between a split/join/first keystroke and the
+mounted canonical note. return freezes semantic segments while the same live
+editor immediately owns the suffix. each segment merges over the commit receipt's
+exact shared-text initialization before its split commits. input admissions keep
+text and structure in one undo order despite asynchronous persistence. the same
+draft retains preparation progress and the loss guard; it introduces no persistent
+outbox or second body cache. structural controls remain unavailable during handoff.
+pending boundary plans retain their displayed peer and exact receipt identities;
+prepared neighbors distinguish an unloaded relationship from absence.
+
+handoff waits for the active native input packet and reconciles prosemirror's
+own dom observer before capturing selection or destroying a view. deferred
+composition completion cannot release a newer packet. this narrow observer
+adapter depends on the locked prosemirror-view version and must be requalified
+when it changes. titles publish readiness after their controlled value and
+relative caret have reached the actual field.
+
+history extends an inverse's causal coverage only from its own structural commits
+and its own editor/undo origins' commit receipts. restoring a relationship during
+one undo therefore remains reversible by an older undo, while an unrelated
+replica's addition or edit stays outside that inverse.
+
+touch-capable panes expose six fixed actions: outdent, indent, move up, move down,
+undo and redo. desktop uses shortcuts. no insert or finish-editing control is
+needed: return inserts and normal focus/keyboard dismissal ends text editing.
+android reports actual keyboard visibility through its existing bridge; an inset
+of zero alone does not imply dismissal.
+
+writing rows keep a leading bullet link and a trailing disclosure only for
+proved projected children; an open empty branch keeps its mounted input. they disclose authored local links, excluding relationships
+already traversed by that occurrence. a bounded batched local query proves child
+availability. one prepared window owns the row projections, adjacent and absolute
+tail relationships, child proofs and retained note/title documents. graph proofs
+share a store revision; unknown data never means absent. first entry waits for
+preparation; refresh retains the prior window until its replacement is ready.
+writing rows use that projection directly, including their native bullet links.
+the opened resource retains
+machine-derived connections and resource management. outline reads grow a retained
+prefix in bounded pages; loading another page does not replace earlier rows.
 
 ## device ownership
 
