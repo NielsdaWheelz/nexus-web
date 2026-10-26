@@ -18,12 +18,27 @@ in all-scope search. classify ownership explicitly; keep local own writing sole
 canonical authority, while authorized peer results retain their remote owner.
 do not treat absent/unloaded local state as proof of peer ownership.
 
-ownership repair in progress: every ResourceItemOut now requires
+ownership repair: every ResourceItemOut now requires
 `authored_by_viewer`, derived in one indexed server account/identity batch over
 only requested authored refs. canonical hidden identities and newly committed
 server writes are included; passage anchors use their own account table.
 readable peer highlights and non-authored resources are false. this is personal
 writing ownership, not a visibility or authorization grant. clients must suppress
 only explicitly viewer-owned remote copies, including matching passages; they
-must not infer ownership from a scheme or a missing local row. client cutover
-and the real peer/own-feed-pending proof remain pending.
+must not infer ownership from a scheme or a missing local row. that client
+cutover is implemented; lab35 (`20261025-170315-6cc86ca6581e`, source `597`)
+passes the real own-before-feed, readable-peer and hidden-owned identity checks.
+scoped local retrieval remains unresolved.
+
+owner selected full offline parity with replicated scope metadata. one material
+boundary remains open: metadata alone cannot locate a new offline capture from
+an older saved publication inside the current publication's parts. the pending
+choice is replicating current searchable text for referenced sources, or using
+publication-specific results until reconnect. no image/pdf download expansion
+or source-byte permission is implied.
+
+the proposed refresh reuses foreground pull/provision and the existing 30-second
+sync cadence, with a coherent source snapshot and durable input revision. broad
+invalidation trades extra recomputation for avoiding account fanout and another
+job system. large publications still require bounded staged records and an
+atomic completion marker; queries keep the previous complete revision until then.

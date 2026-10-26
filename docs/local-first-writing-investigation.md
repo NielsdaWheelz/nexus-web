@@ -427,7 +427,12 @@ replicate the minimal read-only facts needed to resolve media, source-backed
 part, library and conversation scopes. scope resolution combines the last
 synchronized metadata with current local authored state, including new offline
 writes. a server-computed membership list alone cannot include those writes.
-source bytes and a new catalogue product remain outside scope.
+source files and a new catalogue product remain outside scope. one further
+choice is pending: full current-part parity for a new capture from an older
+saved publication requires current searchable source text. ids, intervals and
+generation numbers cannot establish where previously unknown words now occur.
+replicating that text costs storage and provisioning time; publication-specific
+results until reconnect would narrow the selected parity contract.
 
 remote authored ownership is explicit: own resources remain locally
 authoritative, including server-created changes still awaiting local delivery;
