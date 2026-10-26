@@ -21,3 +21,20 @@ uuid and frozen local date before loading the document, pass that attempt to
 the existing capture path, and reuse canonical create/link idempotence. no replay
 ledger or persistent unfinished-writing inventory is needed. implementation
 awaits a meaningful red and exact first-send/date initialization contract.
+
+success does not close the activity: `ShareCapture` retains its result only in
+react and offers open/done links. preserving a uuid alone is therefore
+insufficient. if another surface unlinks the captured note before recreation,
+replaying `captureToday` can re-add its relationship or restore the daily page.
+the original note row, including its tombstone, proves prior completion because
+page/note/link commit atomically. deciding whether to submit again must share the
+command's atomic preparation boundary; a component precheck leaves a race.
+qualify completed capture followed by explicit unlink/delete and recreation as
+well as the ordinary duplicate case. replay must preserve the later user action.
+
+`DeviceSession.startup()` reads the local envelope, including the confirmed
+account calendar zone, without network access. native identity/date can be
+frozen before `loadUrl`; restored account identity must match current admission.
+a disposable instrumentation apk using public `Activity.recreate()` is a possible
+proof path without changing device rotation settings or product code. its exact
+package/signing/lifecycle driver is not yet built or qualified.
