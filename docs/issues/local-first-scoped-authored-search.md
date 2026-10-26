@@ -42,3 +42,19 @@ sync cadence, with a coherent source snapshot and durable input revision. broad
 invalidation trades extra recomputation for avoiding account fanout and another
 job system. large publications still require bounded staged records and an
 atomic completion marker; queries keep the previous complete revision until then.
+
+lexical-field audit: server `search/sources.py:284–306` searches highlight exact
+plus captured prefix/suffix, clipped for the selected reading part. local
+`node/authored/src/queries.ts` indexes exact alone, and local excerpts also use
+exact alone. an owned context-only hit is therefore lost after remote ownership
+suppression. the capture already contains these strings; no new source-text
+replication is needed for this field coverage. scoped matching must clip context
+using the same reading bounds before pagination, rather than let source context
+match outside a part. this is source-confirmed; an actual context-only fixture
+is still required when the shared scope query is implemented.
+
+full scope parity does not promise identical PostgreSQL stemming, semantic
+candidates, ranking or label-substring behavior. local FTS uses unicode token
+prefixes. scope qualification should compare controlled literal matches and
+exact eligibility at a common metadata revision, including pending local edits;
+it must not silently expand into semantic-search parity.

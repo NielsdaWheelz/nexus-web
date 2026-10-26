@@ -68,6 +68,16 @@ already open writing documents. subsequent edits therefore see the shared-text
 identities they reference; subscription delivery is not a commit barrier. incoming
 receipt state does not create another write or text-history item.
 
+local receipts also retain `before`: touch/delete or add/remove vectors per
+changed resource or relationship from the successful compare-and-swap prestate. a stale result
+replaces that certificate before remerge; an uncertain committed retry retains
+the original attempt's certificate. requested absence can certify an empty
+vector; an omitted identity supplies no coverage proof. coverage advances each
+added replica component only when its prestate touches are already covered or
+removed in that exact prestate. this command’s removals cannot supply that proof.
+it never imports other prestate lanes or covers a live intervening same-replica
+edit merely because text is unchanged.
+
 ordinary and attached-note editing autosave locally. annotation creation retains
 its explicit-save composer; unsubmitted composer text is ephemeral. uncommitted
 writing retains the loss guard and retry/copy affordance. committed unsynchronized
