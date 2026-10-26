@@ -73,6 +73,7 @@
   background: var(--surface-hover);
 }
 
+.leading:focus-visible,
 .control:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);

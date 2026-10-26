@@ -112,15 +112,26 @@ displayed baselines. titles use plain shared text and admit no marks or atoms.
 the projection reuses the canonical inline grammar without importing row ids or
 placement from clipboard content.
 
-item text means an occurrence’s own note body or inline page title. it is not a
-sequential tab stop: pointer, f2 and programmatic focus enter it. idle editable
-item text assigns tab/shift-tab and the move chord to the outline, silently
-refusing unavailable structure and ignoring repeats. root text, insertion and
-annotation fields keep native keys. escape selects the occurrence; a second
-escape clears selection and focuses its bullet, from which tab leaves. native
-links and buttons retain their own keys. the flat-host port is tracked in
-`docs/issues/local-first-outline-focus-model.md`; it must preserve these contracts
-without restoring a second row editor or outline session.
+item text means an occurrence’s own note body or inline page title.
+item text is entered by pointer or f2, not sequential tab. each occurrence's
+read-only head is its native navigation target; f2 from that target or its own
+head controls enters editable item text at the end. text, embedded content,
+terminal references and an open query never borrow that command. escape selects
+an item; a second escape returns to its bullet. native traversal skips item
+text in either direction and can return to the admitted root or insertion field.
+root text, insertion fields and annotation bodies retain native tab behavior.
+idle editable item text reserves tab/shift-tab and the move chord for outline
+structure; unavailable moves are silently refused. native links and buttons keep
+their own keys.
+the existing focus request owns a plain-tab entry certificate while the host is
+unfocused. actual native focus installs its authorized root/insertion caret
+synchronously before selection observation; pointer and later keyboard intent
+revoke it, and explicit focus replaces it. the same selection notifications retry
+an entry held by input ownership; its row, ref, field kind and lease must still
+match. native tab still chooses its target.
+flat structural moves and return execute once per press; held backward/forward text
+deletion retains the native repeat path. local writes already sequence through
+the same runtime tail, without an additional keyboard queue.
 
 the outer projection replaces complete changed rows at row boundaries. isolating
 row wrappers never enter the inline input fitter; binding owns inline diffs.

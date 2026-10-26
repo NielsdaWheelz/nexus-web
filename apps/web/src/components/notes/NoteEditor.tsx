@@ -156,8 +156,10 @@ export interface NoteEditorProjection {
   nodeViews?: DirectEditorProps["nodeViews"];
   plugins?: readonly Plugin[];
   onViewReady(view: EditorView | null): void;
+  onFocus(): void;
   reference(row_id: string): ReferenceInputHost | null;
   context(row_id: string): {branch: OutlineBranch; occurrenceKey: string; containingNoteRef: string | null; beforeCollapse?(scope: string): Promise<boolean>};
+  itemText(row_id: string): boolean;
   keys(row_id: string): StructuralKeys | null;
   onEdit(row_id: string, edit: NoteEdit): void;
   onSelectionChange(row_id: string, selection: NoteEdit["selectionAfter"]): void;
@@ -440,7 +442,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const field = editingField(view.state);
     if (!field) return false;
     if (from < field.from || to > field.to) {
-      warn("select text within one field", "select blocks to change more than one item.");
+      warn("Select text within one field", "Select items to change them together.");
       return true;
     }
     if (field.kind === "title" || $from.parent.attrs.presentation === "code") return false;
@@ -478,7 +480,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (!field) return false;
     const selected = view.state.selection;
     if (selected.from < field.from || selected.to > field.to) {
-      warn("select text within one field", "select blocks to change more than one item.");
+      warn("Select text within one field", "Select items to change them together.");
       return true;
     }
     const from = selected.from - field.from, to = selected.to - field.from;
@@ -743,7 +745,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       const field = editingField(current.state);
       if (!field) return false;
       if (selection.from < field.from || selection.to > field.to) {
-        warn("select text within one field", "select blocks to change more than one item.");
+        warn("Select text within one field", "Select items to change them together.");
         return true;
       }
       if ((inputType === "deleteContentBackward" || inputType === "deleteContentForward") && !selection.empty) {
@@ -869,32 +871,39 @@ function NoteEditorContent(props: NoteEditorProps) {
           }),
         ],
       }),
-      attributes: (state) => ({
-        class: latest.current.compact
-          ? `${styles.view} ${styles.compact}`
-          : styles.view,
-        role: activeReference(state) !== null ? "combobox" : "textbox",
-        "aria-readonly": String(
-          !latest.current.editable || busy.current,
-        ),
-        ...(activeReference(state) !== null
-          ? {
-              "aria-expanded": String(referenceRef.current.bindings.inputProps["aria-expanded"] ?? false),
-              "aria-controls": referenceRef.current.bindings.inputProps["aria-controls"] ?? "",
-              tabindex: "0",
-              "aria-autocomplete": "list",
-              "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
-            }
-          : {}),
-        "aria-label": latest.current.label,
-        "aria-multiline": "true",
-        "data-placeholder":
-          latest.current.placeholder ??
-          (latest.current.reference ? "write a note, or @ link something" : ""),
-        "data-empty": String(
-          !latest.current.projection && editingField(state)?.node.content.size === 0,
-        ),
-      }),
+      attributes: (state) => {
+        const field = editingField(state);
+        const nativeEntry = state.selection instanceof TextSelection && field?.row_id !== null && field?.row_id !== undefined &&
+          state.selection.from >= field.from && state.selection.to <= field.to && !latest.current.projection?.itemText(field.row_id);
+        return {
+          class: latest.current.compact
+            ? `${styles.view} ${styles.compact}`
+            : styles.view,
+          role: activeReference(state) !== null ? "combobox" : "textbox",
+          "aria-readonly": String(
+            !latest.current.editable || busy.current,
+          ),
+          ...(activeReference(state) !== null
+            ? {
+                "aria-expanded": String(referenceRef.current.bindings.inputProps["aria-expanded"] ?? false),
+                "aria-controls": referenceRef.current.bindings.inputProps["aria-controls"] ?? "",
+                tabindex: "0",
+                "aria-autocomplete": "list",
+                "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
+              }
+            : latest.current.projection && latest.current.editable && !busy.current
+              ? {tabindex: nativeEntry ? "0" : "-1"}
+              : {}),
+          "aria-label": latest.current.label,
+          "aria-multiline": "true",
+          "data-placeholder":
+            latest.current.placeholder ??
+            (latest.current.reference ? "write a note, or @ link something" : ""),
+          "data-empty": String(
+            !latest.current.projection && editingField(state)?.node.content.size === 0,
+          ),
+        };
+      },
       nodeViews: {
         resource_embed(node, current, getPos) {
           const position = getPos();
@@ -1035,6 +1044,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         },
         focus(current) {
           suspended.current = false;
+          latest.current.projection?.onFocus();
           notifySelection(current.state);
           setReferenceFocused(true);
           setReferenceVisible(true);
@@ -1143,7 +1153,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           const field = editingField(current.state);
           if (!field) return false;
           if (selection instanceof TextSelection && (selection.from < field.from || selection.to > field.to))
-            return act(() => warn("select text within one field", "select blocks to change more than one item."));
+            return act(() => warn("Select text within one field", "Select items to change them together."));
           return act(() => action(fieldSelection(current.state, field)));
         };
         if (event.key === "Enter" && !event.altKey) {
@@ -1164,6 +1174,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const keys = structuralKeys(current.state);
         const structural = outlineStructuralCommand(event, latest.current.platform);
         if (structural && keys?.selectBlock) {
+          if (event.repeat) return act(() => {});
           return arrangeAt(at => {
             if (structural === "indent") keys.indent?.(at);
             else if (structural === "outdent") keys.outdent?.(at);
@@ -1178,11 +1189,11 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (!arrange) return false;
           return arrangeAt(arrange);
         }
-        if (event.shiftKey) return false;
         if (event.key === "Enter" && event.repeat) {
           event.preventDefault();
           return true;
         }
+        if (event.shiftKey) return false;
         const inputType = event.key === "Enter" ? "insertParagraph"
           : event.key === "Backspace" ? "deleteContentBackward"
           : event.key === "Delete" ? "deleteContentForward" : null;
@@ -1252,6 +1263,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
       readSelection() {
+        latest.current.projection?.onFocus();
         if (!nativeInputOpen.current && !view.composing && compositionBase.current === null) syncNativeSelection(view);
         const field = editingField(view.state);
         const selection = field ? fieldSelection(view.state, field) : {anchor: 1, head: 1};
@@ -1484,7 +1496,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               if(activeReference(view.state)!==null)return;
               const field=editingField(view.state);if(!field||field.kind!=="body")return;
               if(view.state.selection.from<field.from||view.state.selection.to>field.to){
-                warn("select text within one field","select blocks to change more than one item.");return;
+                warn("Select text within one field","Select items to change them together.");return;
               }
               latest.current.history?.boundary();
               const block=field.node,before=fieldBody(field);

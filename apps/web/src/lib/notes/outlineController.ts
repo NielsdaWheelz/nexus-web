@@ -2,7 +2,7 @@
  * binds its canonical document; the retained cell owns placement and copy text. */
 import * as Y from "yjs";
 import {type Node as PMNode} from "prosemirror-model";
-import {Plugin, TextSelection, NodeSelection} from "prosemirror-state";
+import {Plugin, TextSelection, NodeSelection, type Transaction} from "prosemirror-state";
 import type {EditorView, NodeView} from "prosemirror-view";
 import {bodyText, docFromBody, emptyBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
 import {decodeBytes, readBody} from "@nexus/authored/documents";
@@ -16,7 +16,7 @@ import type {OutlineRowChrome, OutlineRowMount} from "@/components/notes/Outline
 import rowStyles from "@/components/notes/OutlineEditorRow.module.css";
 import {buttonClassName} from "@/components/ui/control";
 import {OutlineBinding, type OutlineBindingField} from "./outlineBinding";
-import {canonicalBody, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
+import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
 import {OutlinePendingInput, type PendingOutlineField} from "./outlinePending";
 import {OutlineHistory, type DisplayedWriting, type OutlineBookmark} from "./structure";
 import type {LocalCommit, WritingDocument, WritingRuntime} from "./runtime";
@@ -75,7 +75,7 @@ export class OutlineController {
   private handle: NoteEditorHandle | null = null;
   private disconnect: (() => void) | null = null;
   private unbindFocus: (() => void) | null = null;
-  private waiting: {row_id: string; selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection); lease: () => boolean; resolve(): void} | null = null;
+  private waiting: {row_id: string; selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection); lease: () => boolean; resolve(): void; native?: {ref: string | null; kind: "body" | "title"}} | null = null;
   private deferred = false;
   private initialTitleApplied = false;
   private titleEdited = false;
@@ -122,15 +122,39 @@ export class OutlineController {
   }
   lease = () => {const at = this.intent; return () => this.active && at === this.intent;};
   revoke(): void {this.intent++; this.waiting?.resolve(); this.waiting = null;}
+  /** Native tab chooses the focus destination. The existing request reconciles
+   * this admitted entry only after the browser actually enters its host. */
+  armNativeEntry(): void {
+    this.waiting?.resolve(); this.waiting = null;
+    const view = this.view;
+    if (!this.active || !view || view.hasFocus() || this.selected.size || !this.handle?.canArrange()) return;
+    const selection = view.state.selection;
+    if (!(selection instanceof TextSelection)) return;
+    const field = fieldAt(view.state.doc, selection.anchor), row = field ? this.rows.get(field.row_id) : null;
+    if (!field || !row || !row.root && !row.tail || !this.editableReady(row) || selection.from < field.from || selection.to > field.to) return;
+    this.waiting = {row_id: row.row_id, selection: {anchor: selection.anchor - field.from + 1, head: selection.head - field.from + 1},
+      lease: this.lease(), resolve() {}, native: {ref: row.ref, kind: field.kind}};
+  }
   setHandle(handle: NoteEditorHandle | null): void {this.handle = handle; if (handle) this.refresh();}
   setView(view: EditorView | null): void {
     this.view = view;
-    if (view) {if (!this.disconnect) this.connect(); this.project(true); this.tryFocus();}
+    if (view) {
+      if (!this.disconnect) this.connect();
+      this.project(true);
+      if (this.selectionRow === null && !this.selected.size) {
+        const tr = view.state.tr.setMeta(outlineTransactionSource, "projection");
+        if (this.setNativeEntry(tr)) view.dispatch(tr);
+      }
+      this.tryFocus();
+    }
     else {this.disconnect?.(); this.disconnect = null; this.unbindFocus?.(); this.unbindFocus = null;}
   }
   setFocused(value: boolean): void {this.focused = value; if (!value) this.refresh(); this.notify();}
   withdraw(): void {this.focused = false; this.selected.clear(); this.refresh(); this.syncMetadata(); this.notify();}
   onSelectionChange = (row_id: string, at: {anchor: number; head: number}) => {
+    // Keyup and composition/query release retry the same certified entry. Its
+    // dispatch notifies with the settled selection; this call's old args do not.
+    if (this.waiting?.native) {this.tryFocus(); return;}
     if (!(this.view?.state.selection instanceof NodeSelection)) {
       if (this.selectionRow !== row_id) this.history.boundary();
       this.selectionRow = row_id; this.selection = at; this.selected.clear();
@@ -712,6 +736,23 @@ export class OutlineController {
         : outlineEditorSchema.nodes.note_row!.create(attrs, outlineEditorSchema.nodeFromJSON(body.body_pm_json));
     }));
   }
+  /** One host supplies the root/tail tab entry; item text is entered explicitly.
+   * Changing this hidden selection never focuses or creates another host. */
+  private setNativeEntry(tr: Transaction): boolean {
+    const root = this.rows.get(this.pending.root_id);
+    const row = root && root.kind !== "reference" && this.editableReady(root) ? root
+      : [...this.rows.values()].find(row => row.tail && row.parent_id === this.pending.root_id && this.editableReady(row));
+    const field = row ? fieldById(tr.doc, row.row_id) : null;
+    if (!field) return false;
+    this.selectionRow = field.row_id; this.selection = {anchor: 1, head: 1};
+    tr.setSelection(TextSelection.create(tr.doc, field.from));
+    return true;
+  }
+  private restoreNativeEntry(): void {
+    if (!this.view || this.selected.size || !this.handle?.canArrange()) return;
+    const tr = this.view.state.tr.setMeta(outlineTransactionSource, "projection");
+    if (this.setNativeEntry(tr)) {this.view.dispatch(tr); this.armNativeEntry();}
+  }
   private project(semantic = false): void {
     if (!this.view || !semantic && !this.handle?.canArrange()) return;
     const next = this.doc();
@@ -730,6 +771,7 @@ export class OutlineController {
     if (active && this.selected.size) {
       tr.doc.forEach((node, at) => {if (node.attrs.row_id === active) tr.setSelection(NodeSelection.create(tr.doc, at));});
     } else if (field) tr.setSelection(TextSelection.create(tr.doc, field.from + Math.min(field.to - field.from, selection.anchor - 1), field.from + Math.min(field.to - field.from, selection.head - 1)));
+    else if (active === null && !this.selected.size && this.view.state.doc.childCount === 0) this.setNativeEntry(tr);
     this.view.dispatch(tr);
   }
   private retainField(row: OutlineRow): void {
@@ -759,9 +801,17 @@ export class OutlineController {
       this.history.editor(document, row.origin).record(edit, undefined, this.pending.bookmark(this.retained(row_id)!, edit.selectionAfter) ?? undefined);
     }
   };
+  itemText = (row_id: string): boolean => {
+    const row = this.rows.get(row_id);
+    return !!row && !row.root && !row.tail && !row.gap && !row.terminal && row.kind !== "reference";
+  };
+  private editableItem(row: OutlineRow): boolean {
+    return this.itemText(row.row_id) && !this.blockedRows.has(row.row_id) && !!this.handle?.canArrange() && this.editableReady(row) &&
+      (this.pending.fields.get(row.row_id)?.pending === true || this.binding.document(row.row_id) === this.documents.get(row.ref ?? "")?.document);
+  }
   keys = (row_id: string): StructuralKeys | null => {
     const row = this.rows.get(row_id); if (!row || row.gap || this.filter.trim() || this.blockedRows.has(row_id)) return null;
-    const arrangement: StructuralKeys = {indent: at => this.arrangePrepared(row_id, "indent", at), outdent: at => this.arrangePrepared(row_id, "outdent", at),
+    const arrangement: StructuralKeys = row.root || row.tail ? {} : {indent: at => this.arrangePrepared(row_id, "indent", at), outdent: at => this.arrangePrepared(row_id, "outdent", at),
       move: (direction, at) => this.arrangePrepared(row_id, direction === "up" ? "move_up" : "move_down", at), selectBlock: () => this.select(row_id)};
     if (row.kind === "reference") return arrangement;
     return {...arrangement, split: (left, right, displayed) => {
@@ -818,6 +868,11 @@ export class OutlineController {
     this.selectionRow = row_id; this.focused = true;
     if (this.view) {let at = 0; this.view.state.doc.forEach((node, offset) => {if (node.attrs.row_id === row_id) at = offset;}); this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, at))); this.view.focus();}
     this.syncMetadata(); this.notify();
+  }
+  private clearSelection(row_id = this.selectionRow): void {
+    this.selected.clear(); this.focused = false; this.syncMetadata(); this.notify();
+    if (row_id) this.mounts.get(row_id)?.leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});
+    this.restoreNativeEntry();
   }
   remove(ids: readonly string[], direction?: "backward" | "forward"): void {
     const candidates = ids.flatMap(id => {const row = this.rows.get(id); return row && !row.root && !row.tail && (row.link || this.pending.fields.get(id)?.pending) ? [row] : [];});
@@ -958,8 +1013,15 @@ export class OutlineController {
   private tryFocus(): void {
     const request = this.waiting; if (!request || !this.view) return;
     if (!request.lease()) {this.waiting = null; request.resolve(); return;}
-    if (!this.view.editable) return;
     const row = this.rows.get(request.row_id);
+    if (request.native) {
+      const field = fieldById(this.view.state.doc, request.row_id);
+      if (!row || !row.root && !row.tail || row.ref !== request.native.ref || field?.kind !== request.native.kind) {
+        this.waiting = null; request.resolve(); return;
+      }
+      if (!this.view.hasFocus() || !this.handle?.canArrange()) return;
+    }
+    if (!this.view.editable) return;
     if (typeof request.selection === "function") {
       const document = row?.ref ? this.documents.get(row.ref)?.document : null;
       if (!document) return;
@@ -1085,12 +1147,30 @@ export class OutlineController {
     dom.className = rowStyles.row; head.className = rowStyles.head; leading.className = rowStyles.leading; trailing.className = rowStyles.trailing; content.className = rowStyles.content;
     leading.contentEditable = "false"; trailing.contentEditable = "false"; content.dataset.outlineField = id;
     head.append(leading, content, trailing); dom.append(head);
+    head.addEventListener("keydown", event => {
+      const target = event.target, row = this.rows.get(id);
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey ||
+        !(target instanceof Element) || target.closest("[data-outline-occurrence]") !== dom || content.contains(target) || !row || !this.handle?.canArrange()) return;
+      if (event.key === "F2" && !event.shiftKey && this.editableItem(row)) {
+        event.preventDefault(); event.stopPropagation();
+        if (!event.repeat) {this.selected.clear(); void this.focus(id, "end"); this.syncMetadata(); this.notify();}
+      } else if (event.key === " " && !event.shiftKey && target === leading) {
+        event.preventDefault(); event.stopPropagation(); if (!event.repeat) this.select(id);
+      } else if (event.key === "Escape" && !event.shiftKey && this.selected.size) {
+        event.preventDefault(); event.stopPropagation(); this.clearSelection(id);
+      } else if (event.key === "Tab" && !this.selected.size) this.restoreNativeEntry();
+    }, true);
     const sync = () => {
       const row = this.rows.get(id); if (!row) return;
       dom.dataset.outlineRow = id; dom.dataset.outlineOccurrence = id; dom.dataset.outlineKind = row.kind === "body" ? "note" : row.kind;
       dom.dataset.depth = String(row.depth); dom.style.setProperty("--outline-depth", String(row.depth));
       dom.dataset.root = String(row.root);
       leading.hidden = row.root || row.tail || !!row.gap;
+      leading.tabIndex = leading.hidden ? -1 : 0;
+      if (!leading.hidden) {
+        leading.dataset.outlineTarget = "true"; leading.setAttribute("role", "group"); leading.setAttribute("aria-label", `outline item: ${this.label(row)}`);
+      } else {delete leading.dataset.outlineTarget; leading.removeAttribute("role"); leading.removeAttribute("aria-label");}
+      if (this.editableItem(row)) leading.setAttribute("aria-keyshortcuts", "F2"); else leading.removeAttribute("aria-keyshortcuts");
       const hideTrailing = row.root || !(row.terminal || row.children?.available === true);
       const disclosure = trailing.querySelector<HTMLButtonElement>("button[aria-expanded]");
       if (hideTrailing && disclosure && document.activeElement === disclosure)
@@ -1143,11 +1223,13 @@ export class OutlineController {
       },
       keydown: (_view, event) => {
         if (!this.selected.size || event.isComposing || event.altKey || event.metaKey || event.ctrlKey) return false;
+        if (event.key === "Escape") {event.preventDefault(); this.clearSelection(); return true;}
         if (event.key === "Delete" || event.key === "Backspace") {event.preventDefault(); this.remove([...this.selected]); return true;}
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {event.preventDefault(); const rows = [...this.rows.values()].filter(row => !row.gap && !row.tail && !row.root), at = rows.findIndex(row => row.row_id === this.selectionRow), next = rows[at + (event.key === "ArrowDown" ? 1 : -1)]; if (next) this.select(next.row_id, event.shiftKey); return true;}
-        if (event.key === "Enter" && this.selectionRow) {event.preventDefault(); const row = this.rows.get(this.selectionRow); if (row) void this.appendAfter(row); return true;} return false;
+        if (event.key === "Enter" && this.selectionRow) {event.preventDefault(); const row = this.rows.get(this.selectionRow); if (row && !event.repeat) void this.appendAfter(row); return true;} return false;
       },
-    }}})], keys: this.keys, onEdit: this.onEdit, onSelectionChange: this.onSelectionChange, onViewReady: view => this.setView(view),
+    }}})], keys: this.keys, itemText: this.itemText, onFocus: () => {if (this.waiting?.native) this.tryFocus();},
+    onEdit: this.onEdit, onSelectionChange: this.onSelectionChange, onViewReady: view => this.setView(view),
     context: row_id => {
       const row = this.rows.get(row_id), parent = row?.branch ?? this.rootBranch;
       const branch = row?.ref && !parent.ancestors.has(row.ref) ? enterOutlineOccurrence({branch: parent, ref: row.ref, target: {kind: "occurrence", key: row_id}, edgeIds: row.link ? [row.link.link_id] : []}) : parent;

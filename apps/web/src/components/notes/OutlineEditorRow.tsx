@@ -39,7 +39,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     if (!row || row.root) return [];
     const parsed = row.ref && parseResourceRef(row.ref);
     const identity = parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "note";
-    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "select block", restoreFocusOnClose: false, onSelect: row.select}];
+    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", restoreFocusOnClose: false, onSelect: row.select}];
     if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `unlink from ${row.parentLabel}`, restoreFocusOnClose: false, onSelect: row.unlink});
     const leading = <span onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}

@@ -9,12 +9,12 @@ import type { OutlineCommand } from "@/lib/notes/editorTypes";
 import styles from "./OutlineCommands.module.css";
 
 const commands: readonly [OutlineCommand, string, LucideIcon][] = [
-  ["outdent", "outdent", IndentDecrease],
-  ["indent", "indent", IndentIncrease],
-  ["move_up", "move item up", ArrowUp],
-  ["move_down", "move item down", ArrowDown],
-  ["undo", "undo", Undo2],
-  ["redo", "redo", Redo2],
+  ["outdent", "Outdent", IndentDecrease],
+  ["indent", "Indent", IndentIncrease],
+  ["move_up", "Move item up", ArrowUp],
+  ["move_down", "Move item down", ArrowDown],
+  ["undo", "Undo", Undo2],
+  ["redo", "Redo", Redo2],
 ];
 
 export default function OutlineCommands({

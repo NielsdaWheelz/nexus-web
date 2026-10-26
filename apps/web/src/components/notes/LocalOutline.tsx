@@ -87,6 +87,8 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
     const intent = (event: Event) => {
       if (!event.isTrusted) return;
       controller.revoke();
+      if (event instanceof KeyboardEvent && event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.isComposing)
+        controller.armNativeEntry();
       if (event.type === "pointerdown" && event.target instanceof Element && !event.target.closest(`[data-outline-session="${pending.value.input.root_id}"]`) && !event.target.closest("[data-outline-commands]")) controller.withdraw();
     };
     document.addEventListener("pointerdown", intent, true); document.addEventListener("keydown", intent, true); document.addEventListener("beforeinput", intent, true);
