@@ -24,10 +24,11 @@ import type {FocusSelection, NoteEdit, OutlineCommand} from "./editorTypes";
 import {clipboardPlainText, readOutlineClipboard, writeOutlineClipboard, type ClipItem} from "./clipboard";
 import {prepareTarget} from "@/lib/resourceGraph/links";
 
+interface ChildProof {descriptor: string; store_revision: string; available: boolean | null}
 export interface OutlineRow {
   row_id: string; ref: string | null; link: LinkState | null; parent_id: string | null; parent_ref: string;
   depth: number; branch: OutlineBranch; resource: ResourceProjection | null; kind: "body" | "title" | "reference";
-  childrenAvailable: boolean; open: boolean; terminal: boolean; root: boolean; tail: boolean;
+  children: ChildProof | null; open: boolean; terminal: boolean; root: boolean; tail: boolean;
   gap?: "before" | "after" | "tail";
   origin: unknown;
 }
@@ -266,7 +267,34 @@ export class OutlineController {
     }
     return false;
   }
+  private childDescriptor(row: OutlineRow): string | null {
+    if (!row.parent_id || !row.ref || !row.link) return null;
+    return JSON.stringify([row.parent_id, row.parent_ref, row.ref, row.link.link_id,
+      [...row.branch.ancestors].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+        .map(([ref, target]) => [ref, target.kind, target.kind === "occurrence" ? target.key : null]),
+      [...row.branch.traversedEdgeIds].sort()]);
+  }
+  private childProof(row: OutlineRow, window: OutlineWindow | undefined): ChildProof | null {
+    if (!window || !row.link || !window.rows.some(item => item.link?.link_id === row.link!.link_id && item.resource.ref === row.ref)) return null;
+    const descriptor = this.childDescriptor(row);
+    if (descriptor === null || descriptor !== this.childDescriptor({...row, parent_ref: window.ref, branch: window.branch})) return null;
+    const available = window.childAvailability.get(row.link.link_id);
+    return typeof available === "boolean" ? {descriptor, store_revision: window.data.store_revision, available} : null;
+  }
+  private refreshChildren(parent_id: string, window: OutlineWindow): void {
+    if (!this.active || !this.requests.has(parent_id)) return;
+    let changed = false;
+    for (const row of this.rows.values()) {
+      if (row.parent_id !== parent_id) continue;
+      const proof = this.childProof(row, window);
+      if (!proof || row.children?.descriptor === proof.descriptor && (BigInt(row.children.store_revision) > BigInt(proof.store_revision)
+        || row.children.available !== null && row.children.store_revision === proof.store_revision)) continue;
+      row.children = proof; changed = true;
+    }
+    if (changed) {this.syncMetadata(); this.notify();}
+  }
   accept(parent_id: string, window: OutlineWindow): void {
+    this.refreshChildren(parent_id, window);
     if (this.proposals.get(parent_id) !== window) {this.proposals.set(parent_id, window); this.versions.set(parent_id, (this.versions.get(parent_id) ?? 0) + 1);}
     if (this.scheduled.has(parent_id)) return;
     this.scheduled.add(parent_id);
@@ -380,7 +408,7 @@ export class OutlineController {
     this.rows.clear();
     const root = this.pending.root_id;
     if (this.rootField && (this.documents.has(this.rootRef) || this.pending.fields.get(root)?.raw)) this.rows.set(root, {row_id: root, ref: this.rootRef, link: null, parent_id: null, parent_ref: this.rootRef,
-      depth: 0, branch: this.rootBranch, resource: this.windows.get(root)?.rootResource ?? null, kind: this.rootRef.startsWith("page:") ? "title" : "body", childrenAvailable: false, open: true, terminal: false, root: true, tail: false, origin: this.origin(root)});
+      depth: 0, branch: this.rootBranch, resource: this.windows.get(root)?.rootResource ?? null, kind: this.rootRef.startsWith("page:") ? "title" : "body", children: null, open: true, terminal: false, root: true, tail: false, origin: this.origin(root)});
     let tailSlots = Math.max(0, MAX_REFS - this.refs().size - this.pending.provisionalCount());
     const collect = (parent_id: string, ref: string, branch: OutlineBranch, depth: number) => {
       const window = this.windows.get(parent_id);
@@ -393,9 +421,11 @@ export class OutlineController {
         const override = this.pending.fields.get(id);
         if (override && override.parent_id !== parent_id) {id = crypto.randomUUID(); this.identities.set(`${parent_id}/${link.link_id}`, {id, origin: this.history.typingOrigin()});}
         if (moving) this.identities.set(`${parent_id}/${link.link_id}`, {id, origin: moving.origin});
-        return {row_id: id, ref: item.resource.ref, link, parent_id, parent_ref: ref, depth, branch, resource: item.resource,
+        const row: OutlineRow = {row_id: id, ref: item.resource.ref, link, parent_id, parent_ref: ref, depth, branch, resource: item.resource,
           kind: terminal || item.resource.kind !== "note" && item.resource.kind !== "page" ? "reference" : item.resource.kind === "page" ? "title" : "body",
-          childrenAvailable: window?.childAvailability.get(link.link_id) === true, open: this.opened.has(id), terminal, root: false, tail: false, origin: this.origin(id)};
+          children: null, open: this.opened.has(id), terminal, root: false, tail: false, origin: this.origin(id)};
+        row.children = this.childProof(row, window);
+        return row;
       });
       for (const pending of this.pending.fields.values()) if (pending.parent_id === parent_id) {
         const at = siblings.findIndex(row => row.row_id === pending.row_id);
@@ -405,14 +435,14 @@ export class OutlineController {
         const after = pending.after_id === null ? siblings.length - 1 : siblings.findIndex(row => row.row_id === pending.after_id);
         const before = pending.before_id ? siblings.findIndex(row => row.row_id === pending.before_id) : -1;
         siblings.splice(before >= 0 ? before : after >= 0 ? after + 1 : siblings.length, 0, {row_id: pending.row_id, ref: pending.ref, link: pending.link, parent_id, parent_ref: pending.parent_ref, depth, branch,
-          resource: pending.resource ?? existing?.resource ?? null, kind: pending.kind, childrenAvailable: existing?.childrenAvailable ?? false, open: this.opened.has(pending.row_id), terminal: existing?.terminal ?? false, root: false, tail: false, origin: pending.origin});
+          resource: pending.resource ?? existing?.resource ?? null, kind: pending.kind, children: existing?.children ?? null, open: this.opened.has(pending.row_id), terminal: existing?.terminal ?? false, root: false, tail: false, origin: pending.origin});
       }
       if ([...this.pending.fields.values()].some(row => row.parent_id === parent_id && row.relocating)) {
         const rank = new Map(this.pending.order.map((id, index) => [id, index]));
         siblings.sort((a, b) => (rank.get(a.row_id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.row_id) ?? Number.MAX_SAFE_INTEGER));
       }
       if (window?.beforeEdge) this.rows.set(`before:${parent_id}`, {row_id: `before:${parent_id}`, ref: null, link: null, parent_id, parent_ref: ref, depth, branch,
-        resource: null, kind: "reference", childrenAvailable: false, open: false, terminal: false, root: false, tail: false, gap: "before", origin: null});
+        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, tail: false, gap: "before", origin: null});
       for (const row of siblings) {
         if (this.filter.trim() && !this.bodyMatches(row) && !protectedRows.has(row.row_id)) continue;
         this.rows.set(row.row_id, row);
@@ -428,20 +458,32 @@ export class OutlineController {
         }
       }
       if (window?.afterEdge) this.rows.set(`after:${parent_id}`, {row_id: `after:${parent_id}`, ref: null, link: null, parent_id, parent_ref: ref, depth, branch,
-        resource: null, kind: "reference", childrenAvailable: false, open: false, terminal: false, root: false, tail: false, gap: "after", origin: null});
+        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, tail: false, gap: "after", origin: null});
       else if (window && !this.filter.trim() && tailSlots > 0) {
         const id = this.tailId(parent_id);
         if (!this.pending.fields.has(id)) {tailSlots--; this.rows.set(id, {row_id: id, ref: null, link: null, parent_id, parent_ref: ref, depth, branch, resource: null,
-          kind: "body", childrenAvailable: false, open: false, terminal: false, root: false, tail: true, origin: this.origin(id)});}
+          kind: "body", children: null, open: false, terminal: false, root: false, tail: true, origin: this.origin(id)});}
       }
       else if (window && !this.filter.trim()) this.rows.set(`tail:${parent_id}`, {row_id: `tail:${parent_id}`, ref: null, link: null, parent_id, parent_ref: ref, depth, branch,
-        resource: null, kind: "reference", childrenAvailable: false, open: false, terminal: false, root: false, tail: false, gap: "tail", origin: null});
+        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, tail: false, gap: "tail", origin: null});
     };
     collect(root, this.rootRef, this.rootBranch, 0);
     for (const [id, embedded] of this.embedded) if (embedded.owner === root) collect(id, embedded.ref, embedded.branch, 1);
     if (!semantic && [...protectedRows].some(id => previousRows.has(id) && !this.rows.has(id))) {
       this.rows.clear(); for (const [id, row] of previousRows) this.rows.set(id, row);
       this.deferred = true; return;
+    }
+    for (const row of this.rows.values()) {
+      const descriptor = this.childDescriptor(row);
+      if (row.children?.descriptor !== descriptor) row.children = null;
+      const proof = (previousRows.get(row.row_id) ?? this.occurrences.get(row.row_id))?.children;
+      if (proof && descriptor !== null) {
+        const newer = !row.children || BigInt(proof.store_revision) > BigInt(row.children.store_revision);
+        if (proof.descriptor === descriptor && (newer || row.children?.available === null && proof.store_revision === row.children.store_revision)) row.children = proof;
+        // Relocation invalidates availability, but an older admitted window
+        // must not resurrect a proof already superseded before relocation.
+        else if (newer) row.children = {descriptor, store_revision: proof.store_revision, available: null};
+      }
     }
     this.pending.order = [...this.rows.keys(), ...this.pending.order.filter(id => !this.rows.has(id) && this.pending.fields.get(id)?.raw)];
     const fields = new Map<string, OutlineBindingField>();
@@ -814,7 +856,7 @@ export class OutlineController {
       depth: row.depth, parent_id: row.parent_id, label: row.gap ? row.gap === "before" ? "show earlier items" : row.gap === "after" ? "show more items" : "write at end" : this.label(row),
       href: row.resource ? localResourceHref(row.resource) : row.ref ? `/${row.kind === "title" ? "pages" : "notes"}/${row.ref.split(":")[1]}` : null,
       parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
-      childrenAvailable: row.childrenAvailable, open: row.open, terminal: row.terminal, root: row.root || row.tail || !!row.gap, selected: this.selected.has(row.row_id),
+      childrenAvailable: row.children?.available === true, open: row.open, terminal: row.terminal, root: row.root || row.tail || !!row.gap, selected: this.selected.has(row.row_id),
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id), unlink: () => this.remove([row.row_id]), reveal: () => {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
           else if (ancestor?.kind === "occurrence" && this.rows.has(ancestor.key)) void this.focus(ancestor.key); else if (ancestor) this.revealExternal?.(ancestor);}
@@ -839,7 +881,11 @@ export class OutlineController {
       dom.dataset.depth = String(row.depth); dom.style.setProperty("--outline-depth", String(row.depth));
       dom.dataset.root = String(row.root);
       leading.hidden = row.root || row.tail || !!row.gap;
-      trailing.hidden = row.root || !(row.terminal || row.childrenAvailable);
+      const hideTrailing = row.root || !(row.terminal || row.children?.available === true);
+      const disclosure = trailing.querySelector<HTMLButtonElement>("button[aria-expanded]");
+      if (hideTrailing && disclosure && document.activeElement === disclosure)
+        leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});
+      trailing.hidden = hideTrailing;
       if (row.ref) dom.dataset.resourceRef = row.ref; else delete dom.dataset.resourceRef;
       if (row.parent_id) dom.dataset.parentRow = row.parent_id;
       if (row.root) dom.dataset.outlineRoot = "true";

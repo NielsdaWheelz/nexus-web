@@ -180,6 +180,11 @@ absolute tail relationships and child proofs; the root admits and retains all
 note/title documents together. graph proofs
 share a store revision; unknown data never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
+compatible child proofs refresh independently of raw field admission. each
+proof identifies its resource, relationship, parent and traversal context;
+relocation discards availability but retains its revision watermark, so an
+older admitted window cannot resurrect stale disclosure. only the disappearing
+disclosure's actual focus moves to its existing bullet before it hides.
 writing rows use that projection directly, including their native bullet links.
 the opened resource retains machine-derived connections and resource management.
 embedded targets render rich read-only previews; editing opens their resource.

@@ -10,6 +10,8 @@ import type {WritingRuntime} from "./runtime";
 
 export interface OutlineEdge {link: LinkState; resource: ResourceProjection}
 export interface OutlineWindow {
+  readonly ref: string;
+  readonly branch: OutlineBranch;
   data: QueryResult;
   rows: QueryRow[];
   beforeEdge: OutlineEdge | null;
@@ -75,7 +77,7 @@ export function useOutlineWindow(query: OutlineQuery, branch: OutlineBranch, run
       }
       const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
         .filter(({link, resource}) => (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
-      if (!retired) publish({key, runtime, window: {data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!, childAvailability, resources,
+      if (!retired) publish({key, runtime, window: {ref: query.ref, branch, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!, childAvailability, resources,
         rootResource: resources.get(query.ref) ?? null, editableRefs}});
     })().catch(error => {if (!retired) fail({key, error});});
     return () => {retired = true;};
