@@ -20,6 +20,14 @@ no reader-profile PATCH was sent. the host ran four labs at load average ~19 on
 checked. the launcher has the same class of gap
 (`nexus-launch-click-before-hydration-is-lost.md`).
 
+the complete-index branch independently reproduces replacement with all 200
+server rows and no hydration error: source `fb5a7bd53`, private lab
+`20261025-183604-aba244cdc7f8`, `index-module-200-hydration.json` and its hydration
+trace. the original list remains visible through 639 ms, is removed at 948 ms,
+then returns as new nodes at 1,414 ms. body chunks execute after removal. the
+initiating ancestor/context update remains unproven; navigation timings cannot
+qualify this deep-link path.
+
 impact: an early key or click on a fresh pane is silently discarded, and the
 body flashes server content, skeleton, content. slow script startup widens the
 window.
