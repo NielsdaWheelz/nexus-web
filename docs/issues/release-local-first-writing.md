@@ -69,3 +69,16 @@ sha256 admission token. only notes whose text projection changes get a new
 revision-fenced reindex intent; old active/unclaimed intents for those notes
 settle superseded. unchanged lexical/materialized evidence remains available.
 no canonical content/id, chunk or vector is dropped merely to reset the corpus.
+
+current-corpus rehearsal passed on 2026-10-26, candidate `78505bfb1`:
+the verified 0317 nightly archive was fully restored to isolated disk-backed
+postgres 15.19/pg_search 0.26.2 under the production 512 mib/no-swap cap, then
+normal alembic ran 0318–0320. all 28 notes, 2 pages, 80 highlights and 18 authored
+links retained content, identities, liveness, bindings and endpoint order;
+810,348 non-note lexical rows matched. actual merge bytes decoded through the
+shared validator. the largest complete-account change/envelope was
+138,877/138,943 bytes; the largest snapshot record was 4,255 bytes. this archive
+has zero passage anchors; separate conversion cases own that nonempty case.
+owned scratch resources were removed; production was read-only. installed-client
+and deployed cutover qualification remain pending, and release still takes its
+own stopped-writer backup.
