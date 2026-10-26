@@ -24,7 +24,7 @@
 // - Defects throw in render; aborts and 401s are not failures.
 
 import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteReady, remoteAttemptAllowed } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -282,7 +282,7 @@ function useList<T, M>(
           shownRef.current = null;
           setShown(null);
         }
-        if (!remoteReady()) {
+        if (!remoteAttemptAllowed()) {
           if (base !== null && base.cursor === null) { for (const waiter of settle) waiter.resolve(); return null; }
           throw localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection");
         }

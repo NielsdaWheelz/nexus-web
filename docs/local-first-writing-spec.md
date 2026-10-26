@@ -248,6 +248,14 @@ editor objects. initial cache budget: 64 documents or 16 mib encoded state,
 excluding currently mounted editors. evict clean/unmounted instances only.
 pin documents referenced by retained undo groups; discard oldest whole groups
 before exceeding the cache budget. closing the outline releases its history.
+the visible outline uses one persistent editing host. its separate admission
+budget is 64 distinct documents or 16 mib encoded state across the entire
+session, including disclosed descendants, neighbors, tail, pending writing and
+history. release inactive windows and oldest whole history groups before loading
+more. growth of already protected writing may exceed that budget: preserve the
+text and stop additional loads until room exists. never discard accepted input
+or remount its editor to enforce a memory number. this is an admission bound,
+not a hard resident-memory ceiling.
 fts5 and indexed endpoint tables supply local queries. tokenization/query
 construction belongs to the shared query owner, including literal escaping.
 

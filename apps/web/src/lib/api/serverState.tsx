@@ -20,7 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteReady, remoteAttemptAllowed } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import {
   ApiError,
@@ -417,7 +417,7 @@ function useServerState<D>(
                 if (controller.signal.aborted) return;
                 if (current.queued || generation !== owner.generation || reading.key !== latest.current.key || reading.accountId !== latest.current.accountId) continue;
                 if (saved !== null) {
-                  const next: Held<D> = { key: stateKey, data: saved.data, source: saved.source, error: null, running: remoteReady(), generation: (heldRef.current?.generation ?? 0) + 1 };
+                  const next: Held<D> = { key: stateKey, data: saved.data, source: saved.source, error: null, running: remoteAttemptAllowed(), generation: (heldRef.current?.generation ?? 0) + 1 };
                   heldRef.current = next;
                   setState(next);
                 } else localError = new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device");
@@ -432,7 +432,7 @@ function useServerState<D>(
               heldRef.current = next;
               setState(next);
             }
-            if (!remoteReady()) {
+            if (!remoteAttemptAllowed()) {
               setState(h => ({ ...h, error: h.data === null ? localError ?? new ApiError(0, "E_NETWORK", "this view needs a connection") : null }));
               continue;
             }

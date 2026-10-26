@@ -22,7 +22,13 @@ server components: callFastAPI ────────────────�
   requestId?, details?, retryAfterMs?}`; status 0 `E_NETWORK` is a transport failure. Every
   call carries `X-Nexus-Wire`; a supplied sealed revision must match this build
   and is never rewritten; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
-  request id comes from the body, else the `x-request-id` header). A 426 reloads
+  request id comes from the body, else the `x-request-id` header). decoding is
+  pure: the request owner observes failures under its captured account assertion.
+  retired-account answers become cancellation and cannot change admission. demand
+  requests may test unavailable browser reachability; checking, sign-in and update
+  fences remain closed, and native admission remains native-owned. background
+  readiness stays separate. parsed current-account success can restore browser
+  readiness; a transport failure cannot downgrade terminal admission. a 426 reloads
   the tab once per (tab, build), unless uncommitted writing or incompatible/sealed
   submitted work holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
@@ -91,6 +97,8 @@ server components: callFastAPI ────────────────�
   without one counts as a failure. A delivered event resets the count. exhaustion
   retains the final normalized error, including its code and available request id.
   installed admission suspends the same owner/cursor without spending its budget.
+  an account stream retains its original account assertion through reconnect and
+  stops delivery when that owner retires; a readiness event never retargets it.
 - `proxy.ts` (server only): `proxySession(request, path, lane)`,
   `proxyShare`, `proxyExtension`. The session lane refuses a cross-origin
   mutation (403), resolves the session before reading a body (ended → 401 and

@@ -52,7 +52,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
     const releaseAccount = bindApiAccount(accountId);
     const releaseAdmission = installedApp || host !== "workspace" ? () => {} : bindBrowserAdmission();
     let explicitlyRetired = false;
-    const retired = () => { explicitlyRetired = true; };
+    const retired = () => { explicitlyRetired = true; releaseAccount(); releaseAdmission(); };
     window.addEventListener("nexus:authored-retired", retired);
     let live = true;
     let publishedReady = false;

@@ -3,10 +3,13 @@
 // the bff's planned cut before the platform's function limit). The server's
 // committed state is the truth: a reconnect replays what was missed (cursor
 // streams) or re-sends the whole snapshot (snapshot streams).
-import { installedApp, remoteAdmission, remoteReady, subscribeAdmission, observeRemoteFailure } from "@/lib/native/admission";
+import { installedApp, remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   ApiError,
+  captureApiAccount,
+  isCurrentApiAccount,
+  observeApiFailure,
   isApiError,
   isSameSystemApiDefect,
   readResponse,
@@ -72,6 +75,7 @@ const jittered = (ms: number) =>
 export function openStream<E, P = unknown>(
   options: StreamOptions<E, P>,
 ): () => void {
+  const account = captureApiAccount();
   const stop = new AbortController();
   const signal = stop.signal;
   const abort = () => stop.abort(options.signal?.reason);
@@ -116,11 +120,13 @@ export function openStream<E, P = unknown>(
       headers: {
         Accept: "text/event-stream",
         [WIRE_HEADER]: String(WIRE_REVISION),
+        ...(account === null ? {} : { "X-Nexus-Account": account.accountId }),
       },
       signal,
     });
     if (!response.ok) {
       const error = await readResponse<never>(response).catch(asError);
+      observeApiFailure(error, account);
       const transient =
         isApiError(error) && !isSameSystemApiDefect(error) &&
         (error.status === 0 || error.status >= 500 || error.status === 429);
@@ -134,7 +140,7 @@ export function openStream<E, P = unknown>(
     let delivered = false;
     try {
       await readEvents(response.body, (id, type, data) => {
-        if (signal.aborted) return true;
+        if (signal.aborted || !isCurrentApiAccount(account)) return true;
         try {
           // justify-type-assertion: the same deploy validated this event's public payload.
           const event = options.decode(type, data as P, id);
@@ -163,7 +169,7 @@ export function openStream<E, P = unknown>(
       let failure: ApiError;
       try {
         await admitted();
-        if (signal.aborted) return;
+        if (signal.aborted || !isCurrentApiAccount(account)) return;
         const empty = await connect();
         if (terminal) return options.onComplete?.();
         if (empty === null) {
@@ -172,7 +178,7 @@ export function openStream<E, P = unknown>(
         }
         failure = empty;
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted || !isCurrentApiAccount(account)) return;
         if (error instanceof Fatal) {
           const reason = error.reason;
           if (installedApp && isApiError(reason) && (reason.status === 401 || reason.status === 426)) {
@@ -189,7 +195,7 @@ export function openStream<E, P = unknown>(
         }
         failure = isApiError(error) ? error : new ApiError(0, "E_NETWORK", "Stream lost");
         if (installedApp && failure.status === 0) {
-          observeRemoteFailure(0);
+          observeApiFailure(failure, account);
           suspended = failure;
           options.onSuspended(failure);
           continue;

@@ -31,3 +31,19 @@ reconnect and the installed client. a owns the browser red and client repair;
 no further backend change is established as necessary.
 
 actual mounted red on `dc4467ee3`, lab `20261025-191710-26f7763b06b3`: the initial remote map settled empty; a real peer writer created the blue passage highlight without advancing the viewer’s authored head or entering their corpus. no peer paint appeared within 45 seconds. the candidate passes static checks; live green and packaged-native freshness remain pending.
+
+lab49 on 47719 proved peer-create blue paint, failed refresh notice and cached
+blue paint, but retry issued no request. lab50's passive events ruled out movement
+or nondelivery: the same connected retry button received trusted down/up/click at
+a stable rectangle. lab51 (`20261025-195750-960fdbc31f87`) stopped at the actual
+api guard: admission was `Unavailable`, with stack apiFetch → readRemote → refresh
+→ action → onClick. the earlier network failure had closed the browser's gate;
+manual retry could not reach transport until an unrelated focus/online event.
+
+an owner correction is in review: browser attempts may test reachability without
+changing background readiness, while current-account parsed success can recover
+unavailable admission. checking/sign-in/update fences and native authority stay
+intact. response observations must retain their captured account identity;
+retirement must release it immediately and delayed cleanup must not clear its
+replacement. late transport failures must not downgrade terminal admission.
+actual retry green and live retirement/terminal race controls remain pending.
