@@ -6,4 +6,4 @@ this blocks a bounded, user-driven tail append on the declared 100,000-child pag
 
 resolved when both actual firefox and packaged android can reach the large page's tail input through normal ui, append ten notes without mounting the corpus, and prove exact canonical tail order. the revised disposable capacity drivers must measure first trusted input through the committed row's visible paint; they cannot retain the removed explicit save-note flow.
 
-actual red on `9836f73b6`: lab `20261025-185429-a6974b14e059` loaded the 101-note page and proved its prefix/show-more controls; no write-at-end button existed. static gate passes for the candidate; live green remains pending.
+actual red on `9836f73b6`: lab `20261025-185429-a6974b14e059` loaded the 101-note page and proved its prefix/show-more controls; no write-at-end button existed. static gate passes. actual browser green on `dc4467ee3`, lab `20261025-190057-010e0f65ea7e`: the indexed tail opens without changing command sequence, mounts at most 100 rows, then typing creates exactly the 102nd final note. the declared 100,000-block firefox/handset run remains pending.

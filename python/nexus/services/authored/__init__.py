@@ -31,6 +31,7 @@ from nexus.schemas.authored import (
 )
 from nexus.services.authored import helper
 from nexus.services.resource_graph.refs import require_ref
+from nexus.services.resource_items.versions import annotations_revision
 
 MAX_CHANGE_BYTES = 2 * 1024 * 1024
 MAX_ENVELOPE_BYTES = 3 * 1024 * 1024
@@ -652,6 +653,7 @@ def download(db: Session, account_id: UUID, after: int) -> DownloadChanges:
             break
         changes.append(change)
     return DownloadChanges(
+        annotations_revision=annotations_revision(db, viewer_id=account_id),
         changes=changes,
         next_cursor=changes[-1].server_seq if changes else str(after),
         head_cursor=str(watermark),

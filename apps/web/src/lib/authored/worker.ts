@@ -60,7 +60,9 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       sync = new Sync(persistence, {
         json: async <T>(path: string, body: unknown | null, signal: AbortSignal) => (await response(path, body, signal)).json() as Promise<T>,
         snapshot: async signal => { const result = await response("/api/authored/snapshot", null, signal); if (!result.body) throw new Error("authored snapshot stream missing"); return result.body; },
-      }, serialize, changed);
+      }, serialize, changed, () => {
+        for (const port of ports) port.postMessage({ kind: "annotations_changed" });
+      });
       const state = await persistence.replica();
       sync.facts.ready = state.provisioning_complete;
       sync.facts.cursor = state.server_cursor;

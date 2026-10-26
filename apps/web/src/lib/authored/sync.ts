@@ -19,9 +19,10 @@ export class Sync {
   private foreground = true;
   private failures = 0;
   private commitError = false;
+  private annotationsRevision: string | null = null;
   last_error: string | null = null;
   readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, cursor: "0", head: null };
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void) {}
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
   wake() {
     if (this.retired || !this.foreground) return;
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
@@ -90,9 +91,15 @@ export class Sync {
   private async download() {
     while (!this.retired && this.foreground) {
       const replica = await this.local(() => this.persistence.replica());
-      const { data } = await this.transport.json<{ data: { changes: FeedChange[]; next_cursor: string; head_cursor: string } }>(`/api/authored/changes?after=${replica.server_cursor}`, null, this.abort.signal);
+      const { data } = await this.transport.json<{ data: { changes: FeedChange[]; next_cursor: string; head_cursor: string; annotations_revision: string } }>(`/api/authored/changes?after=${replica.server_cursor}`, null, this.abort.signal);
       if (this.retired) return;
       this.facts.head = max(this.facts.head, data.head_cursor);
+      // This opaque remote-evidence token has no relation to the applied cursor.
+      if (typeof data.annotations_revision !== "string") throw new Error("authored feed omitted its annotations revision");
+      if (data.annotations_revision !== this.annotationsRevision) {
+        this.annotationsRevision = data.annotations_revision;
+        this.annotationsChanged();
+      }
       await this.local(async () => {
         const current = await this.persistence.applyRemote(data.changes, data.next_cursor);
         this.facts.cursor = current.server_cursor;

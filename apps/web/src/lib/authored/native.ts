@@ -79,6 +79,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
   const queries = new Set<(corpusChanged?: boolean) => void>();
+  const annotations = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null) => void>();
   const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.last_error); for (const listener of queries) listener(corpusChanged); };
@@ -127,7 +128,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         if (chunk.done) controller.close();
       }, cancel: async () => { await frame("snapshot_cancel"); } });
     },
-  }, serialize, changed);
+  }, serialize, changed, () => { for (const listener of annotations) listener(); });
   sync.facts.ready = replica.provisioning_complete; sync.facts.cursor = replica.server_cursor; sync.facts.pending = (await persistence.pending()).length > 0;
   const wake = () => sync.wake();
   const foreground = () => sync.setForeground(nativeForeground && document.visibilityState === "visible");
@@ -175,11 +176,12 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       const read = (corpusChanged = true) => { if (!corpusChanged) return; void serialize(() => queryLocal(query)).then(result => { if (live) listener(result); }, error => { if (live && sync.facts.ready) reportError(error); }); };
       queries.add(read); read(); return () => { live = false; queries.delete(read); };
     },
+    annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.last_error); return () => { statuses.delete(listener); }; },
     close: async () => {
       closed = true; sync.close();
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
-      queries.clear(); statuses.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
+      queries.clear(); statuses.clear(); annotations.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
       window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", foreground);
       await sync.stopped(); await queue;
     },

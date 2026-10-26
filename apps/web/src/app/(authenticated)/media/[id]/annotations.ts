@@ -86,9 +86,9 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   let stops: (() => void)[] = [];
   let linkReads = 0;
 
-  function project() {
+  function project(remoteReadSucceeded = false) {
     const roots = wire ? remoteRoots(wire, doc) : [];
-    if (wire) remote = { status: "ready", data: { ...wire, evidence: { ...wire.evidence, roots, counts: rootCounts(roots) } } };
+    if (wire && (remoteReadSucceeded || remote.status !== "failed")) remote = { status: "ready", data: { ...wire, evidence: { ...wire.evidence, roots, counts: rootCounts(roots) } } };
     const localState = local.getState();
     const noteRefs: NoteRef[] = [];
     const markers: RailMarker[] = [];
@@ -131,7 +131,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${mediaId}/document-map`, { signal });
       if (signal.aborted) return;
       wire = data;
-      project();
+      project(true);
     } catch (error) {
       if (signal.aborted || handleUnauthenticatedApiError(error)) return;
       remote = { status: "failed", error, retrying: false };
@@ -174,6 +174,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       if (listeners.size === 1) {
         stops = [
           local.subscribe(project),
+          store.annotations_changed(() => { if (doc !== null) void readRemote(); }),
           store.subscribe({ kind: "adjacency", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks()),
           store.subscribe({ kind: "backlinks", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks()),
         ];

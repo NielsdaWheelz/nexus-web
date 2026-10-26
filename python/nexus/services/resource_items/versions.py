@@ -1,4 +1,4 @@
-"""Writer-owned lane versions: the chat ``context`` lane is the one surviving lane.
+"""Writer-owned context preconditions and readable-annotation invalidation lanes.
 
 Writers lock the lane before incrementing. An absent lane of a live resource is
 version one. Authored content carries no lane: its causality is the authored feed.
@@ -13,6 +13,23 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceVersion
 from nexus.services.resource_graph.refs import ResourceRef
+
+
+def annotations_revision(db: Session, *, viewer_id: UUID) -> str:
+    """Opaque equality token for the viewer's readable remote annotation maps.
+
+    It is independent of authored feed cursors and confers no source access.
+    Pull responses and writing hints read this same owner in their snapshot.
+    Annotation lanes belong to media and survive media deletion; the sum only
+    advances. Apparatus cleanup removes its own scheme's lanes, never these.
+    """
+    return str(
+        db.scalar(
+            select(func.coalesce(func.sum(ResourceVersion.version), 0)).where(
+                ResourceVersion.user_id == viewer_id, ResourceVersion.lane == "annotations"
+            )
+        )
+    )
 
 
 def ensure_version(

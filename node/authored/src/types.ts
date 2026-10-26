@@ -81,6 +81,8 @@ export interface AuthoredStore {
   query(query: AuthoredQuery): Promise<QueryResult>;
   subscribe(query: AuthoredQuery, listener: (result: QueryResult) => void): () => void;
   commit(frame: CommitFrame): Promise<CommitResult>;
+  /** Derived peer annotations are remote evidence, never canonical corpus changes. */
+  annotations_changed(listener: () => void): () => void;
   sync_status(listener: (status: SyncStatus, detail: string | null) => void): () => void;
   close(): Promise<void>;
 }

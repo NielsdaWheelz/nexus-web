@@ -5495,6 +5495,8 @@ export interface components {
         };
         /** DownloadChanges */
         DownloadChanges: {
+            /** Annotations Revision */
+            annotations_revision: string;
             /** Changes */
             changes: components["schemas"]["FeedChange"][];
             /** Head Cursor */

@@ -1,12 +1,15 @@
-# offline catalog page summaries must leave every client
+# qualify local page indexes on installed clients
 
-the server catalog no longer carries pages (`OfflineCatalogOut.notes` removed);
-the local authored store is their sole owner. client readers of the old section
-remain: `apps/web/src/lib/catalog/selectors.ts` (`notes` map, `catalogPage`, the
-updated/title page list) and their callers.
+the duplicate catalog page authority is removed. `offline_catalog` exports no
+pages; `lib/catalog` has no notes map or catalog-page selectors. the pages pane
+uses `useAuthoredPages({kind:"pages"})`; shared sqlite orders by displayed title
+then ref. wire generation and the full static gate pass, including gate48.
+there is no remaining old-wire build defect.
 
-impact: the web build fails against the regenerated wire until those readers go;
-any surviving page list would duplicate local authored results.
-
-resolved when no client reads catalog pages and installed clients list pages
-only from the local store in title order.
+the original completion condition also required installed clients to list pages
+from the local store in title order. source and browser page-authoring proofs
+establish the owner but do not substitute for that named installed-index check.
+retain until the current paired app opens the page index offline after restart,
+shows independently created pages in title/ref order, and receives another
+replica's page without catalog duplication. no new catalog implementation is
+needed.

@@ -17,9 +17,7 @@ installed keyboard qualification is pending. shared samsung `RFCT51J2MCH` is
 exclusively owned by local-first native qualification until its root explicitly
 releases it. browser semantic input events do not prove gboard behavior.
 the [intermittent return input loss](outline-native-return-input-loss.md) remains
-a release blocker until actual immediate-key continuity is qualified. the
-[code newline correction](outline-code-native-newlines.md) also needs installed
-regression confirmation.
+a release blocker until actual immediate-key continuity is qualified.
 
 after release, use only `.mobileeditorqa20261025`, a disposable account and owned
 reverse mappings. qualify actual onscreen return, backspace tap/hold across a

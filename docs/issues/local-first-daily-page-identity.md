@@ -1,16 +1,20 @@
-# offline daily pages need convergent identity
+# finish daily identity convergence qualification
 
-target gap: two disconnected devices must be able to create today's page and
-combine automatically, including after a prior page for that date was deleted.
+the old random daily proposal, conflicting binding refusal and permanent
+retirement writers are deleted. `notes/api.dailyPage` reads the canonical known
+binding (including hidden state), otherwise derives `dailyId(account,date)`.
+first content and page creation/restoration commit together; opening a day writes
+nothing. migration320 preserves recoverable date bindings and existing ids.
+already-erased pre-cutover date history cannot be reconstructed; the approved
+release boundary is recorded in the release issue.
 
-evidence: `python/nexus/services/notes.py:285-318` proposes a random id and refuses
-a competing live daily binding with `This day has a different page`.
-`:264-272` retires the identity, removes the date binding and deletes the page.
-`python/nexus/services/authored_identities.py:103-118` makes retirement permanent.
+real browser lab26 passed two disconnected devices' first materialization into
+one daily page with both notes. server daily tool identity/append and frozen
+migration preservation also pass. these are implemented behavior, not the old
+online-only conflict defect.
 
-impact: persisting current commands does not supply automatic daily-page merge.
-a stable date identity alone also needs defined deletion/recreation semantics.
-
-resolved when disconnected first-use and delete/recreate/concurrent-edit cases
-yield one visible daily page with the retained authored content and convergent
-references, without manual conflict resolution.
+remaining: same-date delete/recreate against an unseen remote edit, retained
+references and restart, plus the installed mixed-device same-day cases in both
+delivery orders. a four-actor run stopping earlier at ime does not qualify later
+daily cases. resolved when those named races preserve one visible binding and
+all retained authored content without manual conflict resolution.

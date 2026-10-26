@@ -21,7 +21,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.types import Receive, Scope, Send
@@ -38,6 +37,7 @@ from nexus.services import media as media_service
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.oracle import readings as oracle_readings
+from nexus.services.resource_items.versions import annotations_revision
 
 router = APIRouter(tags=["streaming"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -160,13 +160,7 @@ async def stream_writing(request: Request, viewer: ViewerDep) -> StreamingRespon
     def read() -> Snapshot:
         with _snapshot() as db:
             revision = str(authored.head(db, viewer.user_id))
-            annotations = db.scalar(
-                text(
-                    "SELECT COALESCE(sum(version), 0) FROM resource_versions"
-                    " WHERE user_id = :viewer AND lane = 'annotations'"
-                ),
-                {"viewer": viewer.user_id},
-            )
+            annotations = annotations_revision(db, viewer_id=viewer.user_id)
         state = WritingState(revision=revision, annotations_revision=str(annotations))
         return state.model_dump(mode="json"), False
 

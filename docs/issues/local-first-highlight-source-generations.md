@@ -1,23 +1,20 @@
-# offline highlights must retain their source publication
+# finish old-publication offline capture qualification
 
-target gap: an offline source can remain readable after the server publishes
-different text. synchronizing its new annotation must preserve writing without
-applying old offsets to a different publication.
+highlight selection now retains one coherent literal quote, typed locator and
+nullable source publication in canonical authored state. upload does not replay
+the retired current-generation create endpoint. relational projection never
+blindly labels old offsets with the current generation. frozen migration320
+preserves unknown original publication as null; its real conversion proof passes.
 
-evidence: `python/nexus/services/highlights.py:765-777,825-839` checks the current
-reading generation and refuses fresh creation with `Reader publication changed`.
-`docs/modules/offline.md:23-25` currently excludes annotations from saved views.
+browser lab32 passed replacement of a pdf publication with the literal quote and
+editable note retained but unlocated. lab35 passed concurrent offline resize as
+one coherent capture, and changed-text unique relocation, explicit ambiguity and
+repair with the attached note. overlapping identities remain independent. the
+old paths/claim that saved views exclude annotations are obsolete.
 
-impact: replaying today's create request either refuses valid offline authored
-work or, if its fence is removed indiscriminately, places it on the wrong text.
-
-resolved when local creation retains exact source identity, quote and anchor;
-reconnection after source replacement preserves the annotation and attached
-notes; unique valid relocation works and unresolved location remains explicit
-at the source without creating a recovery destination.
-
-migration gap: current fragment-anchor/highlight rows do not necessarily retain
-their creation generation. never label an old locator with the current generation
-without exact quote/extent proof. preserve unknown original publication as null
-and resolve by unique quote. resizing and independent overlapping highlight
-identities must follow the owner's explicit v1 decision.
+remaining exact race: create an annotation and note on a retained g1 download
+while the server has already published g2, then reconnect and retain that g1
+capture without refusing the writing or painting its offsets on g2. qualify this
+on the current installed app as well as the browser; separate offline-create and
+later-republication controls do not prove that ordering. current source-access
+loss must remain literal/unlocated, with no invented recovery destination.

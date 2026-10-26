@@ -1,24 +1,20 @@
-# server-only retention cannot govern offline authored deletion
+# finish causal deletion qualification
 
-target gap, not a defect in the current online-first contract: local-first
-writing must preserve a note edited concurrently with deletion. a disconnected
-device's edits and links are absent from the server's retention census.
+server retention no longer decides authored deletion. the old outline
+consume/remove writer and empty-resource cleanup service, cli and periodic job
+are deleted. canonical observed-delete vectors and unseen touches determine
+liveness; projections retain rows and readers apply that verdict. machine-source
+teardown remains separate and preserves literal authored captures.
 
-evidence: `python/nexus/services/outline.py:582-603` physically deletes a note
-after checking server retainers. `python/nexus/services/empty_resource_cleanup.py:85-86,117-128`
-qualifies server-empty, unretained roots after seven days.
+real browser lab24 passed deletion against an offline note edit: only the edited
+note revived, its independent sibling stayed deleted, and its link survived.
+backend cases repeatedly prove unseen-touch revival, narrow unlink, machine-fact
+liveness and source-retainer teardown (including lab43). those proofs replace
+the obsolete physical-deletion concern.
 
-impact: carrying these rules into offline replication can erase or reject
-writing that another device still owns. replicated edit-wins liveness must own
-deletion; authored-root cleanup cannot infer global absence from one replica.
-this requires merge metadata, not a history/trash/recovery product.
-
-resolved when delete/edit and delete/new-link races converge without losing the
-offline writing, in either delivery order and after process restart, and server
-cleanup cannot bypass that contract.
-
-status (cutover worktree, unqualified): the server retention census, `outline.py`
-consume/remove and `empty_resource_cleanup.py` (with its cli command and periodic
-job) are deleted; server deletion is now an observed `delete_resource` through
-`services.authored`, and readers hide projections by `authored_visible`. device
-convergence in both delivery orders and after restart remains to be qualified.
+remaining completion condition: delete/edit and delete/new-link in both delivery
+orders across installed/browser replicas, including process restart. existing
+mixed-device cases must actually reach their graph phase; earlier n-way text
+success is not graph qualification. retain until these named races converge and
+no server cleanup bypasses canonical liveness. this requires no trash/history
+feature or additional retention framework.
