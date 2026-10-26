@@ -86,6 +86,7 @@ export default function CollectionView({
   const scopeKey = `${returnScope}:${anchorKey ?? ""}`;
   const scrollport = useCallback(() => listRef.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') ?? null, []);
   const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, geometry: status === "ready" ? geometry : null, listRef, scrollport });
+  const { rowElement, pin } = window;
   usePaneCollectionGeometry({ scope: returnScope, window });
   const windowed = window.plan.kind !== "Intrinsic";
   const ready = status !== "loading" && window.plan.kind !== "Measure";
@@ -103,15 +104,15 @@ export default function CollectionView({
     const root = returnScopeRef.current;
     const latest = new Set(committedIds.current);
     const next = sameRow && latest.has(id) ? id : previous.slice(previous.indexOf(id) + 1).find(candidate => latest.has(candidate));
-    const mounted = next ? window.rowElement(next)?.querySelector<HTMLElement>(selector) : null;
+    const mounted = next ? rowElement(next)?.querySelector<HTMLElement>(selector) : null;
     if (mounted?.isConnected) return mounted;
     const fallback = fallbackTarget();
     if (next && root && windowed) {
       pendingFocus.current?.release();
-      pendingFocus.current = { id: next, selector, fallback, release: window.pin(next) };
+      pendingFocus.current = { id: next, selector, fallback, release: pin(next) };
     }
     return fallback;
-  }, [window.rowElement, window.pin, windowed, fallbackTarget]);
+  }, [rowElement, pin, windowed, fallbackTarget]);
   useLayoutEffect(() => () => { pendingFocus.current?.release(); pendingFocus.current = null; }, [scopeKey]);
   useLayoutEffect(() => {
     const pending = pendingFocus.current;
@@ -120,7 +121,7 @@ export default function CollectionView({
       if (active !== document.body && active !== pending.fallback) {
         pending.release(); pendingFocus.current = null;
       } else {
-        const target = window.rowElement(pending.id)?.querySelector<HTMLElement>(pending.selector);
+        const target = rowElement(pending.id)?.querySelector<HTMLElement>(pending.selector);
         if (target) { target.focus({ preventScroll: true }); pending.release(); pendingFocus.current = null; }
       }
     }

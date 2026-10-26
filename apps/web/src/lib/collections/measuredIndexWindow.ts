@@ -166,6 +166,9 @@ export function useMeasuredIndexWindow({ scopeKey, ids, geometry, listRef, scrol
       scrollport: port, listTop: list.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop };
   }, []);
 
+  // Ordinary/sortable markup can replace the list ref without changing inputs.
+  // Rebind each committed node; unchanged demand/geometry setters retain state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const list = listRef.current;
     const port = enabled ? scrollport() : null;
@@ -187,6 +190,10 @@ export function useMeasuredIndexWindow({ scopeKey, ids, geometry, listRef, scrol
       return changed ? { scopeKey, sticky, pins } : before;
     });
     committed.current = { geometry, scopeKey, ids, byId, list, port, view: activeView };
+    if (previous?.list !== list) {
+      if (previous?.list) observer.current?.unobserve(previous.list);
+      if (list !== null) observer.current?.observe(list);
+    }
     const nextSample = enabled ? list?.querySelector<HTMLElement>("[data-collection-row-id]") ?? null : null;
     if (sample.current !== nextSample) {
       if (sample.current !== null) observer.current?.unobserve(sample.current);
