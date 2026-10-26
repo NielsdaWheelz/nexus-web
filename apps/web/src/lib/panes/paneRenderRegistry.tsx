@@ -74,10 +74,8 @@ function load(id: PaneRouteId): ModuleEntry {
   const loaded = modules.get(id);
   if (loaded) return loaded;
   let snapshot: ModuleSnapshot = { kind: "Pending" };
-  if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "module-start", now: performance.now(), id }));
   const listeners = new Set<() => void>();
   const publish = (next: ModuleSnapshot) => {
-    if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "module-publish", now: performance.now(), id, kind: next.kind, listeners: listeners.size }));
     snapshot = next;
     for (const listener of listeners) listener();
   };
@@ -91,7 +89,6 @@ function load(id: PaneRouteId): ModuleEntry {
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getSnapshot: () => snapshot,
     getServerSnapshot() {
-      if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "module-hydration-snapshot", now: performance.now(), id, kind: snapshot.kind }));
       if (snapshot.kind === "Pending") throw promise;
       return snapshot;
     },
@@ -106,7 +103,6 @@ function PaneBody({ id }: { readonly id: PaneRouteId }) {
   // Client module arrival starts interruptible rendering, rather than a Suspense
   // retry's minimum fallback delay. No initial value: SSR must keep its ready body.
   const snapshot = useDeferredValue(current);
-  if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "pane-body-render", now: performance.now(), id, current: current.kind, deferred: snapshot.kind }));
   if (current.kind === "Failed") throw current.error;
   if (snapshot.kind === "Pending") return <PaneLoadingState label="Loading pane…" announcement="None" />;
   if (snapshot.kind === "Failed") throw snapshot.error;

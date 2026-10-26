@@ -737,10 +737,7 @@ function createWorkspaceStore(
     },
     value: () => value,
     setColumnWidth(px: number): void {
-      if (px !== data.columnWidthPx) {
-        console.info("index-ssr-diag " + JSON.stringify({ event: "column-store-publication", now: performance.now(), old: data.columnWidthPx, next: px, stack: new Error().stack }));
-        set({ columnWidthPx: px });
-      }
+      if (px !== data.columnWidthPx) set({ columnWidthPx: px });
     },
     /** After hydration: fold the location hash into the active pane, then own the address. */
     mount(): () => void {

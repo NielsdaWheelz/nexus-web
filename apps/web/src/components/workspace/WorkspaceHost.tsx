@@ -54,7 +54,6 @@ const PaneContent = memo(function PaneContent(props: {
     "notes", "conversations", "media", "page", "conversation", "note"].includes(props.routeId);
   const canAdmit = local || catalog || admission === "Ready";
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
-  if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "pane-content-render", now: performance.now(), paneId: runtime.paneId, visitId: runtime.visitId, href: runtime.href, route: props.routeId, presented: props.isPresented, admission, admitted, canAdmit }));
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
   if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
