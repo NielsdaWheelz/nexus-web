@@ -132,15 +132,21 @@ that keyboard command.
 text and structure share one session undo order. reference-query text retains its
 local editing history while the query owns input.
 
-the existing retained workspace input cell owns raw fields while their semantic
-commands await receipts. both a split's prefix and suffix retain later edits.
-arrangement uses that same ordered owner, including pending parent identities;
-following typing and return do not race an independent arrangement handoff.
-ordered continuation merges over exact receipt initialization; adoption changes
-authority and metadata without replacing ahead writing or the editing host.
-preparation progress and committed structural receipts survive a later loading
-failure, so retry resumes installation rather than creating another resource.
-the runtime retains its original immutable write and exact-byte retry.
+the existing retained workspace input cell owns pending occurrence metadata and
+literal copy text. every accepted field binds its actual canonical document at
+synchronous admission. the runtime reserves one command slot before mutation,
+seals the real y updates and newborn initializers, and prepares only graph
+metadata afterward. following typing, return and undo use those same documents
+and their real undo managers; no receipt-time body replay or inverse snapshot
+restore is involved. deferred graph preparation waits for a predecessor's
+eventual receipt, while its first failure remains visible through the original
+error owner. exact immutable retry stays with the runtime.
+
+receipt adoption acknowledges only its admission. it never overwrites later
+writing, placement or the editing host. canonical settlement also clears the
+same retained cell while its pane is absent. hidden history occurrences retain
+their displayed causal baselines; redo reuses those baselines rather than
+acquiring a newer unrelated frontier.
 
 native packets, composition and reference queries retain their field and
 baseline together. incoming projection changes cannot withdraw an owner while
@@ -149,7 +155,7 @@ native selection before choosing a field. deferred composition completion cannot
 release a newer packet or record another field's edit. the packet fence
 distinguishes a consumed, reconciled semantic key from permission to
 refresh or adopt remote state. a field without an admitted document stays
-read-only unless the retained raw-input owner already owns its writing.
+read-only until synchronous admission binds its real initializer.
 the narrow observer adapter depends on the locked prosemirror-view version and must be requalified
 when it changes. a query consumes its transient text synchronously on acceptance;
 ordinary typing in other fields continues, while structural commands wait for
@@ -164,8 +170,8 @@ owned redo from remaining undoable. frozen field proofs additionally retain
 shared-text identities and deletion sets; conservative coverage may keep a
 concurrently changed source visible.
 position receipts update relationship positions without replacing their observed
-membership frontier. a replacement history remaps queued admissions before
-accepting new input; numeric clocks from separate sessions never interleave.
+membership frontier. each occurrence retains its own typing origin and displayed
+frontier; another session’s received state is not proof of observation.
 
 pending outline export reads one fresh retained-cell snapshot as literal text,
 including visible completed segments and the active body. the workspace keeps
@@ -208,12 +214,17 @@ writing or clipboard data.
 
 one session admits at most 64 unique document identities and 16 mib of encoded
 state across root, disclosed branches, neighbors, tail, pending input and history.
-the charge includes each canonical encoding once, each independent retained
-occurrence/frozen baseline encoding, and utf-8 history metadata. hidden history
-bindings remain charged; visual anchor ids alone retain no writing. the document
-count stays deduplicated by canonical ref, so large repeated aliases can exhaust
-the byte budget first.
-provisional fields reserve capacity before they become editable. this is a
+the byte charge includes each canonical y encoding once, every independently
+retained occurrence baseline (including hidden history occurrences), retained
+history metadata and unresolved independent frozen encodings. baseline and
+history owners report their charges through their existing maps; there is no
+second inventory. visual anchor ids alone retain no writing. the same owned
+snapshot is counted once; different causal baselines count separately even when
+their ref or bytes match. prosemirror model, dom
+and general heap allocations are outside this encoded-state contract. new aliases
+reserve their baseline and initial capture even when their canonical document is
+already held, so repeated large aliases admit fewer fields. provisional fields
+reserve capacity before they become editable. this is a
 new-admission bound, not a heap guarantee or an authoring quota: accepted typing,
 composition and incoming growth remain protected and stop additional loads when
 over budget. inactive windows and whole old history groups release through their

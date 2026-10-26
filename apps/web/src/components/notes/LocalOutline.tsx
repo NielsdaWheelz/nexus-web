@@ -49,7 +49,7 @@ function OutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filte
   const branch = useMemo(() => inherited.ancestors.has(rootRef) ? inherited : {...inherited, ancestors: new Map(inherited.ancestors).set(rootRef, {kind: "root"} as const)}, [inherited, rootRef]);
   const [, setRevision] = useState(0);
   const notify = useCallback(() => setRevision(value => value + 1), []);
-  const pending = useEditorDraft(`Outline.Session:${occurrencePrefix}`, () => ({input: new OutlinePendingInput(runtime), revision: 0}), pendingRisk, pendingCopy);
+  const pending = useEditorDraft(`Outline.Session:${occurrencePrefix}`, () => ({input: new OutlinePendingInput(), revision: 0}), pendingRisk, pendingCopy);
   const setPending = pending.set;
   const changed = useCallback(() => setPending(value => ({...value, revision: value.revision + 1})), [setPending]);
   const [failure, setFailure] = useState<unknown | null>(null);
@@ -118,7 +118,7 @@ function MountedOutline({controller, pending, runtime, rootRef, rootField, filte
       {[...controller.requests.values()].map(request => <BranchCollector key={request.parent_id} controller={controller} request={request}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label={rootField?.label ?? "edit outline"}
-        placeholder={rootField?.placeholder ?? "write or @ to link"} compact history={{undo: () => {if (!pending.value.input.risk().changed && !pending.value.input.risk().unconfirmed) history.undo();}, redo: () => {if (!pending.value.input.risk().changed && !pending.value.input.risk().unconfirmed) history.redo();}, boundary: () => history.boundary()}}
+        placeholder={rootField?.placeholder ?? "write or @ to link"} compact history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} inspection={rootField?.inspection} onEditorReady={handle => controller.setHandle(handle)}/>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
     </div>
