@@ -22,6 +22,8 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 
 internal fun isHandledShareCallback(uri: Uri): Boolean =
@@ -32,12 +34,18 @@ internal fun isHandledShareCallback(uri: Uri): Boolean =
  * local binding and survives transport/auth changes within that binding. Entry
  * checks never replay capture commands, renew browser documents or own Main's
  * foreground renewal flag; fixed credential effects belong to DeviceSession.
+ * One activity attempt retains its account, note id and calendar date through
+ * recreation; another ACTION_SEND creates another activity attempt.
  */
 class ShareActivity : AppCompatActivity() {
     private val device by lazy { DeviceSession.get(this) }
     private val router by lazy { AppRouter(this, device) }
     private lateinit var root: FrameLayout
     private lateinit var shareUrl: Uri
+    private lateinit var sharedText: String
+    private lateinit var captureId: String
+    private var captureAccount: UUID? = null
+    private var captureDate: String? = null
     private var webView: WebView? = null
     private var authored: app.nexus.android.authored.AuthoredBridge? = null
     private var documentAccount: UUID? = null
@@ -49,8 +57,10 @@ class ShareActivity : AppCompatActivity() {
         val text = intent?.takeIf { it.action == Intent.ACTION_SEND }
             ?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim()
         if (text.isNullOrEmpty()) { finish(); return }
-        shareUrl = Uri.parse(BuildConfig.NEXUS_BASE_URL).buildUpon().appendEncodedPath("share")
-            .appendQueryParameter("text", text).build()
+        sharedText = text
+        captureId = savedInstanceState?.getString("capture_id") ?: UUID.randomUUID().toString()
+        captureAccount = savedInstanceState?.getString("capture_account_id")?.let(UUID::fromString)
+        captureDate = savedInstanceState?.getString("capture_date")
         root = FrameLayout(this)
         setContentView(root)
         releaseDevice = device.subscribe {
@@ -87,7 +97,20 @@ class ShareActivity : AppCompatActivity() {
                 }
                 val account = device.accountId()
                 if (account == null) { showAdmission("SignInRequired"); return@launch }
+                if (captureAccount != null && captureAccount != account) { finish(); return@launch }
                 if (webView == null) {
+                    if (captureAccount == null) {
+                        val confirmed = device.startup()?.optJSONObject("binding")?.getJSONObject("account")
+                            ?: throw LocalStateError("E_LOCAL_BINDING", "open nexus to prepare this account, then share again")
+                        if (generation != resumeGeneration || isFinishing || isDestroyed) return@launch
+                        if (UUID.fromString(confirmed.getString("account_id")) != account || device.accountId() != account) { finish(); return@launch }
+                        captureAccount = account
+                        captureDate = LocalDate.now(ZoneId.of(confirmed.getString("calendar_time_zone"))).toString()
+                    }
+                    shareUrl = Uri.parse(BuildConfig.NEXUS_BASE_URL).buildUpon().appendEncodedPath("share")
+                        .appendQueryParameter("text", sharedText).appendQueryParameter("capture_id", captureId)
+                        .appendQueryParameter("capture_account_id", captureAccount.toString())
+                        .appendQueryParameter("capture_date", checkNotNull(captureDate)).build()
                     documentAccount = account
                     val view = createWebView(); webView = view
                     showDocument(); view.loadUrl(shareUrl.toString())
@@ -225,6 +248,15 @@ class ShareActivity : AppCompatActivity() {
         authored?.setForeground(false)
         webView?.let { it.onPause(); it.pauseTimers() }
         super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::captureId.isInitialized) {
+            outState.putString("capture_id", captureId)
+            outState.putString("capture_account_id", captureAccount?.toString())
+            outState.putString("capture_date", captureDate)
+        }
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
