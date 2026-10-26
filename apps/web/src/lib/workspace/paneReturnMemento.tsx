@@ -92,6 +92,9 @@ function anchorOf(element: Element, content: HTMLElement): Anchor | null {
     : null;
 }
 
+/** Position is separate from identity, including when a richer eye line is passed. */
+function anchorKey({ scope, id }: Anchor): string { return JSON.stringify([scope, id]); }
+
 function findAnchor(content: HTMLElement, anchor: Anchor): HTMLElement | null {
   for (const element of content.querySelectorAll<HTMLElement>(ANCHORS)) {
     const found = anchorOf(element, content);
@@ -189,10 +192,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       : row
         ? element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor!.offset
         : memento.scrollTop;
-    const beforeTop = element.scrollTop;
     element.scrollTop = Math.min(Math.max(0, element.scrollHeight - element.clientHeight), Math.max(0, top));
-    console.info("index-memento-place", { time: performance.now(), visit: port.visitId, beforeTop, wantedTop: top, actualTop: element.scrollTop,
-      anchor, frame: frame && { scope: frame.scopeKey, listTop: frame.listTop, height: frame.height, rank: frame.ids.indexOf(anchor!.id), count: frame.ids.length } });
     refreshRanges(port);
   }
 
@@ -273,7 +273,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const focused = memento.focus?.anchor;
     if (focused) {
       const entry = geometryFor(port, focused);
-      const key = JSON.stringify(focused);
+      const key = anchorKey(focused);
       if (entry !== undefined && !restore.mounted.has(key)) restore.mounted.set(key, entry.window.pin(focused.id));
       if (entry !== undefined && entry.window.rowElement(focused.id) === null) return;
     }
@@ -320,17 +320,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const port = scrollports.get(paneId);
     if (!port || pending.has(paneId)) return null;
     const captured = refreshes.get(paneId);
-    if (captured?.port === port && captured.inputGeneration === port.inputGeneration) {
-      console.info("index-memento-reuse", { time: performance.now(), visit: port.visitId, top: port.element.scrollTop, generation: port.inputGeneration, eyeLine: captured.eyeLine });
-      return captured;
-    }
+    if (captured?.port === port && captured.inputGeneration === port.inputGeneration) return captured;
     refreshes.delete(paneId);
     const snapshot: RefreshSnapshot = { paneId, port, inputGeneration: port.inputGeneration,
       eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false };
-    console.info("index-memento-capture", { time: performance.now(), visit: port.visitId, top: port.element.scrollTop, generation: port.inputGeneration, eyeLine: snapshot.eyeLine,
-      windows: frames(port).map(entry => { const current = entry.window.readGeometry(); return { scope: entry.scope,
-        cached: entry.frame && { origin: entry.frame.listTop, height: entry.frame.height, count: entry.frame.ids.length, rank: entry.frame.ids.indexOf(snapshot.eyeLine?.id ?? "") },
-        current: current && { origin: current.listTop, height: current.height, count: current.ids.length, rank: current.ids.indexOf(snapshot.eyeLine?.id ?? "") } }; }) });
     refreshes.set(paneId, snapshot);
     return snapshot;
   }
@@ -357,13 +350,13 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         if (scrollports.get(snapshot.paneId) !== port || port.inputGeneration !== snapshot.inputGeneration) return;
         if (eyeLine === null) { refreshRanges(port); return; }
         let anchor: Anchor | null = eyeLine;
-        const remaining = new Set(orderedAnchors(port).map(item => JSON.stringify(item)));
-        if (!remaining.has(JSON.stringify(anchor))) {
+        const remaining = new Set(orderedAnchors(port).map(anchorKey));
+        if (!remaining.has(anchorKey(anchor))) {
           const position = snapshot.anchors.findIndex(item => item.scope === eyeLine.scope && item.id === eyeLine.id);
           anchor = null;
           for (let index = position + 1; index < snapshot.anchors.length; index += 1) {
             const candidate = snapshot.anchors[index];
-            if (remaining.has(JSON.stringify(candidate))) { anchor = candidate; break; }
+            if (remaining.has(anchorKey(candidate))) { anchor = candidate; break; }
           }
         }
         if (anchor !== null) place(port, { routeKey: port.routeKey, scrollTop: 0,
@@ -501,9 +494,6 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const sameScope = before !== null && next !== null && before.scopeKey === next.scopeKey;
       const changed = sameScope && (before.epoch !== next.epoch || before.listTop !== next.listTop ||
         (before.ids !== next.ids && (before.ids.length !== next.ids.length || before.ids.some((id, index) => id !== next.ids[index]))));
-      if (changed) console.info("index-memento-geometry", { time: performance.now(), visit: entry.visitId, scope: entry.scope,
-        top: port?.element.scrollTop, before: before && { origin: before.listTop, height: before.height, count: before.ids.length },
-        next: next && { origin: next.listTop, height: next.height, count: next.ids.length } });
       // Geometry epochs use the same whole-pane snapshot as row publications.
       const captured = changed && port && !holds.has(paneId) ? captureRefresh(paneId) : null;
       entry.frame = next;
