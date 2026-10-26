@@ -15,5 +15,20 @@ actual before certificates through shared `advanceCoverage`. preserve the curren
 proof through same-parent scalar history. never substitute the latest broad
 state, force removal, or await the promise being installed.
 
+the receipt can contain several patches for one link; fold every matching patch
+against that identity's actual before certificate. a missing certificate retains
+the lower proof. start new-link coverage empty and fold the actual certificate;
+an empty before-state requires certified absence. never seed coverage from an
+unguarded add patch.
+
+`outlinePending.resume()` retires the bound entry, and `occurrence()` then falls
+back to `fields[row_id].link`. install the guarded future through the existing
+relationship owner so its resolved proof also reaches that field before
+settlement; updating only `Bound.link` leaves a second stale-proof path. retain
+the existing promise-identity and receipt-owner guards against older completions.
+superseded callbacks still resolve their proof for successor chains; the guards
+reject stale publication, not that value. offscreen settlement needs no mounted
+input owner.
+
 resolve with the unchanged lock-held ui control and preservation of unseen
 foreign additions. keep runtime, schema, queue and registry ownership unchanged.
