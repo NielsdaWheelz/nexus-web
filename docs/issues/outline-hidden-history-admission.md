@@ -15,3 +15,7 @@ estimate history-free ownership through the existing maps, then use the same
 retirement/settlement owner and publish after actual cleanup. prove deliberate
 new admission succeeds after minimal retirement while writing and independent
 aliases remain intact. retain the ordinary no-history byte-bound control too.
+
+`671837d36` supplies the visible baseline set to the hypothetical estimate,
+leaving frozen captures charged and full actual admission unchanged. the combined
+root static gate passes. the pressure/retirement sequence is not live-qualified.

@@ -22,3 +22,11 @@ only with actual owner release; visual placement anchors must not retain docs.
 resolve with repeated large-note aliases: refuse new admission at the byte bound,
 preserve accepted writing/focus, and admit again after inactive baselines/history
 retire. qualify hidden undo/redo frontier preservation separately.
+
+`671837d36` passes the same byte-admission/refusal, occurrence identity and body
+premises in `20261026-040010-ee608cb2729b`. the fixture then calls locator keys
+on an inherited-editable child instead of the focused native host and fails its
+focus assertion before typing. no product focus defect follows from that run.
+the corrected driver keeps real click and immediate focus/caret assertions, sends
+keys through the page keyboard, and retains all writing/release/retry oracles.
+those latter arms remain unqualified.
