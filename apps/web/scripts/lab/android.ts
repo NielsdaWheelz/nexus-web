@@ -4,6 +4,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { chromium, expect, type Browser, type Page } from "@playwright/test";
+import { openLabWebTransport } from "./transport";
 
 export interface AndroidLabRelease {
   serial: string; package_name: string; package_stopped: boolean;
@@ -32,6 +33,8 @@ export async function openLabAndroid(input: {
   }))];
   const existing = new Set((await adb("reverse", "--list")).split(/\s+/));
   if (ports.some(port => existing.has(port))) throw new Error("android lab reverse port is already owned");
+  const webPort = `tcp:${new URL(input.web_origin).port}`;
+  const transport = await openLabWebTransport(Number(new URL(input.web_origin).port));
   const reverses = new Set<string>();
   let forward: string | null = null;
   let ownsPackage = false;
@@ -42,6 +45,7 @@ export async function openLabAndroid(input: {
     const errors: unknown[] = [];
     try { await browser?.close(); browser = null; page = null; } catch (error) { errors.push(error); }
     const results = await Promise.allSettled([
+      transport.close(),
       ...(ownsPackage ? [adb("shell", "am", "force-stop", input.package_name).then(() => { ownsPackage = false; })] : []),
       ...(forward ? [adb("forward", "--remove", forward).then(() => { forward = null; })] : []),
       ...[...reverses].map(port => adb("reverse", "--remove", port).then(() => { reverses.delete(port); })),
@@ -69,20 +73,22 @@ export async function openLabAndroid(input: {
     return page;
   };
   try {
-    for (const port of ports) { await adb("reverse", port, port); reverses.add(port); }
+    for (const port of ports) { await adb("reverse", port, port === webPort ? `tcp:${transport.port}` : port); reverses.add(port); }
     ownsPackage = true;
     await adb("install", "-r", input.apk_file);
     if (await adb("shell", "pm", "clear", input.package_name) !== "Success")
       throw new Error("android lab could not clear its disposable package");
     await adb("shell", "am", "start", "-W", "-n", `${input.package_name}/app.nexus.android.MainActivity`);
     return { close, attachPage, setWebReachable: async reachable => {
-      const webPort = `tcp:${new URL(input.web_origin).port}`;
       if (reachable) {
-        if (reverses.has(webPort)) return;
-        if ((await adb("reverse", "--list")).split(/\s+/).includes(webPort)) throw new Error("android lab web reverse port is already owned");
-        await adb("reverse", webPort, webPort); reverses.add(webPort);
-      } else if (reverses.has(webPort)) {
-        await adb("reverse", "--remove", webPort); reverses.delete(webPort);
+        if (!reverses.has(webPort)) {
+          if ((await adb("reverse", "--list")).split(/\s+/).includes(webPort)) throw new Error("android lab web reverse port is already owned");
+          await adb("reverse", webPort, `tcp:${transport.port}`); reverses.add(webPort);
+        }
+        transport.setReachable(true);
+      } else {
+        transport.setReachable(false);
+        if (reverses.has(webPort)) { await adb("reverse", "--remove", webPort); reverses.delete(webPort); }
       }
     }, restart: async pathname => {
       const target = new URL(pathname, input.web_origin);

@@ -88,8 +88,11 @@ it installs and clears only that package, refuses existing reverse ports, and
 returns ownership before `attachPage()` waits for its webview. the caller owns
 real login and input. `close()` disconnects, stops the owned package and removes
 only its created mappings and returns the exact released mappings.
-`setWebReachable` controls only the owned web reverse; reconnect refuses occupied
-ports. `restart` preserves app data and replaces only its own process/cdp forward.
+`setWebReachable` gates the owned web reverse through a loopback tcp transport.
+going offline closes its pooled connections and rejects new ones before removing
+the reverse; storage remains independently reachable. tls and http/2 pass through
+unchanged. reconnect refuses occupied ports. `restart` preserves app data and
+replaces only its own process/cdp forward.
 no companion driver or device-wide settings change.
 
 setup requests use `browserRequest` in `scripts/lab/browser.ts`, preserving real
