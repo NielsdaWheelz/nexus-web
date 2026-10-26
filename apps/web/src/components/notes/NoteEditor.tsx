@@ -1383,7 +1383,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       inspection.signal.removeEventListener("abort", clear);
       clear();
     };
-  }, [inspection]);
+  }, [visitId, bodyViewKey, inspection]);
 
   const linkOpen = link !== null && linkVisible;
   useEffect(() => {
