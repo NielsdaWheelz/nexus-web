@@ -71,3 +71,26 @@ exact-only. the canonical static gate passes. run `20261025-220418-077b1b573dad`
 `6f9e41b48` passes the same real offline context searches, literal excerpts, exact
 quote labels, exact-only saved passages and absence of duplicate/source rows.
 this does not implement the pending scoped-source metadata contract.
+
+bulk scope-input delivery is also unresolved. the current draft places complete
+scope facts/text in the initial authored snapshot. the actual 100,000-note bff
+stream at `e2f9a0c30` took 223.5 of the existing 280 seconds for 219,541,458 bytes.
+rendered epub text supports 64 mib per source; the admitted input universe has no
+aggregate text-size bound. bounded records alone therefore cannot guarantee that
+one complete snapshot fits the deadline. this is a protocol gap, not evidence
+that any particular extra book already failed the budget. building the whole
+text publication while holding the authored head also leaves write latency
+proportional to bulk source bytes.
+
+before implementing text replication, separate the authored snapshot deadline
+from resumable, bounded scope-input hydration under the existing sync/staging
+owner. each text page must use the exact authorized reading/publication/slice
+contract, recheck current admission, and never publish partial scope facts.
+source/part replacement must invalidate or restart affected staging without a
+network-held database transaction. keep prior complete scope facts readable
+while refreshing, but explicit revocation must withdraw the affected scope;
+unknown scopes remain explicitly unavailable. no new source admission or reader
+get mutation follows from this delivery change. qualify a supported large source,
+multiple-source aggregate, interrupted hydration and publication/revocation races
+within unchanged per-response budgets. the source-text product choice remains
+pending; no dependent production code is authorized.
