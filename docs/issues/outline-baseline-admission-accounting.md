@@ -5,7 +5,14 @@ encodings plus history metadata, while `OutlineBinding.bind` independently
 allocates a displayed ydoc for each occurrence. aliases of one large note can
 therefore exceed the accepted 16 mib admission budget without increasing the
 canonical-document count. retaining hidden history bindings makes their charge
-necessary too. this is source evidence; no heap or capacity failure is claimed.
+necessary too.
+
+real browser run `20261026-032516-e857afde0ad0` on `dcc6c2e5f` (unchanged old
+controller) admits 17 aliases of one 940k-character note. their measured encoding
+plus the canonical copy totals 16,921,440 bytes, exceeding 16,777,216 while the
+fixture's unique documents/tails remain below 64. the byte-bound assertion fails
+in 11.6 seconds; later writing and branch-release assertions do not run. this is
+an admission failure, not a measured heap or 100,000-note capacity result.
 
 charge independent displayed/frozen baseline encodings through their existing
 binding/pending owners, including prospective new aliases. retain the 64 distinct
