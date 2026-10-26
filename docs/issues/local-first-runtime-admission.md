@@ -7,12 +7,13 @@ to retry even before a change/frame exists. later admitted commands remain behin
 its unsettled tail. ordinary provider cleanup calls close, not discard; an
 explicitly retired account alone discards its writing.
 
-remaining qualification: a real recoverable read_snapshot timeout followed by the
-ordinary retry must preserve that intent, commit it once, then settle a queued
-later edit with the next counter. pause the existing worker RPC and retain its
-actual 30-second client deadline; no supplied host, private runtime mutation or
-fabricated response. a second same-port timeout makes the store terminal and
-would not qualify this recoverable premise.
+live run `20261025-212216-4c293cc5ee65` on `b1b09675f` passes the real
+recoverable read_snapshot timeout and ordinary retry. the actual shared worker
+paused on this note's preparation request through its unchanged 30-second client
+deadline; the error appeared while the command lease remained retained. retry
+committed the retained first intent and queued later edit exactly once each
+(`command_seq + 2`), preserved offline server absence, then uploaded the exact
+final text on reconnect. no replacement store or fabricated response was used.
 
 also retain the exact provider-unmount condition: accepted writing must remain
 owned and retryable when that provider leaves without account retirement.

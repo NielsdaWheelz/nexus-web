@@ -1,49 +1,35 @@
-# open readers still need peer annotation invalidation
+# qualify peer annotations and remote admission
 
-own highlights come from the local authored store; readable peers' highlights
-come from the separate server document map. the backend cutover is wired:
-`services/authored/projections.py` calls `highlights.annotations_changed`, the
-readable audience's annotation lanes advance, and `/stream/writing` exposes the
-changed `annotations_revision`. real postgres case 3c passes repeatedly,
-including lab43 (`9836f73b6`). this proves server admission and invalidation only.
+browser behavior is repaired and proved; installed-client freshness and delayed
+account/admission races remain unqualified.
 
-the current browser hint owner (`lib/authored/hints.ts`) discards stream data and
-only wakes replication. a peer change has no own authored feed entry. the open
-map owner (`media/[id]/annotations.ts`) rereads on initial subscription, changed
-source identity or explicit refresh; local adjacency/backlink subscriptions only
-refresh links. no client currently consumes the annotation token. a peer's
-create/edit/delete can therefore remain stale in an already-open reader.
+own highlights belong to the local authored corpus. readable peers belong to the
+server document map and never enter that corpus. previously the browser hint
+owner discarded `annotations_revision`, so peer writes did not refresh an open
+map. the repair carries the existing opaque token on ordinary authored pull and
+emits one dedicated annotation event. no new polling, persisted token or writing
+watermark is involved. cached map projection preserves failure/retry state until
+a successful remote read replaces it.
 
-the client repair now carries the required opaque token on ordinary authored pull
-responses and emits a dedicated remote-annotation event; it does not persist the
-token, advance a writing watermark, invalidate own queries or add polling.
+real red on `dc4467ee3`, run `20261025-191710-26f7763b06b3`: a peer created a
+highlight after the initial map settled empty; the viewer's head did not advance,
+the peer remained absent from the owned corpus, and no paint appeared in 45 seconds.
 
-one related read-owner defect is repaired in the same path: `project` previously
-replaced a failed remote read with ready cached wire, hiding its failure/retry ui.
-a consumed token supplies no second same-token event. projection now preserves
-the failed/retrying state and old visible marks until a successful read explicitly
-publishes ready; manual retry remains available. no additional lifecycle owner
-is introduced. these repairs await the actual open-reader proof.
+that fix exposed an admission defect: a failed refresh marked the browser
+unavailable, then the api guard blocked manual retry before transport. run
+`20261025-195750-960fdbc31f87` observed `Unavailable` at the actual api guard
+with the trusted retry handler on its stack and no request dispatched.
 
-resolved when a real shared-library peer changes a highlight while the reader
-stays open, and the remote map refreshes independently of local writing, including
-reconnect and the installed client. a owns the browser red and client repair;
-no further backend change is established as necessary.
+browser demand requests can now test reachability while background readiness
+remains separate. only a current-account parsed success recovers unavailable
+admission. checking/sign-in/update fences and native authority remain intact;
+retired responses cannot change the replacement account's state.
 
-actual mounted red on `dc4467ee3`, lab `20261025-191710-26f7763b06b3`: the initial remote map settled empty; a real peer writer created the blue passage highlight without advancing the viewer’s authored head or entering their corpus. no peer paint appeared within 45 seconds. the candidate passes static checks; live green and packaged-native freshness remain pending.
+run `20261025-211531-a0460035a27e` on `b1b09675f` passes real peer creation,
+cached paint through failed refresh, an actual retry request and changed color,
+then peer deletion across reconnect without losing committed offline writing.
 
-lab49 on 47719 proved peer-create blue paint, failed refresh notice and cached
-blue paint, but retry issued no request. lab50's passive events ruled out movement
-or nondelivery: the same connected retry button received trusted down/up/click at
-a stable rectangle. lab51 (`20261025-195750-960fdbc31f87`) stopped at the actual
-api guard: admission was `Unavailable`, with stack apiFetch → readRemote → refresh
-→ action → onClick. the earlier network failure had closed the browser's gate;
-manual retry could not reach transport until an unrelated focus/online event.
-
-an owner correction is in review: browser attempts may test reachability without
-changing background readiness, while current-account parsed success can recover
-unavailable admission. checking/sign-in/update fences and native authority stay
-intact. response observations must retain their captured account identity;
-retirement must release it immediately and delayed cleanup must not clear its
-replacement. late transport failures must not downgrade terminal admission.
-actual retry green and live retirement/terminal race controls remain pending.
+resolve after the installed client repeats peer create/edit/delete and reconnect,
+and real delayed success/failure responses cannot reopen terminal admission or
+survive account retirement. the browser result does not substitute for those
+remaining checks.

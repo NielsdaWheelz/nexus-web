@@ -5,6 +5,7 @@
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { hasUncommittedWriting } from "@/lib/notes/runtime";
+import { holdWireReload } from "@/lib/api/client";
 
 export type WorkRisk = Readonly<{
   changed: boolean;
@@ -156,7 +157,11 @@ const WorkContext = createContext<ReturnType<typeof createWorkRegistry> | null>(
 
 export function WorkProvider({ children }: { children: ReactNode }) {
   const [registry] = useState(createWorkRegistry);
-  useLayoutEffect(() => registry.mount(), [registry]);
+  useLayoutEffect(() => {
+    const unmount = registry.mount();
+    const releaseReload = holdWireReload(() => reloadStrandsWriting(registry.guard));
+    return () => { releaseReload(); unmount(); };
+  }, [registry]);
   return <WorkContext value={registry}>{children}</WorkContext>;
 }
 

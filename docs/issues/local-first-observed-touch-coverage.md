@@ -5,7 +5,10 @@ receipts owned by that history. a replica counter is a prefix, not an isolated
 event: creation at 1, another outline session's edit at 4, then this history's
 edit at 5 lets its inverse cover 4 too. undoing creation can therefore hide
 independent writing. link-add coverage has the same prefix constraint. this is
-a source-traced defect; the exact live interleaving is not yet qualified.
+a reproduced defect: on `b1b09675f`, live run
+`20261025-210327-5107f3e65a96` passes both same-replica actor clocks and
+first text undo (`ABC` → `AB`), then creation undo leaves canonical `AB` hidden.
+the creation link is removed and the unrelated resource/link remain unchanged.
 
 touch-only predecessor certification also blocks legitimate redo: another
 session edits and deletes through 4; this history undoes its hidden creation,

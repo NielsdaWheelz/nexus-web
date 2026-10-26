@@ -38,6 +38,10 @@ server components: callFastAPI ────────────────�
   shows it through `apiTransportFeedback`; one that throws it (`isStaleBuild`)
   reaches the pane or workspace boundary, which shows it and reports no client
   defect. The workspace save keeps the workspace up.
+  the existing work provider binds this automatic-reload decision to its current
+  loss risks and admitted writing. it does not issue a beforeunload prompt to
+  obtain permission for an automatic reload, or queue a deferred reload; normal
+  later checks and the explicit reload action retain their existing ownership.
   structured api calls assign `X-Request-ID` before dispatch, preserve a supplied
   id and enforce `cache: "no-store"`. independent application read owners are not
   coordinated by the browser http cache. search manual reads have one aggregate
