@@ -191,7 +191,10 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
         UNION ALL SELECT 'highlight_member:'||h.id::text||':'||r.media_id::text,
             jsonb_build_object('kind','highlight_member','highlight_ref','highlight:'||h.id::text,'reading_ref','media:'||r.media_id::text)
             FROM highlights h JOIN readings r ON r.source_id=h.anchor_media_id
-            WHERE h.user_id<>:viewer_id AND {highlight_visibility_sql("h")}
+            WHERE h.user_id<>:viewer_id AND h.authored_visible
+                AND ({highlight_visibility_sql("h")} OR EXISTS (
+                    SELECT 1 FROM retained_refs retained
+                    WHERE retained.ref='highlight:'||h.id::text))
                 AND (r.media_id=h.anchor_media_id OR (h.anchor_kind='fragment_offsets'
                     AND {highlight_in_reading_scope_sql("h.id", "r.media_id")}))
         UNION ALL SELECT 'interval:'||interval_key,
