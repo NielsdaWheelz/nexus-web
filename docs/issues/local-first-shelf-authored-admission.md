@@ -16,3 +16,8 @@ fixed native sync calls preserve the shelf's network isolation. verify offline
 annotation/reopen/sync in downloaded pdf and text readers, plus denied source
 document/subframe access. reuse existing bridge framing and account authority;
 do not broaden account/settings operations or add arbitrary network/file access.
+
+native18, source `597473844`, run `20261025-170237-0031d206e243`, proves the
+installed saved-pdf capture, cold reopen, attached-note edit, automatic upload
+after server recovery, and denied source mainframe/subframe access. saved-text
+qualification remains in the mixed-device case; keep this issue until that passes.

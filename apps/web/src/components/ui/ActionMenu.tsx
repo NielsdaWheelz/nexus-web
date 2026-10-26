@@ -177,12 +177,27 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
 }
 
 /** Height a trailing region may take without overflowing its scroller: the scroller's cap less the published content. */
-function trailingRoom(scroller: HTMLElement, region: HTMLElement, mobile: boolean): number {
-  const used = scroller.scrollHeight - region.offsetHeight;
-  if (!mobile) return parseFloat(getComputedStyle(scroller).maxBlockSize) - used;
+function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
+  const published = scroller.querySelector<HTMLElement>(":scope > [data-menu-published]");
+  if (published === null) throw new Error("a trailing menu requires its published content block");
+  // max-block-size caps the border box. Measure the other flow block plus its
+  // padding/borders in fractional CSS pixels, even when the scroller is clipped.
+  const style = getComputedStyle(scroller);
+  const used = published.getBoundingClientRect().height
+    + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  if (!mobile) return parseFloat(style.maxBlockSize) - used;
   const panel = scroller.closest<HTMLElement>('[role="dialog"]');
-  const available = panel?.parentElement?.clientHeight ?? window.innerHeight;
-  return available - ((panel?.offsetHeight ?? scroller.offsetHeight) - scroller.offsetHeight) - used;
+  const parent = panel?.parentElement;
+  if (!panel || !parent)
+    throw new Error("a mobile trailing menu requires its sheet containing block");
+  // The sheet's 100% cap uses the backdrop content box, excluding safe-area padding.
+  const containing = getComputedStyle(parent);
+  const available = parent.getBoundingClientRect().height
+    - parseFloat(containing.paddingTop) - parseFloat(containing.paddingBottom)
+    - parseFloat(containing.borderTopWidth) - parseFloat(containing.borderBottomWidth);
+  const overhead = panel.getBoundingClientRect().height - scroller.getBoundingClientRect().height;
+  return available - overhead - used;
 }
 
 /**
@@ -417,8 +432,8 @@ export default function ActionMenu({
     if (content && trailingRegion) {
       // The region scrolls within the room the published rows leave, so its growth never scrolls them.
       const region = node.querySelector<HTMLElement>("[data-menu-trailing]");
-      const room = region ? trailingRoom(node, region, active.mobile) : NaN;
-      if (region && Number.isFinite(room)) region.style.maxBlockSize = `${Math.max(region.offsetHeight, room)}px`;
+      const room = region ? trailingRoom(node, active.mobile) : NaN;
+      if (region && Number.isFinite(room)) region.style.maxBlockSize = `${Math.max(region.getBoundingClientRect().height, room)}px`;
     }
     if (content || !active.visible || active.admission !== null) {
       change({
