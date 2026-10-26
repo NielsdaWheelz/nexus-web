@@ -40,6 +40,7 @@ export class OutlinePendingInput {
   private notify = () => {};
   private inflight = 0;
   private finishing = false;
+  private resumeAgain = false;
   error: unknown | null = null;
   connect(owner: InputOwner): () => void {
     if (this.owner?.history !== owner.history)
@@ -213,7 +214,8 @@ export class OutlinePendingInput {
     owner.publish([], admitted.committed); this.watch([row_id], admitted, new Map([[row_id, admitted.link]]));
   }
   resume(): void {
-    if (this.finishing || ![...this.bound].some(([id, bound]) => bound.settled && this.fields.get(id)?.pending)) return;
+    if (this.finishing) {this.resumeAgain = true; return;}
+    if (![...this.bound].some(([id, bound]) => bound.settled && this.fields.get(id)?.pending)) return;
     this.finishing = true;
     let changed = false;
     void (async () => {
@@ -233,7 +235,11 @@ export class OutlinePendingInput {
         this.fields.set(id, {...field, body, pending: false}); changed = true;
         bound.release(); this.bound.delete(id); this.owner?.identity(this.fields.get(id)!);
       }
-    })().catch(error => {this.error = error; changed = true;}).finally(() => {this.finishing = false; if (changed) this.notify();});
+    })().catch(error => {this.error = error; this.resumeAgain = false; changed = true;}).finally(() => {
+      const again = this.resumeAgain; this.resumeAgain = false; this.finishing = false;
+      if (changed) this.notify();
+      if (again) this.resume();
+    });
   }
   acknowledge(row_id: string, owner: object, revision: string): void {
     const row = this.fields.get(row_id); if (row?.receiptOwner !== owner) return;

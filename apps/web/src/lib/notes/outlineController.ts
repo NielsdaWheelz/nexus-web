@@ -502,7 +502,7 @@ export class OutlineController {
   }
   private editableReady(row: OutlineRow): boolean {return row.kind !== "reference" && (row.tail || this.pending.fields.get(row.row_id)?.pending === true || row.ref !== null && this.documents.has(row.ref));}
   private rebuild(semantic = false): void {
-    if (this.view && this.windows.size > 0 && !semantic && (this.hasPendingWriting() || !this.handle?.canArrange())) {this.deferred = true; return;}
+    if (this.view && this.windows.size > 0 && !semantic && (this.hasPendingWriting() || !this.handle?.canArrange())) {this.deferred = true; this.syncMetadata(); return;}
     this.deferred = false;
     for (const row of this.rows.values()) this.occurrences.set(row.row_id, row);
     const protectedRows = this.protectedRows(), previousRows = new Map(this.rows);
