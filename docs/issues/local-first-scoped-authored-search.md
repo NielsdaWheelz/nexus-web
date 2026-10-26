@@ -50,8 +50,8 @@ exact alone. an owned context-only hit is therefore lost after remote ownership
 suppression. the capture already contains these strings; no new source-text
 replication is needed for this field coverage. scoped matching must clip context
 using the same reading bounds before pagination, rather than let source context
-match outside a part. this is source-confirmed; an actual context-only fixture
-is still required when the shared scope query is implemented.
+match outside a part. all-scope context matching is repaired and proved below; reading-part context
+clipping remains part of the pending shared scope query.
 
 full scope parity does not promise identical PostgreSQL stemming, semantic
 candidates, ranking or label-substring behavior. local FTS uses unicode token
@@ -67,5 +67,7 @@ only the whole-paragraph control highlight; the original exact-quote highlight
 was absent. the shared index now covers captured prefix/exact/suffix fields and
 the local excerpt uses the same shared ordered fields as literal captured text.
 labels and navigation remain the exact quote, and saved passages remain
-exact-only. the canonical static gate passes; actual mounted green remains pending. it does
-not implement the pending scoped-source metadata contract.
+exact-only. the canonical static gate passes. run `20261025-220418-077b1b573dad` on
+`6f9e41b48` passes the same real offline context searches, literal excerpts, exact
+quote labels, exact-only saved passages and absence of duplicate/source rows.
+this does not implement the pending scoped-source metadata contract.

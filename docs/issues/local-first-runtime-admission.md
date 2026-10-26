@@ -20,3 +20,11 @@ owned and retryable when that provider leaves without account retirement.
 ordinary pane navigation unmounts editors, not the account provider; full-document
 exit and approved signout are different contracts. do not report those as this
 proof. no new production failure is established by this remaining qualification.
+
+no supported user action currently isolates that unmount: workspace setup retry
+precedes editor readiness; native binding loss is account retirement; switching
+document entries is full-document exit. lazy pane failures stop at the pane
+boundary. the authenticated render boundary can remove the account provider,
+but no deterministic user-triggered failure is established. the pending-outline
+boundary is inside the account provider and cannot qualify its unmount. retain
+this limitation rather than substituting pane navigation or injected react state.
