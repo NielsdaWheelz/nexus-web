@@ -17,11 +17,11 @@ was 4 makes the next undo ineffective. the exact pre-commit deletion/removal
 vector must distinguish already removed predecessors from independently live
 ones; removals made by the command itself cannot authorize its coverage.
 
-the incoming flat-editor candidate checks full yjs state before extending a
-displayed field's coverage. that includes text deletion sets, but not touch-only
-`restore_resource` events. body equality alone cannot prove observation of every
-intervening resource touch. preserve the resource's causal contract rather than
-silently narrowing it to differing text bytes.
+the runtime now carries exact per-identity pre-cas certificates and the shared
+`advanceCoverage` helper checks removed as well as covered predecessors. the
+incoming flat editor uses those certificates; yjs inclusion is additional byte
+protection, never a substitute for touch-only restore/no-op causality. consumer
+integration and its live qualification remain pending.
 
 resolve at the shared capture/receipt/history boundary: only extend a replica
 prefix when every intervening relevant touch is covered. retain the last safe
@@ -29,3 +29,10 @@ coverage otherwise. qualify another same-device session's intervening edit and
 restore, subsequent local typing, explicit delete/join and structural undo;
 independent writing and links must survive. no event ledger, storage migration or
 private runtime test seam is implied.
+
+removed-resource predecessor baseline control passes on `b1b09675f`, run
+`20261025-222224-0e2a5f7ffee4`: two actual same-replica sessions, a full foreign
+edit and public resource deletion, then creation undo/redo/undo preserve exact
+text and expected visibility, coverage, ordinary relation and unrelated rows.
+this validates the control fixture before qualifying the guarded candidate; it
+does not exercise a higher foreign link-add removal.
