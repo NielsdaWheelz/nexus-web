@@ -17,17 +17,17 @@ the integrated head is 0319: coordinate the existing
 migration/installed-state obligations with the same paired release.
 the existing wire fence rejects saved wire-16 catalogs after the paired upgrade;
 obtain a wire-17 catalog online before qualifying disconnected use.
-qualify installed catalog promotion, native consumption observations, trusted
-android touch fling/find/selection/drag and actual screen-reader announcements
-on the paired binaries. an attached android 16 handset is available; isolated
-debug qualification is being prepared without replacing its release or existing
-debug app. physical finger and screen-reader checks remain unqualified.
-local chromium proof does not discharge these
-checks. record measured large-index opening and sustained refresh costs with
-the change's proof in the pr body.
+isolated android qa qualifies saved-catalog cold offline browsing, complete live
+promotion, retained-media observations and trusted adb scrolling/dragging. it
+preserves the installed release/debug apps and does not qualify production
+activation. repeat the relevant checks on the paired production binaries and
+deployed data. measured opening, input and sustained refresh proof belongs in
+the pr body.
 
 the owner waived safari qualification on 2026-10-25 (`skip safari`); no safari
 automation or trust settings were changed. this is a waiver, not browser proof.
+the owner also waived human-finger and spoken-screen-reader qualification;
+trusted adb input and live-region mutations do not establish either.
 
 resolve after exact wire/source pairing and these owner checks; retain any
 failed performance or browser qualification as a separate issue.
