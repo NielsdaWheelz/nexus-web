@@ -1,4 +1,4 @@
-# deletion coverage can absorb an unrelated same-device touch
+# observed-delete coverage needs final qualification
 
 `lib/notes/structure.ts::cover` extends structural inverse coverage with later
 receipts owned by that history. a replica counter is a prefix, not an isolated
@@ -42,5 +42,14 @@ the guarded flat candidate passes both unchanged public-ui cases in run
 canonical `AB` remains visible while the creation scope is unlinked. case 41
 passes the removed-resource predecessor control. both prove one same-replica
 actor clock and unchanged unrelated rows. the compound-admission/history change
-must retain these results; explicit join/delete, touch-only restore and higher
-foreign link-add removal remain separate qualification obligations.
+must retain these results. current runtime `1dac` passes both unchanged cases
+on root `5722c445d`, run `20261026-065625-f4aa9c71beee`.
+
+root `9cefc062e`, run `20261026-070702-86fd5a46dbe9`, also passes the actual
+same-replica foreign-link control: after another history re-adds the pair, own
+redo and fresh unlink upload, but removal retains the earlier certified prefix
+below the foreign add. the foreign membership survives. ordinary empty-note
+unlink after undo and held birth/undo/redo/fresh unlink pass too. these cover
+the repaired pending relationship handoff; explicit joins, touch-only restores
+and observing an already-existing target relationship remain separate final
+qualification obligations, not reproduced failures of the current source.
