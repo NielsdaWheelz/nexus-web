@@ -54,7 +54,7 @@ import {
   type Transaction,
   type Command,
 } from "prosemirror-state";
-import { DecorationSet, EditorView, type DirectEditorProps } from "prosemirror-view";
+import { EditorView, type DecorationSet, type DirectEditorProps } from "prosemirror-view";
 import {
   history as ownHistory,
   redo as ownRedo,
@@ -214,7 +214,8 @@ type Format = (typeof FORMATS)[number][0];
 const shortcut = (key: string) =>
   `⌘/Ctrl+${key.startsWith("Shift") ? "Shift+" : ""}${key.at(-1)!.toUpperCase()}`;
 const SOURCE = "noteEditSource";
-const inspectionKey = new PluginKey<DecorationSet>("noteInspection");
+interface InspectionState { target: NoteInspection; decorations: DecorationSet }
+const inspectionKey = new PluginKey<InspectionState | null>("noteInspection");
 
 interface LinkDialog {
   row_id: string | null;
@@ -851,7 +852,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         ),
         plugins: [
           ...(latest.current.projection?.plugins ?? []),
-          inspectionPlugin(),
+          inspectionPlugin(() => shell.current?.focus({ preventScroll: true })),
           ownHistory(),
           keymap({
             Enter: enter,
@@ -1377,13 +1378,6 @@ function NoteEditorContent(props: NoteEditorProps) {
       return;
     }
     view.dispatch(view.state.tr.setMeta(inspectionKey, inspection));
-    if (!inspectionKey.getState(view.state)?.find().length) return;
-    if (!inspection.restored) {
-      view.dom
-        .querySelector("[data-note-inspection-range]")
-        ?.scrollIntoView({ block: "center" });
-      if (inspection.mayFocus()) shell.current?.focus({ preventScroll: true });
-    }
     inspection.signal.addEventListener("abort", clear, { once: true });
     return () => {
       inspection.signal.removeEventListener("abort", clear);
@@ -1679,22 +1673,32 @@ function replaceable(view: EditorView): boolean {
   );
 }
 
-function inspectionPlugin(): Plugin<DecorationSet> {
-  return new Plugin<DecorationSet>({
+/** A projection may hydrate after arrival. Paint only the exact target body;
+ * edits, abort or a changed body after paint retire its offsets permanently. */
+function inspectionPlugin(focus: () => void): Plugin<InspectionState | null> {
+  return new Plugin<InspectionState | null>({
     key: inspectionKey,
     state: {
-      init: () => DecorationSet.empty,
-      apply(tr, set) {
-        if (tr.docChanged) return DecorationSet.empty;
+      init: () => null,
+      apply(tr, previous) {
         const inspection = tr.getMeta(inspectionKey) as
           NoteInspection | null | undefined;
-        if (inspection === undefined) return set;
-        return inspection
-          ? inspectionDecorations(tr.doc, inspection)
-          : DecorationSet.empty;
+        if (inspection === undefined && !tr.docChanged) return previous;
+        const target = inspection === undefined ? previous?.target ?? null : inspection;
+        if (!target || target.signal.aborted || (tr.docChanged && tr.getMeta(outlineTransactionSource) !== "projection")) return null;
+        const decorations = inspectionDecorations(tr.doc, target);
+        if (inspection === undefined && previous?.decorations.find().length && !decorations.find().length) return null;
+        return { target, decorations };
       },
     },
-    props: { decorations: (state) => inspectionKey.getState(state) },
+    props: { decorations: (state) => inspectionKey.getState(state)?.decorations ?? null },
+    view: () => ({ update(view, before) {
+      const current = inspectionKey.getState(view.state), previous = inspectionKey.getState(before);
+      if (!current?.decorations.find().length || current.target.restored) return;
+      if (current.target === previous?.target && previous?.decorations.find().length) return;
+      view.dom.querySelector("[data-note-inspection-range]")?.scrollIntoView({ block: "center" });
+      if (current.target.mayFocus()) focus();
+    } }),
   });
 }
 
