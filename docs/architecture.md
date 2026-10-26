@@ -586,6 +586,10 @@ discipline (this is the single most important backend invariant):
   not borrow the session. phase-owned stream sessions retain their own lifetime.
 - **Server-side prepared statements are disabled** (`prepare_threshold=None`) for
   pooler safety.
+- **jit is disabled on application engine connections**, sync and async, including
+  workers. this favors interactive reads over compilation of expanded visibility
+  plans. longer corpus-wide worker ranking may lose compilation gains; its cost
+  still needs qualification for that workload.
 - **SERIALIZABLE** isolation is opt-in through `db/retries.py`
   (`retry_serializable`, or `retry_read_committed` for a locked set re-checked
   against a newer snapshot): the helper selects the isolation, reruns a
@@ -1233,7 +1237,7 @@ one: `access()` returns the row plus the viewer's role, the one capability rule;
 create, rename, delete, the index, writable destinations),
 `services/library_entries.py` (the **sole writer** of `library_entries`: the
 media target, locked append, move, filing and unfiling), `services/library_listing.py` (the entry view
-lenses and the one page statement; no DML), and `services/library_members.py` (the
+lenses and the complete pane aggregate; no DML), and `services/library_members.py` (the
   `memberships` and `library_invitations` tables; users and invitations are plain uuids). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
@@ -1248,9 +1252,9 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   invariant since migration `0131`, with cleanup explicit in app code).
   mutable named libraries also carry a sequence-backed `order_revision`;
   strict moves compare it under the library lock and return committed visible
-  ids plus revision. unfiltered custom-order pages bind it into their cursors;
-  a rejected revision discards the incomplete browser walk. `/order` supplies
-  a complete repeatable-read recovery snapshot without metadata pagination.
+  ids plus revision. the complete unfiltered custom-order response carries it;
+  stale commands refuse instead of rebasing. `/order` supplies the narrow
+  repeatable-read recovery snapshot.
 - **Sharing**: invites (`library_invitations`) and ownership transfer, both
   admin/owner-gated, with masked-404 for non-members. Accepting an invite is a
   single transaction — membership upsert, then invite status update — and the
@@ -1313,10 +1317,9 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   library ordering and suggestion eligibility; display alone uses coarse rounding
   and retains exact zero. `schemas/reading_time.py` owns the generated wire
   shape; collection formatting consumes its numbers directly. requests never scan document text.
-- **remaining-time order belongs to library listing.** `sort=remaining` orders
-  raw `float8` seconds before pagination, unknowns last in either direction,
-  then title and target identity; its finite `FloatOrNull` cursor key keeps the
-  view binding of §8.12. filters and authored positions retain their owners.
+- **remaining-time order belongs to library listing.** `remaining_asc`/`remaining_desc` order
+  raw `float8` seconds over the complete selection, unknowns last in either
+  direction, then title and target identity (§8.12). filters and authored positions retain their owners.
 - **suggestions is the one relevance owner.** `services/suggestions.py` composes
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, lectern and library
@@ -1358,8 +1361,8 @@ authority (then a new, distinct person) → new person. It runs inline inside th
 publishing transaction (batch publication opens a fresh SERIALIZABLE-retried
 session per 200 targets; source ingest, podcast identity and metadata research
 publish on their own transaction), so there is no dedupe job, proposal table,
-or merge contract. A credit change moves rows across open author-works
-continuations under the keyset guarantee (§8.12); the tab that made it rereads.
+or merge contract. a credit change invalidates the complete author-works observation (§8.12);
+the tab that made it rereads.
 Visibility predicates (`visible_podcast_ids_cte_sql`,
 `visible_content_credit_rows_sql`, `visible_contributor_ids_cte_sql`) live
 solely in `auth/permissions.py`. An orphaned person is already invisible under those
@@ -1377,7 +1380,7 @@ many outlines and a row is a link, not containment. `services/outline.py` reads
 outlines and applies the idempotent outline commands (insert, move, relink, remove, body
 and title writes, ensure-daily) in one SERIALIZABLE transaction; a removed note with no
 other place (link, annotation, link note, citation) is deleted. `services/notes.py` owns
-pages, the keyset index, the daily page (latent until its first write, its id derived
+pages, the complete index, the daily page (latent until its first write, its id derived
 from the date) and quick capture; `services/note_bodies.py` the note row, its text
 projection and reindexing. Note prose has no inline resource references; whole-block
 `object_embed` nodes keep `origin='note_body'` facts; highlight and link notes are
@@ -1675,18 +1678,18 @@ inline native options own disclosure/focus, while domains own clear/reset and
 request policy. the shell hosts independent query/navigation publications and
 its `Pane.Search` focus command. each
 domain owns a closed view type, URL codec, option inventory and labels, request
-identity, server query, total order, cursor, and local match fields. this is
+identity, server query, total order and local match fields. this is
 presentation composition, not a query engine: no row-metadata schema, runtime
 registry, generic controller, Boolean AST, or client sorting of pageable rows.
 
 | Surface | Local match fields | Canonical view | `Sort by` options | Execution |
 | --- | --- | --- | --- | --- |
 | Lectern | title; presented subtitle | Custom order | Custom order; newest/oldest added; title A–Z/Z–A | client over the complete snapshot |
-| Author works | work title | Newest published | Newest/oldest published; title A–Z/Z–A | owner SQL before keyset |
-| Chats | chat title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL before keyset |
-| Libraries | presented Library name | Oldest created | Oldest/newest created; name A–Z/Z–A | owner SQL before keyset |
+| Author works | work title | Newest published | Newest/oldest published; title A–Z/Z–A | owner SQL over the complete result |
+| Chats | chat title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
+| Libraries | presented Library name | Oldest created | Oldest/newest created; name A–Z/Z–A | owner SQL over the complete result |
 | Notes index | Page title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
-| Library entries | row title; contributor names | Recently added / Custom order | title/creator A–Z/Z–A; newest/oldest published or added; least/most time left | owner SQL before keyset |
+| Library entries | row title; contributor names | Recently added / Custom order | title/creator A–Z/Z–A; newest/oldest published or added; least/most time left | owner SQL over the complete result |
 | Podcast subscriptions | title; contributor names | Newest episode | Newest episode; most unplayed; title A–Z | owner SQL |
 | Podcast episodes | title; contributor names | Newest released | Newest/oldest released; shortest/longest duration | owner SQL |
 | Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
@@ -1705,13 +1708,13 @@ The chain is:
 
 ```text
 pane URL
-  -> strict domain frontend codec (Invalid makes zero request)
+  -> domain URL validation and canonical request query
   -> requested view + owner-built API query/cache identity
   -> BFF exact forwarding
   -> strict route parse + backend domain view
   -> authorized base relation
-  -> domain filter -> order plan -> keyset -> limit+1
-  -> useServerList: publish each page and exhaust while active (§8.12)
+  -> domain filter -> total order -> complete repeatable-read observation
+  -> useServerValue: publish the complete observation (§8.12)
   -> domain presenter + explicit local match fields
   -> visit-local Filter query -> CollectionView
 ```
@@ -1721,75 +1724,71 @@ The URL is requested state; the pane's list hook owns everything after it
 
 ### 8.12 Lists
 
-Every keyset list pages one way: the six collection families (chats,
-libraries, library entries, author works, followed podcasts, podcast
-episodes), library destinations, members and invitations, imports and import
-history, and the chat read tool's completed messages.
+finite saved indexes are complete ordered observations: libraries, library contents,
+followed podcasts, episodes, pages, chats, author works and lectern. selected get
+routes reject unknown/repeated query keys and `limit`/`cursor`. `CollectionIndex`
+contains only `items`; library entries add their library, podcast section and
+nullable manual-order revision; episodes add their show detail. all parts and
+consumption stamps share one read-only repeatable-read transaction. canonical
+`SortKey` plans define total orders, including unique tie-breakers and null rules,
+and also serve command selections. podcast index rows transfer compact identity
+and bibliography; detail/catalog capabilities keep their full representations.
 
-- **One plan.** A list declares a total order of `SortKey`s ending in a unique
-  key; `services/collection_keyset.keyset_page` derives the `ORDER BY`, the
-  strict NULL-safe page predicate and the cursor from it, so the three cannot
-  disagree. Each owner keeps its own plans: the sort vocabulary is domain
-  language.
-- **One cursor.** Unpadded base64url JSON `{after, binding}`: the last row's
-  sort values and a sha256 over the list's binding, the plan and those values.
-  The binding is `{list, viewer, …scope, …view}`: `Chats` (title search),
-  `Libraries`, `LibraryEntries` (library, view), `AuthorWorks` (handle),
-  `PodcastSubscriptions` (sort, filter, library), `PodcastEpisodes` (podcast,
-  state, sort), `LibraryDestinations` (query), `LibraryMembers` (library),
-  `LibraryInvitations` (library, status), `imports:{view}` (the normalized
-  query), `imports:history` (import ref), `CompletedMessages` (resource uri).
-  Decoding checks the digest, the arity and every value's kind; any failure is
-  `400 E_INVALID_CURSOR`, never a reinterpretation. A cursor carries no
-  revision, so a deploy that changes a plan or a binding answers each
-  outstanding cursor 400 once.
-- **One page contract** for the six families (`schemas/collection_page.py`):
-  query `limit` (1..200, default 100), `cursor` and the list's own keys; an
-  unknown or repeated key, a bad limit or an empty cursor is
-  `400 E_INVALID_REQUEST`. the response is `{data: {items, next_cursor}}`.
-  specialized lists retain their typed envelopes and snake_case keys.
-- **The keyset guarantee.** Following cursors to the end returns every row
-  whose sort values do not change during the walk exactly once, in plan
-  order. A row inserted or moved after the cursor appears; one inserted or
-  moved before it is missing until the next read from the first page; a
-  deleted row disappears; a row moved forward across the cursor can come
-  twice from the server and is shown once. The volatile orders are chats by
-  update, podcasts by unplayed count and latest episode, the entries
-  "remaining" order with the in-progress and unfinished projections, and the
-  episode state filter. The tab's own writes always reread from page one.
+`useServerValue` holds these complete results. a changed query immediately hides
+old rows, metadata and targets. same-query refresh retains its accepted snapshot
+until atomic replacement or failure. `fresh` requires live data and the accepted
+invalidation token to match the requested token; commands additionally require
+no running read/failure and their domain authority. strict `refetch()` is
+awaitable and supersedes older work; `revalidate()` coalesces one observation
+behind current work without discarding a useful result. failure stops passive
+observation until explicit recovery. podcast work/transcript polling reads the
+aggregate every3 seconds; followed idle shows every60 seconds, only while active
+and visible. library work polling likewise rereads its aggregate. accepted
+publication changes notify other indexes; query changes and first baselines do
+not impersonate publication.
 
-the browser holds every paginated collection in `lib/api/useServerList.ts`.
-`key` names the view; a new key exposes no previous-key rows or metadata,
-including before effects run, and admits its first page. same-key refresh keeps
-its usable snapshot until atomic replacement or failure. each page publishes immediately, even
-when empty, then the list appends sequentially to cursor exhaustion while its
-surface is active and the document visible. embedded disclosures additionally
-require their open lifetime. an admitted logical read may finish inactive;
-query change or unmount aborts. scrolling admits no work. rows deduplicate by
-stable id, first occurrence wins; metadata follows the latest committed page.
-`fresh` means the committed snapshot matches the requested key and `stale` token.
-actions using that snapshot also require no running read or settled failure.
+accepted pane entry starts declared get reads beside lazy code loading.
+route-owned descriptors are shared with mounted readers. the account/visit/route
+one-use seed owner holds pending, success or failure until its first read effect
+claims it, then drops the handoff. bootstrap uses exact query keys and retains its
+bounded deadline. no completed-read cache, speculative writes or hidden active
+pane is introduced. returns paint visit snapshots and reread under the ordinary
+value policy. saved catalog projections remain complete and promote only after
+a complete current live stamp covers their listening facts.
 
-`refetch()` and `stale` changes supersede older work and atomically replace the
-loaded page prefix; a complete list rereads to its end. requests preserve each
-adapter's page size. `revalidate()` coalesces periodic observations behind
-initial traversal and strict refresh without superseding an admitted read; a
-last pending observation survives polling stopping. any settled failure stops
-automatic work until explicit recovery, a new query or strict invalidation.
-continuation failure retains usable current-query rows, including picker
-choices. an invalid cursor allows one source restart per logical operation,
-then requires explicit recovery. only a null cursor licenses completion counts
-and operations requiring completeness, including custom ordering.
+read completeness is independent of mounted rows. `CollectionView` mounts all
+rows through 200. eligible indices that declare `UniformIndex` geometry above
+that threshold use `measuredIndexWindow.ts` for the visible range, overscan and bounded
+interaction pins. actual equal row measurement supplies the complete scroll
+extent; the measurement probe stays hidden behind loading until that extent is
+ready. filtering, counts, playback capture and media-summary membership still
+consume the complete ordered data. native find, text selection and the
+accessibility tree cover mounted rows only in a windowed index; the app filter
+searches the complete index. wrapping details, search and outlines retain their
+own intrinsic layout. [resource presentation](modules/resource-references.md#presentation-contract)
+owns the row contract.
 
-a pane return restores its visit snapshot and rereads only if `stale` moved;
-a server seed supplies the first page once. automatic continuation is visually
-and audibly quiet. `useCollectionReadFeedback` supplies a nullable continuation
-recovery notice and a persistent, separate live node: an announced active initial
-wait receives one first-response outcome, never a per-page or exhaustion receipt.
-inactive or abandoned waits retire without replay. local filter status speaks
-subsequent user query changes; complete single-response
-reads remain single responses. authored outline branches alone retain explicit
-`usePagePrefix` expansion with their first-page authority and generations.
+the existing pane memento is the sole index scroll-restoration owner. it combines
+full-order logical geometry with native anchors, captures the eye-line before
+mutation and restores after the affected sections are ready, unless newer input
+intent wins. deleted anchors choose the next surviving row. media-summary
+membership retains only additions, releases removals and preserves unchanged
+references; complete seeded rows remain usable while summaries refresh.
+
+truly paged capabilities retain `CollectionPage`, `keyset_page` and
+`useServerList`: discovery/search, members/invitations, imports/history and chat
+message tools. a total order derives the cursor's null-safe predicate and
+`ORDER BY`; cursors bind viewer, domain scope and view. a page walk includes
+unchanged sort identities once; movement across the cursor can omit/repeat a
+row until refresh. each admitted page publishes immediately and automatic
+traversal follows that surface's existing activity policy; scroll admits no
+work. same-query refresh retains its prefix, continuation failure offers retry,
+and one invalid cursor may restart its logical operation. authored outline
+branches alone use explicit `usePagePrefix` expansion.
+
+complete and paged reads share one foreground wait/outcome narrator. preparation,
+returns, passive refresh and continuation stay silent; local filters announce
+user query changes. only paged readers expose continuation recovery.
 
 In-tab change topics (`lib/api/changes.ts`) tell mounted lists that a
 committed write in this tab changed server state. A writer publishes after
@@ -1958,9 +1957,10 @@ open over Resume and never become panes.
   request ID, and React component stack, never exception messages, request bodies, draft text, tokens, or
   provider payloads. Kept constraints: nonce-CSP + **streaming only** — no PPR,
   no `next/dynamic`, no server-emitted `modulepreload` (chunk URLs are unknown
-  server-side); `React.lazy` stays the splitting mechanism (a lazy body starts
-  its import while hydrating; a failed import is forgotten so "Retry pane" imports
-  again).
+  server-side). the pane registry owns dynamic imports and one cached
+  `Pending` → `Ready` or `Failed` outcome per route; import failure requires
+  document reload. startup updates can still replace streamed bodies before
+  hydration; see the [owning issue](issues/pane-body-drops-gestures-before-hydration.md).
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; every
   Supabase call is behind `lib/supabase/` (`cookie.ts` edge-safe, `auth.ts`

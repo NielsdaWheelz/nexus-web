@@ -99,7 +99,8 @@ function createStore() {
       entry.stale = false;
       entry.resolving = true;
     }
-    notify();
+    // Stale becomes resolving without changing public pending/retrying facts.
+    let changed = false;
     try {
       const { data } = await apiFetch<
         ApiJson<"/media/summaries/resolve", "post">
@@ -113,9 +114,12 @@ function createStore() {
         const entry = entries.get(media_id);
         // Released, or invalidated in flight: the next request reads it again.
         if (entry === undefined || entry.stale) continue;
-        if (orderingFacts(entry.summary) !== orderingFacts(summary))
-          queryRevision += 1;
-        entry.summary = summary;
+        if (JSON.stringify(entry.summary) !== JSON.stringify(summary)) {
+          if (orderingFacts(entry.summary) !== orderingFacts(summary)) queryRevision += 1;
+          entry.summary = summary;
+          changed = true;
+        }
+        if (!entry.resolved || entry.error !== null) changed = true;
         entry.resolved = true;
         entry.error = null;
       }
@@ -123,37 +127,44 @@ function createStore() {
       if (controller.signal.aborted) return;
       const modeled = modeledApiError(error, (found) => {
         defect = found;
+        changed = true;
       });
       for (const id of ids) {
         const entry = entries.get(id);
-        if (modeled !== null && entry !== undefined && !entry.stale)
+        if (modeled !== null && entry !== undefined && !entry.stale) {
           entry.error = modeled;
+          changed = true;
+        }
       }
     } finally {
       for (const id of ids) {
         const entry = entries.get(id);
-        if (entry !== undefined) entry.resolving = false;
+        if (entry !== undefined) {
+          if (entry.error !== null && !entry.stale) changed = true;
+          entry.resolving = false;
+        }
       }
       running = false;
       request = null;
-      if (active) notify();
+      if (active && changed) notify();
       schedule();
     }
   }
 
-  const invalidate = (ids: Iterable<string>) => {
+  const invalidate = (ids: Iterable<string>, changed = false) => {
     for (const id of ids) {
       const entry = entries.get(id);
       if (entry === undefined) continue;
+      if (entry.error !== null && !entry.stale && !entry.resolving) changed = true;
       entry.stale = true;
     }
-    notify();
+    if (changed) notify();
     schedule();
   };
 
   const invalidateQueries = (ids: Iterable<string>) => {
     queryRevision += 1;
-    invalidate(ids);
+    invalidate(ids, true);
   };
 
   return {
@@ -175,17 +186,19 @@ function createStore() {
     queryRevision: () => queryRevision,
     retain({ ids, seeds }: { ids: readonly string[]; seeds: readonly MediaSummary[] }) {
       const supplied = new Map(seeds.map(seed => [seed.media_id, seed]));
+      let changed = false;
       for (const id of ids) {
         if (!entries.has(id)) {
           const summary = supplied.get(id) ?? null;
           entries.set(id, { summary, resolved: summary !== null, error: null, retained: 0, stale: true, resolving: false });
+          if (summary !== null) changed = true;
         }
         const entry = entries.get(id)!;
         const seed = supplied.get(id);
-        if (!entry.resolved && seed !== undefined) { entry.summary = seed; entry.resolved = true; }
+        if (!entry.resolved && seed !== undefined) { entry.summary = seed; entry.resolved = true; changed = true; }
         entry.retained += 1;
       }
-      invalidate(ids);
+      invalidate(ids, changed);
     },
     release(ids: Iterable<string>) {
       for (const id of ids) {
@@ -201,7 +214,7 @@ function createStore() {
     },
     resolve: (seed: MediaSummary): MediaSummary | null => {
       const entry = entries.get(seed.media_id);
-      return entry === undefined ? seed : entry.summary;
+      return entry === undefined || !entry.resolved ? seed : entry.summary;
     },
     error(ids: readonly string[]): ApiError | null {
       if (defect !== null) throw defect.error;

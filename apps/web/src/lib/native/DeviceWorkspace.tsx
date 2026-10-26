@@ -80,6 +80,7 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
           renderEnvironment={renderEnvironment}
           initialState={initial.current}
           seeds={{}}
+          consumptionObservations={[]}
           entryFailure={null}
           locationLinkFailure={null}
         /></CatalogProvider>

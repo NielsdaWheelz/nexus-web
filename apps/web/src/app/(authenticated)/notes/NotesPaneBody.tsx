@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useSyncExternalStore } from "react";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
@@ -14,15 +14,10 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogRead } from "@/lib/catalog/provider";
 import { catalogNotes } from "@/lib/catalog/selectors";
-import { useChangeStamp } from "@/lib/api/changes";
-import { useWritingRevision } from "@/lib/api/writingReceive";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
-import {
-  listRowStatus,
-  pageQuery,
-  useServerList,
-  type ListSnapshot,
-} from "@/lib/api/useServerList";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
+import { useNotesIndexRead } from "@/lib/panes/indexPaneEntry";
 import { presentNote } from "@/lib/collections/presenters/note";
 import {
   CANONICAL_UPDATED_TITLE_INDEX_VIEW as CANONICAL,
@@ -45,7 +40,6 @@ import { subscribeWriting } from "@/lib/notes/writes";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
 import {
   dailyDateFor,
-  fetchNotePages,
   isDeletingPage,
   type NotePageSummary,
 } from "@/lib/notes/api";
@@ -71,7 +65,7 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import styles from "./notes.module.css";
 
-const VISIT = definePaneVisitDataKey<ListSnapshot<NotePageSummary>>(
+const VISIT = definePaneVisitDataKey<Visit<{ items: NotePageSummary[] }>>(
   "Notes.Index",
 );
 const UNIT = { singular: "page", plural: "pages" };
@@ -89,7 +83,7 @@ const VIEW_CODEC = {
 
 /**
  * The Notes index: the chats index's sortable view over the viewer's pages
- * (filter, load to the end, count), a box that creates a page, and Today.
+ * (complete filtering and count), a box that creates a page, and Today.
  */
 export default function NotesPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
@@ -98,23 +92,15 @@ export default function NotesPaneBody() {
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
   const viewQuery = updatedTitleIndexViewQuery(view).slice(1);
-  // Writing revisions discover pages other sessions made; Notes, this tab's own.
-  const notesStamp = useChangeStamp("Notes");
-  const writingRevision = useWritingRevision();
   const catalog = useCatalogRead(value => catalogNotes(value, new URLSearchParams(viewQuery)));
-  const list = useServerList<NotePageSummary>({
-    key: invalid ? null : `/notes/pages?${viewQuery}`,
-    stale: `${notesStamp}:${writingRevision}`,
-    catalog,
-    pageSize: 100,
-    active: usePaneIsActive(),
-    visit: VISIT,
-    id: (item) => item.id,
-    fetchPage: (cursor, limit, signal) =>
-      fetchNotePages(pageQuery(viewQuery, cursor, limit), signal),
-  });
+  const descriptor = useNotesIndexRead();
+  const list = useServerValue({ ...descriptor, catalog, visit: VISIT });
+  const indexItems = list.status === "ready" ? list.data.items : [];
+  const failure = list.status === "loading" ? null : list.error;
+  const busy = indexReading(list);
+  const retry = () => { void list.refetch().catch(() => {}); };
   usePaneReturnReady(list.status !== "loading" || invalid);
-  const captureScroll = usePaneScrollRetention(list.items);
+  const captureScroll = usePaneScrollRetention(indexItems);
   const setView = useCallback(
     (next: UpdatedTitleIndexView) => {
       captureScroll();
@@ -124,16 +110,16 @@ export default function NotesPaneBody() {
   );
 
   const pendingDeletes = useSyncExternalStore(subscribeWriting,
-    () => list.items.filter(item => isDeletingPage(item.id)).map(item => item.id).join(" "), () => "");
+    () => indexItems.filter(item => isDeletingPage(item.id)).map(item => item.id).join(" "), () => "");
   const items = useMemo(() => {
     const pending = new Set(pendingDeletes.split(" "));
-    return list.items.filter(item => !pending.has(item.id) && !isDeletedResource(`page:${item.id}`));
-  }, [list.items, pendingDeletes]);
+    return (list.status === "ready" ? list.data.items : []).filter(item => !pending.has(item.id) && !isDeletedResource(`page:${item.id}`));
+  }, [list, pendingDeletes]);
   const rows = useMemo(() => items.map(presentNote), [items]);
   const filterRows = usePaneFilterRows({
     sourceKey: "Notes.Pages",
     getRowStatus: (text) =>
-      listRowStatus(
+      indexRowStatus(
         list,
         rows.length,
         rows.filter((row) => matchesPaneFilterQuery(text, [row.title.text]))
@@ -147,17 +133,17 @@ export default function NotesPaneBody() {
   const filtering = query.trim() !== "";
   const visible = rows.filter((row) => matchesPaneFilterQuery(query, [row.title.text]));
   const emptyTitle = filtering
-    ? list.complete ? "no pages match this filter." : "no matching page found so far."
-    : list.complete ? "no pages yet." : "no pages loaded so far.";
-  const readFeedback = useCollectionReadFeedback({
-    list, unit: UNIT, waiting: list.status === "loading" && !invalid,
+    ? "no pages match this filter."
+    : "no pages yet.";
+  const readFeedback = useIndexReadFeedback({
+    value: list, requestedKey: descriptor.key, active: usePaneIsActive(), unit: UNIT, waiting: list.status === "loading" && !invalid,
     outcome: visible.length > 0 ? "results updated." : emptyTitle,
     returnFocus: () => inputRef.current,
   });
   const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
-    : list.complete
+    : (list.status === "ready")
       ? { kind: "Count", value: items.length, unit: "page" }
       : { kind: "Pending" };
   const reset = useCallback(() => {
@@ -202,7 +188,7 @@ export default function NotesPaneBody() {
             placement: "Inline",
             id: queryStatusId,
             visible: false,
-            content: <PaneFilterRowsStatus announceQueryChanges={list.current && list.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+            content: <PaneFilterRowsStatus announceQueryChanges={(list.status === "ready") && failure === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
           }}
           onReset={canReset ? reset : undefined}
         />
@@ -252,36 +238,30 @@ export default function NotesPaneBody() {
       </div>
     );
   }
-  const failed = list.failure?.op === "More" ? null : list.failure?.error;
+  const failed = failure;
   const loadFailure = failed ? (
     <FeedbackNotice
       content={catalogErrorFeedback(failed) ?? {
         tone: "Danger",
-        title: "Notes couldn’t be loaded.",
+        title: list.status === "ready" ? "couldn’t refresh pages" : "couldn’t load pages",
         requestId: failed.requestId,
       }}
-      announcement="Assertive"
-      actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
+      announcement={list.status === "ready" ? "None" : "Polite"}
+      actions={[{ label: "try again", onClick: retry, busy }]}
+      returnFocus={() => inputRef.current}
     />
   ) : undefined;
   return (
     <div>
       {readFeedback.announcement}
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Notes.Pages"
         rows={visible}
         status={list.status === "failed" ? "error" : list.status}
         ariaLabel="Notes"
-        rowChangePresentation={{
-          kind: "ImmediateOnKeyChange",
-          key: query.trim(),
-        }}
-        collectionBusy={list.running !== null || !list.current}
-        notice={<>
-          {list.status === "ready" ? loadFailure : null}
-          {filtering && list.current && !list.complete && list.failure === null && visible.length > 0
-            ? <p>filter applies to loaded items.</p> : null}
-        </>}
+        anchorKey={query.trim()}
+        collectionBusy={busy}
+        notice={list.status === "ready" ? loadFailure : null}
         error={list.status === "ready" ? undefined : loadFailure}
         empty={
           <FeedbackNotice
@@ -292,7 +272,6 @@ export default function NotesPaneBody() {
             announcement="None"
           />
         }
-        footer={readFeedback.notice}
         toolbar={
           <>
             <form

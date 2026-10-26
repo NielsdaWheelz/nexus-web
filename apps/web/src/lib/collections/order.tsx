@@ -97,8 +97,9 @@ export function projectOrder<T>(
   id: (row: T) => string,
   order: CollectionOrder,
 ): readonly T[] {
-  let ids = order.acked?.ids ?? rows.map(id);
   const pending = order.state.pending;
+  if (order.acked === null && pending?.phase !== "Sending") return rows;
+  let ids = order.acked?.ids ?? rows.map(id);
   if (pending?.phase === "Sending")
     ids = moveBefore(ids, pending.command.itemId, pending.command.beforeId);
   const byId = new Map(rows.map((row) => [id(row), row]));

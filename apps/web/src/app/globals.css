@@ -322,13 +322,6 @@
     --duration-base: 0ms;
     --duration-deliberate: 0ms;
   }
-
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation-duration: 0ms !important;
-    animation-delay: 0ms !important;
-  }
 }
 
 /* The Black Forest Oracle: a route-local manuscript palette (oracle, atlas). */

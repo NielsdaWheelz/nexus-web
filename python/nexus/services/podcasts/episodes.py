@@ -1,5 +1,6 @@
-"""A show's known catalogue, ordered selections, exact counts and transcript eligibility.
+"""Complete known episode indexes, atomic show detail and transcript eligibility.
 
+The caller owns one read-only repeatable-read snapshot for header and episodes.
 Catalogue inspection and point tools require no subscription or library membership.
 Selections exclude teardown, retain unsaved identities and never acquire holdings.
 """
@@ -14,9 +15,8 @@ from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.db.models import TranscriptState
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import podcast as wire
-from nexus.schemas.collection_page import CollectionPage
 from nexus.services import media as media_service
-from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.consumption import projection
 
 _TRANSCRIBABLE = (
@@ -96,7 +96,7 @@ def selection_fingerprint(media_ids: list[UUID]) -> str:
 
 
 def episode_order_plan(sort: wire.EpisodeSort) -> list[SortKey]:
-    """The one total order behind the listing's ORDER BY, predicate and cursor."""
+    """The total order shared by the complete index and ordered selection."""
     direction = "asc" if sort == "oldest" else "desc"
     published = [
         SortKey("published_missing", "asc", KeysetValueKind.Int),
@@ -112,51 +112,44 @@ def episode_order_plan(sort: wire.EpisodeSort) -> list[SortKey]:
     ]
 
 
+def _ordered_episodes_sql(sort: wire.EpisodeSort) -> str:
+    order = order_by_sql(episode_order_plan(sort), alias="r")
+    return f"SELECT * FROM ({_episodes_sql()}) r ORDER BY {order}"
+
+
 def list_episodes(
     db: Session,
     viewer_id: UUID,
     podcast_id: UUID,
     *,
-    limit: int,
-    cursor: str | None,
     state: str,
     sort: wire.EpisodeSort,
-) -> CollectionPage[wire.PodcastEpisodeListItemOut]:
-    if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": podcast_id}) is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-    rows, next_cursor = keyset_page(
-        db,
-        binding={
-            "list": "PodcastEpisodes",
-            "viewer": viewer_id,
-            "podcast": podcast_id,
-            "state": state,
-            "sort": sort,
-        },
-        plan=episode_order_plan(sort),
-        cursor=cursor,
-        limit=limit,
-        params={"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state},
-        alias="r",
-        sql=lambda keyset, order: f"""
-            SELECT * FROM ({_episodes_sql()}) r WHERE TRUE {keyset}
-            ORDER BY {order} LIMIT :limit
-        """,
+) -> wire.PodcastEpisodeIndexOut:
+    """The show's detail and every selected episode from the same read snapshot."""
+    from nexus.services.podcasts.subscriptions_query import get_podcast_detail
+
+    podcast = get_podcast_detail(db, viewer_id, podcast_id)
+    rows = (
+        db.execute(
+            text(_ordered_episodes_sql(sort)),
+            {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state},
+        )
+        .mappings()
+        .all()
     )
-    page = {row["media_id"]: row for row in rows}
-    summaries = media_service.media_summaries(db, viewer_id=viewer_id, media_ids=list(page))
-    return CollectionPage(
+    summaries = media_service.media_summaries(
+        db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows]
+    )
+    return wire.PodcastEpisodeIndexOut(
+        podcast=podcast,
         items=[
             wire.PodcastEpisodeListItemOut(
-                id=media_id,
-                media_summary=summary,
-                transcript_state=TranscriptState(
-                    page[media_id]["transcript_state"] or "not_requested"
-                ),
+                id=row["media_id"],
+                media_summary=summaries[row["media_id"]],
+                transcript_state=TranscriptState(row["transcript_state"] or "not_requested"),
             )
-            for media_id, summary in summaries.items()
+            for row in rows
         ],
-        next_cursor=next_cursor,
     )
 
 
@@ -164,17 +157,14 @@ def ordered_selection_ids(
     db: Session, viewer_id: UUID, podcast_id: UUID, *, state: str, sort: wire.EpisodeSort
 ) -> tuple[str, list[UUID]]:
     """Complete known episode list in its owner's total order; no live cursor walk."""
-    from nexus.services.collection_keyset import order_by_sql
-
     label = db.scalar(
         text("SELECT title FROM podcasts WHERE id = :podcast_id"),
         {"podcast_id": podcast_id},
     )
     if label is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-    order = order_by_sql(episode_order_plan(sort), alias="r")
-    ids = db.scalars(
-        text(f"SELECT media_id FROM ({_episodes_sql()}) r ORDER BY {order}"),
+    rows = db.execute(
+        text(_ordered_episodes_sql(sort)),
         {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": state},
     )
-    return label, list(ids)
+    return label, [row.media_id for row in rows]

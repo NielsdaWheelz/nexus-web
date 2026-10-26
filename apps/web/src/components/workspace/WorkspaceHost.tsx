@@ -17,6 +17,8 @@ import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { FeedbackState } from "@/components/feedback/Feedback";
 import { checkSession } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
+import { IndexPaneEntry } from "@/lib/panes/indexPaneEntry";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import { paneMountKey, resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { getInteractionGeneration, hasActiveInteractionOwner, useInteractionOwner } from "@/lib/ui/overlay";
@@ -44,6 +46,7 @@ const PaneContent = memo(function PaneContent(props: {
   readonly isPresented: boolean;
 }) {
   const admission = useRemoteAdmission();
+  const runtime = requirePaneRuntime(usePaneRuntime(), "PaneContent");
   const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings"].includes(props.routeId);
   // Covered bodies own saved-data and coverage states; mounting grants no remote
   // capability. Other cold server panes still require credential admission.
@@ -54,7 +57,7 @@ const PaneContent = memo(function PaneContent(props: {
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
   if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
-  if (props.routeId !== "unsupported") return renderPane(props.routeId);
+  if (props.routeId !== "unsupported") return <IndexPaneEntry routeId={props.routeId} params={runtime.pathParams} query={runtime.searchParams}>{renderPane(props.routeId)}</IndexPaneEntry>;
   return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "nexus has no view for this address" }} announcement="Polite" /></div>;
 });
 

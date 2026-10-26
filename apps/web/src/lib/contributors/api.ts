@@ -1,5 +1,5 @@
 // The contributor read surface on the generated wire types: author search,
-// detail and works pages.
+// detail and the complete works index.
 // The server validates everything it is sent; nothing here re-validates it.
 
 import { apiFetch } from "@/lib/api/client";
@@ -38,12 +38,12 @@ export async function getContributor(
   return (await apiFetch<Body>(authorPath(handle), { signal })).data;
 }
 
-/** One works page; `query` carries the view keys and the page keys as given. */
+/** Every visible work in the canonical order. */
 export async function listContributorWorks(
   handle: string,
   query: URLSearchParams,
   signal: AbortSignal,
-): Promise<ListPage<ContributorWork>> {
+) {
   type Body = ApiJson<"/contributors/{contributor_handle}/works", "get">;
   const path = `${authorPath(handle)}/works?${query}` as const;
   return (await apiFetch<Body>(path, { signal })).data;

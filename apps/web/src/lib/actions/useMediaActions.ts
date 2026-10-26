@@ -31,14 +31,12 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const ref = subject.kind === "Stored" ? `media:${subject.summary.media_id}`
     : admittedId !== null ? `media:${admittedId}` : `external:${subject.target}`;
   const busy = useBusyActionIds(ref);
-  const { read, receipts, pending } = ctx.lectern;
+  const { read, itemsById, receipts, pending } = ctx.lectern;
   const request = mediaId === null ? undefined : pending.get(mediaId);
   const receipt = mediaId === null ? undefined : receipts.get(mediaId);
   const newerReceipt = receipt !== undefined && (read.status !== "ready" || compareRevision(receipt.order_revision, read.data.order_revision) > 0);
-  const present = newerReceipt ? receipt.present : read.status === "ready"
-    ? read.data.items.some(item => item.media_summary.media_id === mediaId) : null;
-  const sharedItem = mediaId === null || read.status !== "ready" ? null
-    : read.data.items.find(item => item.media_summary.media_id === mediaId) ?? null;
+  const sharedItem = mediaId === null ? null : itemsById.get(mediaId) ?? null;
+  const present = newerReceipt ? receipt.present : read.status === "ready" ? sharedItem !== null : null;
   const sharedDescriptor = sharedItem?.activation.kind === "FooterAudio" ? sharedItem.activation.descriptor : null;
   const descriptor = knownDescriptor ?? sharedDescriptor;
   const creatingLibrary = subject.kind === "External" && placement.hasPendingExternalCreation(subject.target);

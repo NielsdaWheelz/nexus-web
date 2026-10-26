@@ -436,14 +436,13 @@ export interface paths {
         };
         /**
          * List Conversations
-         * @description The owned-chat index: four views, literal title search and keyset paging.
+         * @description The complete owned-chat index: four views and literal title search.
          *
          *     Optional ``media_id`` scopes current direct context by its endpoint's media owner.
          *
          *     Errors:
          *         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
          *             or repeated key, invalid media id, or title search over 200 characters.
-         *         E_INVALID_CURSOR (400): malformed or mismatched viewer, media, search or view.
          *         E_MEDIA_NOT_FOUND (404): scoped media is missing or unreadable, including
          *             viewer tombstones and pending teardown.
          */
@@ -454,6 +453,23 @@ export interface paths {
          * @description An empty chat with its initial context refs (a resource's "chat" action).
          */
         post: operations["create_conversation_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest Conversation */
+        get: operations["latest_conversation_conversations_latest_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2517,7 +2533,7 @@ export interface paths {
         };
         /**
          * List Pages
-         * @description Keyset pages of the viewer's pages in the chats index's four views.
+         * @description The complete owned-page index in the chats index's four views.
          */
         get: operations["list_pages_notes_pages_get"];
         put?: never;
@@ -4284,6 +4300,31 @@ export interface components {
             /** Items */
             items: components["schemas"]["UndoItem"][];
         };
+        /** CollectionIndex[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        CollectionIndex_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Items */
+            items: (components["schemas"]["MediaContributorWorkItemOut"] | components["schemas"]["PodcastContributorWorkItemOut"] | components["schemas"]["ExternalContributorWorkItemOut"])[];
+        };
+        /** CollectionIndex[ConversationListItemOut] */
+        CollectionIndex_ConversationListItemOut_: {
+            /** Items */
+            items: components["schemas"]["ConversationListItemOut"][];
+        };
+        /** CollectionIndex[LibraryOut] */
+        CollectionIndex_LibraryOut_: {
+            /** Items */
+            items: components["schemas"]["LibraryOut"][];
+        };
+        /** CollectionIndex[NotePageSummaryOut] */
+        CollectionIndex_NotePageSummaryOut_: {
+            /** Items */
+            items: components["schemas"]["NotePageSummaryOut"][];
+        };
+        /** CollectionIndex[PodcastIndexItemOut] */
+        CollectionIndex_PodcastIndexItemOut_: {
+            /** Items */
+            items: components["schemas"]["PodcastIndexItemOut"][];
+        };
         /** CollectionLecternOut */
         CollectionLecternOut: {
             added_count: components["schemas"]["_Count"];
@@ -4311,20 +4352,6 @@ export interface components {
             media_ids: string[];
             target: components["schemas"]["CollectionTarget"];
         };
-        /** CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Items */
-            items: (components["schemas"]["MediaContributorWorkItemOut"] | components["schemas"]["PodcastContributorWorkItemOut"] | components["schemas"]["ExternalContributorWorkItemOut"])[];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[ConversationListItemOut] */
-        CollectionPage_ConversationListItemOut_: {
-            /** Items */
-            items: components["schemas"]["ConversationListItemOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** CollectionPage[LibraryInvitationOut] */
         CollectionPage_LibraryInvitationOut_: {
             /** Items */
@@ -4336,34 +4363,6 @@ export interface components {
         CollectionPage_LibraryMemberOut_: {
             /** Items */
             items: components["schemas"]["LibraryMemberOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[LibraryOut] */
-        CollectionPage_LibraryOut_: {
-            /** Items */
-            items: components["schemas"]["LibraryOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[NotePageSummaryOut] */
-        CollectionPage_NotePageSummaryOut_: {
-            /** Items */
-            items: components["schemas"]["NotePageSummaryOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[PodcastEpisodeListItemOut] */
-        CollectionPage_PodcastEpisodeListItemOut_: {
-            /** Items */
-            items: components["schemas"]["PodcastEpisodeListItemOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[PodcastListItemOut] */
-        CollectionPage_PodcastListItemOut_: {
-            /** Items */
-            items: components["schemas"]["PodcastListItemOut"][];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -4568,17 +4567,10 @@ export interface components {
              */
             kind: "Consumption";
         };
-        /** ConsumptionData[CollectionPage[PodcastEpisodeListItemOut]] */
-        ConsumptionData_CollectionPage_PodcastEpisodeListItemOut__: {
+        /** ConsumptionData[CollectionIndex[PodcastIndexItemOut]] */
+        ConsumptionData_CollectionIndex_PodcastIndexItemOut__: {
             consumption_revision: components["schemas"]["OrderRevision"];
-            data: components["schemas"]["CollectionPage_PodcastEpisodeListItemOut_"];
-            /** Episode Consumption */
-            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
-        };
-        /** ConsumptionData[CollectionPage[PodcastListItemOut]] */
-        ConsumptionData_CollectionPage_PodcastListItemOut__: {
-            consumption_revision: components["schemas"]["OrderRevision"];
-            data: components["schemas"]["CollectionPage_PodcastListItemOut_"];
+            data: components["schemas"]["CollectionIndex_PodcastIndexItemOut_"];
             /** Episode Consumption */
             episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
         };
@@ -4589,10 +4581,10 @@ export interface components {
             /** Episode Consumption */
             episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
         };
-        /** ConsumptionData[LibraryEntriesPageOut] */
-        ConsumptionData_LibraryEntriesPageOut_: {
+        /** ConsumptionData[LibraryEntriesIndexOut] */
+        ConsumptionData_LibraryEntriesIndexOut_: {
             consumption_revision: components["schemas"]["OrderRevision"];
-            data: components["schemas"]["LibraryEntriesPageOut"];
+            data: components["schemas"]["LibraryEntriesIndexOut"];
             /** Episode Consumption */
             episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
         };
@@ -4628,6 +4620,13 @@ export interface components {
         ConsumptionData_PodcastDetailOut_: {
             consumption_revision: components["schemas"]["OrderRevision"];
             data: components["schemas"]["PodcastDetailOut"];
+            /** Episode Consumption */
+            episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
+        };
+        /** ConsumptionData[PodcastEpisodeIndexOut] */
+        ConsumptionData_PodcastEpisodeIndexOut_: {
+            consumption_revision: components["schemas"]["OrderRevision"];
+            data: components["schemas"]["PodcastEpisodeIndexOut"];
             /** Episode Consumption */
             episode_consumption: components["schemas"]["EpisodeConsumptionEntry"][];
         };
@@ -5102,6 +5101,22 @@ export interface components {
         Data_CollectionConsumptionUndoOut_: {
             data: components["schemas"]["CollectionConsumptionUndoOut"];
         };
+        /** Data[CollectionIndex[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
+        Data_CollectionIndex_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
+            data: components["schemas"]["CollectionIndex_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        };
+        /** Data[CollectionIndex[ConversationListItemOut]] */
+        Data_CollectionIndex_ConversationListItemOut__: {
+            data: components["schemas"]["CollectionIndex_ConversationListItemOut_"];
+        };
+        /** Data[CollectionIndex[LibraryOut]] */
+        Data_CollectionIndex_LibraryOut__: {
+            data: components["schemas"]["CollectionIndex_LibraryOut_"];
+        };
+        /** Data[CollectionIndex[NotePageSummaryOut]] */
+        Data_CollectionIndex_NotePageSummaryOut__: {
+            data: components["schemas"]["CollectionIndex_NotePageSummaryOut_"];
+        };
         /** Data[CollectionLecternOut] */
         Data_CollectionLecternOut_: {
             data: components["schemas"]["CollectionLecternOut"];
@@ -5110,14 +5125,6 @@ export interface components {
         Data_CollectionLecternPreparedOut_: {
             data: components["schemas"]["CollectionLecternPreparedOut"];
         };
-        /** Data[CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
-        Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
-            data: components["schemas"]["CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        };
-        /** Data[CollectionPage[ConversationListItemOut]] */
-        Data_CollectionPage_ConversationListItemOut__: {
-            data: components["schemas"]["CollectionPage_ConversationListItemOut_"];
-        };
         /** Data[CollectionPage[LibraryInvitationOut]] */
         Data_CollectionPage_LibraryInvitationOut__: {
             data: components["schemas"]["CollectionPage_LibraryInvitationOut_"];
@@ -5125,14 +5132,6 @@ export interface components {
         /** Data[CollectionPage[LibraryMemberOut]] */
         Data_CollectionPage_LibraryMemberOut__: {
             data: components["schemas"]["CollectionPage_LibraryMemberOut_"];
-        };
-        /** Data[CollectionPage[LibraryOut]] */
-        Data_CollectionPage_LibraryOut__: {
-            data: components["schemas"]["CollectionPage_LibraryOut_"];
-        };
-        /** Data[CollectionPage[NotePageSummaryOut]] */
-        Data_CollectionPage_NotePageSummaryOut__: {
-            data: components["schemas"]["CollectionPage_NotePageSummaryOut_"];
         };
         /** Data[CollectionPage[ViewerInvitationOut]] */
         Data_CollectionPage_ViewerInvitationOut__: {
@@ -5493,6 +5492,10 @@ export interface components {
         /** Data[Union[BrowserSessionOut, NoneType]] */
         Data_Union_BrowserSessionOut__NoneType__: {
             data: components["schemas"]["BrowserSessionOut"] | null;
+        };
+        /** Data[Union[ConversationListItemOut, NoneType]] */
+        Data_Union_ConversationListItemOut__NoneType__: {
+            data: components["schemas"]["ConversationListItemOut"] | null;
         };
         /** Data[Union[ReaderCursorEmpty, ReaderCursorPositioned, ReaderCursorUnresolved]] */
         Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__: {
@@ -6952,15 +6955,15 @@ export interface components {
             removal_revision: components["schemas"]["OrderRevision"];
         };
         /**
-         * LibraryEntriesPageOut
+         * LibraryEntriesIndexOut
          * @description Only the unfiltered manual-order view carries a structural revision.
          */
-        LibraryEntriesPageOut: {
+        LibraryEntriesIndexOut: {
             /** Items */
             items: components["schemas"]["LibraryMediaEntryOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            library: components["schemas"]["LibraryOut"];
             order_revision: components["schemas"]["OrderRevision"] | null;
+            podcasts: components["schemas"]["LibraryPodcastIndexOut"];
         };
         /** LibraryEntryOrder */
         LibraryEntryOrder: {
@@ -7141,6 +7144,26 @@ export interface components {
             /** Placements */
             placements: components["schemas"]["LibraryPlacementOut"][];
             removal_revision: components["schemas"]["OrderRevision"];
+        };
+        /** LibraryPodcastIndexOut */
+        LibraryPodcastIndexOut: {
+            /** Can Add Content */
+            can_add_content: boolean;
+            /** Imports */
+            imports: components["schemas"]["PodcastImportOut"][];
+            order_revision: components["schemas"]["OrderRevision"];
+            removal_revision: components["schemas"]["OrderRevision"];
+            /** Subscriptions */
+            subscriptions: components["schemas"]["LibraryPodcastIndexShowOut"][];
+        };
+        /** LibraryPodcastIndexShowOut */
+        LibraryPodcastIndexShowOut: {
+            /** Destinations */
+            destinations: components["schemas"]["PodcastDestinationOut"][];
+            /** Imports */
+            imports: components["schemas"]["PodcastImportOut"][];
+            podcast: components["schemas"]["PodcastIndexItemOut"];
+            recurring: components["schemas"]["PodcastRecurringOut"];
         };
         /** LibraryPodcastOut */
         LibraryPodcastOut: {
@@ -9554,6 +9577,12 @@ export interface components {
             /** Unfinished Count */
             unfinished_count: number;
         };
+        /** PodcastEpisodeIndexOut */
+        PodcastEpisodeIndexOut: {
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeListItemOut"][];
+            podcast: components["schemas"]["PodcastDetailOut"];
+        };
         /** PodcastEpisodeListItemOut */
         PodcastEpisodeListItemOut: {
             /**
@@ -9746,6 +9775,20 @@ export interface components {
         };
         /** @enum {string} */
         PodcastImportState: "pending" | "running" | "complete" | "failed" | "cancelled";
+        /** PodcastIndexItemOut */
+        PodcastIndexItemOut: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Image Url */
+            image_url: string | null;
+            /** Title */
+            title: string;
+        };
         /** PodcastIndexOrder */
         PodcastIndexOrder: {
             /** Alpha */
@@ -14743,7 +14786,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
                 };
             };
             /** @description Validation Error */
@@ -14772,7 +14815,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_ConversationListItemOut__"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_ConversationListItemOut__"];
                 };
             };
         };
@@ -14797,6 +14840,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConversationOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    latest_conversation_conversations_latest_get: {
+        parameters: {
+            query: {
+                media_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_Union_ConversationListItemOut__NoneType__"];
                 };
             };
             /** @description Validation Error */
@@ -15739,7 +15813,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_LibraryOut__"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_LibraryOut__"];
                 };
             };
         };
@@ -16059,7 +16133,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConsumptionData_LibraryEntriesPageOut_"];
+                    "application/json": components["schemas"]["ConsumptionData_LibraryEntriesIndexOut_"];
                 };
             };
             /** @description Validation Error */
@@ -18885,7 +18959,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_NotePageSummaryOut__"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_NotePageSummaryOut__"];
                 };
             };
         };
@@ -19236,7 +19310,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConsumptionData_CollectionPage_PodcastListItemOut__"];
+                    "application/json": components["schemas"]["ConsumptionData_CollectionIndex_PodcastIndexItemOut__"];
                 };
             };
         };
@@ -19388,7 +19462,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConsumptionData_CollectionPage_PodcastEpisodeListItemOut__"];
+                    "application/json": components["schemas"]["ConsumptionData_PodcastEpisodeIndexOut_"];
                 };
             };
             /** @description Validation Error */

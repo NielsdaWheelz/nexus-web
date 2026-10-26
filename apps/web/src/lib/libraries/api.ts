@@ -37,8 +37,8 @@ async function data<T>(path: `/api/${string}`, signal?: AbortSignal) {
   return (await apiFetch<{ data: T }>(path, { signal })).data;
 }
 
-export function librariesPage(query: URLSearchParams, signal?: AbortSignal) {
-  return data<ListPage<Library>>(`/api/libraries?${query}`, signal);
+export async function librariesIndex(query: URLSearchParams, signal?: AbortSignal) {
+  return (await apiFetch<ApiJson<"/libraries", "get">>(`/api/libraries?${query}`, { signal })).data;
 }
 
 /** Stamped with its read snapshot's consumption revision; observations reach native. */
@@ -77,15 +77,14 @@ export async function deleteLibrary(id: string): Promise<void> {
   publishChange("Libraries", "Entries");
 }
 
-/** One page; its metadata is the page's consumption revision (fold with `oldestRevision`). */
-export async function entriesPage(
+/** One atomic library, entry and podcast observation. */
+export async function libraryEntriesIndex(
   id: string,
   query: URLSearchParams,
   signal?: AbortSignal,
 ) {
-  const { data, consumption_revision } = stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+  return stampedRead(await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
     `${libraryPath(id)}/entries?${query}`, { signal }));
-  return { ...data, metadata: { consumption_revision } };
 }
 
 export async function libraryOrder(libraryId: string, signal: AbortSignal): Promise<Snapshot> {

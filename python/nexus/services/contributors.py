@@ -24,7 +24,7 @@ from nexus.db.models import Contributor, ContributorAlias, ContributorCredit, Me
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.collection_page import CollectionPage, CollectionQuery, parse_collection_query
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.contributors import (
     ContributorDetailOut,
     ContributorRoleFactOut,
@@ -37,7 +37,7 @@ from nexus.schemas.contributors import (
     PodcastContributorWorkItemOut,
 )
 from nexus.services.browse.targets import ProjectGutenbergEpubTarget, seal_target
-from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.contributor_credits import load_contributor_credits_for_catalogue
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
@@ -221,8 +221,7 @@ _DATE_MISSING = SortKey("date_missing", "asc", KeysetValueKind.Int)  # undated l
 _HREF = SortKey("href", "asc", KeysetValueKind.Text)  # the relation's unique key: plans are total
 
 # The four views, keyed by the raw (sort, direction) pair. Both absent is oldest-first;
-# ``published+asc`` is rejected, so every view has exactly one url. Each plan is hashed
-# into its cursors: changing one invalidates its outstanding cursors.
+# ``published+asc`` is rejected, so every view has exactly one url.
 _WORKS_PLANS: dict[tuple[str | None, str | None], list[SortKey]] = {
     (None, None): [
         _DATE_MISSING,
@@ -255,13 +254,13 @@ _WORKS_PLANS: dict[tuple[str | None, str | None], list[SortKey]] = {
 
 def parse_contributor_works_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[list[SortKey], CollectionQuery]:
+) -> list[SortKey]:
     """Strict works-view parse over ``multi_items()``, so duplicate keys are visible."""
-    query = parse_collection_query(items, domain_keys={"sort", "direction"})
-    plan = _WORKS_PLANS.get((query.parameters.get("sort"), query.parameters.get("direction")))
+    query = parse_index_query(items, domain_keys={"sort", "direction"})
+    plan = _WORKS_PLANS.get((query.get("sort"), query.get("direction")))
     if plan is None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported author works view")
-    return plan, query
+    return plan
 
 
 def list_contributor_works(
@@ -270,51 +269,45 @@ def list_contributor_works(
     viewer_id: UUID,
     contributor_handle: ContributorHandle,
     plan: list[SortKey],
-    cursor: str | None,
-    limit: int,
-) -> CollectionPage[ContributorWorkItemOut]:
+) -> CollectionIndex[ContributorWorkItemOut]:
     """Distinct visible works with their role facts, in one total order.
 
-    The ``facts`` wrapper projects the derived sort columns once, so ORDER BY, the keyset
-    and the cursor read identical expressions. A cursor is bound to this viewer, author
-    and view.
+    The facts wrapper projects each derived sort column once; summaries and local
+    external catalogue credits hydrate in batches in the caller's read snapshot.
     """
     from nexus.services.media import media_summaries
 
     contributor = _visible_contributor(db, contributor_handle, viewer_id)
-    page, next_cursor = keyset_page(
-        db,
-        binding={"list": "AuthorWorks", "viewer": viewer_id, "contributor": contributor_handle},
-        plan=plan,
-        cursor=cursor,
-        limit=limit,
-        params={"viewer_id": viewer_id, "contributor_id": contributor.id},
-        sql=lambda keyset, order: f"""
+    order = order_by_sql(plan, alias="facts")
+    rows = (
+        db.execute(
+            text(f"""
             WITH facts AS (
                 SELECT w.*, (w.date_key IS NULL)::int AS date_missing,
                        lower(btrim(w.title)) AS title_key
                 FROM ({_works_sql()}) w
                 WHERE w.contributor_id = :contributor_id
             )
-            SELECT * FROM facts
-            WHERE TRUE {keyset}
-            ORDER BY {order}
-            LIMIT :limit
-        """,
+            SELECT * FROM facts ORDER BY {order}
+        """),
+            {"viewer_id": viewer_id, "contributor_id": contributor.id},
+        )
+        .mappings()
+        .all()
     )
     summaries = media_summaries(
-        db, viewer_id=viewer_id, media_ids=[r["media_id"] for r in page if r["media_id"]]
+        db, viewer_id=viewer_id, media_ids=[r["media_id"] for r in rows if r["media_id"]]
     )
     catalogue = load_contributor_credits_for_catalogue(
         db,
         [
             r["project_gutenberg_catalog_ebook_id"]
-            for r in page
+            for r in rows
             if r["media_id"] is None and r["podcast_id"] is None
         ],
     )
     items: list[ContributorWorkItemOut] = []
-    for row in page:
+    for row in rows:
         facts = [ContributorRoleFactOut(**fact) for fact in row["role_facts"]]
         if row["media_id"] is not None:
             items.append(
@@ -351,7 +344,7 @@ def list_contributor_works(
                     role_facts=facts,
                 )
             )
-    return CollectionPage[ContributorWorkItemOut](items=items, next_cursor=next_cursor)
+    return CollectionIndex[ContributorWorkItemOut](items=items)
 
 
 def resolve_contributor_ids_by_handles(db: Session, handles: Sequence[str]) -> dict[str, UUID]:

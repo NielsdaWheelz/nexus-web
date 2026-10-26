@@ -11,7 +11,7 @@ from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas import podcast as wire
-from nexus.schemas.collection_page import CollectionPage, parse_collection_query
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.consumption import ConsumptionData
 from nexus.services import media_deletion
 from nexus.services.consumption import observation
@@ -66,12 +66,12 @@ def remove_episode(
 @router.get("/podcasts")
 def list_podcasts(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
-) -> ConsumptionData[CollectionPage[wire.PodcastListItemOut]]:
+) -> ConsumptionData[CollectionIndex[wire.PodcastIndexItemOut]]:
     response.headers["Cache-Control"] = "private, no-store"
-    query = parse_collection_query(
+    query = parse_index_query(
         request.query_params.multi_items(), domain_keys=frozenset({"sort", "filter", "library_id"})
     )
-    library = query.parameters.get("library_id")
+    library = query.get("library_id")
     try:
         library_id = None if library is None else UUID(library)
     except ValueError as exc:
@@ -81,15 +81,13 @@ def list_podcasts(
     data = queries.list_podcasts(
         db,
         viewer.user_id,
-        limit=query.limit,
-        cursor=query.cursor,
         sort=_option(
-            query.parameters,
+            query,
             "sort",
             "recent_episode",
             ("recent_episode", "unplayed_count", "alpha"),
         ),
-        filter=_option(query.parameters, "filter", "all", ("all", "has_new", "not_in_library")),
+        filter=_option(query, "filter", "all", ("all", "has_new", "not_in_library")),
         library_id=library_id,
     )
     return observation.stamp(db, viewer.user_id, data, [])
@@ -164,22 +162,18 @@ def list_podcast_episodes(
     viewer: ViewerDep,
     db: RepeatableReadDbSession,
     response: Response,
-) -> ConsumptionData[CollectionPage[wire.PodcastEpisodeListItemOut]]:
+) -> ConsumptionData[wire.PodcastEpisodeIndexOut]:
     response.headers["Cache-Control"] = "private, no-store"
-    query = parse_collection_query(
+    query = parse_index_query(
         request.query_params.multi_items(), domain_keys=frozenset({"state", "sort"})
     )
     data = episodes.list_episodes(
         db,
         viewer.user_id,
         podcast_id,
-        limit=query.limit,
-        cursor=query.cursor,
-        state=_option(
-            query.parameters, "state", "all", ("all", "unplayed", "in_progress", "played")
-        ),
+        state=_option(query, "state", "all", ("all", "unplayed", "in_progress", "played")),
         sort=_option(
-            query.parameters,
+            query,
             "sort",
             "newest",
             ("newest", "oldest", "duration_asc", "duration_desc"),

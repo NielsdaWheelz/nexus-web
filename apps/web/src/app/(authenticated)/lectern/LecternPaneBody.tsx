@@ -103,8 +103,8 @@ export default function LecternPaneBody() {
     kind: "catalog", snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at,
   };
   const lectern: ServerValue<Lectern> = showingSaved ? {
-    status: "ready", data: saved, source, generation: 0, error: null, refreshing: false, refetch: live.refetch,
-  } : live.status === "ready" || saved !== null || remoteReady() || catalog.loading ? live : { status: "failed", retrying: false, refetch: live.refetch,
+    status: "ready", data: saved, source, generation: 0, fresh: false, acceptedStale: null, error: null, refreshing: false, refetch: live.refetch, revalidate: live.revalidate,
+  } : live.status === "ready" || saved !== null || remoteReady() || catalog.loading ? live : { status: "failed", retrying: false, refetch: live.refetch, revalidate: live.revalidate,
     error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") };
   const liveShown = lectern.status === "ready" && source.kind === "live";
   const { ensure } = useLecternCommands();
@@ -271,7 +271,7 @@ export default function LecternPaneBody() {
         )}
         {valid ? (
           <PlaybackSourceContext.Provider value={capture}>
-          <CollectionView
+          <CollectionView geometry="UniformIndex"
             returnScope="Lectern.Items"
             ariaLabel="On the lectern"
             surface={false}
@@ -320,13 +320,13 @@ export default function LecternPaneBody() {
                   : "Nothing on the lectern yet."}
               </p>
             }
-            rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
+            anchorKey={query}
             order={ordering}
           />
           </PlaybackSourceContext.Provider>
         ) : null}
       </section>
-      {liveShown ? <QuickReadsSection isActive={isActive} /> : null}
+      {liveShown ? <QuickReadsSection /> : null}
       {liveShown ? <SuggestionsSection
         destination={{ kind: "Lectern" }}
         suggestions={suggestions}

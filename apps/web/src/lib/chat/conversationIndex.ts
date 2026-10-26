@@ -4,7 +4,6 @@ import { apiFetch } from "@/lib/api/client";
 import type { FeedbackOffer } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
-import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
@@ -14,20 +13,27 @@ import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { chatFailure } from "./wire";
 
-// The Chats index: its pages and its delete. Writers publish "Chats".
+// The complete chat index, latest source lookup and deletion. Writers publish "Chats".
 
 export type ConversationListItem = Schema<"ConversationListItemOut">;
 
-/** One keyset page; `query` holds the view's keys, `limit` and `cursor`. */
+/** Every visible selected chat, in its canonical order. */
 export async function fetchConversationIndex(
   query: URLSearchParams,
   signal: AbortSignal,
-): Promise<ListPage<ConversationListItem>> {
+) {
   const response = await apiFetch<ApiJson<"/conversations", "get">>(
     `/api/conversations?${query}`,
     { cache: "no-store", signal },
   );
   return response.data;
+}
+
+/** The newest visible chat for one source, without transferring its full index. */
+export async function fetchLatestSourceConversation(mediaId: string, signal: AbortSignal) {
+  return (await apiFetch<ApiJson<"/conversations/latest", "get">>(
+    `/api/conversations/latest?${new URLSearchParams({ media_id: mediaId })}`, { signal },
+  )).data;
 }
 
 export function deleteConversation(

@@ -72,11 +72,25 @@ evicting another pane. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
-errors terminate. library metadata, canonical entries and published suggestions
-seed independently: a named miss loses only its own result. a cold inactive pane
+errors terminate. complete library/episode aggregates and independent published suggestions use
+exact route-query keys. accepted destination entry overlaps declared get reads
+with code loading through the same one-use seed owner. claims transfer pending,
+successful or failed work to the mounted owner; close, account retirement and
+module failure retire unclaimed work. a named bootstrap miss loses only its own
+result; no completed response cache remains. a cold inactive pane
 admits its body and existing read owners only when first presented. the
 authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
 unknown paths render unsupported panes.
+
+the pane registry owns one cached `Pending` → `Ready` or `Failed` module outcome
+per route. server rendering and hydration suspend for pending code. startup
+updates can still replace streamed body markup before hydration; the
+[existing startup issue](../issues/pane-body-drops-gestures-before-hydration.md)
+records that unresolved loss of early gestures. client navigation renders ordinary
+loading while code is pending, then defers the ready
+body's render so module arrival does not incur suspense's fallback retry delay.
+only the committed ready body spends unused seeds; import failure keeps its stage
+and requires document reload. this registry holds code, never account data.
 
 required-data transport failures (`E_NETWORK`, `E_UPSTREAM`,
 `E_UPSTREAM_TIMEOUT`, `E_AUTH_UNAVAILABLE`) are classified before react serializes
@@ -1085,8 +1099,30 @@ content), then focuses the row's `[data-row-focusable]` (else the pane
 landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
 Visit data is written on every commit and tagged with its routeKey, so a replace
 to another route never restores stale data; a list's snapshot carries the change
-stamp it was read under, and a return rereads when the stamp moved
-(architecture §8.12). `usePaneVisitDataWriter` records an immutable snapshot
+stamp it was read under. complete value readers paint the visit snapshot and
+reread; paged readers retain their stamp-based return policy (architecture §8.12).
+`PaneRefreshAnchor` captures same-query row replacement before mutation and
+restores one shared pane eye-line after layout, unless newer input intent wins.
+large eligible indices register their complete ordered ids and measured row
+geometry through `usePaneCollectionGeometry`. the same memento owns return,
+refresh and measurement-change scroll writes; the row window owns measurement
+and mounted demand only. restoration waits for affected descendants to finish
+measurement, including sibling lists sharing this scrollport. logical ranks
+locate unmounted anchors and choose the next full-order survivor after removal;
+bounded row demand mounts a needed target before focus recovery. a connected
+unrelated focus destination wins over a pending return.
+
+`CollectionView` keeps the most recently interacted row and its neighbours
+mounted in a large index; an active menu or drag adds scoped demand. this preserves
+the source through menu/dialog handoff without a second overlay lifecycle. a
+menu's existing geometry guard may retire it when geometry changes. the
+collection's focus owner retains the logical source through its own portal and
+recovers that source after remount, or the next survivor after removal. lists
+through 200 stay fully mounted. larger windows retain complete data and filter
+scope, while native find, selection and accessibility traversal inspect mounted
+content only; see [resource presentation](resource-references.md#presentation-contract).
+
+`usePaneVisitDataWriter` records an immutable snapshot
 synchronously before a write or navigation can outlive its presentation. its
 stable function uses the mounted visit's latest committed route key; callers
 own delivery lifetime and stop writing after departure. it adds no task owner

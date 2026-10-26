@@ -20,11 +20,7 @@ export type SuggestionsDestination =
   | { kind: "Library"; id: string; name: string };
 
 export async function getSuggestions(path: ApiPath, signal: AbortSignal): Promise<Suggestions> {
-  return requestWithDeadline({
-    request: (boundedSignal) => requestWithRetry(async (attemptSignal) =>
-      (await apiFetch<ApiJson<"/lectern/suggestions", "get">>(path, { signal: attemptSignal })).data, boundedSignal),
-    signal, timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS,
-  });
+  return (await apiFetch<ApiJson<"/lectern/suggestions", "get">>(path, { signal })).data;
 }
 
 export async function viewSuggestions(path: ApiPath, refs: string[], signal: AbortSignal) {
