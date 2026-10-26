@@ -7,6 +7,7 @@ import {bodyText, type NoteBody} from "@nexus/authored/body";
 import type {LinkState, ResourceProjection} from "@nexus/authored/types";
 import type {NoteEdit, FocusSelection} from "./editorTypes";
 import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OutlineBookmark, OutlineHistory, OutlineOccurrence, OutlinePlacement} from "./structure";
+import {advanceRelationship} from "./structure";
 import {LocalCommitError, type LocalCommit, type WritingDocument} from "./runtime";
 import {clipboardPlainText} from "./clipboard";
 import {noteBodySchema} from "@nexus/authored/body";
@@ -86,12 +87,14 @@ export class OutlinePendingInput {
       bound = {document, link, release: document?.retain() ?? (() => {}), settled: false, captureBytes: 0};
       this.bound.set(row_id, bound);
     }
+    const retained = bound;
     bound.link = link;
     void Promise.resolve(link).then(value => {
-      if (this.bound.get(row_id)?.link !== link) return;
-      this.bound.get(row_id)!.link = value;
       const field = this.fields.get(row_id);
-      if (field) {const current = {...field, link: value}; this.fields.set(row_id, current); this.owner?.identity(current);}
+      if (this.bound.get(row_id) !== retained || retained.link !== link || !field ||
+        field.ref !== row.ref || field.parent_ref !== row.parent_ref || field.parent_id !== row.parent_id) return;
+      retained.link = value;
+      const current = {...field, link: value}; this.fields.set(row_id, current); this.owner?.identity(current);
     }).catch(error => {this.error = error; this.notify();});
   }
   private occurrence(id: string): OutlineOccurrence {
@@ -222,14 +225,16 @@ export class OutlinePendingInput {
       for (const [id, bound] of this.bound) {
         const row = this.fields.get(id);
         if (!row?.pending || !bound.settled) continue;
-        const revision = row.revision, token = row.receiptOwner;
+        const revision = row.revision, token = row.receiptOwner, relationship = bound.link;
+        const observed = await relationship;
         if (bound.document) {
           const bytes = Y.encodeStateAsUpdate(bound.document.doc).byteLength;
           bound.captureBytes += bytes;
           try {await bound.document.capture().then(() => {});} finally {bound.captureBytes -= bytes;}
         }
         const field = this.fields.get(id);
-        if (!field || field.revision !== revision || field.receiptOwner !== token || !bound.settled) continue;
+        if (!field || this.bound.get(id) !== bound || field.revision !== revision || field.receiptOwner !== token || !bound.settled ||
+          bound.link !== relationship && bound.link !== observed) continue;
         if (!field.hidden && bound.document && this.owner && !this.owner.confirmed(field, bound.document)) continue;
         const body = bound.document ? field.kind === "title" ? bodyText(bound.document.doc.getText("title").toString()) : readBody(bound.document.doc) : field.body;
         this.fields.set(id, {...field, body, pending: false}); changed = true;
@@ -241,12 +246,23 @@ export class OutlinePendingInput {
       if (again) this.resume();
     });
   }
-  acknowledge(row_id: string, owner: object, revision: string): void {
+  acknowledge(row_id: string, owner: object, committed: Promise<LocalCommit>): void {
     const row = this.fields.get(row_id); if (row?.receiptOwner !== owner) return;
-    this.fields.set(row_id, {...row, settledRevision: revision});
-    const bound = this.bound.get(row_id); if (bound) bound.settled = true;
-    else this.fields.set(row_id, {...this.fields.get(row_id)!, pending: false});
-    this.resume(); this.notify();
+    // Capture before replacement: a later command may already need this
+    // future, even when a superseding owner suppresses its publication.
+    const previous = this.observedLink(row_id);
+    const link = previous ? Promise.all([previous, committed]).then(([observed, receipt]) => advanceRelationship(observed, receipt)) : null;
+    if (link) this.restoreRelationship(row_id, link);
+    const retained = this.bound.get(row_id); if (retained) retained.settled = false;
+    void committed.then(async receipt => {
+      await link;
+      const field = this.fields.get(row_id);
+      if (field?.receiptOwner !== owner || this.bound.get(row_id) !== retained || field.ref !== row.ref || field.parent_id !== row.parent_id || field.parent_ref !== row.parent_ref) return;
+      this.fields.set(row_id, {...field, settledRevision: receipt.store_revision});
+      const bound = this.bound.get(row_id); if (bound) bound.settled = true;
+      else this.fields.set(row_id, {...this.fields.get(row_id)!, pending: false});
+      this.resume(); this.notify();
+    }).catch(error => {this.error = error; this.notify();});
   }
   retry(): void {
     const error = this.error; this.error = null;

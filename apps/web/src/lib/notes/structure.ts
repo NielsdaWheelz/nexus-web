@@ -45,6 +45,15 @@ export interface AdmittedLink extends AdmittedStructure {link: Promise<LinkState
 export interface AdmittedNote extends AdmittedLink {document: WritingDocument}
 export interface AdmittedJoin extends AdmittedStructure {selection: (document: WritingDocument) => FocusSelection}
 export interface AdmittedPaste extends AdmittedStructure {refs: readonly string[]; documents: readonly WritingDocument[]}
+/** Extend only the membership this occurrence already observed. A command may
+ * carry several patches for one pair; every extension uses its actual prestate. */
+export function advanceRelationship(link: LinkState, receipt: LocalCommit): LinkState {
+  const before = receipt.before.links.find(state => state.link_id === link.link_id);
+  let covered = link.add_vv;
+  for (const patch of receipt.change.links) if (patch.link_id === link.link_id)
+    covered = advanceCoverage(covered, before ? {touch: before.add_vv, removed: before.remove_vv} : null, patch.add_vv);
+  return {...link, add_vv: covered};
+}
 interface Coverage {resources: Map<string, Vector>; links: Map<string, Vector>}
 interface Settlement {store_revision: string; links: readonly LinkState[]}
 interface Group {
@@ -63,7 +72,7 @@ interface FocusOwner {
   capture(): OutlineBookmark | null;
   restore(bookmark: OutlineBookmark, mayFocus?: () => boolean): Promise<void>;
   lease(): () => boolean;
-  prepare?(target: OutlineBookmark | null, source: OutlineBookmark | null, mayFocus: () => boolean, visibility: OutlineVisibility): (store_revision: string) => void;
+  prepare?(target: OutlineBookmark | null, source: OutlineBookmark | null, mayFocus: () => boolean, visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void;
   publish(documents: readonly WritingDocument[], target: OutlineBookmark | null, source: OutlineBookmark | null, mayFocus: () => boolean, committed: Promise<LocalCommit>): void;
 }
 
@@ -190,9 +199,8 @@ export class OutlineHistory {
     try {
       const admission = group.apply(redo, lower);
       from.splice(from.indexOf(group), 1); to.push(group);
+      acknowledge?.(admission.committed);
       owner?.publish(group.documents, target, source, mayFocus, admission.committed);
-      const completion = group.settled;
-      void completion.then(receipt => {if (receipt) acknowledge?.(receipt.store_revision);}).catch(() => {});
       void admission.result.catch(() => {});
     } catch (error) {this.failure(error);}
   }
@@ -216,7 +224,7 @@ export class OutlineHistory {
     const result = completion.then(receipt => {
       const link = receipt.change.links.find(link => link.link_id === id());
       if (!link) throw new Error("outline creation receipt has no relationship");
-      return link;
+      return advanceRelationship({...link, add_vv: {}}, receipt);
     });
     void result.catch(() => {});
     return result;
@@ -471,7 +479,7 @@ export class OutlineHistory {
         if (state) current = {...state, add_vv: {}, remove_vv: {}};
       }
       if (!current) throw new Error("reparent receipt has no relationship");
-      return current;
+      return advanceRelationship({...current, add_vv: existing?.add_vv ?? {}}, receipt);
     });
     group.after = this.relationship(group.after, link);
     void link.catch(() => {}); return {result: admitted.result, committed: completion, link};

@@ -172,7 +172,14 @@ owned redo from remaining undoable. frozen field proofs additionally retain
 shared-text identities and deletion sets; conservative coverage may keep a
 concurrently changed source visible.
 position receipts update relationship positions without replacing their observed
-membership frontier. each occurrence retains its own typing origin and displayed
+membership frontier. history replay synchronously installs an eventual receipt
+future in the same occurrence owner before another command can observe it. that
+future folds every matching link patch through its actual prestate certificate;
+new membership starts with empty coverage. its safe result reaches the retained
+field before the bound retires, including offscreen. bound/promise/ref/parent
+identity governs relationship publication; receipt ownership governs command
+settlement. same-parent scalar history keeps the current proof; reparenting uses
+the target bookmark's proof. each occurrence retains its own typing origin and displayed
 frontier; another session’s received state is not proof of observation.
 
 pending outline export reads one fresh retained-cell snapshot as literal text,
@@ -199,6 +206,8 @@ absolute tail relationships and child proofs; the root admits and retains all
 note/title documents together. graph proofs
 share a store revision; unknown data never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
+a cold append keeps its existing focus intent through initial prefix admission,
+then requests the bounded absolute-tail window before focusing the field.
 compatible child proofs refresh independently of raw field admission. each
 proof identifies its resource, relationship, parent and traversal context;
 relocation discards availability but retains its revision watermark, so an

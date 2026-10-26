@@ -174,7 +174,7 @@ export class OutlineController {
     this.pending.freeze(field, document);
   }
   private prepare(bookmark: OutlineBookmark | null, source: OutlineBookmark | null, mayFocus: () => boolean,
-    visibility?: {show: readonly OutlineBookmark[]; hide: readonly OutlineBookmark[]}): (revision: string) => void {
+    visibility?: {show: readonly OutlineBookmark[]; hide: readonly OutlineBookmark[]}): (committed: Promise<LocalCommit>) => void {
     if (visibility) {
       const acknowledge = [
         ...[...visibility.hide].sort((a, b) => (this.occurrences.get(b.key)?.depth ?? 0) - (this.occurrences.get(a.key)?.depth ?? 0)).map(row => this.prepare(null, row, () => false)),
@@ -183,7 +183,7 @@ export class OutlineController {
       ];
       for (const row of visibility.show) if (row.selection === null && this.rows.has(row.key)) this.selected.add(row.key);
       this.syncMetadata();
-      return revision => {for (const accept of acknowledge) accept(revision);};
+      return committed => {for (const accept of acknowledge) accept(committed);};
     }
     if (!bookmark) {
       const row = source ? this.rows.get(source.key) ?? this.occurrences.get(source.key) : null;
@@ -201,7 +201,7 @@ export class OutlineController {
           ?? [...this.rows.values()].find(candidate => candidate.tail || candidate.root);
         if (next) void this.focus(next.row_id, next.kind === "reference" ? null : "end", mayFocus); else this.view?.dom.blur();
       }
-      return revision => {this.pending.acknowledge(row.row_id, receiptOwner, revision); this.changed();};
+      return committed => {this.pending.acknowledge(row.row_id, receiptOwner, committed);};
     }
     const occurrence = bookmark.occurrence;
     const row = this.rows.get(bookmark.key) ?? this.occurrences.get(bookmark.key);
@@ -209,6 +209,8 @@ export class OutlineController {
     const parent_id = occurrence.parent_id ?? (occurrence.parent_ref === this.rootRef ? this.pending.root_id : [...this.occurrences.values()].find(row => row.ref === occurrence.parent_ref)?.row_id);
     if (!parent_id) return () => {};
     const token = crypto.randomUUID(), current = this.pending.fields.get(row.row_id), receiptOwner = {};
+    const sameParent = (current ?? row).ref === bookmark.ref && (current ?? row).parent_id === parent_id && (current ?? row).parent_ref === occurrence.parent_ref;
+    const relationship = sameParent ? this.pending.observedLink(row.row_id) ?? row.link : occurrence.link;
     const positioned = occurrence.after_id !== undefined || occurrence.before_id !== undefined;
     if (occurrence.link_id) this.transfer(row.row_id, parent_id, occurrence.link_id, row.origin);
     const observed = occurrence.link && "link_id" in occurrence.link ? occurrence.link : null;
@@ -220,11 +222,11 @@ export class OutlineController {
       origin: row.origin, relocating: token, previousParent: row.parent_id, previousLink: row.link?.link_id, settledRevision: undefined, receiptOwner});
     if (positioned) this.pending.place(row.row_id, occurrence.after_id ?? null, occurrence.before_id ?? null);
     this.protectField(row.row_id);
-    if (occurrence.link) this.pending.restoreRelationship(row.row_id, occurrence.link);
+    if (relationship) this.pending.restoreRelationship(row.row_id, relationship);
     if (parent_id !== this.pending.root_id && !this.opened.has(parent_id)) this.toggle(parent_id, true);
     this.changed(true);
     if (!this.documents.has(bookmark.ref)) {const owner = this.windows.has(parent_id) ? parent_id : this.pending.root_id; const window = this.windows.get(owner); if (window) this.accept(owner, window);}
-    return revision => {this.pending.acknowledge(row.row_id, receiptOwner, revision); this.changed();};
+    return committed => {this.pending.acknowledge(row.row_id, receiptOwner, committed);};
   }
   private tailId(parent: string): string {
     let id = this.tailIds.get(parent); if (!id) {id = crypto.randomUUID(); this.tailIds.set(parent, id);} return id;
