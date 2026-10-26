@@ -58,7 +58,7 @@ function ContextualMenuInvocation({
 }: ContextualMenuProps & { readonly session: ActionMenuSession }) {
   const pane = usePaneRuntime();
   const paneSubject = usePaneSubject();
-  const coarse=useTouchCapable();
+  const coarse = useTouchCapable();
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
   const client = useClientActions(resourceRef ?? null, title);

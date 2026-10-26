@@ -77,15 +77,16 @@ export function outlineShortcuts(platform: PlatformKind): readonly {
   id: string; title: string; description: string; meta: string;
 }[] {
   return [
-    {id: "Outline.Select", title: "select a block", description: "escape from note text selects its block. space selects a focused block. on touch screens, hold its bullet and choose select block.", meta: "Esc / Space"},
-    {id: "Outline.Browse", title: "browse blocks", description: "from a selected block, arrows follow the visible outline, including expanded children. shift extends the selection.", meta: "↑ / ↓"},
-    {id: "Outline.Insert", title: "insert or split a block", description: "return splits note text at the caret or inserts after a selected block. on an empty nested note it outdents; an empty root note stays put.", meta: "Enter"},
-    {id: "Outline.LineBreak", title: "insert a line break", description: "starts another line within the same note. return inside code also stays in the note.", meta: "Shift+Enter"},
-    {id: "Outline.Indent", title: "indent or outdent", description: "nests the block under the one above it, or moves it out a level. an unavailable move leaves the caret in place.", meta: "Tab / Shift+Tab"},
-    {id: "Outline.Move", title: "move a block up or down", description: "moves the block past its sibling. editing keeps the caret at the same text position.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
-    {id: "Outline.History", title: "undo or redo", description: "undoes or redoes the last change in this outline, including writing and block changes.", meta: usesMeta(platform) ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
-    {id: "Outline.Delete", title: "join or remove a block", description: "at a note boundary, joins an adjacent note. an empty note or selected block is unlinked; the resource remains. undo restores the change.", meta: "Backspace / Delete"},
-    {id: "Outline.Clear", title: "clear block selection", description: "clears the selection and returns focus to the bullet. tab then moves on.", meta: "Esc"},
+    {id: "Outline.Select", title: "Select an item", description: "Escape from note text selects its item. Space selects a focused item. On touch screens, hold its bullet and choose select item.", meta: "Esc / Space"},
+    {id: "Outline.Browse", title: "Browse items", description: "From a selected item, arrows follow the visible outline, including expanded children. Shift extends the selection.", meta: "↑ / ↓"},
+    {id: "Outline.Edit", title: "Edit the item's text", description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.", meta: "F2"},
+    {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits note text at the caret or inserts after a selected item. On an empty nested note it outdents; an empty root note stays put.", meta: "Enter"},
+    {id: "Outline.LineBreak", title: "Insert a line break", description: "Starts another line within the same note. Return inside code also stays in the note.", meta: "Shift+Enter"},
+    {id: "Outline.Indent", title: "Indent or outdent", description: "Nests the item under the one above it, or moves it out a level. An unavailable move leaves the caret in place.", meta: "Tab / Shift+Tab"},
+    {id: "Outline.Move", title: "Move an item up or down", description: "Moves the item past its sibling. Editing keeps the caret at the same text position.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
+    {id: "Outline.History", title: "Undo or redo", description: "Undoes or redoes the last change in this outline, including writing and item changes.", meta: usesMeta(platform) ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
+    {id: "Outline.Delete", title: "Join or remove an item", description: "At a note boundary, joins an adjacent note. An empty note or selected item is unlinked; the resource remains. Undo restores the change.", meta: "Backspace / Delete"},
+    {id: "Outline.Clear", title: "Clear item selection", description: "Clears the selection and returns focus to the bullet. Tab then moves on.", meta: "Esc"},
   ];
 }
 

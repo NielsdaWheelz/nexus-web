@@ -112,6 +112,16 @@ displayed baselines. titles use plain shared text and admit no marks or atoms.
 the projection reuses the canonical inline grammar without importing row ids or
 placement from clipboard content.
 
+item text means an occurrence’s own note body or inline page title. it is not a
+sequential tab stop: pointer, f2 and programmatic focus enter it. idle editable
+item text assigns tab/shift-tab and the move chord to the outline, silently
+refusing unavailable structure and ignoring repeats. root text, insertion and
+annotation fields keep native keys. escape selects the occurrence; a second
+escape clears selection and focuses its bullet, from which tab leaves. native
+links and buttons retain their own keys. the flat-host port is tracked in
+`docs/issues/local-first-outline-focus-model.md`; it must preserve these contracts
+without restoring a second row editor or outline session.
+
 the outer projection replaces complete changed rows at row boundaries. isolating
 row wrappers never enter the inline input fitter; binding owns inline diffs.
 each editor step routes through its own pre-step document to one field. generic
@@ -217,7 +227,9 @@ passage composition retains its existing ephemeral policy; it has no outline
 draft or new recovery owner.
 
 touch-capable panes expose six fixed actions: outdent, indent, move up, move down,
-undo and redo. desktop uses shortcuts. no insert or finish-editing control is
+undo and redo. the shared render-environment owner detects touch capability with
+`any-pointer: coarse`, independently of layout. hardware keyboards use the
+outline shortcuts listed in settings; platform modifiers share `usesMeta`. no insert or finish-editing control is
 needed: return inserts and normal focus/keyboard dismissal ends text editing.
 window navigation uses the same native-control recipe and comfortable touch size
 as other commands. noneditable islands remain interactive without being treated

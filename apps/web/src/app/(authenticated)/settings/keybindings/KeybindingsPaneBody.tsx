@@ -43,12 +43,12 @@ export default function KeybindingsPaneBody() {
           surface={false}
         />
       </PaneSection>
-      <PaneSection title="outline" description="these keys apply while editing or selecting a block. touch screens offer six buttons for indentation, movement, undo and redo.">
+      <PaneSection title="Outline" description="These keys apply while editing or selecting an item. Touch screens offer six buttons for indentation, movement, undo and redo.">
         <CollectionView
           returnScope="Settings.Keybindings.Outline"
           rows={outlineShortcuts(platform).map(item => presentSettingsRow({...item, presentation: "Details"}))}
           status="ready"
-          ariaLabel="outline shortcuts"
+          ariaLabel="Outline shortcuts"
           surface={false}
         />
       </PaneSection>

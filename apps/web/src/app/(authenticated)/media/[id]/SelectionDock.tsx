@@ -17,6 +17,8 @@ import { AttachedNotes, PLACEMENT_COPY } from "@/lib/documentReader/chrome/Reade
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { usesMeta } from "@/lib/shortcuts";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { bodyHasContent } from "@nexus/authored/body";
@@ -260,6 +262,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
   const { composer, menu } = verbs;
+  const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
   const feedback = useFeedback();
   const { draft, opening, annotation } = composer;
@@ -306,7 +309,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       ? "this chat is still responding" : "this chat can’t accept a reply here"
       : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
       : selected?.snapshot.kind === "Failed" ? "couldn’t load chat" : null;
-    const shortcut = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "cmd" : "ctrl";
+    const shortcut = usesMeta(platform) ? "cmd" : "ctrl";
     const command = (id: string, label: string, icon: ActionDescriptor["icon"], onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });

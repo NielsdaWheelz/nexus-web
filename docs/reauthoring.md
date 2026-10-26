@@ -8,6 +8,14 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+outline touch accessory on main against `a8343cc90`: +147 authored runtime lines
+(224 added, 77 deleted): workspace/app shell +110, notes outline +14,
+resource items +12, note editor +8 and reader web ui +3. these historical counts
+precede the local-first flat editor and are not combined totals. the shared
+render-environment owner and layout-independent six-command touch bar remain;
+the item-text focus contract ports to the flat host without restoring deleted
+row editors. current local-first ownership and area facts below remain binding.
+
 mobile editor checkpoint `f50e52f5a` against local-first `c20ebe7b6`: +3,100 authored runtime lines
 under the historical classifier, plus 39 shared `node/authored` runtime lines.
 the combined runtime change is +3,139 (4,371 added, 1,232 deleted):
