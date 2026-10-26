@@ -78,3 +78,11 @@ canonical bodies, resource visibility, links and untouched control, then fails
 `data-outline-pending=true`. the cause and whether any work remains unacknowledged
 are unestablished. resolve that owner state and pass the unchanged held controls;
 do not replace the marker oracle with a delay or infer native qualification.
+
+failure-only public close observation reports no beforeunload dialog
+(`20261026-041156-64bd5ba7a941`); that does not expose the pending owner's state.
+external candidate `3969f8c7d` publishes metadata through a protected rebuild and
+coalesces resume requests during capture, but the unchanged split case still
+fails the same marker (`20261026-041723-268f788dcc13`). it is not integrated or
+accepted as resolving this defect. inspect row/mount and adoption ownership before
+another repair; the complete canonical-writing assertions still pass.
