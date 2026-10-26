@@ -140,10 +140,8 @@ export class WritingRuntime {
       for (const note of initializers) note.doc.destroy();
       throw error;
     }
-    let frontiers: Promise<WritingSnapshot>[];
     let vectors: Map<string,Uint8Array>;
     try {
-      frontiers = participants.map(({document}) => document.capture());
       vectors = new Map(participants.map(({document}) => [document.ref,Y.encodeStateVector(document.doc)]));
       for (const note of initializers) vectors.set(note.ref,Y.encodeStateVector(note.doc));
     } catch (error) {
@@ -199,7 +197,7 @@ export class WritingRuntime {
     } catch (error) { if (!owner.faulted) { owner.faulted = true; owner.fault = error; } }
     owner.intent = {kind:"batch",intents:[...preludes,...edits]};
     if (!owner.faulted) owner.prepare_graph = async () => {
-      await Promise.all(frontiers);
+      // The reserved tail already orders every participant's pending local command.
       const graph = structuredClone(await args.prepare(created.map(document=>document.ref)));
       for (const intent of graph) if (intent.kind === "batch" || intent.kind === "create_note" || intent.kind === "create_page" || intent.kind === "edit_body" || intent.kind === "edit_title") {
         owner.faulted = true;
