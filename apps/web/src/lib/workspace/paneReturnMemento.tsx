@@ -189,7 +189,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       : row
         ? element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor!.offset
         : memento.scrollTop;
+    const beforeTop = element.scrollTop;
     element.scrollTop = Math.min(Math.max(0, element.scrollHeight - element.clientHeight), Math.max(0, top));
+    console.info("index-memento-place", { time: performance.now(), visit: port.visitId, beforeTop, wantedTop: top, actualTop: element.scrollTop,
+      anchor, frame: frame && { scope: frame.scopeKey, listTop: frame.listTop, height: frame.height, rank: frame.ids.indexOf(anchor!.id), count: frame.ids.length } });
     refreshRanges(port);
   }
 
@@ -317,10 +320,17 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const port = scrollports.get(paneId);
     if (!port || pending.has(paneId)) return null;
     const captured = refreshes.get(paneId);
-    if (captured?.port === port && captured.inputGeneration === port.inputGeneration) return captured;
+    if (captured?.port === port && captured.inputGeneration === port.inputGeneration) {
+      console.info("index-memento-reuse", { time: performance.now(), visit: port.visitId, top: port.element.scrollTop, generation: port.inputGeneration, eyeLine: captured.eyeLine });
+      return captured;
+    }
     refreshes.delete(paneId);
     const snapshot: RefreshSnapshot = { paneId, port, inputGeneration: port.inputGeneration,
       eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false };
+    console.info("index-memento-capture", { time: performance.now(), visit: port.visitId, top: port.element.scrollTop, generation: port.inputGeneration, eyeLine: snapshot.eyeLine,
+      windows: frames(port).map(entry => { const current = entry.window.readGeometry(); return { scope: entry.scope,
+        cached: entry.frame && { origin: entry.frame.listTop, height: entry.frame.height, count: entry.frame.ids.length, rank: entry.frame.ids.indexOf(snapshot.eyeLine?.id ?? "") },
+        current: current && { origin: current.listTop, height: current.height, count: current.ids.length, rank: current.ids.indexOf(snapshot.eyeLine?.id ?? "") } }; }) });
     refreshes.set(paneId, snapshot);
     return snapshot;
   }
@@ -491,6 +501,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const sameScope = before !== null && next !== null && before.scopeKey === next.scopeKey;
       const changed = sameScope && (before.epoch !== next.epoch || before.listTop !== next.listTop ||
         (before.ids !== next.ids && (before.ids.length !== next.ids.length || before.ids.some((id, index) => id !== next.ids[index]))));
+      if (changed) console.info("index-memento-geometry", { time: performance.now(), visit: entry.visitId, scope: entry.scope,
+        top: port?.element.scrollTop, before: before && { origin: before.listTop, height: before.height, count: before.ids.length },
+        next: next && { origin: next.listTop, height: next.height, count: next.ids.length } });
       // Geometry epochs use the same whole-pane snapshot as row publications.
       const captured = changed && port && !holds.has(paneId) ? captureRefresh(paneId) : null;
       entry.frame = next;
