@@ -82,9 +82,12 @@ admits its body and existing read owners only when first presented. the
 authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
 unknown paths render unsupported panes.
 
-the pane registry owns one cached module outcome per route. server rendering and
-hydration suspend for pending code and preserve streamed body markup. client
-navigation renders ordinary loading while code is pending, then defers the ready
+the pane registry owns one cached `Pending` → `Ready` or `Failed` module outcome
+per route. server rendering and hydration suspend for pending code. startup
+updates can still replace streamed body markup before hydration; the
+[existing startup issue](../issues/pane-body-drops-gestures-before-hydration.md)
+records that unresolved loss of early gestures. client navigation renders ordinary
+loading while code is pending, then defers the ready
 body's render so module arrival does not incur suspense's fallback retry delay.
 only the committed ready body spends unused seeds; import failure keeps its stage
 and requires document reload. this registry holds code, never account data.

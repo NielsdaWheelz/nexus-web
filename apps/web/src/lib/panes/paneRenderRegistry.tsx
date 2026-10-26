@@ -8,8 +8,9 @@ import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Module = { default: ComponentType };
 
-// Bodies remain separate chunks; the shell owns their readiness. Server rendering
-// and hydration suspend until code arrives, preserving streamed body markup.
+// Bodies remain separate chunks; pending code suspends server rendering and
+// hydration. Startup updates can still replace streamed markup before hydration;
+// see docs/issues/pane-body-drops-gestures-before-hydration.md.
 const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   downloads: () => import("@/app/(authenticated)/downloads/DownloadsPaneBody"),
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),

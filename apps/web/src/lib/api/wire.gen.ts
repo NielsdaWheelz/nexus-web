@@ -2533,7 +2533,7 @@ export interface paths {
         };
         /**
          * List Pages
-         * @description Keyset pages of the viewer's pages in the chats index's four views.
+         * @description The complete owned-page index in the chats index's four views.
          */
         get: operations["list_pages_notes_pages_get"];
         put?: never;

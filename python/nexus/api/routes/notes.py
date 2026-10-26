@@ -29,7 +29,7 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 def list_pages(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[CollectionIndex[NotePageSummaryOut]]:
-    """Keyset pages of the viewer's pages in the chats index's four views."""
+    """The complete owned-page index in the chats index's four views."""
     items = request.query_params.multi_items()
     return Data(data=notes.list_pages(db, viewer.user_id, items))
 

@@ -1957,9 +1957,10 @@ open over Resume and never become panes.
   request ID, and React component stack, never exception messages, request bodies, draft text, tokens, or
   provider payloads. Kept constraints: nonce-CSP + **streaming only** — no PPR,
   no `next/dynamic`, no server-emitted `modulepreload` (chunk URLs are unknown
-  server-side); `React.lazy` stays the splitting mechanism (a lazy body starts
-  its import while hydrating; a failed import is forgotten so "Retry pane" imports
-  again).
+  server-side). the pane registry owns dynamic imports and one cached
+  `Pending` → `Ready` or `Failed` outcome per route; import failure requires
+  document reload. startup updates can still replace streamed bodies before
+  hydration; see the [owning issue](issues/pane-body-drops-gestures-before-hydration.md).
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; every
   Supabase call is behind `lib/supabase/` (`cookie.ts` edge-safe, `auth.ts`
