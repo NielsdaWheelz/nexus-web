@@ -22,7 +22,7 @@ the raw-stage repair needs canonical identity, not just delayed dispatch. for
 raw `ab`, delete `b`, then receive unseen `x` before `b`: canonical yjs undo can
 restore `b` with anchors depending on `x`. replaying that inverse into a frozen
 raw clone lacks its dependencies; restoring the earlier body loses concurrent
-writing. `commands.ts` currently creates the note's actual initializer only
+writing. before the runtime repair, `commands.ts` created the actual initializer only
 after runtime store/lease admission, so immediate history cannot own it.
 
 a new note must receive its one real initializer at semantic admission, with
@@ -41,11 +41,15 @@ mutation, and asynchronous graph-only preparation. it reserves the existing
 command order before publication, seals initializers and deltas once, and keeps
 participants pinned through the existing eventual commit/retry owner. partial
 mutation failure retains unsaved writing and blocks later commands; retry never
-reruns that mutation. implementation and adversarial review are in progress.
+reruns that mutation. this boundary is implemented in `59f316fa9`, simplified in
+`658a499a6`, and passes the static gate. real sqlite/yjs run
+`20261026-020746-90bfa6cea63c` proves creation/edit/inverse/edit ordering before
+the first receipt, retry without repeated mutation, and copy/discard of separate
+queued notes. its injected store adapter does not qualify editor or native input.
 
 ordering barriers, displayed forward-delete identities, and history-owned inverse
 coverage are distinct. awaiting a broad capture cannot authorize deleting its
 foreign touches. a consumed inverse must publish its causally complete actual
 post-undo body before subsequent input; it cannot install inverse-only bytes into
 an obsolete displayed clone. the consumer rewrite and unchanged immediate-undo
-journey remain required after the runtime boundary is qualified.
+journey remain required.

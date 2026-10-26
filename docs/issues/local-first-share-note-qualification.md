@@ -17,3 +17,9 @@ identity. include offline delivery on the installed packaged entry and browser
 entry admission where supported. preserve native account authority and document
 retirement. url/media capture and uploads retain their existing online limits;
 this gap does not require offline imports or arbitrary share content.
+
+attempt `20261026-023319-13dd58aea4e3` built the paired apk and disposable
+instrumentation apk but stopped at the driver's signature-tool environment
+before installation. its subsequent read found handset `RFCT51J2MCH`
+disconnected. no share behavior or device mutation occurred; native qualification
+still requires a connected handset and a fresh coordinated ownership window.
