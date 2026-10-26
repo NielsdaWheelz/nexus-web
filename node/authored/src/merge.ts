@@ -33,7 +33,7 @@ export function mergeRegister<T>(a:Register<T>|null,b:Register<T>|null):Register
 }
 function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { return mergeRegister(a,b)!; }
 export function projectResource(state:ResourceState):ResourceProjection {
-  const common={ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,selection:null,color:null,embedded_refs:[]};
+  const common={authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,selection:null,color:null,embedded_refs:[]};
   switch(state.kind) {
     case "note": {
       const {body}=mergeNote(state.body_state,null);

@@ -20,7 +20,7 @@ import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { searchProgress } from "@/lib/search/progress";
 import { fetchSearchPreview, type PreviewPhase } from "@/lib/search/searchApi";
 import { searchQueryToParams } from "@/lib/search/searchParams";
-import { AUTHORED_REF, localResult, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
+import { WRITING_REF, localResult, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import type { NexusRecent, NexusSource } from "./model";
 import type { NexusQuery } from "./query";
@@ -32,8 +32,8 @@ const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
 const LOCAL_PAGES = 1;
 const EMPTY_LOCAL: readonly LocalMatch[] = [];
 /** A remote row's matching passage may be the server's copy of authored text; local owns that. */
-const withoutAuthoredPassage = <Row extends { matching_passage: { item: { ref: string } } | null }>(row: Row): Row =>
-  row.matching_passage && AUTHORED_REF.test(row.matching_passage.item.ref) ? { ...row, matching_passage: null } : row;
+const withoutAuthoredPassage = <Row extends { matching_passage: { item: { authored_by_viewer: boolean } } | null }>(row: Row): Row =>
+  row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row;
 const PREVIEW_SETTLE_MS = { direct: 80, lexical: 120, hybrid: 160 } as const;
 const PREVIEW_PHASE_RANK = { direct: 0, lexical: 1, hybrid: 2 } as const;
 const PROGRESS_REVEAL_MS = 150;
@@ -64,14 +64,14 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   });
 
   const referenceRef = query.intent.kind === "Resource" ? query.intent.ref : null;
-  const authoredRef = referenceRef !== null && AUTHORED_REF.test(referenceRef) ? referenceRef : null;
-  const localRead = useAuthoredQuery(open && authoredRef ? { kind: "resource", ref: authoredRef } : null);
+  const localRef = referenceRef !== null && WRITING_REF.test(referenceRef) ? referenceRef : null;
+  const localRead = useAuthoredQuery(open && localRef ? { kind: "resource", ref: localRef } : null);
   const localRow = localRead.data?.rows[0]?.resource ?? null;
   // stable while its row is unchanged; the launcher merges rows on identity.
-  const localReference = useMemo(() => authoredRef && localRow ? localResult(localRow, "") : null, [authoredRef, localRow]);
+  const localReference = useMemo(() => localRow?.authored_by_viewer ? localResult(localRow, "") : null, [localRow]);
   const local = useLocalSearch(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, LOCAL_PAGES);
   const reference = usePaneFreeServerValue<ResourceItem>({
-    key: open && referenceRef && !authoredRef ? `${accountId}:nexus-ref:${referenceRef}` : null,
+    key: open && referenceRef && !localRow?.authored_by_viewer ? `${accountId}:nexus-ref:${referenceRef}` : null,
     stale: "",
     load: (signal) => resolveResourceItem(referenceRef!, signal),
   });
@@ -144,16 +144,16 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const remotePreview = shown?.data ?? null;
   // remote search reads synchronized projections; local authored rows are canonical.
   const preview = useMemo(() => remotePreview && { ...remotePreview,
-    resources: remotePreview.resources.filter(row => !AUTHORED_REF.test(row.item.ref)).map(withoutAuthoredPassage),
-    saved: remotePreview.saved.filter(row => !AUTHORED_REF.test(row.item.ref)).map(withoutAuthoredPassage),
-    passages: remotePreview.passages.filter(row => !AUTHORED_REF.test(row.item.ref)) }, [remotePreview]);
+    resources: remotePreview.resources.filter(row => !row.item.authored_by_viewer).map(withoutAuthoredPassage),
+    saved: remotePreview.saved.filter(row => !row.item.authored_by_viewer).map(withoutAuthoredPassage),
+    passages: remotePreview.passages.filter(row => !row.item.authored_by_viewer) }, [remotePreview]);
   const localShown = useMemo(() => {
     if (!local.matches) return EMPTY_LOCAL;
     const remote = new Set([...preview?.resources ?? [], ...preview?.saved ?? [], ...preview?.passages ?? []].map(row => row.item.ref));
-    return local.matches.filter(match => AUTHORED_REF.test(match.resource.ref) || !remote.has(match.resource.ref));
+    return local.matches.filter(match => match.resource.authored_by_viewer || !remote.has(match.resource.ref));
   }, [local.matches, preview]);
   const remoteBusy = identityKey !== null && shown?.phase !== "hybrid" && ((shown?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
-    || (open && referenceRef !== null && !authoredRef && reference.status === "loading");
+    || (open && referenceRef !== null && localReference === null && reference.status === "loading");
   useEffect(() => {
     if (!remoteBusy) { setShowBusy(false); return; }
     const timer = window.setTimeout(() => setShowBusy(true), PROGRESS_REVEAL_MS);
@@ -161,7 +161,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   }, [remoteBusy, identityKey]);
   const failures = new Set<NexusSource>();
   const retrying = new Set<NexusSource>();
-  for (const [source, value, wanted] of [["Direct", direct, identityKey !== null], ["Lexical", lexical, wantsLexical], ["Hybrid", hybrid, wantsHybrid], ["Reference", reference, open && referenceRef !== null && !authoredRef]] as const) {
+  for (const [source, value, wanted] of [["Direct", direct, identityKey !== null], ["Lexical", lexical, wantsLexical], ["Hybrid", hybrid, wantsHybrid], ["Reference", reference, open && referenceRef !== null && !localRow?.authored_by_viewer]] as const) {
     if (!wanted) continue;
     if (source !== "Reference" && shown !== null && PREVIEW_PHASE_RANK[shown.phase] > PREVIEW_PHASE_RANK[source === "Direct" ? "direct" : source === "Lexical" ? "lexical" : "hybrid"]) continue;
     if (value.status !== "loading" && value.error) {
@@ -218,18 +218,18 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     recent: baseData?.recent ?? EMPTY_RECENT,
     frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
     preview,
-    reference: !authoredRef && referenceRef !== null && reference.status === "ready" ? reference.data : null,
-    referenceFailed: !authoredRef && referenceRef !== null && reference.status === "failed",
+    reference: referenceRef !== null && reference.status === "ready" && !reference.data.authored_by_viewer ? reference.data : null,
+    referenceFailed: localReference === null && referenceRef !== null && reference.status === "failed",
     /** Local matches for the typed text; the launcher places them before remote rows. A retained
      * source label yields to the server's row for the same ref. */
     local: localShown,
     /** An exact authored ref resolved on this device; null while reading or when absent. */
     localReference,
-    /** The local read finished and this device has no such resource. */
-    localReferenceMissing: authoredRef !== null && localRead.data !== null && localRow === null,
+    /** The server explicitly names an owned ref, but its local visible row is absent. */
+    localReferenceMissing: localRef !== null && localRead.data !== null && !localRow?.authored_by_viewer && reference.status === "ready" && reference.data.authored_by_viewer,
     searchUnavailable,
     progress: {
-      text: searchUnavailable ? "search is unavailable for this input. shorten the search or ask nexus with the full text." : identityKey === null && referenceRef === null ? "" : blockedError ? blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available" : authoredRef !== null ? "" : referenceRef !== null ? reference.status === "failed" ? "resource lookup failed" : showBusy && remoteBusy ? "searching your content…" : "" : remoteBusy && !showBusy && progress.action === null ? "" : progress.text,
+      text: searchUnavailable ? "search is unavailable for this input. shorten the search or ask nexus with the full text." : identityKey === null && referenceRef === null ? "" : blockedError ? blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available" : localReference !== null ? "" : referenceRef !== null ? reference.status === "failed" ? "resource lookup failed" : showBusy && remoteBusy ? "searching your content…" : "" : remoteBusy && !showBusy && progress.action === null ? "" : progress.text,
       action: searchUnavailable ? null : identityKey === null && referenceRef === null ? null : blockedError ? null : referenceRef !== null ? reference.status === "failed" ? "search" as const : null : progress.action,
     },
     interact,

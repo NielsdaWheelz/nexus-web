@@ -157,6 +157,7 @@ class Corpus(Closed):
 
 
 class ResourceProjection(Closed):
+    authored_by_viewer: bool
     ref: str
     kind: Literal["note", "page", "highlight"]
     visible: bool

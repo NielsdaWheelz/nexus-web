@@ -57,7 +57,7 @@ export function rootItem(root: EvidenceRoot): Schema<"ResourceItemOut"> {
   const content = root.content;
   if (content.kind !== "SourceReference") return content.item;
   return {
-    ref: root.ref, action_ref: content.action_ref, label: content.label,
+    authored_by_viewer: false, ref: root.ref, action_ref: content.action_ref, label: content.label,
     preview: {
       body: { kind: "passage", prefix: null, exact: content.excerpt, suffix: null, color: null },
       source: root.source.apparatus_source === null ? null : { ...root.source.apparatus_source, location_label: content.location_label },

@@ -13,8 +13,8 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { SearchKind } from "./kinds";
 import type { SearchQuery } from "./query";
 
-/** Refs whose canonical state is authored locally; remote search rows for them are dropped. */
-export const AUTHORED_REF = /^(note_block|page|highlight|passage_anchor):/u;
+/** Schemes that can have a canonical local writing row; this does not establish ownership. */
+export const WRITING_REF = /^(note_block|page|highlight|passage_anchor):/u;
 /** The server's discovery families (`services/search/query.py` `DISCOVERY_FAMILIES`) for local refs. */
 const FAMILIES: Partial<Record<string, SearchKind>> = {
   note_block: "notes", page: "notes", highlight: "highlights", passage_anchor: "saved_passages",

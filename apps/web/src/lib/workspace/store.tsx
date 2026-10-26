@@ -22,6 +22,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import { conversationEndpoint } from "@/lib/chat/view";
 import { useWorkGuard, type WorkGuard, type WorkScope } from "@/lib/unsavedWork";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { NEW_PAGE_IDENTITY, type NewPageIdentity } from "@/lib/panes/pageAuthoring";
 import {
   getSecondaryGroupForSurface,
   companionWidthPx,
@@ -207,13 +208,13 @@ function createWorkspaceStore(
     if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) projectHref(href, replace);
   }
 
-  function admit(next: WorkspaceState, ownerIds: readonly string[] = []): boolean {
+  function admit(next: WorkspaceState, ownerIds: readonly string[] = [], retainedVisit: string | null = null): boolean {
     const reachable = reachableVisits(next);
     const scopes: WorkScope[] = data.state.panes
       .filter(pane => !next.panes.some(current => current.id === pane.id))
       .map(pane => ({ kind: "pane", paneId: pane.id }));
     for (const [visitId, routeKey] of reachableVisits(data.state)) {
-      if (reachable.get(visitId) !== routeKey) scopes.push({ kind: "visit", visitId, routeKey });
+      if (visitId !== retainedVisit && reachable.get(visitId) !== routeKey) scopes.push({ kind: "visit", visitId, routeKey });
     }
     return guard.confirmLoss({ scopes, ownerIds });
   }
@@ -224,7 +225,8 @@ function createWorkspaceStore(
   }
 
   /** Admission has succeeded: capture, retire, arrive, then publish synchronously. */
-  function commit(next: WorkspaceState, patch: Partial<Data> = {}, sourceArrival: string | null = null): void {
+  function commit(next: WorkspaceState, patch: Partial<Data> = {}, sourceArrival: string | null = null,
+    materializedPage: { visitId: string; previousRoute: string; routeKey: string } | null = null): void {
     if (next === data.state && Object.keys(patch).length === 0) return;
     for (const pane of data.state.panes) {
       const current = next.panes.find(value => value.id === pane.id);
@@ -233,6 +235,7 @@ function createWorkspaceStore(
         memento.capture(pane.id);
       }
     }
+    if (materializedPage) memento.rekeyVisit(materializedPage.visitId, materializedPage.previousRoute, materializedPage.routeKey);
     const closed = patch.recentlyClosedPanes ?? data.recentlyClosedPanes;
     const visitOf = new Map(next.panes.map((p) => [p.id, p.current_visit.id]));
     const deliveries = new Map(
@@ -504,7 +507,11 @@ function createWorkspaceStore(
         ? replaceVisit(pane.current_visit, target, options.labelHint)
         : newVisit(target, options.labelHint);
       const state = trimHistory(moved(data.state, paneId, visit, options.activate ?? true));
-      if (!admit(state, options.discardOwnerIds)) return "cancelled";
+      const previousRoute = resolvePaneRouteModel(pane.current_visit.href);
+      // justify-type-assertion: PageAccount alone writes this closed visit-data key.
+      const authoring = memento.read(visit.id, previousRoute.routeKey, NEW_PAGE_IDENTITY.name) as NewPageIdentity | null;
+      const materializing = options.replace === true && previousRoute.id === "pageNew" && authoring !== null && target === `/pages/${authoring.id}`;
+      if (!admit(state, options.discardOwnerIds, materializing ? visit.id : null)) return "cancelled";
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const arrival = sourceTargetFromHref(target, true);
       if (arrival) {
@@ -514,7 +521,8 @@ function createWorkspaceStore(
         });
       }
       else deliveries.delete(paneId);
-      commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null);
+      commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null,
+        materializing ? { visitId: visit.id, previousRoute: previousRoute.routeKey, routeKey: resolvePaneRouteModel(target).routeKey } : null);
       return "committed";
     },
     goBackPane(paneId: string, options: PaneHistoryOptions): WorkspaceNavigationResult {

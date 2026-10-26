@@ -22,13 +22,13 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneDailyPage, usePaneEntryDelivery, usePaneParam, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
+import { usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 
+import { NEW_PAGE_IDENTITY, type NewPageIdentity } from "@/lib/panes/pageAuthoring";
 import styles from "./page.module.css";
 
 type ResolvedPage = { ref: string; prelude: Intent[] };
-type NewPageIdentity = { accountId: string; id: string };
-const NEW_PAGE = definePaneVisitDataKey<NewPageIdentity>("new-page-identity");
+
 
 export default function PagePaneBody() {
   const writing = useWritingRuntime();
@@ -41,7 +41,7 @@ export default function PagePaneBody() {
 
 function PageAccount({ writing, pageId, localDate }: { writing: WritingRuntime; pageId: string | null; localDate: string | null }) {
   const accountId = useAuthoredAccountId();
-  const retained: NewPageIdentity | null = usePaneVisitData(NEW_PAGE, (): NewPageIdentity => ({ accountId, id: createdId }));
+  const retained: NewPageIdentity | null = usePaneVisitData(NEW_PAGE_IDENTITY, (): NewPageIdentity => ({ accountId, id: createdId }));
   const [createdId] = useState<string>(() => retained?.accountId === accountId ? retained.id : crypto.randomUUID());
   const identity = localDate === null ? pageId === "new" || pageId === null ? createdId : pageId : `daily:${localDate}`;
   return <PageContent key={identity} writing={writing} createdId={createdId} pageId={pageId === "new" ? null : pageId} localDate={localDate} />;

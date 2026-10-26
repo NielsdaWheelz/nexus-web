@@ -10,7 +10,8 @@ query per scheme, plus summary and source-credit batches, avoids recursive reads
 Hydration returns its authorized passage facts with the rows; activation reuses them
 within the same viewer, reading context and read snapshot. A media that disappears during
 summary hydration becomes unavailable before routing, so neither its old title nor a live
-activation escapes.
+activation escapes. One indexed canonical ownership batch marks the viewer's authored
+identities, including hidden ones; readable peer highlights remain remotely owned.
 """
 
 from __future__ import annotations
@@ -170,6 +171,20 @@ def resource_items_out(
 
     A reading chooses presentation, never visibility or an additional audience.
     """
+    resource_refs = [ref.uri for ref in refs if ref.scheme in ("note_block", "page", "highlight")]
+    anchor_ids = [str(ref.id) for ref in refs if ref.scheme == "passage_anchor"]
+    authored_by_viewer: set[str] = set()
+    if resource_refs or anchor_ids:
+        authored_by_viewer = set(
+            db.scalars(
+                text("""SELECT ref FROM authored_resources
+                    WHERE account_id=:viewer AND ref=ANY(:refs)
+                    UNION ALL
+                    SELECT 'passage_anchor:' || anchor_id FROM authored_passages
+                    WHERE account_id=:viewer AND anchor_id=ANY(:anchors)"""),
+                {"viewer": viewer_id, "refs": resource_refs, "anchors": anchor_ids},
+            )
+        )
     rows, passages = _rows(db, viewer_id, refs, reading_media_ids=reading_media_ids)
     summaries = media_summaries(
         db,
@@ -211,6 +226,7 @@ def resource_items_out(
         out.append(
             _resource_item_out(
                 ref=ref,
+                authored_by_viewer=ref.uri in authored_by_viewer,
                 row=row,
                 credits=credits.get(ref.uri),
                 media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
@@ -225,6 +241,7 @@ def resource_items_out(
 def _resource_item_out(
     *,
     ref: ResourceRef,
+    authored_by_viewer: bool,
     row: dict[str, Any] | None,
     credits: list[ContributorCreditOut] | None,
     media_summary: MediaSummaryOut | None,
@@ -264,6 +281,7 @@ def _resource_item_out(
             else ref.uri
         )
     return ResourceItemOut(
+        authored_by_viewer=authored_by_viewer,
         ref=ref.uri,
         action_ref=action_ref,
         label=label,

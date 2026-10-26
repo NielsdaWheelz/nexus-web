@@ -22,12 +22,12 @@ export function pageTitle(title: string, local_date: string | null): string {
 }
 const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.map((month,index)=>`WHEN ${index+1} THEN '${month}'`).join(" ")} END || ' ' || CAST(CAST(substr(local_date,9,2) AS INTEGER) AS TEXT) || ', ' || substr(local_date,1,4))`;
 const READABLE = `WITH readable AS (
-  SELECT ref,projection_json FROM resources WHERE visible=1
+  SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
-  SELECT 'passage_anchor:'||anchor_id AS ref,json_object('ref','passage_anchor:'||anchor_id,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json FROM passages
+  SELECT 'passage_anchor:'||anchor_id AS ref,json_object('ref','passage_anchor:'||anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json FROM passages
 )`;
 /** Rebuild one FTS row from canonical presented content, on either SQLite host. */
 export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
@@ -51,12 +51,12 @@ const INCIDENT = `
   SELECT l.link_id,l.endpoint_a,l.endpoint_b,l.position_b AS position,l.state_json AS position_json,l.endpoint_a AS other_ref
   FROM links l INDEXED BY links_b WHERE l.endpoint_b=?1 AND l.visible=1 AND l.link_id<>COALESCE((SELECT exclude_link_id FROM bound),'') AND ${live("?1")} AND ${live("l.endpoint_a")}`;
 const BOUNDED_READABLE = `
-  SELECT r.ref,r.projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
+  SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
-  SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT 'passage_anchor:'||p.anchor_id AS ref,json_object('ref','passage_anchor:'||p.anchor_id,'kind','source','authored_by_viewer',json('true'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(p.state_json,'$.capture.value.quote_exact'),'local_date',NULL,'source_ref',p.source_ref,'selection',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
   FROM wanted w CROSS JOIN passages p ON p.anchor_id=substr(w.ref,16) WHERE w.ref='passage_anchor:'||p.anchor_id`;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
@@ -95,11 +95,11 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       if (query.refs.length > 100) throw new TypeError("At most 100 references may be resolved");
       return { sql: `${READABLE} SELECT projection_json,NULL AS link_json FROM readable WHERE ref IN (${query.refs.map(() => "?").join(",") || "NULL"}) ORDER BY ref`, params: query.refs };
     }
-    case "daily": return { sql: "SELECT projection_json,NULL AS link_json FROM resources WHERE local_date=? AND visible=1", params: [query.local_date] };
+    case "daily": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE local_date=? AND visible=1", params: [query.local_date] };
     case "pages": {
       const cursor=readAdjacencyCursor(query.cursor);
       const where=cursor===null?'':`WHERE(display_title,ref)>(?,?)`;
-      return {sql:`WITH pages AS(SELECT projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[1]]:[],limit]};
+      return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[1]]:[],limit]};
     }
     case "annotation_notes": {
       let cursor: [string,string,string] | null = null;
@@ -110,7 +110,7 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       }
       return {
         sql: `WITH attached AS (
-          SELECT n.projection_json,l.state_json AS link_json,h.ref AS highlight_ref,l.link_id,
+          SELECT json_set(n.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,l.state_json AS link_json,h.ref AS highlight_ref,l.link_id,
           CASE WHEN l.endpoint_a=h.ref THEN l.position_a ELSE l.position_b END AS position
           FROM resources h JOIN links l ON (l.endpoint_a=h.ref OR l.endpoint_b=h.ref)
           JOIN resources n ON n.ref=CASE WHEN l.endpoint_a=h.ref THEN l.endpoint_b ELSE l.endpoint_a END
@@ -119,8 +119,8 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
         params:[query.source_ref,cursor?.[0]??null,cursor?.[0]??"",cursor?.[0]??"",cursor?.[1]??"",cursor?.[1]??"",cursor?.[2]??"",limit],
       };
     }
-    case "annotations": return { sql: "SELECT projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
-    case "backlinks": return { sql: "SELECT r.projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
+    case "annotations": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
+    case "backlinks": return { sql: "SELECT json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
     case "search": return { sql: `WITH wanted AS MATERIALIZED(SELECT d.ref FROM search_fts f CROSS JOIN search_documents d ON d.rowid=f.rowid WHERE search_fts MATCH ? AND d.ref>? ORDER BY d.ref LIMIT ?),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT projection_json,NULL AS link_json FROM readable ORDER BY ref`, params: [searchExpression(query.text) || '""', query.cursor ?? "", limit] };
     case "adjacency": {
       const cursor=readAdjacencyCursor(query.cursor);

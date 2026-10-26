@@ -578,6 +578,7 @@ fault injection, permanent scenario suite or test-only product seams.
 | offline CRUD | provision; disconnect; create/edit/delete each authored kind; search/backlinks agree; kill/reopen preserves every acknowledged local commit |
 | concurrency | phone, two firefox tabs and server author merge same-note changes in both delivery orders; concurrent type/mark/atom edits stay valid; same-day creation and same-passage independent notes converge |
 | graph | last unlink/page deletion preserves notes; delete/edit revives only addressed resource; explicit unlinks stay removed; equal-position insertion and concurrent moves converge |
+| scoped search | owned authored results match server scope predicates at the same metadata revision for media/parts, libraries and conversations; new offline edits use the replicated scope facts immediately; metadata replacement exposes one complete revision; readable peer results retain their remote owner |
 | structure/undo | rapid edit/split/join/undo/redo preserves identity, unrelated incoming edits and the documented duplication rule; test IME and repeated appearances |
 | durability | interrupt before local commit, after local commit, after server commit before reply and during incoming apply; no false saved state, half-command or duplicate semantic effect; retry same bytes |
 | lifecycle | auth expiry, reconnect, cross-tab signout, cancel/discard, failed purge, shell update and wrong-account callbacks obey local authority |

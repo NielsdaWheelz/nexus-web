@@ -13,5 +13,5 @@ export function authoredItem(resource: ResourceProjection): ResourceItem {
     ? { kind: "named", title: text, image_url: null, media_kind: null, contributors: null }
     : resource.kind === "highlight" ? { kind: "passage", prefix: null, exact: excerpt, suffix: null, color: resource.color }
     : { kind: "prose", excerpt, role: null, format: (resource.body_pm_json ? parseBody(resource.body_pm_json).body_pm_json.attrs?.presentation : null) === "code" ? "code" : "plain", image_count: 0 };
-  return { ref: resource.ref, action_ref: resource.ref, label: text || "empty note", preview: { body, source: null }, activation: { resource_ref: resource.ref, kind: href === null ? "none" : "route", href, unavailable_reason: null }, missing: !resource.visible };
+  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label: text || "empty note", preview: { body, source: null }, activation: { resource_ref: resource.ref, kind: href === null ? "none" : "route", href, unavailable_reason: null }, missing: !resource.visible };
 }

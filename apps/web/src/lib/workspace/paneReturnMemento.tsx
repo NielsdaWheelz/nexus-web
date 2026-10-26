@@ -55,6 +55,8 @@ export interface PaneReturnMemento {
   forget(reachableVisits: ReadonlyMap<string, string>): void;
   read(visitId: string, routeKey: string, name: string): unknown;
   write(visitId: string, routeKey: string, name: string, value: unknown): void;
+  /** A lossless address change for the same authored resource and visit. */
+  rekeyVisit(visitId: string, previousRoute: string, routeKey: string): void;
   retainWorkOwner(owner: WorkOwner): void;
   forgetWorkOwner(id: string): void;
   /** A fresh source arrival owns position and focus over an old visit return. */
@@ -223,6 +225,19 @@ export function createPaneReturnMemento(guard: WorkGuard) {
           record.unregister();
           workOwners.delete(id);
         }
+      }
+    },
+    rekeyVisit(visitId: string, previousRoute: string, routeKey: string): void {
+      const shell = mementos.get(visitId);
+      if (shell?.routeKey === previousRoute) shell.routeKey = routeKey;
+      const data = visitData.get(visitId);
+      if (data?.routeKey === previousRoute) data.routeKey = routeKey;
+      for (const [id, record] of workOwners) {
+        const scope = record.owner.scope;
+        if (scope.kind !== "visit" || scope.visitId !== visitId || scope.routeKey !== previousRoute) continue;
+        record.unregister();
+        const owner = { ...record.owner, scope: { ...scope, routeKey } };
+        workOwners.set(id, { owner, unregister: guard.register(owner) });
       }
     },
     retainWorkOwner(owner: WorkOwner): void {

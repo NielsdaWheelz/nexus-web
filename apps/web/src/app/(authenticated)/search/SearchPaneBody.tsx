@@ -32,7 +32,7 @@ import { searchHref, searchQueryFromParams, searchQueryToParams } from "@/lib/se
 import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { SEARCH_ACTION_LABELS, searchProgress } from "@/lib/search/progress";
 import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
-import { AUTHORED_REF, localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
+import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { TRANSPORT_CODES } from "@/lib/nexus/useNexusFind";
 import SearchControls from "./SearchControls";
 import styles from "./page.module.css";
@@ -136,8 +136,8 @@ function SearchResults({ query, accountId }: { query: SearchQuery; accountId: st
   });
   const selected = visit.adopted?.phase === "hybrid" ? hybrid : lexical;
   // remote search reads synchronized projections, including a server copy of authored text.
-  const results = (visit.adopted === null ? [] : selected.items).filter(row => !AUTHORED_REF.test(row.item.ref))
-    .map(row => "matching_passage" in row && row.matching_passage && AUTHORED_REF.test(row.matching_passage.item.ref) ? { ...row, matching_passage: null } : row);
+  const results = (visit.adopted === null ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
+    .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row);
   const localApplies = localSearchApplies(query);
   const [localPages, setLocalPages] = useState(1);
   const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages);
@@ -338,7 +338,7 @@ function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLoc
   if (local.error) return <FeedbackNotice content={{ tone: "Danger", title: "couldn’t search this device" }} announcement="Polite"
     actions={[{ label: "retry", onClick: local.retry }]} />;
   const remoteRefs = new Set(remote.map(row => row.item.ref));
-  const shown = (local.matches ?? []).filter(match => AUTHORED_REF.test(match.resource.ref) || !remoteRefs.has(match.resource.ref));
+  const shown = (local.matches ?? []).filter(match => match.resource.authored_by_viewer || !remoteRefs.has(match.resource.ref));
   if (!shown.length) return null;
   return <section className={styles.section} aria-label="on this device">
     <h2 className={styles.sectionHeading}>on this device</h2>

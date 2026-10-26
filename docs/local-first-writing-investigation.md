@@ -419,3 +419,18 @@ dependency installation or runtime qualification was performed in this review.
 resolved decisions replace superseded proposals in this document. future changes
 must preserve the explicit distinction between agreed behaviour, implementation
 recommendations and measured results.
+
+## scope parity decision — 2026-10-25
+
+owner chose full offline scope parity over captured-source-only semantics.
+replicate the minimal read-only facts needed to resolve media, source-backed
+part, library and conversation scopes. scope resolution combines the last
+synchronized metadata with current local authored state, including new offline
+writes. a server-computed membership list alone cannot include those writes.
+source bytes and a new catalogue product remain outside scope.
+
+remote authored ownership is explicit: own resources remain locally
+authoritative, including server-created changes still awaiting local delivery;
+authorized peer highlights retain their existing remote reader. ref schemes and
+absence from the local store do not establish ownership. the resource-item wire
+now states `authored_by_viewer`, derived from canonical account ownership.

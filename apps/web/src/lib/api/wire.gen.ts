@@ -11113,6 +11113,8 @@ export interface components {
             /** Action Ref */
             action_ref: string;
             activation: components["schemas"]["ResourceActivationOut"];
+            /** Authored By Viewer */
+            authored_by_viewer: boolean;
             /** Label */
             label: string;
             /** Missing */

@@ -38,7 +38,7 @@ export interface SourceCapture { kind: string; label: string; publication: Publi
 export interface SourceStub { source_ref: ResourceRef; capture: Register<SourceCapture> }
 export interface Change { command_seq: Counter; lamport: Counter; resources: ResourcePatch[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
 export interface Corpus { resources: ResourceState[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
-export interface ResourceProjection { ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: Record<string, unknown> | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; selection: SelectionCapture | null; color: HighlightColor | null; embedded_refs: string[] }
+export interface ResourceProjection { authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: Record<string, unknown> | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; selection: SelectionCapture | null; color: HighlightColor | null; embedded_refs: string[] }
 export interface MergeResult extends Corpus { projections: ResourceProjection[] }
 export interface FeedChange { server_seq: Counter; replica_id: string; change: Change }
 export interface ReplicaState { account_id: string; replica_id: string; command_seq: Counter; store_revision: Counter; lamport: Counter; server_cursor: Counter; format_revision: number; provisioning_complete: boolean }

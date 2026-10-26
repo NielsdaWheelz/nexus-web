@@ -145,6 +145,7 @@ class ResourcePreviewOut(_Out):
 
 
 class ResourceItemOut(_Out):
+    authored_by_viewer: bool
     ref: str
     action_ref: str
     label: str
