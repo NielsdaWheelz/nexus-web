@@ -1,24 +1,18 @@
-# concurrent offline annotations lack an automatic merge contract
+# qualify independent offline annotations on both clients
 
-target gap: independent devices can annotate the same source extent while
-offline. automatic synchronization must preserve both contributions.
+the old server exact-extent alias and duplicate-resize refusal are removed.
+the shared authored graph gives each highlight an independent stable id and
+retains each attached note/link. overlapping extents do not merge identities;
+resizing replaces one complete selection register and preserves that identity.
 
-evidence: `python/nexus/services/highlights.py:877-890` aliases an exact-extent
-highlight to one canonical identity, then refuses a different initial note id
-with `Highlight already has a note`.
+current-main browser run `20261026-044324-d15a61f681c7` passes two overlapping
+text highlights, multiple independent attached notes, exact chooser selection
+and deletion of one highlight while the other's notes remain. its concurrent
+resize case stops before the second drag because the fixture measures a scrolled
+range that the reader subsequently repositions; this is not a merge verdict.
 
-impact: the current server conflict policy cannot meet always-automatic merge.
-the owner selected independent linked notes for concurrent annotations, not one
-merged annotation identity. highlight identity and source-version anchoring need
-a convergent contract while both note identities and bodies remain intact;
-blindly replaying existing requests is not offline annotation support.
-
-resolved when both text and pdf same-extent offline annotations converge with
-all authored text and links retained, including reversed delivery order and a
-changed source publication. no manual recovery destination is introduced.
-
-owner also confirmed retaining pdf resizing with stable independent highlight
-ids. remove exact-extent creation aliases and duplicate-resize refusal
-(`python/nexus/services/pdf_highlights.py:134-184`); overlapping highlights may
-coexist, each retaining its own notes. verify resize preserves identity and
-deleting one overlap leaves the other untouched.
+retain until two offline devices create same-extent text and pdf annotations in
+both delivery orders, preserving all notes/links, and both installed clients
+pass stable-id resize/overlap deletion. include the old-publication race tracked
+in [source generations](local-first-highlight-source-generations.md). no manual
+recovery destination or coalescing by extent is accepted.
