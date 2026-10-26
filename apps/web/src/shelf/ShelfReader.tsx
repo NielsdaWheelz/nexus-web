@@ -16,7 +16,6 @@ import { MapRail } from "@/lib/documentReader/chrome/MapRail";
 import { CompactAnnotationLayer, type ReaderAnnotationProps } from "@/lib/documentReader/chrome/CompactAnnotations";
 import { AuthoredProvider } from "@/lib/authored/provider";
 import { ReaderNoteEditorHost } from "@/lib/notes/editorHost";
-import { WorkProvider } from "@/lib/unsavedWork";
 import DocumentReaderView, {
   useDocumentReader,
   useReaderState,
@@ -154,11 +153,11 @@ export default function ShelfReader({
   useEffect(() => reader.revalidate(), [item.progress, reader]);
   // The copy's bytes never wait on the account store: annotations join when it opens.
   // the shelf hosts the same editor through reader ports: drafts, feedback and the account store.
-  const layer = account.kind === "Ready" ? <WorkProvider><AuthoredProvider accountId={account.id} host="shelf">
+  const layer = account.kind === "Ready" ? <AuthoredProvider accountId={account.id} host="shelf">
     <ReaderNoteEditorHost identity={`shelf:${item.media_id}:${item.saved_at}`}>
       <CompactAnnotationLayer reader={reader} mediaId={item.media_id} source={{ kind: item.kind, label: item.title }} available report={setAnnotations} />
     </ReaderNoteEditorHost>
-  </AuthoredProvider></WorkProvider> : account.kind === "Unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
+  </AuthoredProvider> : account.kind === "Unavailable" ? <FeedbackNotice content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
     actions={[{ label: "retry", onClick: account.retry }]} /> : null;
 
   const text =

@@ -92,14 +92,22 @@ restore an old body snapshot or overwrite an intervening scalar owner.
 
 ## outline interaction
 
-the outline owns visible occurrence selection, structural commands, history and
-focus across disclosed branches. editors expose selection bookmarks and input
-capabilities; they do not own graph placement. caret bookmarks use shared text
-identity through moves and remounts. pane edit/append entries use the same focus
-owner and wait for the actual field; newer input cancels both focus and delayed
-window changes. append uses the proven absolute tail. browser keys and native
-semantic input enter the same return/deletion grammar after composition and
-reference input have had their own admission.
+one outline session owns one persistent prosemirror view and dom editing host.
+its flat, ephemeral rows project the root, disclosed occurrences and pending
+fields; they never become authored storage. an occurrence uuid survives receipt
+adoption and reparenting. resource refs, relationships and placement remain
+separate identities, and repeated appearances of one note have separate
+displayed baselines. titles use plain shared text and admit no marks or atoms.
+the projection reuses the canonical inline grammar without importing row ids or
+placement from clipboard content.
+
+each editor step routes through its own pre-step document to one field. generic
+cross-field joins and splits are refused; the structural intent owner performs
+them. shared-text identity preserves caret bookmarks. structural history also
+records the semantic occurrence placement, so a surviving independent relation
+cannot acquire the moved occurrence's identity. newer user intent cancels delayed
+focus and targeted window changes; programmatic selection does not cancel its
+own operation. append uses the proven absolute tail.
 
 return splits prose at the selection; an empty nested item outdents. an empty
 top-level item stays empty. backward/forward deletion at a boundary joins adjacent
@@ -107,30 +115,55 @@ notes; deleting an empty item unlinks its occurrence. code return remains an
 in-note break. its native DOM parser preserves literal newlines; clipboard slices
 retain their separate existing import policy. explicit block removal unlinks
 exactly the selected relationships.
+title return and shift-return enter the root's first item or create the following
+item for a title occurrence. pasting literal title text remains separate from
+that keyboard command.
 text and structure share one session undo order. reference-query text retains its
 local editing history while the query owns input.
 
-one retained input owns typing between a split/join/first keystroke and the
-mounted canonical note. return freezes semantic segments while the same live
-editor immediately owns the suffix. each segment merges over the commit receipt's
-exact shared-text initialization before its split commits. input admissions keep
-text and structure in one undo order despite asynchronous persistence. the same
-draft retains preparation progress and the loss guard; it introduces no persistent
-outbox or second body cache. structural controls remain unavailable during handoff.
-pending boundary plans retain their displayed peer and exact receipt identities;
-prepared neighbors distinguish an unloaded relationship from absence.
+the existing retained workspace input cell owns raw fields while their semantic
+commands await receipts. both a split's prefix and suffix retain later edits.
+arrangement uses that same ordered owner, including pending parent identities;
+following typing and return do not race an independent arrangement handoff.
+ordered continuation merges over exact receipt initialization; adoption changes
+authority and metadata without replacing ahead writing or the editing host.
+preparation progress and committed structural receipts survive a later loading
+failure, so retry resumes installation rather than creating another resource.
+the runtime retains its original immutable write and exact-byte retry.
 
-handoff waits for the active native input packet and reconciles prosemirror's
-own dom observer before capturing selection or destroying a view. deferred
-composition completion cannot release a newer packet. this narrow observer
-adapter depends on the locked prosemirror-view version and must be requalified
-when it changes. titles publish readiness after their controlled value and
-relative caret have reached the actual field.
+native packets, composition and reference queries retain their field and
+baseline together. incoming projection changes cannot withdraw an owner while
+its dom remains protected. commands reconcile prosemirror's own dom observer and
+native selection before choosing a field. deferred composition completion cannot
+release a newer packet or record another field's edit. the packet fence
+distinguishes a consumed, reconciled semantic key from permission to
+refresh or adopt remote state. a field without an admitted document stays
+read-only unless the retained raw-input owner already owns its writing.
+the narrow observer adapter depends on the locked prosemirror-view version and must be requalified
+when it changes. a query consumes its transient text synchronously on acceptance;
+ordinary typing in other fields continues, while structural commands wait for
+the open query to finish.
 
-history extends an inverse's causal coverage only from its own structural commits
-and its own editor/undo origins' commit receipts. restoring a relationship during
-one undo therefore remains reversible by an older undo, while an unrelated
-replica's addition or edit stays outside that inverse.
+one resource undo manager tracks distinct occurrence origins within the same
+session history. origin changes break typing groups. an inverse extends coverage
+only through owned receipts whose prestate permits that component's advance.
+this preserves independent work from another history even on the same replica,
+including a touch-only restore. an already removed predecessor does not block an
+owned redo from remaining undoable. frozen field proofs additionally retain
+shared-text identities and deletion sets; conservative coverage may keep a
+concurrently changed source visible.
+position receipts update relationship positions without replacing their observed
+membership frontier. a replacement history remaps queued admissions before
+accepting new input; numeric clocks from separate sessions never interleave.
+
+pending outline export reads one fresh retained-cell snapshot as literal text,
+including visible completed segments and the active body. the workspace keeps
+that same account-scoped guard above its error boundaries. “copy pending outline
+text” and the runtime's “copy unsaved note edits” are separate exports that may
+overlap. their text is never concatenated as if disjoint. the runtime's own
+stopped-workspace guard remains necessary after its provider unmounts. shelf
+passage composition retains its existing ephemeral policy; it has no outline
+draft or new recovery owner.
 
 touch-capable panes expose six fixed actions: outdent, indent, move up, move down,
 undo and redo. desktop uses shortcuts. no insert or finish-editing control is
@@ -139,16 +172,37 @@ android reports actual keyboard visibility through its existing bridge; an inset
 of zero alone does not imply dismissal.
 
 writing rows keep a leading bullet link and a trailing disclosure only for
-proved projected children; an open empty branch keeps its mounted input. they disclose authored local links, excluding relationships
+projected parents. retaining an open empty input does not establish child
+availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
-availability. one prepared window owns the row projections, adjacent and absolute
-tail relationships, child proofs and retained note/title documents. graph proofs
+availability. each data-only branch proof owns row projections, adjacent and
+absolute tail relationships and child proofs; the root admits and retains all
+note/title documents together. graph proofs
 share a store revision; unknown data never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
 writing rows use that projection directly, including their native bullet links.
-the opened resource retains
-machine-derived connections and resource management. outline reads grow a retained
-prefix in bounded pages; loading another page does not replace earlier rows.
+the opened resource retains machine-derived connections and resource management.
+embedded targets render rich read-only previews; editing opens their resource.
+their disclosed descendants enter the containing flat session rather than
+constructing nested editors.
+
+reserved blank inputs use the editor's existing placeholder treatment. the hint
+is generated presentation, clears with field content, and never enters authored
+writing or clipboard data.
+
+one session admits at most 64 unique document identities and 16 mib of encoded
+state across root, disclosed branches, neighbors, tail, pending input and history.
+provisional fields reserve capacity before they become editable. this is a
+new-admission bound, not a heap guarantee or an authoring quota: accepted typing,
+composition and incoming growth remain protected and stop additional loads when
+over budget. inactive windows and whole old history groups release through their
+existing owners first. manual paging replaces a bounded window, exposes earlier
+items and retains “write at end” beside show-more. a failed admission explains the
+limit at the requested action. if history retirement needs settlement, a new
+gesture requests insertion after it finishes; a delayed split is not replayed.
+the proven tail retains a manual entry even when it cannot reserve a blank field.
+no account-wide status or recovery inventory is
+introduced. the runtime's unpinned document cache remains a separate owner.
 
 ## device ownership
 

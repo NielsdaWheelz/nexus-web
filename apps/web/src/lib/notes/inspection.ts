@@ -9,7 +9,8 @@ export function inspectionDecorations(
 ): DecorationSet {
   const start = Math.max(0, Math.floor(target.startOffset));
   const end = Math.max(start, Math.floor(target.endOffset));
-  const block = doc.firstChild;
+  const offset = doc.type.name === "outline_doc" ? 1 : 0;
+  const block = offset === 1 ? doc.firstChild?.firstChild : doc.firstChild;
   if (!block || end <= start) return DecorationSet.empty;
   const attrs = {
     class: "nexus-note-inspection",
@@ -18,14 +19,14 @@ export function inspectionDecorations(
   const decorations: Decoration[] = [];
   for (const span of projectBody(block).spans) {
     if (span.end <= start || span.start >= end) continue;
-    const from =
+    const from = offset + (
       span.exact === null
         ? span.from
-        : span.from + codepointToUtf16(span.exact, Math.max(0, start - span.start));
-    const to =
+        : span.from + codepointToUtf16(span.exact, Math.max(0, start - span.start)));
+    const to = offset + (
       span.exact === null
         ? span.to
-        : span.from + codepointToUtf16(span.exact, Math.min(end, span.end) - span.start);
+        : span.from + codepointToUtf16(span.exact, Math.min(end, span.end) - span.start));
     const previous = decorations.at(-1);
     if (previous?.from === from && previous.to === to) continue;
     decorations.push(

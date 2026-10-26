@@ -1,7 +1,7 @@
 "use client";
 
 // One account's synchronous loss decision. Owners retain their own input and
-// requests; this registry reads their current risks and never stores either.
+// requests; this registry reads their risks and optional text exports, never input.
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { securityTeardownStarted } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { hasUncommittedWriting } from "@/lib/notes/runtime";
@@ -21,11 +21,14 @@ export interface WorkOwner {
   readonly id: string;
   readonly scope: WorkScope;
   read(): WorkRisk;
+  /** Fresh text from this owner; an empty export is distinct from no export. */
+  readCopyText?(): string | null;
   subscribe(listener: () => void): () => void;
 }
 export interface WorkGuard {
   register(owner: WorkOwner): () => void;
   confirmLoss(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): boolean;
+  readCopyText(input: { scopes: readonly WorkScope[]; ownerIds: readonly string[] }): string | null;
   confirmDocumentExit(): boolean;
   hasWork(): boolean;
 }
@@ -103,6 +106,15 @@ function createWorkRegistry() {
     },
     confirmLoss: ({ scopes, ownerIds }) => confirm(risk(owner =>
       ownerIds.includes(owner.id) || scopes.some(scope => matches(scope, owner.scope)))),
+    readCopyText: ({ scopes, ownerIds }) => {
+      const texts: string[] = [];
+      for (const { owner } of owners.values()) {
+        if (!ownerIds.includes(owner.id) && !scopes.some(scope => matches(scope, owner.scope))) continue;
+        const text = owner.readCopyText?.() ?? null;
+        if (text !== null) texts.push(text);
+      }
+      return texts.length ? texts.join("\n\n") : null;
+    },
     confirmDocumentExit: () => confirm(risk(() => true)),
     hasWork: () => risky(risk(() => true)),
   };

@@ -27,6 +27,7 @@ export interface ReferenceInputHost {
 type ReferenceContext = { source_ref: string | null };
 function referenceContext(host: ReferenceInputHost): ReferenceContext { return { source_ref: host.source_ref }; }
 type State = {
+  row_id: string | null;
   context: ReferenceContext;
   message: string | null;
   raw: string;
@@ -40,20 +41,24 @@ export function useReferenceInput(
   editorKey: string,
   host: ReferenceInputHost | null,
   pickerOpen: boolean,
+  input: {
+    row_id: string | null;
+    prepareAccept(): boolean;
+    accepted(row_id: string | null, base: NoteBody): void;
+  },
 ) {
+  const row_id = input.row_id;
   const paneActive = pickerOpen;
-  const draft = useEditorDraft<{ state: State | null; completion: number }>(
+  const draft = useEditorDraft<State | null>(
     `Resources.ReferenceDraft:${editorKey}`,
-    () => ({ state: null, completion: 0 }),
+    () => null,
   );
-  const { state, completion } = draft.value;
+  const state = draft.value;
   const listId = `reference-${useId().replaceAll(":", "")}`;
   const active = state !== null;
   const paused = false;
   const hasHost = host !== null;
-  function set(next: State | null, completed = false) {
-    draft.set(previous => ({ state: next, completion: previous.completion + (completed ? 1 : 0) }));
-  }
+  const set = draft.set;
   const sourceRef = state?.host.source_ref ?? null;
   const search = useLinkTargets(
     state?.raw ?? "",
@@ -63,21 +68,21 @@ export function useReferenceInput(
     sourceRef,
   );
   const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
-  const admitted = pickerOpen && state !== null && !paused && search.querySettled && !search.minimum && search.current;
+  const admitted = pickerOpen && state !== null && state.row_id === row_id && !paused && search.querySettled && !search.minimum && search.current;
   const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
     firstExistingKey: options[0]?.key ?? null, active: state?.active ?? null });
   const selected = admitted ? reconciled?.key ?? null : null;
   useEffect(() => {
-    const value = draft.read().state;
+    const value = draft.read();
     if (value && value === state && value.active !== reconciled) set({ ...value, active: reconciled });
     // Selection belongs to the reference draft; reconciliation changes no text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, reconciled]);
   const bindings = useSearchOptions({ listId, label: `link from ${state?.host.label ?? "editor"}`,
-    open: pickerOpen && state !== null, options, activeKey: selected,
+    open: pickerOpen && state !== null && state.row_id === row_id, options, activeKey: selected,
     onActiveChange(key) {
-      const value = draft.read().state;
+      const value = draft.read();
       if (value && value === state) set({ ...value, active: { context, key } });
     },
     onActivate(key) { accept(search.items.find(item => targetKey(item) === key)); },
@@ -90,9 +95,11 @@ export function useReferenceInput(
     return () => report?.(false);
   }, [active, draft.owner, hasHost]);
   function accept(target: LinkTargetResult | undefined) {
-    const value = draft.read().state;
+    if (!input.prepareAccept()) return;
+    const value = draft.read();
     if (
       !value ||
+      value.row_id !== row_id ||
       !admitted ||
       value.message !== null ||
       value.raw !== state?.raw ||
@@ -112,41 +119,41 @@ export function useReferenceInput(
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
         : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target };
+    set(null);
+    input.accepted(value.row_id, value.base);
     owner.onSelected(selectedTarget, target.item);
-    set(null, true);
   }
 
   return {
     state,
     owner: draft.owner,
-    completion,
     search: { ...search, items: admitted ? search.items : [] },
     selected,
     bindings,
     acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },
     isReady: () => true,
     reviewPosition() {
-      const value = draft.read().state;
+      const value = draft.read();
       const context = host ? referenceContext(host) : null;
       if (value && context && host) {
-        set({ ...value, context, host, message: null });
+        set({ ...value, row_id, context, host, message: null });
       }
     },
-    getState: () => draft.read().state,
-    begin(base: NoteBody) {
-      const context = host ? referenceContext(host) : null;
-      if (host && context && draft.read().state === null) {
-        set({ context, message: null, raw: "@", base, editBase: null, host: { ...host },
+    getState: draft.read,
+    begin(base: NoteBody, field_id: string | null = row_id, suppliedHost: ReferenceInputHost | null = host) {
+      const context = suppliedHost ? referenceContext(suppliedHost) : null;
+      if (suppliedHost && context && draft.read() === null) {
+        set({ row_id: field_id, context, message: null, raw: "@", base, editBase: null, host: { ...suppliedHost },
           active: null,
         });
       }
     },
     edit(raw: string) {
-      const value = draft.read().state;
+      const value = draft.read();
       if (value) set({ ...value, raw });
     },
     literal() {
-      if (draft.read().state === null) return false;
+      if (draft.read() === null) return false;
       set(null);
       return true;
     },

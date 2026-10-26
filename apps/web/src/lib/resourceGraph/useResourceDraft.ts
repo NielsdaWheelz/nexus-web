@@ -37,7 +37,7 @@ function draftCell<T>(initial: T) {
   };
 }
 export function useResourceDraft<T>(
-  name: string, initial: () => T, risk?: (value: T) => WorkRisk,
+  name: string, initial: () => T, risk?: (value: T) => WorkRisk, readCopyText?: (value: T) => string | null,
 ) {
   const owner = resourceDraftOwnerId(usePaneVisitIdentity(), name);
   const scope = usePaneVisitWorkScope();
@@ -56,6 +56,7 @@ export function useResourceDraft<T>(
   holder.current = cell;
   usePaneVisitWorkOwner(risk ? {
     id: owner, scope, read: () => risk(cell.read()), subscribe: cell.subscribe,
+    ...(readCopyText ? {readCopyText: () => readCopyText(cell.read())} : {}),
   } : null);
   const value = useSyncExternalStore(cell.subscribe, cell.read, cell.read);
   return {

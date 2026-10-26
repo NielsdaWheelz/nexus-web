@@ -8,12 +8,15 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-mobile editor against local-first `c20ebe7b6`: +1,348 authored runtime lines
-(1,973 added, 625 deleted) under the historical classifier, plus 15 shared
-`node/authored` runtime lines (16 added, one deleted). the combined runtime
-change is +1,363. fixed touch commands, prepared local windows and retained input
-replace the insertion/finish controls, duplicate row reads and disposable input
-handoffs. native visibility and receipt publication have explicit owners. lab
+mobile editor checkpoint `f07f1963eb` against local-first `c20ebe7b6`: +2,561 authored runtime lines
+(3,568 added, 1,007 deleted) under the historical classifier, plus 33 shared
+`node/authored` runtime lines (37 added, four deleted). the combined runtime
+change is +2,594: web +2,534, android +27 and shared authored +33. one flat native
+editing host, occurrence baselines and bounded prepared windows replace
+insertion/finish controls, duplicate row reads and disposable input handoffs.
+the existing retained input owns ordered structure and writing; receipt and
+causal coverage retain their explicit owners. obsolete draft/bridge components
+and their orphan page stylesheet are deleted. lab
 providers, configuration, docs and temporary cases are outside this count;
 historical area totals retain their bases.
 

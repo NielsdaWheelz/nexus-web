@@ -7,7 +7,6 @@ import type { Intent } from "@nexus/authored/commands";
 import { pageTitle } from "@nexus/authored/queries";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
-import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
 import LocalOutline, { type LocalOutlineHandle } from "@/components/notes/LocalOutline";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -23,12 +22,9 @@ import { requirePaneRuntime, usePaneDailyPage, usePaneEntryDelivery, usePanePara
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
-
 import { NEW_PAGE_IDENTITY, type NewPageIdentity } from "@/lib/panes/pageAuthoring";
-import styles from "./page.module.css";
 
 type ResolvedPage = { ref: string; prelude: Intent[] };
-
 
 export default function PagePaneBody() {
   const writing = useWritingRuntime();
@@ -81,7 +77,6 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   const [entryMessage, setEntryMessage] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [entryError, setEntryError] = useState<unknown | null>(null);
-  const titleInput = useRef<HTMLTextAreaElement>(null);
   const outline = useRef<LocalOutlineHandle | null>(null);
   const surface = useRef<HTMLDivElement>(null);
   const saved = useSyncExternalStore(writing.subscribe, writing.snapshot, writing.snapshot);
@@ -141,13 +136,11 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   return <div ref={surface}>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
     {localError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." }} announcement="Assertive"
-      actions={[{ label: "retry saving", onClick: () => { void writing.retry().catch(setEntryError); } }, { label: "copy text", onClick: () => { void navigator.clipboard.writeText(titleInput.current?.value ?? "").catch(setEntryError); } }]} /> : null}
+      actions={[{ label: "retry saving", onClick: () => { void writing.retry().catch(setEntryError); } }, { label: "copy text", onClick: () => { void navigator.clipboard.writeText(outline.current?.rootText() ?? "").catch(setEntryError); } }]} /> : null}
     {entryError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
     {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
-    <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} rootEditor={owner =>
-      <div className={styles.title}><BoundPageTitleEditor pageRef={ref} prelude={prelude} initialTitle={initialTitle} placeholder={pageTitle("", date)} inputRef={titleInput}
-        session={owner.history} onEditorReady={owner.onEditorReady} onSelectionChange={owner.onSelectionChange} onEnter={owner.onEnter}/></div>}/>
+    <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} rootField={{label: "edit page title", initialTitle, placeholder: pageTitle("", date)}}/>
 
   </div>;
 }

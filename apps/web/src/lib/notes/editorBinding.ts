@@ -8,24 +8,38 @@ import type { EditorView } from "prosemirror-view";
 import { docFromBody, noteBodySchema, sameBody, type InlineNode, type NoteBody } from "@nexus/authored/body";
 import { applyBodyEdits, bodyInline, readBody, encodeBytes, LOCAL_EDIT, type BodyEdit } from "@nexus/authored/documents";
 import type { WritingDocument } from "./runtime";
-export class InlineBinding {
+/** One editing engine can bind a standalone body or an outline's selected field.
+ * Selection positions in the view are global; authored edits stay field-local. */
+export interface EditorBinding {
+  readonly baseline: Y.Doc | null;
+  document(row_id?: string): WritingDocument | null;
+  bodyState(row_id?: string): string | null;
+  body(row_id?: string): NoteBody;
+  attach(view: EditorView, deferred: () => boolean): void;
+  apply(transaction: Transaction): void;
+  handoff(before: NoteBody, after: NoteBody, row_id?: string): void;
+  refresh(): void;
+  close(): void;
+}
+export class InlineBinding implements EditorBinding {
   readonly baseline = new Y.Doc();
   private view: EditorView | null = null;
   private deferred: () => boolean = () => false;
   private updating = false;
   private readonly receive = () => this.refresh();
-  constructor(private readonly document: WritingDocument, private readonly origin: unknown = LOCAL_EDIT) { Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(document.doc)); }
+  constructor(private readonly writing: WritingDocument, private readonly origin: unknown = LOCAL_EDIT) { Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(writing.doc)); }
+  document(): WritingDocument { return this.writing; }
   bodyState():string {return encodeBytes(Y.encodeStateAsUpdate(this.baseline));}
   body(): NoteBody { return readBody(this.baseline); }
   attach(view: EditorView, deferred: () => boolean): void {
     this.view = view; this.deferred = deferred;
-    this.document.doc.on("update", this.receive);
+    this.writing.doc.on("update", this.receive);
   }
   apply(transaction: Transaction): void {
     this.updating = true;
     try {
       applyBodyEdits(this.baseline, transactionEdits(transaction));
-      Y.applyUpdate(this.document.doc, Y.encodeStateAsUpdate(this.baseline, Y.encodeStateVector(this.document.doc)), this.origin);
+      Y.applyUpdate(this.writing.doc, Y.encodeStateAsUpdate(this.baseline, Y.encodeStateVector(this.writing.doc)), this.origin);
     } finally { this.updating = false; }
   }
   /** Explicit attachment/literal handoff must match its displayed baseline. */
@@ -50,7 +64,7 @@ export class InlineBinding {
     this.updating = true;
     try {
       applyBodyEdits(this.baseline, edits);
-      Y.applyUpdate(this.document.doc, Y.encodeStateAsUpdate(this.baseline, Y.encodeStateVector(this.document.doc)), this.origin);
+      Y.applyUpdate(this.writing.doc, Y.encodeStateAsUpdate(this.baseline, Y.encodeStateVector(this.writing.doc)), this.origin);
     } finally { this.updating = false; }
     this.refresh();
   }
@@ -60,7 +74,7 @@ export class InlineBinding {
     const inline = bodyInline(this.baseline), selection = view.state.selection;
     const relative = (position: number) => Y.createRelativePositionFromTypeIndex(inline, Math.max(0, Math.min(inline.length, position - 1)));
     const anchor = relative(selection.anchor), head = relative(selection.head);
-    Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(this.document.doc, Y.encodeStateVector(this.baseline)));
+    Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(this.writing.doc, Y.encodeStateVector(this.baseline)));
     const next = docFromBody(this.body());
     const start = view.state.doc.content.findDiffStart(next.content);
     if (start === null) return;
@@ -71,7 +85,7 @@ export class InlineBinding {
     if (a && b) transaction.setSelection(TextSelection.create(transaction.doc, a.index + 1, b.index + 1));
     view.dispatch(transaction);
   }
-  close(): void { this.document.doc.off("update", this.receive); this.view = null; this.baseline.destroy(); }
+  close(): void { this.writing.doc.off("update", this.receive); this.view = null; this.baseline.destroy(); }
 }
 function inlineContent(fragment: Fragment): Fragment {
   const nodes: import("prosemirror-model").Node[] = [];

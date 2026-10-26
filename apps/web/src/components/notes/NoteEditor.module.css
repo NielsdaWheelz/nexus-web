@@ -70,16 +70,22 @@
   white-space: pre-wrap;
 }
 
-.view[data-empty="true"] {
+.view[data-empty="true"],
+.view :global([data-outline-tail="true"] [data-outline-field][data-empty="true"]) {
   display: grid;
 }
 
 .view[data-empty="true"]::before,
-.view[data-empty="true"] > :global(p) {
+.view[data-empty="true"] > :global(p),
+.view[data-empty="true"] > :global(pre),
+.view :global([data-outline-tail="true"] [data-outline-field][data-empty="true"])::before,
+.view :global([data-outline-tail="true"] [data-outline-field][data-empty="true"]) > :global(p),
+.view :global([data-outline-tail="true"] [data-outline-field][data-empty="true"]) > :global(pre) {
   grid-area: 1 / 1;
 }
 
-.view[data-empty="true"]::before {
+.view[data-empty="true"]::before,
+.view :global([data-outline-tail="true"] [data-outline-field][data-empty="true"])::before {
   color: var(--ink-faint);
   content: attr(data-placeholder);
   pointer-events: none;

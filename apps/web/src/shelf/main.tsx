@@ -16,6 +16,7 @@ import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { NAV_COLLAPSED_COOKIE, type RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { WorkProvider } from "@/lib/unsavedWork";
 
 // This entry is the packaged Android shelf, independent of the workspace document.
 const environment: RenderEnvironment = {
@@ -38,7 +39,8 @@ function ShelfFrame() {
 }
 
 /** The native session names the account; the shelf document never chooses one. Copy
- * reading never waits on it: each reader mounts its annotation layer once it is known. */
+ * reading never waits on it: each reader mounts its annotation layer once it is known.
+ * Its guard and error boundary stay mounted throughout account discovery. */
 function ShelfAccountScope({ children }: { readonly children: ReactNode }) {
   const [state, setState] = useState<ShelfAccountState>({ kind: "Loading" });
   const [attempt, setAttempt] = useState(0);
@@ -49,7 +51,7 @@ function ShelfAccountScope({ children }: { readonly children: ReactNode }) {
       () => { if (live) setState({ kind: "Unavailable", retry }); });
     return () => { live = false; };
   }, [attempt]);
-  return <ShelfAccount value={state}><AuthenticatedWorkspaceErrorBoundary accountId={state.kind === "Ready" ? state.id : undefined}>{children}</AuthenticatedWorkspaceErrorBoundary></ShelfAccount>;
+  return <ShelfAccount value={state}><WorkProvider><AuthenticatedWorkspaceErrorBoundary accountId={state.kind === "Ready" ? state.id : undefined}>{children}</AuthenticatedWorkspaceErrorBoundary></WorkProvider></ShelfAccount>;
 }
 
 connectLocalContent({ accountId: null, indexPath: "/shelf/downloads.json" });

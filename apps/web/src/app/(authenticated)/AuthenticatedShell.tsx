@@ -36,7 +36,6 @@ import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementCon
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
 import { useChatWorkOwners } from "@/lib/chat/drafts";
-import { WorkProvider } from "@/lib/unsavedWork";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { connectLocalContent } from "@/lib/offline/localContent";
@@ -74,7 +73,7 @@ export default function AuthenticatedShell(props: {
 }) {
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
-      <WorkProvider><AuthoredProvider accountId={props.account.accountId}>
+      <AuthoredProvider accountId={props.account.accountId}>
         <RenderEnvironmentProvider value={props.renderEnvironment}>
           <UnauthenticatedApiBoundary>
             <MobileViewportProvider>
@@ -99,7 +98,7 @@ export default function AuthenticatedShell(props: {
             </MobileViewportProvider>
           </UnauthenticatedApiBoundary>
         </RenderEnvironmentProvider>
-      </AuthoredProvider></WorkProvider>
+      </AuthoredProvider>
     </AuthenticatedAccountProvider>
   );
 }

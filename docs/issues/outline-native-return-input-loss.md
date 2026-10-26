@@ -22,8 +22,8 @@ the mobile trace bounds its device calls to `2026-10-26T02:06:09.709Z`–
 `02:11:22.907Z`. build-only package/mapping reads have no individual start
 timestamps, so the audit does not establish absence of all read-only adb traffic.
 
-`LocalOutline.startSplit` mounts a temporary input; `completeDraft` replaces it
-with the canonical successor. repair input ownership at the responsible editor
-layer. preserve the immediate physical sequence without keyboard delays or a
+the prior `LocalOutline.startSplit` mounted a temporary input; `completeDraft`
+replaced it with the canonical successor. the integrated flat editor removes
+these handoffs, but installed-device qualification remains pending. preserve the immediate physical sequence without keyboard delays or a
 second native edit interpreter. resolve when repeated real return/typing and
 canonical rich-body checks retain every key, alongside undo and offline reopen.

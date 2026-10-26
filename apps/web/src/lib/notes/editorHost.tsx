@@ -15,19 +15,22 @@ export interface NoteEditorHost {
   references: "local" | "all";
   embedded_preview: "literal" | "workspace";
   uploads: { signal(): AbortSignal; is_owned(): boolean; subscribe(listener: () => void): () => void } | null;
-  useDraft<T>(name: string, initial: () => T, risk?: (value: T) => WorkRisk): Draft<T>;
+  useDraft<T>(name: string, initial: () => T, risk?: (value: T) => WorkRisk, readCopyText?: (value: T) => string | null): Draft<T>;
 }
 const Context = createContext<NoteEditorHost | null>(null);
+/** Rich previews disclose children into the containing outline session. */
+export const OutlineEmbeddingOccurrence = createContext<string | null>(null);
 export function useOptionalNoteEditorHost(): NoteEditorHost | null { return useContext(Context); }
 export function useNoteEditorHost(): NoteEditorHost {
   const host = useContext(Context);
   if (!host) throw new Error("Note editor host is missing");
   return host;
 }
-export function useEditorDraft<T>(name: string, initial: () => T, risk?: (value: T) => WorkRisk): Draft<T> {
+/** A workspace draft's optional copy reader shares its existing retained risk owner. */
+export function useEditorDraft<T>(name: string, initial: () => T, risk?: (value: T) => WorkRisk, readCopyText?: (value: T) => string | null): Draft<T> {
   const host = useContext(Context);
   const useDraft = host?.useDraft ?? useResourceDraft;
-  return useDraft(name, initial, risk);
+  return useDraft(name, initial, risk, readCopyText);
 }
 export function WorkspaceNoteEditorHost({ children }: { children: ReactNode }) {
   const identity = usePaneVisitIdentity();
