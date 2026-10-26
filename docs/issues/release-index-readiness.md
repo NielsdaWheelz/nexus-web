@@ -26,5 +26,8 @@ local chromium proof does not discharge these
 checks. record measured large-index opening and sustained refresh costs with
 the change's proof in the pr body.
 
+the owner waived safari qualification on 2026-10-25 (`skip safari`); no safari
+automation or trust settings were changed. this is a waiver, not browser proof.
+
 resolve after exact wire/source pairing and these owner checks; retain any
 failed performance or browser qualification as a separate issue.
