@@ -160,6 +160,20 @@ const SEARCH_READINGS_SQL = `WITH ${SEARCH_SCOPE_CTES}
     (m.source_ref IN (SELECT value FROM json_each(?2)) OR EXISTS(SELECT 1 FROM scope_facts owner WHERE owner.revision=m.revision AND owner.kind='source_alias' AND owner.owner_ref IN (SELECT value FROM json_each(?2)) AND owner.target_ref=m.source_ref))
     AND (m.reading_ref=m.source_ref OR NOT EXISTS(SELECT 1 FROM members root WHERE root.reading_ref=m.source_ref)))
   GROUP BY m.reading_ref HAVING m.reading_ref>COALESCE(json_extract(?3,'$'),'') ORDER BY m.reading_ref LIMIT 100`;
+// Exact conversation refs may resolve against independently authorized readings.
+// These rows never enter requested members or grant scope to another result.
+const SEARCH_EXACT_READINGS_SQL = `SELECT r.reading_ref,r.source_ref,r.source_kind,r.body_generation,r.source_generation,
+    0 AS linked_allowed,
+    EXISTS(SELECT 1 FROM scope_text_complete c WHERE c.revision=r.revision AND c.reading_ref=r.reading_ref) AS complete,
+    json_quote(r.reading_ref) AS cursor_json
+  FROM scope_readings r WHERE r.revision=(SELECT active_revision FROM scope_state WHERE singleton=1)
+    AND r.source_ref IN (SELECT value FROM json_each(?1))
+    AND NOT EXISTS(SELECT 1 FROM scope_revocations v WHERE v.scope_ref=r.reading_ref)
+    AND (?2 IS NULL OR r.reading_ref=?2)
+    AND (?2 IS NOT NULL OR r.reading_ref=r.source_ref OR NOT EXISTS(
+      SELECT 1 FROM scope_readings root WHERE root.revision=r.revision AND root.reading_ref=r.source_ref
+        AND NOT EXISTS(SELECT 1 FROM scope_revocations v WHERE v.scope_ref=root.reading_ref)))
+    AND r.reading_ref>COALESCE(json_extract(?3,'$'),'') ORDER BY r.reading_ref LIMIT 100`;
 const SEARCH_INTERVALS_SQL = `SELECT interval_key,reading_ref,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut
     ,json_array(reading_ref,interval_key) AS cursor_json
   FROM scope_intervals WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1)
@@ -226,7 +240,7 @@ export const SEARCH_MATCH_SQL = {
 } as const;
 /** Every read shape is finite and packaged by content identity for the native host. */
 export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
-  SEARCH_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL] as const;
+  SEARCH_READINGS_SQL, SEARCH_EXACT_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL] as const;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
 function orderedIncident(where:string,direction:"ASC"|"DESC",limit:string,exclude:string,requireRootLive=true):string {
@@ -341,6 +355,8 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
   const expression = searchExpression(query.text) || '""';
   const readings = new Map<string, SearchReading>();
   const loadedSources = new Set<string>();
+  const exactReadings = new Map<string, SearchReading>();
+  const loadedExactSources = new Set<string>();
   const sourceNotes = new Map<string, boolean>();
   const peers = new Map<string, {ref: string; resource: ResourceProjection | null; scoped: boolean}[]>();
   const aliases = new Map<string, string>();
@@ -357,25 +373,59 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
       cursor = String(page.at(-1)!.cursor_json);
     }
   };
-  const textsForHighlight = (resource: ResourceProjection, linkedOnly: boolean): SearchText[] => {
-    const key = `${resource.ref}:${linkedOnly}`;
+  const loadReadings = async (rows: Record<string, unknown>[], target: Map<string, SearchReading>): Promise<boolean> => {
+    if (rows.some(row => Number(row.complete) !== 1 || row.reading_ref !== row.source_ref && (row.body_generation === null || row.source_generation === null))) return false;
+    const refs: string[] = [];
+    for (const row of rows) {
+      const ref = String(row.reading_ref);
+      if (target.has(ref)) continue;
+      refs.push(ref);
+      target.set(ref, {kind: "reading", reading_ref: ref, source_ref: String(row.source_ref), source_kind: String(row.source_kind),
+        body_generation: row.body_generation === null ? null : Number(row.body_generation), source_generation: row.source_generation === null ? null : Number(row.source_generation),
+        linked_allowed: Number(row.linked_allowed) === 1, intervals: []});
+    }
+    if (refs.length) for (const row of await pageRead(SEARCH_INTERVALS_SQL, [JSON.stringify(refs)])) target.get(String(row.reading_ref))!.intervals.push({
+      kind: "interval", interval_key: String(row.interval_key), reading_ref: String(row.reading_ref), fragment_id: String(row.fragment_id), fragment_idx: Number(row.fragment_idx),
+      start_offset: Number(row.start_offset), end_offset: Number(row.end_offset), purpose: row.purpose === "body" ? "body" : "required_note", start_cut: Number(row.start_cut) === 1, end_cut: Number(row.end_cut) === 1,
+    });
+    return true;
+  };
+  const loadExactReadings = async (source: string, owner: string | null): Promise<boolean> => {
+    const key = `${source}:${owner ?? ""}`;
+    if (loadedExactSources.has(key)) return true;
+    if (!await loadReadings(await pageRead(SEARCH_EXACT_READINGS_SQL, [JSON.stringify([source]), owner]), exactReadings)) return false;
+    loadedExactSources.add(key);
+    return true;
+  };
+  const textsForHighlight = (resource: ResourceProjection, linkedOnly: boolean, exact = false): SearchText[] => {
+    const key = `${resource.ref}:${linkedOnly}:${exact}`;
     const known = highlightTexts.get(key);
     if (known) return known;
     const selection = resource.selection;
     if (!selection) return [];
-    const variants: SearchText[] = [];
-    const full = () => ({literal: capturedHighlightText(selection), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => selection[field] ?? "").join(" ")});
-    if (!linkedOnly && directFacts.has(resource.ref)) variants.push(full());
-    for (const reading of readings.values()) {
-      if (linkedOnly && !reading.linked_allowed) continue;
-      if (reading.reading_ref === resource.source_ref) {variants.push(full()); continue;}
-      if (reading.source_ref !== resource.source_ref || selection.locator.type === "pdf_page_geometry") continue;
+    const containing = [...(exact ? exactReadings : readings).values()].filter(reading => {
+      if (linkedOnly && !reading.linked_allowed) return false;
+      if (reading.reading_ref === resource.source_ref) return true;
+      if (reading.source_ref !== resource.source_ref || selection.locator.type === "pdf_page_geometry") return false;
       const locator = selection.locator;
-      if (!highlightFitsReading([{fragment_id: locator.fragment_id, start_offset: locator.start_offset, end_offset: locator.end_offset}], reading.intervals)) continue;
-      const intervals = reading.intervals.filter(interval => interval.purpose === "body" && interval.fragment_id === locator.fragment_id);
-      const fields = clippedHighlightFields(selection, locator.start_offset, locator.end_offset,
-        Math.min(...intervals.map(interval => interval.start_offset)), Math.max(...intervals.map(interval => interval.end_offset)));
-      variants.push({literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field]).join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field]).join(" ")});
+      return highlightFitsReading([{fragment_id: locator.fragment_id, start_offset: locator.start_offset, end_offset: locator.end_offset}], reading.intervals);
+    });
+    // Server reading_owner_sql: root, then smallest canonical extent, then id.
+    // Choose before lexical evaluation; a wider sibling cannot rescue a miss.
+    const extent = (reading: SearchReading) => reading.intervals.filter(interval => interval.purpose === "body").reduce((sum, interval) => sum + interval.end_offset - interval.start_offset, 0);
+    containing.sort((a, b) => Number(b.reading_ref === b.source_ref) - Number(a.reading_ref === a.source_ref)
+      || extent(a) - extent(b) || (a.reading_ref < b.reading_ref ? -1 : a.reading_ref > b.reading_ref ? 1 : 0));
+    const reading = containing[0];
+    let variants: SearchText[] = [];
+    if (reading) {
+      let fields = selection;
+      if (reading.reading_ref !== resource.source_ref && selection.locator.type !== "pdf_page_geometry") {
+        const locator = selection.locator;
+        const intervals = reading.intervals.filter(interval => interval.purpose === "body" && interval.fragment_id === locator.fragment_id);
+        fields = {...selection, ...clippedHighlightFields(selection, locator.start_offset, locator.end_offset,
+          Math.min(...intervals.map(interval => interval.start_offset)), Math.max(...intervals.map(interval => interval.end_offset)))};
+      }
+      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" ")}];
     }
     highlightTexts.set(key, variants);
     return variants;
@@ -383,7 +433,7 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
   const noteInScope = (ref: string): boolean => directFacts.has(ref) || (peers.get(ref) ?? []).some(peer =>
     peer.scoped || [...readings.values()].some(reading => reading.linked_allowed && reading.reading_ref === peer.ref)
       || peer.resource?.kind === "highlight" && textsForHighlight(peer.resource, true).length > 0);
-  const passageInScope = async (passage: PassageState, ref: string): Promise<boolean> => {
+  const passageInScope = async (passage: PassageState, ref: string): Promise<boolean | null> => {
     const known = passageMembership.get(ref);
     if (known !== undefined) return known;
     let admitted = false;
@@ -391,22 +441,29 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
       && (directFacts.has(ref) || sourceNotes.get(passage.source_ref) === true && noteInScope(passage.source_ref));
     else {
       const source = aliases.get(passage.source_ref) ?? passage.source_ref;
-      for (const reading of readings.values()) {
-        if (reading.source_ref !== source && reading.reading_ref !== source) continue;
-        // An admitted full source retains its stored quote even when unlocated.
-        if (reading.reading_ref === reading.source_ref) {admitted = true; break;}
-        const scanner = new ScopeQuoteScanner(passage.normalized_exact, passage.prefix, passage.suffix);
-        let cursor: string | null = null;
-        for (;;) {
-          const windows = await read({sql: SEARCH_QUOTE_WINDOWS_SQL, params: [reading.reading_ref, passage.normalized_exact, passage.prefix, passage.suffix, cursor]});
-          if (!windows.length) break;
-          const window = windows[0]!;
-          scanner.add({fragment_id: String(window.fragment_id), start_offset: Number(window.raw_start), normalized_start_offset: Number(window.lo),
-            normalized_text: String(window.normalized_text), edits: JSON.parse(String(window.edits_json)), start_cut: Number(window.start_cut) === 1, end_cut: Number(window.end_cut) === 1});
-          if (scanner.ambiguous) break;
-          cursor = String(window.cursor_json);
+      const pools = directFacts.has(ref) ? [readings, exactReadings] : [readings];
+      for (const pool of pools) {
+        if (pool === exactReadings && !await loadExactReadings(source, passage.source_ref === source ? null : passage.source_ref)) return null;
+        for (const reading of pool.values()) {
+          if (reading.source_ref !== source && reading.reading_ref !== source) continue;
+          // Ordinary reopening of a part-owned capture retains that exact part.
+          if (pool === exactReadings && passage.source_ref !== source && reading.reading_ref !== passage.source_ref) continue;
+          // An admitted full source retains its stored quote even when unlocated.
+          if (reading.reading_ref === reading.source_ref) {admitted = true; break;}
+          const scanner = new ScopeQuoteScanner(passage.normalized_exact, passage.prefix, passage.suffix);
+          let cursor: string | null = null;
+          for (;;) {
+            const windows = await read({sql: SEARCH_QUOTE_WINDOWS_SQL, params: [reading.reading_ref, passage.normalized_exact, passage.prefix, passage.suffix, cursor]});
+            if (!windows.length) break;
+            const window = windows[0]!;
+            scanner.add({fragment_id: String(window.fragment_id), start_offset: Number(window.raw_start), normalized_start_offset: Number(window.lo),
+              normalized_text: String(window.normalized_text), edits: JSON.parse(String(window.edits_json)), start_cut: Number(window.start_cut) === 1, end_cut: Number(window.end_cut) === 1});
+            if (scanner.ambiguous) break;
+            cursor = String(window.cursor_json);
+          }
+          if (scanner.result !== null) {admitted = true; break;}
         }
-        if (scanner.result !== null) {admitted = true; break;}
+        if (admitted) break;
       }
     }
     passageMembership.set(ref, admitted);
@@ -443,21 +500,7 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
     if (newSources.length) {
       for (const row of await read({sql: SEARCH_ALIASES_SQL, params: [JSON.stringify(newSources)]})) aliases.set(String(row.owner_ref), String(row.target_ref));
       const newReadings = await pageRead(SEARCH_READINGS_SQL, [scopesJson, JSON.stringify(newSources)]);
-      if (newReadings.some(row => Number(row.complete) !== 1 || row.reading_ref !== row.source_ref && (row.body_generation === null || row.source_generation === null)))
-        return {...result, rows: [], next_cursor: null, scope_available: false};
-      const newRefs: string[] = [];
-      for (const row of newReadings) {
-        const ref = String(row.reading_ref);
-        if (readings.has(ref)) continue;
-        newRefs.push(ref);
-        readings.set(ref, {kind: "reading", reading_ref: ref, source_ref: String(row.source_ref), source_kind: String(row.source_kind),
-          body_generation: row.body_generation === null ? null : Number(row.body_generation), source_generation: row.source_generation === null ? null : Number(row.source_generation),
-          linked_allowed: Number(row.linked_allowed) === 1, intervals: []});
-      }
-      if (newRefs.length) for (const row of await pageRead(SEARCH_INTERVALS_SQL, [JSON.stringify(newRefs)])) readings.get(String(row.reading_ref))!.intervals.push({
-        kind: "interval", interval_key: String(row.interval_key), reading_ref: String(row.reading_ref), fragment_id: String(row.fragment_id), fragment_idx: Number(row.fragment_idx),
-        start_offset: Number(row.start_offset), end_offset: Number(row.end_offset), purpose: row.purpose === "body" ? "body" : "required_note", start_cut: Number(row.start_cut) === 1, end_cut: Number(row.end_cut) === 1,
-      });
+      if (!await loadReadings(newReadings, readings)) return {...result, rows: [], next_cursor: null, scope_available: false};
       for (const source of newSources) loadedSources.add(source);
     }
     const factRefs = [...new Set([...candidates.map(candidate => candidate.resource.ref), ...noteRefs])];
@@ -467,8 +510,16 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
       if (resource.kind === "note" || resource.kind === "page") {
         if (noteInScope(resource.ref)) match = {resource, link: null, match_text: null};
       } else if (resource.kind === "highlight") {
-        for (const text of textsForHighlight(resource, false)) if (await matches(text.lexical, expression)) {match = {resource, link: null, match_text: text.literal}; break;}
-      } else if (passage && await passageInScope(passage, resource.ref)) match = {resource, link: null, match_text: passage.capture.value.quote_exact};
+        const requested = textsForHighlight(resource, false);
+        if (!requested.length && directFacts.has(resource.ref) && resource.source_ref && !await loadExactReadings(resource.source_ref, null))
+          return {...result, rows: [], next_cursor: null, scope_available: false};
+        const texts = requested.length || !directFacts.has(resource.ref) ? requested : textsForHighlight(resource, false, true);
+        for (const text of texts) if (await matches(text.lexical, expression)) {match = {resource, link: null, match_text: text.literal}; break;}
+      } else if (passage) {
+        const admitted = await passageInScope(passage, resource.ref);
+        if (admitted === null) return {...result, rows: [], next_cursor: null, scope_available: false};
+        if (admitted) match = {resource, link: null, match_text: passage.capture.value.quote_exact};
+      }
       if (match) result.rows.push(match);
       if (result.rows.length === limit) return {...result, next_cursor: resource.ref};
     }

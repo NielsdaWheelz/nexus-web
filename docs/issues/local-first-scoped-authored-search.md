@@ -107,6 +107,37 @@ its root-media scope for sixty seconds. offline continuation and part-context
 checks are not reached. this isolates missing local scope admission from
 provisioning failure.
 
+candidate `b741b749a`, run `20261026-102816-2d0ac12f1e7c`, passes both unchanged
+browser cases: root-media retrieval online/offline and part-context clipping with
+the neighboring term excluded. separate owner run `20261026-102816-8708e6bba0a0`
+passes part-only authorization, required-note slices and bounded two-page delivery,
+then reproduces a retained-peer endpoint gap: the real server still admits an
+owned note through its already-linked peer highlight after peer visibility loss,
+but replicated membership omits it. the repair includes that owned endpoint's
+two-ref membership under an independently authorized reading, without peer text
+or search ownership. broader parity, publication/revocation and device proof remain.
+
+`81bf46590` owner paging passes 128 mib across 314 responses, each at most
+462,047 bytes (maximum response time 0.929 s). this qualifies bounded server
+delivery, not device normalization, search latency or atomic publication.
+
+the exact-conversation contrast remains broken: run
+`20261026-111200-adfb6f01ae38` admits the highlight for an inside-part term but
+displays `cobaltneighbourneedle` outside that part; the real server's outside-term
+query is empty. `queries.ts:textsForHighlight` adds full context for an exact
+highlight fact before choosing its requested containing reading. choose the
+reading owner before matching; an exact fact may fall back to independently
+authorized readings only when no requested owner qualifies. preserve exact-only
+conversation context and canonical capture bytes.
+
+run `20261026-111609-438084dfe34c` also isolates an exact media-passage omission:
+the real conversation search returns exactly that passage, the same local profile
+finds it under all-scope, and its conversation scope reports available; the scoped
+local row remains absent for sixty seconds. `queries.ts:passageInScope` consults
+only requested reading membership, so an exact passage fact cannot use its
+independently authorized source. the fallback must stay row-local and admit no
+other passage from that source.
+
 one source-only performance concern remains to measure: the metadata digest
 reuses `media_text_scope.py:text_scope_rows_sql`, whose full-fragment end uses
 `char_length(f.canonical_text)`. bounded wire records do not prevent postgres
