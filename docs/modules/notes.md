@@ -169,7 +169,8 @@ android reports actual keyboard visibility through its existing bridge; an inset
 of zero alone does not imply dismissal.
 
 writing rows keep a leading bullet link and a trailing disclosure only for
-parents/open branches. they disclose authored local links, excluding relationships
+projected parents. retaining an open empty input does not establish child
+availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
 availability. each data-only branch proof owns row projections, adjacent and
 absolute tail relationships and child proofs; the root admits and retains all

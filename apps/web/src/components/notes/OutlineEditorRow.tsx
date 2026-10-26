@@ -57,7 +57,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const trailing = row.terminal ? <button type="button" className={styles.control} data-row-focusable="true"
       aria-label={`show earlier occurrence of ${row.label}`} onKeyDown={event => event.stopPropagation()}
       onClick={event => {event.stopPropagation(); row.reveal();}}><CornerLeftUp size={14}/></button>
-      : row.childrenAvailable || row.open ? <button type="button" className={styles.control} data-row-focusable="true"
+      : row.childrenAvailable ? <button type="button" className={styles.control} data-row-focusable="true"
         aria-label={`${row.open ? "collapse" : "expand"} linked resources for ${row.label}`} aria-expanded={row.open}
         onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}>
         <ChevronRight size={14} className={styles.arrow} data-open={row.open || undefined}/>

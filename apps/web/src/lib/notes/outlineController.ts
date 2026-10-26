@@ -839,7 +839,7 @@ export class OutlineController {
       dom.dataset.depth = String(row.depth); dom.style.setProperty("--outline-depth", String(row.depth));
       dom.dataset.root = String(row.root);
       leading.hidden = row.root || row.tail || !!row.gap;
-      trailing.hidden = row.root || !(row.terminal || row.childrenAvailable || row.open);
+      trailing.hidden = row.root || !(row.terminal || row.childrenAvailable);
       if (row.ref) dom.dataset.resourceRef = row.ref; else delete dom.dataset.resourceRef;
       if (row.parent_id) dom.dataset.parentRow = row.parent_id;
       if (row.root) dom.dataset.outlineRoot = "true";
