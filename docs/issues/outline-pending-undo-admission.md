@@ -60,3 +60,16 @@ with the prior session unmounted, exact durable body/link, and browser close
 without a loss warning. this is a baseline control; the transient owner-null
 early return was found in the consumer rewrite, not in `ec33256fa`. rerun this
 unchanged control on the integrated replacement.
+
+the replacement consumers are integrated from `f8c2b2ed3`. that checkpoint's
+text redo duplicates occurrence nodes; the projection repair in `671837d36`
+passes the unchanged full firefox journey, including undo/redo, joins and exact
+canonical final writing (`20261026-040010-ee608cb2729b`, 4.3 seconds).
+
+held-receipt run `20261026-040315-c76a1871aec4` passes first-glyph undo followed
+by fresh typing and return. the split/two-undo/following-split case passes exact
+canonical bodies, resource visibility, links and untouched control, then fails
+`outline-immediate-pending-history.spec.ts:83`: the still-visible source retains
+`data-outline-pending=true`. the cause and whether any work remains unacknowledged
+are unestablished. resolve that owner state and pass the unchanged held controls;
+do not replace the marker oracle with a delay or infer native qualification.
