@@ -3,7 +3,11 @@
  * together. Pending source bytes never change after local acknowledgement.
  * Scope pages retry keyed upserts and durable cursors in separate staging;
  * publication swaps one complete revision, while revocation withdraws immediately.
- * Interrupted normalization restarts only its unfinished interval from raw rows. */
+ * Interrupted normalization restarts only its unfinished interval from raw rows.
+ * Completion requires contiguous positive chunks through the exact normalized
+ * length in the final output transaction; a peer reset returns ordinary retry.
+ * Pages advance only their requested durable cursor. Effective withdrawal discards
+ * unfinished staging; publication seals the store revision preceding its final read. */
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
@@ -11,7 +15,7 @@ import { DEVICE_SCHEMA } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, searchQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
-import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type NormalizedScopeChunk } from "@nexus/authored/scope";
+import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
 export class Persistence {
   constructor(readonly db: Database) {}
@@ -189,27 +193,35 @@ export class Persistence {
       else await this.db.run(SCOPE_SQL.scope_begin, [revision]);
     });
   }
-  async scopeRevoke(refs: string[]) {
-    if (!refs.length) return;
-    await this.db.transaction(async () => {
+  async scopeRevoke(refs: string[]): Promise<boolean> {
+    if (!refs.length) return false;
+    return this.db.transaction(async () => {
       const input = [JSON.stringify(refs)];
+      const [effect] = await this.db.all(SCOPE_SQL.scope_revoke_effective, input);
+      if (Number(effect.effective) !== 1) return false;
       for (const key of ["scope_revoke", "scope_revoke_text", "scope_revoke_complete", "scope_revoke_progress", "scope_revoke_intervals", "scope_revoke_normalized", "scope_revoke_normalized_complete"] as const) await this.db.run(SCOPE_SQL[key], input);
+      await this.db.run(SCOPE_SQL.scope_discard);
       await this.db.run(SCOPE_SQL.scope_changed);
+      return true;
     });
   }
-  async scopeMetadata(page: ScopeInputsPage) {
-    await this.db.transaction(async () => {
-      if ((await this.scopeProgress()).staging_revision !== page.revision) throw new Error("scope metadata revision changed");
+  async scopeMetadata(page: ScopeInputsPage, requestedCursor: string | null): Promise<boolean> {
+    return this.db.transaction(async () => {
+      const state = await this.scopeProgress();
+      if (state.staging_revision !== page.revision || state.metadata_complete || state.metadata_cursor !== requestedCursor) return false;
       const input = [page.revision, JSON.stringify(page.records)];
       for (const key of ["scope_metadata_facts", "scope_metadata_readings", "scope_metadata_intervals"] as const) await this.db.run(SCOPE_SQL[key], input);
       await this.db.run(SCOPE_SQL.scope_metadata_cursor, [page.next_cursor, Number(page.next_cursor === null), page.revision]);
+      return true;
     });
   }
-  async scopeText(page: ScopeTextPage) {
-    await this.db.transaction(async () => {
-      if ((await this.scopeProgress()).staging_revision !== page.revision) throw new Error("scope text revision changed");
+  async scopeText(page: ScopeTextPage, requestedCursor: string | null): Promise<boolean> {
+    return this.db.transaction(async () => {
+      const state = await this.scopeProgress();
+      if (state.staging_revision !== page.revision || !state.metadata_complete || state.reading_ref !== page.reading_ref || state.raw_complete || state.text_cursor !== requestedCursor) return false;
       await this.db.run(SCOPE_SQL.scope_text_chunks, [page.revision, page.reading_ref, JSON.stringify(page.chunks)]);
       await this.db.run(SCOPE_SQL.scope_text_cursor, [page.revision, page.reading_ref, page.next_cursor, Number(page.next_cursor === null)]);
+      return true;
     });
   }
   async scopeNormalizationNext(revision: string, readingRef: string): Promise<ScopeNormalizationInterval | null> {
@@ -220,35 +232,52 @@ export class Persistence {
     const [row] = await this.db.all(SCOPE_SQL.scope_normalization_raw, [revision, readingRef, intervalKey, after, after]);
     return row ? {start_offset: Number(row.start_offset), text: String(row.text)} : null;
   }
+  async scopeNormalizationObservation(revision: string, readingRef: string, intervalKey: string, after: number | null): Promise<ScopeNormalizationObservation> {
+    return this.db.transaction(async () => ({
+      progress: await this.scopeProgress(),
+      interval: await this.scopeNormalizationNext(revision, readingRef),
+      chunk: await this.scopeNormalizationRead(revision, readingRef, intervalKey, after),
+    }));
+  }
   async scopeNormalizationReset(revision: string, readingRef: string, intervalKey: string) {
     await this.db.transaction(async () => {
-      if ((await this.scopeProgress()).staging_revision !== revision) throw new Error("scope normalization revision changed");
+      if ((await this.scopeProgress()).staging_revision !== revision) return;
       await this.db.run(SCOPE_SQL.scope_normalization_reset, [revision, readingRef, intervalKey]);
     });
   }
-  async scopeNormalized(revision: string, readingRef: string, intervalKey: string, chunks: NormalizedScopeChunk[], complete: boolean) {
-    await this.db.transaction(async () => {
-      if ((await this.scopeProgress()).staging_revision !== revision) throw new Error("scope normalization revision changed");
+  async scopeNormalized(revision: string, readingRef: string, intervalKey: string, chunks: NormalizedScopeChunk[], normalizedLength: number | null): Promise<boolean> {
+    return this.db.transaction(async () => {
+      const state = await this.scopeProgress();
+      if (state.staging_revision !== revision) return state.active_revision === revision;
+      if ((await this.db.all(SCOPE_SQL.scope_normalized_is_complete, [revision, readingRef, intervalKey])).length) return true;
       await this.db.run(SCOPE_SQL.scope_normalized_chunks, [revision, readingRef, intervalKey, JSON.stringify(chunks)]);
-      if (complete) await this.db.run(SCOPE_SQL.scope_normalized_done, [revision, readingRef, intervalKey]);
+      if (normalizedLength !== null) {
+        const [coverage] = await this.db.all(SCOPE_SQL.scope_normalized_coverage, [revision, readingRef, intervalKey, normalizedLength]);
+        if (Number(coverage.accepted) !== 1) return false;
+        await this.db.run(SCOPE_SQL.scope_normalized_done, [revision, readingRef, intervalKey]);
+      }
+      return true;
     });
   }
-  async scopeTextComplete(revision: string, readingRef: string) {
-    await this.db.transaction(async () => {
+  async scopeTextComplete(revision: string, readingRef: string): Promise<boolean> {
+    return this.db.transaction(async () => {
       const state = await this.scopeProgress();
-      if (state.staging_revision !== revision || state.reading_ref !== readingRef || !state.raw_complete || await this.scopeNormalizationNext(revision, readingRef) !== null) throw new Error("scope text is incomplete");
+      if (state.staging_revision !== revision || state.reading_ref !== readingRef || !state.raw_complete || await this.scopeNormalizationNext(revision, readingRef) !== null) return false;
       await this.db.run(SCOPE_SQL.scope_text_done, [revision, readingRef]);
+      return true;
     });
   }
-  async scopePublish(revision: string) {
-    await this.db.transaction(async () => {
+  async scopePublish(revision: string, expectedStoreRevision: string): Promise<boolean> {
+    return this.db.transaction(async () => {
+      if ((await this.replica()).store_revision !== expectedStoreRevision) return false;
       const state = await this.scopeProgress();
-      if (state.active_revision === revision && state.staging_revision === null) return;
-      if (state.staging_revision !== revision || !state.metadata_complete || state.reading_ref !== null) throw new Error("scope inputs are incomplete");
+      if (state.active_revision === revision && state.staging_revision === null) return true;
+      if (state.staging_revision !== revision || !state.metadata_complete || state.reading_ref !== null) return false;
       await this.db.run(SCOPE_SQL.scope_publish);
       await this.db.run(SCOPE_SQL.scope_readmitted);
       for (const [key, sql] of Object.entries(SCOPE_SQL)) if (key.endsWith("_prune")) await this.db.run(sql);
       await this.db.run(SCOPE_SQL.scope_changed);
+      return true;
     });
   }
 }

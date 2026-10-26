@@ -13,7 +13,11 @@ import java.util.UUID
  * from the signed shared kernel. FULL commits precede all saved receipts.
  * Scope pages retry keyed staging upserts and durable cursors; complete activation
  * and immediate revocation advance the observable revision without authored writes.
- * Derived normalization may restart only an unfinished interval's stored raw rows. */
+ * Derived normalization may restart only an unfinished interval's stored raw rows.
+ * Its final output transaction proves exact contiguous coverage before marking
+ * completion; a peer reset returns ordinary retry rather than a sync failure.
+ * Pages compare their requested durable cursor; effective withdrawal discards
+ * staging and the final read's store revision fences atomic publication. */
 internal class AuthoredStore(private val context: Context, val account: UUID) {
     private val queries = JSONObject(context.assets.open("app/authored-queries.json").bufferedReader().use { it.readText() })
     private val connection: SQLiteConnection
@@ -195,25 +199,32 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             if (state.optString("active_revision") == revision && !repair) run(scopeSql("scope_discard")) else run(scopeSql("scope_begin"), revision)
         }
     }
-    fun scopeRevoke(refs: JSONArray) = transaction {
-        if (refs.length() > 0) {
-            val input = refs.toString()
-            for (name in listOf("scope_revoke", "scope_revoke_text", "scope_revoke_complete", "scope_revoke_progress", "scope_revoke_intervals", "scope_revoke_normalized", "scope_revoke_normalized_complete")) run(scopeSql(name), input)
-            run(scopeSql("scope_changed"))
-        }
+    fun scopeRevoke(refs: JSONArray): Boolean = transaction {
+        if (refs.length() == 0) return@transaction false
+        val input = refs.toString()
+        if (rows(scopeSql("scope_revoke_effective"), input).getJSONObject(0).getInt("effective") != 1) return@transaction false
+        for (name in listOf("scope_revoke", "scope_revoke_text", "scope_revoke_complete", "scope_revoke_progress", "scope_revoke_intervals", "scope_revoke_normalized", "scope_revoke_normalized_complete")) run(scopeSql(name), input)
+        run(scopeSql("scope_discard")); run(scopeSql("scope_changed"))
+        true
     }
-    fun scopeMetadata(page: JSONObject) = transaction {
+    fun scopeMetadata(page: JSONObject, requestedCursor: String?): Boolean = transaction {
         val revision = page.getString("revision")
-        require(scopeProgress().getString("staging_revision") == revision)
+        val state = scopeProgress()
+        val cursor = if (state.isNull("metadata_cursor")) null else state.getString("metadata_cursor")
+        if (state.optString("staging_revision") != revision || state.getBoolean("metadata_complete") || cursor != requestedCursor) return@transaction false
         val input = page.getJSONArray("records").toString()
         for (name in listOf("scope_metadata_facts", "scope_metadata_readings", "scope_metadata_intervals")) run(scopeSql(name), revision, input)
         run(scopeSql("scope_metadata_cursor"), page.opt("next_cursor"), page.isNull("next_cursor"), revision)
+        true
     }
-    fun scopeText(page: JSONObject) = transaction {
+    fun scopeText(page: JSONObject, requestedCursor: String?): Boolean = transaction {
         val revision = page.getString("revision"); val reading = page.getString("reading_ref")
-        require(scopeProgress().getString("staging_revision") == revision)
+        val state = scopeProgress()
+        val cursor = if (state.isNull("text_cursor")) null else state.getString("text_cursor")
+        if (state.optString("staging_revision") != revision || !state.getBoolean("metadata_complete") || state.optString("reading_ref") != reading || state.getBoolean("raw_complete") || cursor != requestedCursor) return@transaction false
         run(scopeSql("scope_text_chunks"), revision, reading, page.getJSONArray("chunks").toString())
         run(scopeSql("scope_text_cursor"), revision, reading, page.opt("next_cursor"), page.isNull("next_cursor"))
+        true
     }
     fun scopeNormalizationNext(revision: String, reading: String): JSONObject {
         val records = rows(scopeSql("scope_normalization_next"), revision, reading)
@@ -226,27 +237,41 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val records = rows(scopeSql("scope_normalization_raw"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"), after, after)
         return JSONObject().put("chunk", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).apply { put("start_offset", getLong("start_offset")) })
     }
+    fun scopeNormalizationObservation(request: JSONObject): JSONObject = transaction {
+        JSONObject().put("progress", scopeProgress())
+            .put("interval", scopeNormalizationNext(request.getString("revision"), request.getString("reading_ref")).get("interval"))
+            .put("chunk", scopeNormalizationRead(request).get("chunk"))
+    }
     fun scopeNormalizationReset(request: JSONObject) = transaction {
-        require(scopeProgress().getString("staging_revision") == request.getString("revision"))
-        run(scopeSql("scope_normalization_reset"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"))
+        if (scopeProgress().optString("staging_revision") == request.getString("revision"))
+            run(scopeSql("scope_normalization_reset"), request.getString("revision"), request.getString("reading_ref"), request.getString("interval_key"))
     }
-    fun scopeNormalized(request: JSONObject) = transaction {
+    fun scopeNormalized(request: JSONObject): Boolean = transaction {
         val revision = request.getString("revision"); val reading = request.getString("reading_ref"); val interval = request.getString("interval_key")
-        require(scopeProgress().getString("staging_revision") == revision)
+        val state = scopeProgress()
+        if (state.optString("staging_revision") != revision) return@transaction state.optString("active_revision") == revision
+        if (rows(scopeSql("scope_normalized_is_complete"), revision, reading, interval).length() > 0) return@transaction true
         run(scopeSql("scope_normalized_chunks"), revision, reading, interval, request.getJSONArray("chunks").toString())
-        if (request.getBoolean("complete")) run(scopeSql("scope_normalized_done"), revision, reading, interval)
-    }
-    fun scopeTextComplete(revision: String, reading: String) = transaction {
-        val state = scopeProgress()
-        require(state.getString("staging_revision") == revision && state.getString("reading_ref") == reading && state.getBoolean("raw_complete") && scopeNormalizationNext(revision, reading).isNull("interval"))
-        run(scopeSql("scope_text_done"), revision, reading)
-    }
-    fun scopePublish(revision: String) = transaction {
-        val state = scopeProgress()
-        if (state.optString("active_revision") != revision || !state.isNull("staging_revision")) {
-            require(state.getString("staging_revision") == revision && state.getBoolean("metadata_complete") && state.isNull("reading_ref"))
-            run(scopeSql("scope_publish")); run(scopeSql("scope_readmitted")); pruneScope(); run(scopeSql("scope_changed"))
+        if (!request.isNull("normalized_length")) {
+            val coverage = rows(scopeSql("scope_normalized_coverage"), revision, reading, interval, request.getLong("normalized_length"))
+            if (coverage.getJSONObject(0).getInt("accepted") != 1) return@transaction false
+            run(scopeSql("scope_normalized_done"), revision, reading, interval)
         }
+        true
+    }
+    fun scopeTextComplete(revision: String, reading: String): Boolean = transaction {
+        val state = scopeProgress()
+        if (state.optString("staging_revision") != revision || state.optString("reading_ref") != reading || !state.getBoolean("raw_complete") || !scopeNormalizationNext(revision, reading).isNull("interval")) return@transaction false
+        run(scopeSql("scope_text_done"), revision, reading)
+        true
+    }
+    fun scopePublish(revision: String, expectedStoreRevision: String): Boolean = transaction {
+        if (replica().getString("store_revision") != expectedStoreRevision) return@transaction false
+        val state = scopeProgress()
+        if (state.optString("active_revision") == revision && state.isNull("staging_revision")) return@transaction true
+        if (state.optString("staging_revision") != revision || !state.getBoolean("metadata_complete") || !state.isNull("reading_ref")) return@transaction false
+        run(scopeSql("scope_publish")); run(scopeSql("scope_readmitted")); pruneScope(); run(scopeSql("scope_changed"))
+        true
     }
     fun searchRead(params: JSONArray, planKey: String): JSONObject {
         require(replica().getBoolean("provisioning_complete"))

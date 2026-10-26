@@ -4,7 +4,7 @@ import { bindingQueries, searchQuery } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import type { AuthoredStore, Change, FeedChange, ReplicaState, StateSelection, QueryResult, SyncStatus } from "@nexus/authored/types";
-import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, NormalizedScopeChunk } from "@nexus/authored/scope";
+import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
 import { nativeQueryPlan, nativeSearchPlan } from "./nativeQuery";
 import { Sync } from "./sync";
@@ -130,15 +130,16 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     scopeRefs: async (after: string | null) => (await call<{refs: string[]}>("scope_refs", {after})).refs,
     scopeRepairRefs: async (refs: string[]) => (await call<{refs: string[]}>("scope_repair_refs", {refs})).refs,
     scopeReset: async (revision: string, repair = false) => { await call("scope_reset", {revision,repair}); },
-    scopeRevoke: async (refs: string[]) => { await call("scope_revoke", {refs}); },
-    scopeMetadata: async (page: ScopeInputsPage) => { await call("scope_metadata", {page}); },
-    scopeText: async (page: ScopeTextPage) => { await call("scope_text", {page}); },
+    scopeRevoke: async (refs: string[]) => (await call<{changed: boolean}>("scope_revoke", {refs})).changed,
+    scopeMetadata: async (page: ScopeInputsPage, requestedCursor: string | null) => (await call<{accepted: boolean}>("scope_metadata", {page,requested_cursor:requestedCursor})).accepted,
+    scopeText: async (page: ScopeTextPage, requestedCursor: string | null) => (await call<{accepted: boolean}>("scope_text", {page,requested_cursor:requestedCursor})).accepted,
     scopeNormalizationNext: async (revision: string, readingRef: string) => (await call<{interval: ScopeNormalizationInterval | null}>("scope_normalization_next", {revision,reading_ref:readingRef})).interval,
     scopeNormalizationRead: async (revision: string, readingRef: string, intervalKey: string, after: number | null) => (await call<{chunk: ScopeRawChunk | null}>("scope_normalization_read", {revision,reading_ref:readingRef,interval_key:intervalKey,after})).chunk,
+    scopeNormalizationObservation: (revision: string, readingRef: string, intervalKey: string, after: number | null) => call<ScopeNormalizationObservation>("scope_normalization_observation", {revision,reading_ref:readingRef,interval_key:intervalKey,after}),
     scopeNormalizationReset: async (revision: string, readingRef: string, intervalKey: string) => { await call("scope_normalization_reset", {revision,reading_ref:readingRef,interval_key:intervalKey}); },
-    scopeNormalized: async (revision: string, readingRef: string, intervalKey: string, chunks: NormalizedScopeChunk[], complete: boolean) => { await call("scope_normalized", {revision,reading_ref:readingRef,interval_key:intervalKey,chunks,complete}); },
-    scopeTextComplete: async (revision: string, readingRef: string) => { await call("scope_text_complete", {revision,reading_ref:readingRef}); },
-    scopePublish: async (revision: string) => { await call("scope_publish", {revision}); },
+    scopeNormalized: async (revision: string, readingRef: string, intervalKey: string, chunks: NormalizedScopeChunk[], normalizedLength: number | null) => (await call<{accepted: boolean}>("scope_normalized", {revision,reading_ref:readingRef,interval_key:intervalKey,chunks,normalized_length:normalizedLength})).accepted,
+    scopeTextComplete: async (revision: string, readingRef: string) => (await call<{accepted: boolean}>("scope_text_complete", {revision,reading_ref:readingRef})).accepted,
+    scopePublish: async (revision: string, expectedStoreRevision: string) => (await call<{accepted: boolean}>("scope_publish", {revision,expected_store_revision:expectedStoreRevision})).accepted,
   };
   const sync = new Sync(persistence, {
     json: <T,>(path: string, body: unknown | null, signal: AbortSignal): Promise<T> => {

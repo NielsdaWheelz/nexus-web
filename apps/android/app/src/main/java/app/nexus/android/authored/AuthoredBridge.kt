@@ -233,15 +233,16 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "scope_refs" -> store!!.scopeRefs(if (request.isNull("after")) null else request.getString("after"))
             "scope_repair_refs" -> store!!.scopeRepairRefs(request.getJSONArray("refs"))
             "scope_reset" -> { store!!.scopeReset(request.getString("revision"), request.getBoolean("repair")); JSONObject() }
-            "scope_revoke" -> { store!!.scopeRevoke(request.getJSONArray("refs")); JSONObject() }
-            "scope_metadata" -> { store!!.scopeMetadata(request.getJSONObject("page")); JSONObject() }
-            "scope_text" -> { store!!.scopeText(request.getJSONObject("page")); JSONObject() }
+            "scope_revoke" -> JSONObject().put("changed", store!!.scopeRevoke(request.getJSONArray("refs")))
+            "scope_metadata" -> JSONObject().put("accepted", store!!.scopeMetadata(request.getJSONObject("page"), if (request.isNull("requested_cursor")) null else request.getString("requested_cursor")))
+            "scope_text" -> JSONObject().put("accepted", store!!.scopeText(request.getJSONObject("page"), if (request.isNull("requested_cursor")) null else request.getString("requested_cursor")))
             "scope_normalization_next" -> store!!.scopeNormalizationNext(request.getString("revision"), request.getString("reading_ref"))
             "scope_normalization_read" -> store!!.scopeNormalizationRead(request)
+            "scope_normalization_observation" -> store!!.scopeNormalizationObservation(request)
             "scope_normalization_reset" -> { store!!.scopeNormalizationReset(request); JSONObject() }
-            "scope_normalized" -> { store!!.scopeNormalized(request); JSONObject() }
-            "scope_text_complete" -> { store!!.scopeTextComplete(request.getString("revision"), request.getString("reading_ref")); JSONObject() }
-            "scope_publish" -> { store!!.scopePublish(request.getString("revision")); JSONObject() }
+            "scope_normalized" -> JSONObject().put("accepted", store!!.scopeNormalized(request))
+            "scope_text_complete" -> JSONObject().put("accepted", store!!.scopeTextComplete(request.getString("revision"), request.getString("reading_ref")))
+            "scope_publish" -> JSONObject().put("accepted", store!!.scopePublish(request.getString("revision"), request.getString("expected_store_revision")))
             "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame")) }
             "uploaded" -> JSONObject().put("uploaded", store!!.uploaded(request.getString("command_seq")))
             "pending" -> JSONObject().put("changes", store!!.pending())

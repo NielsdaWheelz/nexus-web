@@ -27,7 +27,7 @@ export class Sync {
   private normalization: {revision: string; reading: string; interval: ScopeNormalizationInterval; normalizer: ScopeTextNormalizer; after: number | null; nextRaw: number} | null = null;
   last_error: string | null = null;
   readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", sync_error: false, online: true, pending: false, scope_pending: true, cursor: "0", head: null };
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly annotationsChanged: () => void) {}
   wake() {
     if (this.retired || !this.foreground) return;
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
@@ -120,7 +120,7 @@ export class Sync {
     let progress = await this.local(() => this.persistence.scopeProgress());
     const revoke = async (refs: string[]) => {
       if (!refs.length) return;
-      await this.local(() => this.persistence.scopeRevoke(refs));
+      if (!await this.local(() => this.persistence.scopeRevoke(refs))) return;
       this.normalization = null;
       this.changed(true);
     };
@@ -149,17 +149,20 @@ export class Sync {
       const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"metadata",revision,cursor:progress.metadata_cursor}, this.abort.signal);
       await revoke(data.revoked_refs);
       if (data.restart || data.revision !== revision) { this.normalization = null; await this.local(() => this.persistence.scopeReset(data.revision)); return; }
-      await this.local(() => this.persistence.scopeMetadata(data));
+      if (!await this.local(() => this.persistence.scopeMetadata(data, progress.metadata_cursor))) { this.normalization = null; this.facts.scope_pending = true; return; }
     } else if (progress.reading_ref !== null && !progress.raw_complete) {
       const {data} = await this.transport.json<{data: ScopeTextPage}>("/api/authored/scope-text", {revision,reading_ref:progress.reading_ref,cursor:progress.text_cursor}, this.abort.signal);
       await revoke(data.revoked_refs);
       if (data.revision === revision && data.revoked_refs.includes(progress.reading_ref)) throw new Error("scope reading access changed before refresh completed");
       if (data.restart || data.revision !== revision) { this.normalization = null; await this.local(() => this.persistence.scopeReset(data.revision)); return; }
-      await this.local(() => this.persistence.scopeText(data));
+      if (!await this.local(() => this.persistence.scopeText(data, progress.text_cursor))) { this.normalization = null; this.facts.scope_pending = true; return; }
     } else if (progress.reading_ref !== null) {
       const reading = progress.reading_ref;
       const interval = await this.local(() => this.persistence.scopeNormalizationNext(revision, reading));
-      if (interval === null) { await this.local(() => this.persistence.scopeTextComplete(revision, reading)); return; }
+      if (interval === null) {
+        if (!await this.local(() => this.persistence.scopeTextComplete(revision, reading))) this.facts.scope_pending = true;
+        this.normalization = null; return;
+      }
       let owner = this.normalization;
       if (!owner || owner.revision !== revision || owner.reading !== reading || owner.interval.interval_key !== interval.interval_key) {
         await this.local(() => this.persistence.scopeNormalizationReset(revision, reading, interval.interval_key));
@@ -167,12 +170,22 @@ export class Sync {
         this.normalization = owner;
       }
       const chunk = await this.local(() => this.persistence.scopeNormalizationRead(revision, reading, interval.interval_key, owner!.after));
+      const gap = chunk !== null && chunk.start_offset !== owner.nextRaw;
+      const nextRaw = owner.nextRaw + (chunk === null ? 0 : Array.from(chunk.text).length);
+      if (gap || nextRaw > interval.end_offset || chunk === null && nextRaw !== interval.end_offset) {
+        const current = await this.local(() => this.persistence.scopeNormalizationObservation(revision, reading, interval.interval_key, owner!.after));
+        const recovered = current.chunk === null ? owner.nextRaw === interval.end_offset
+          : current.chunk.start_offset === owner.nextRaw && owner.nextRaw + Array.from(current.chunk.text).length <= interval.end_offset;
+        if (current.progress.staging_revision !== revision || current.progress.reading_ref !== reading || !current.progress.raw_complete
+          || current.interval === null || current.interval.interval_key !== interval.interval_key || current.interval.start_offset !== interval.start_offset || current.interval.end_offset !== interval.end_offset || recovered) {
+          this.normalization = null; this.facts.scope_pending = true; return;
+        }
+        throw new Error(gap ? "scope text contains a gap or overlap" : "scope text disagrees with its complete interval");
+      }
       if (chunk !== null) {
-        if (chunk.start_offset !== owner.nextRaw) throw new Error("scope text contains a gap or overlap");
-        owner.nextRaw += Array.from(chunk.text).length;
+        owner.nextRaw = nextRaw;
         owner.after = chunk.start_offset;
       }
-      if (owner.nextRaw > interval.end_offset || chunk === null && owner.nextRaw !== interval.end_offset) throw new Error("scope text disagrees with its complete interval");
       const complete = owner.nextRaw === interval.end_offset;
       const output = owner.normalizer.push(chunk?.text ?? "", complete);
       const chunks: NormalizedScopeChunk[] = [];
@@ -180,14 +193,20 @@ export class Sync {
       const flush = () => { if (!text) return; chunks.push({start_offset:start,normalized_text:text,edits:output.edits.filter(([at]) => at > start && at <= start + count)}); start += count; text = ""; count = 0; };
       for (const char of output.normalized_text) { text += char; if (++count === 16_384) flush(); }
       flush();
-      if (!chunks.length) await this.local(() => this.persistence.scopeNormalized(revision, reading, interval.interval_key, [], complete));
-      for (let at = 0; at < chunks.length; at++) await this.local(() => this.persistence.scopeNormalized(revision, reading, interval.interval_key, [chunks[at]!], complete && at === chunks.length - 1));
+      if (!chunks.length && !await this.local(() => this.persistence.scopeNormalized(revision, reading, interval.interval_key, [], complete ? start : null))) {
+        this.normalization = null; this.facts.scope_pending = true; return;
+      }
+      for (let at = 0; at < chunks.length; at++) {
+        const accepted = await this.local(() => this.persistence.scopeNormalized(revision, reading, interval.interval_key, [chunks[at]!], complete && at === chunks.length - 1 ? start : null));
+        if (!accepted) { this.normalization = null; this.facts.scope_pending = true; return; }
+      }
       if (complete) this.normalization = null;
     } else {
+      const expectedStoreRevision = (await this.local(() => this.persistence.replica())).store_revision;
       const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"finish",revision}, this.abort.signal);
       await revoke(data.revoked_refs);
       if (data.restart || data.revision !== revision) { await this.local(() => this.persistence.scopeReset(data.revision)); return; }
-      await this.local(() => this.persistence.scopePublish(revision));
+      if (!await this.local(() => this.persistence.scopePublish(revision, expectedStoreRevision))) { this.normalization = null; this.facts.scope_pending = true; return; }
       this.facts.scope_pending = false;
       this.changed(true);
     }

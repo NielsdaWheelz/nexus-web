@@ -73,8 +73,23 @@ export const SCOPE_SQL = {
   scope_normalization_raw: `SELECT start_offset,text FROM scope_text WHERE revision=? AND reading_ref=? AND interval_key=? AND (? IS NULL OR start_offset>?) ORDER BY start_offset LIMIT 1`,
   scope_normalization_reset: `DELETE FROM scope_normalized WHERE revision=? AND reading_ref=? AND interval_key=? AND NOT EXISTS (SELECT 1 FROM scope_normalized_complete c WHERE c.revision=scope_normalized.revision AND c.reading_ref=scope_normalized.reading_ref AND c.interval_key=scope_normalized.interval_key)`,
   scope_normalized_chunks: `INSERT OR REPLACE INTO scope_normalized(revision,reading_ref,interval_key,start_offset,normalized_text,edits_json) SELECT ?,?,?,json_extract(value,'$.start_offset'),json_extract(value,'$.normalized_text'),json_extract(value,'$.edits') FROM json_each(?)`,
+  scope_normalized_is_complete: `SELECT 1 AS complete FROM scope_normalized_complete WHERE revision=? AND reading_ref=? AND interval_key=?`,
+  scope_normalized_coverage: `WITH chunks AS (
+    SELECT start_offset,length(normalized_text) AS size,
+      LAG(start_offset+length(normalized_text),1,0) OVER(ORDER BY start_offset) AS previous_end
+    FROM scope_normalized WHERE revision=?1 AND reading_ref=?2 AND interval_key=?3
+  ) SELECT ?4>=0 AND NOT EXISTS(SELECT 1 FROM chunks WHERE size<=0 OR start_offset<>previous_end)
+    AND COALESCE((SELECT MAX(start_offset+size) FROM chunks),0)=?4 AS accepted`,
   scope_normalized_done: `INSERT OR IGNORE INTO scope_normalized_complete(revision,reading_ref,interval_key) VALUES(?,?,?)`,
   scope_revoke: `INSERT OR IGNORE INTO scope_revocations(scope_ref) SELECT value FROM json_each(?)`,
+  scope_revoke_effective: `WITH requested(ref) AS (SELECT value FROM json_each(?1))
+    SELECT EXISTS(SELECT 1 FROM requested q WHERE NOT EXISTS(SELECT 1 FROM scope_revocations v WHERE v.scope_ref=q.ref))
+      OR EXISTS(SELECT 1 FROM scope_text WHERE reading_ref IN (SELECT ref FROM requested))
+      OR EXISTS(SELECT 1 FROM scope_text_progress WHERE reading_ref IN (SELECT ref FROM requested))
+      OR EXISTS(SELECT 1 FROM scope_text_complete WHERE reading_ref IN (SELECT ref FROM requested))
+      OR EXISTS(SELECT 1 FROM scope_intervals WHERE reading_ref IN (SELECT ref FROM requested))
+      OR EXISTS(SELECT 1 FROM scope_normalized WHERE reading_ref IN (SELECT ref FROM requested))
+      OR EXISTS(SELECT 1 FROM scope_normalized_complete WHERE reading_ref IN (SELECT ref FROM requested)) AS effective`,
   scope_revoke_text: `DELETE FROM scope_text WHERE reading_ref IN (SELECT value FROM json_each(?))`,
   scope_revoke_complete: `DELETE FROM scope_text_complete WHERE reading_ref IN (SELECT value FROM json_each(?))`,
   scope_revoke_progress: `DELETE FROM scope_text_progress WHERE reading_ref IN (SELECT value FROM json_each(?))`,
@@ -93,6 +108,9 @@ export interface ScopeProgress {
 }
 export interface ScopeNormalizationInterval { interval_key: string; start_offset: number; end_offset: number }
 export interface ScopeRawChunk { start_offset: number; text: string }
+export interface ScopeNormalizationObservation {
+  progress: ScopeProgress; interval: ScopeNormalizationInterval | null; chunk: ScopeRawChunk | null;
+}
 export interface ScopeQuoteSlice {
   fragment_id: string; start_offset: number; text: string; start_cut: boolean; end_cut: boolean;
 }
