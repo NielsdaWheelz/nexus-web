@@ -218,7 +218,7 @@ export default function ConversationsPaneBody() {
   return (
     <div>
       {readFeedback.announcement}
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Conversations.Items"
         rows={visible}
         status={list.status === "failed" ? "error" : list.status}

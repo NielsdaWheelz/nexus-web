@@ -41,7 +41,7 @@ export default function QuickReadsSection() {
     announcement={loaded === null ? "Polite" : "None"} actions={[{ label: "try again", onClick: read.refetch }]} />;
   return (
     <PaneSection ref={rootRef} title="Quick reads" aria-label="Quick reads" tabIndex={-1}>
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Lectern.QuickReads" ariaLabel="Quick reads" rows={rows}
         status={read.status === "failed" ? "error" : read.status}
         notice={<>

@@ -254,7 +254,7 @@ export default function NotesPaneBody() {
   return (
     <div>
       {readFeedback.announcement}
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Notes.Pages"
         rows={visible}
         status={list.status === "failed" ? "error" : list.status}

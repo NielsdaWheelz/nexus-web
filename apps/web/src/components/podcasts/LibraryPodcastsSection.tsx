@@ -47,7 +47,7 @@ export default function LibraryPodcastsSection({ library, active, source }: { re
   return <PaneSection ref={card} title={`podcasts${data === null ? "" : ` · ${data.subscriptions.length}`}`} aria-label="podcasts" tabIndex={-1}
     actions={<ButtonLink ref={browse} href={PODCAST_BROWSE_ACTION.href} iconOnly icon={PODCAST_BROWSE_ACTION.icon}
       aria-label={PODCAST_BROWSE_ACTION.label} tooltip={{ text: PODCAST_BROWSE_ACTION.label }} />}>
-    <CollectionView surface={false} returnScope={`Library.Podcasts:${library.id}`} ariaLabel="subscribed podcasts" status={source.status === "failed" ? "error" : source.status}
+    <CollectionView geometry="UniformIndex" surface={false} returnScope={`Library.Podcasts:${library.id}`} ariaLabel="subscribed podcasts" status={source.status === "failed" ? "error" : source.status}
       rows={rows}
       renderRow={manage ? props => {
         const { row } = props;

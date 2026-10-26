@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   memo,
   useCallback,
   useLayoutEffect,
@@ -30,6 +31,8 @@ import { useOverlayContainer } from "@/lib/ui/overlay";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { suppressDragReleaseClick, TOUCH_DRAG_CLAIMED } from "@/lib/ui/dragGesture";
 import styles from "./SortableList.module.css";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import type { MeasuredIndexWindow } from "@/lib/collections/measuredIndexWindow";
 
 // The list owns truthful announcements, including the asynchronous acknowledgement.
 const SILENT = {
@@ -64,14 +67,16 @@ type Drag = {
     "fontFamily" | "fontSize" | "fontWeight" | "fontStyle" | "lineHeight" | "letterSpacing">;
   readonly titleLineClamp: string;
   readonly titleWraps: boolean;
+  readonly epoch: number | null;
   point: Point;
   release: Point | null;
 };
-type Press = Pick<Drag, "id" | "ids" | "revision" | "scopeKey" | "port"> & {
+type Press = Pick<Drag, "id" | "ids" | "revision" | "scopeKey" | "port" | "epoch"> & {
   readonly pointerId: number;
   readonly pointerType: string;
   touchId: number | null;
   invalidated: boolean;
+  readonly releasePin: () => void;
 };
 
 function point(event: Event): Point | null {
@@ -94,17 +99,19 @@ function acceptsTarget(node: HTMLLIElement, target: EventTarget | null): boolean
     : !isInteractiveTarget(target, row);
 }
 
-const Row = memo(function Row({ item, enabled, dragging, renderItem, nodes }: {
+const Row = memo(function Row({ item, enabled, dragging, renderItem, nodes, position }: {
   readonly item: CollectionRowView;
   readonly enabled: boolean;
   readonly dragging: boolean;
   readonly renderItem: (item: CollectionRowView) => ReactNode;
   readonly nodes: Map<string, HTMLLIElement>;
+  readonly position: { readonly index: number; readonly count: number } | null;
 }) {
   return <li ref={node => {
     if (node) nodes.set(item.id, node);
     else nodes.delete(item.id);
   }} className={styles.item} data-sortable-row-id={item.id}
+    aria-posinset={position ? position.index + 1 : undefined} aria-setsize={position?.count}
     data-draggable={enabled || undefined} data-dragging={dragging || undefined}>
     {renderItem(item)}
   </li>;
@@ -146,7 +153,7 @@ function GestureSurface({ rootRef, begin, canActivate, children }: {
  * their intent. A physical press outlives semantic cancellation. Rows stay put,
  * and release commits only the painted insertion boundary in its captured order.
  */
-export default function SortableList({ items, order, renderItem, ariaLabel, busy, scrollport = null, onAnnouncement = null }: {
+export default function SortableList({ items, order, renderItem, ariaLabel, busy, scrollport = null, onAnnouncement = null, window: indexWindow, listRef }: {
   readonly items: readonly CollectionRowView[];
   readonly order: OrderPresentation;
   readonly renderItem: (item: CollectionRowView) => ReactNode;
@@ -154,12 +161,15 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
   readonly busy?: boolean;
   readonly scrollport?: (() => HTMLElement | null) | null;
   readonly onAnnouncement?: ((message: string) => void) | null;
+  readonly window: MeasuredIndexWindow;
+  readonly listRef: RefObject<HTMLUListElement | null>;
 }) {
+  const { readGeometry } = indexWindow;
   const root = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLLIElement>()).current;
   const held = useRef<Press | null>(null);
   const current = useRef({ items, order });
-  current.current = { items, order };
+  useLayoutEffect(() => { current.current = { items, order }; });
   const [drag, setDrag] = useState<Drag | null>(null);
   const active = useRef<Drag | null>(null);
   const [destination, setDestination] = useState<Destination | null>(null);
@@ -207,9 +217,10 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     cancel();
   }, [cancel]);
 
-  const valid = (session: Pick<Drag, "id" | "scopeKey" | "revision" | "ids">) => {
+  const valid = (session: Pick<Drag, "id" | "scopeKey" | "revision" | "ids" | "epoch">) => {
     const latest = current.current;
     return visible() && nodes.get(session.id)?.isConnected === true && latest.order.scopeKey === session.scopeKey &&
+      (session.epoch === null || readGeometry()?.epoch === session.epoch) &&
       latest.order.state.kind === "Ready" && latest.order.state.revision === session.revision &&
       latest.items.length === session.ids.length &&
       latest.items.every((item, index) => item.id === session.ids[index]);
@@ -222,13 +233,15 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     const latest = current.current;
     const port = scrollport === null ? root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') : scrollport();
     if (held.current || event.defaultPrevented || !event.isPrimary || event.button !== 0 ||
+        indexWindow.plan.kind === "Measure" ||
         event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
         (event.pointerType !== "mouse" && event.pointerType !== "touch") ||
         latest.order.state.kind !== "Ready" || latest.items.length < 2 || !port || !visible() ||
         !acceptsTarget(node, event.target)) return null;
     held.current = { id, pointerId: event.pointerId, pointerType: event.pointerType, port,
       scopeKey: latest.order.scopeKey, revision: latest.order.state.revision,
-      ids: latest.items.map((item) => item.id), touchId: null, invalidated: false };
+      ids: latest.items.map((item) => item.id), touchId: null, invalidated: false,
+      epoch: readGeometry()?.epoch ?? null, releasePin: indexWindow.pin(id) };
     return node;
   };
 
@@ -256,14 +269,14 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       if (event.pointerId !== held.current?.pointerId) return;
       if (event.type === "pointercancel") invalidate();
       else if (active.current) active.current.release = point(event);
-      held.current = null;
+      held.current?.releasePin(); held.current = null;
     };
     const contact = (event: TouchEvent) => {
       const press = held.current;
       if (press?.pointerType === "touch" && (event.touches.length !== 1 ||
           (press.touchId !== null && event.touches[0]?.identifier !== press.touchId))) invalidate();
     };
-    const blurred = () => { invalidate(); held.current = null; };
+    const blurred = () => { invalidate(); held.current?.releasePin(); held.current = null; };
     document.addEventListener("pointerdown", added, true);
     document.addEventListener("pointerup", released, true);
     document.addEventListener("pointercancel", released, true);
@@ -273,7 +286,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     document.addEventListener("touchcancel", invalidate, true);
     window.addEventListener("blur", blurred);
     return () => {
-      held.current = null;
+      held.current?.releasePin(); held.current = null;
       active.current = null;
       document.removeEventListener("pointerdown", added, true);
       document.removeEventListener("pointerup", released, true);
@@ -300,14 +313,28 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     const remaining = session.ids.filter((id) => id !== session.id);
     let beforeId: string | null = null;
     let edge = 0;
-    for (const id of remaining) {
-      const rect = nodes.get(id)?.getBoundingClientRect();
-      if (!rect) return null;
-      edge = rect.bottom;
-      if (pointer.y < rect.top + rect.height / 2) {
-        beforeId = id;
-        edge = rect.top;
-        break;
+    const frame = readGeometry();
+    if (frame !== null) {
+      const sourceRank = session.ids.indexOf(session.id);
+      let rank = Math.max(0, Math.floor((pointer.y - bounds.top) / frame.height + 0.5));
+      if (rank === sourceRank) rank += 1;
+      if (rank < session.ids.length) {
+        beforeId = session.ids[rank]!;
+        edge = bounds.top + rank * frame.height;
+      } else {
+        const last = sourceRank === session.ids.length - 1 ? session.ids.length - 2 : session.ids.length - 1;
+        edge = bounds.top + (last + 1) * frame.height;
+      }
+    } else {
+      for (const id of remaining) {
+        const rect = nodes.get(id)?.getBoundingClientRect();
+        if (!rect) return null;
+        edge = rect.bottom;
+        if (pointer.y < rect.top + rect.height / 2) {
+          beforeId = id;
+          edge = rect.top;
+          break;
+        }
       }
     }
     if (beforeId === null ? edge <= top || edge > bottom : edge < top || edge >= bottom) return null;
@@ -375,6 +402,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       id, title: latest.items.find((item) => item.id === id)!.title.text,
       ids: latest.items.map((item) => item.id), revision: latest.order.state.revision,
       scopeKey: latest.order.scopeKey, port, scrollTop: port.scrollTop,
+      epoch: press.epoch,
       origin, point: origin, release: null, source,
       titleBox: { left: titleRect.left - source.left, top: titleRect.top - source.top,
         width: titleRect.width, height: titleRect.height },
@@ -422,7 +450,11 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     });
     resized.observe(source);
     resized.observe(drag.port);
-    const changed = new MutationObserver(invalidate);
+    const changed = new MutationObserver(records => {
+      // Window mounts change the list's children without changing its full order.
+      if (readGeometry() === null || records.some(record => record.target !== list &&
+        record.target.isConnected && (record.target instanceof Element ? record.target : record.target.parentElement)?.closest("[data-collection-row-id]"))) invalidate();
+    });
     changed.observe(list, { childList: true, characterData: true, subtree: true });
     const scrolled = (event: Event) => {
       if (event.target !== drag.port) invalidate();
@@ -442,7 +474,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       window.removeEventListener("resize", invalidate);
       list.removeEventListener("load", loaded, true);
     };
-  }, [drag, nodes, invalidate]);
+  }, [drag, nodes, invalidate, readGeometry]);
 
   if (defect) throw defect.error;
   return (
@@ -481,11 +513,18 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       }}
     >
       <GestureSurface rootRef={root} begin={begin} canActivate={canActivate}>
-        <ResourceList ariaLabel={ariaLabel} busy={busy}>
-          {items.map((item) => (
-            <Row key={item.id} item={item} enabled={order.state.kind === "Ready" && items.length > 1}
-              dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes} />
-          ))}
+        {indexWindow.plan.kind === "Measure" ? <PaneLoadingState label={`Loading ${ariaLabel}…`} announcement="None" /> : null}
+        <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={busy || indexWindow.plan.kind === "Measure"} windowed={indexWindow.plan.kind !== "Intrinsic"} measuring={indexWindow.plan.kind === "Measure"}>
+          {(indexWindow.plan.kind === "Measure" ? [{ id: indexWindow.plan.sampleId, index: 0, gapBeforePx: 0 }] : indexWindow.plan.slots).map(slot => {
+            const item = items[slot.index];
+            return item ? <Fragment key={item.id}>
+              {slot.gapBeforePx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: slot.gapBeforePx, flexShrink: 0 }} /> : null}
+              <Row item={item} enabled={order.state.kind === "Ready" && items.length > 1 && indexWindow.plan.kind !== "Measure"}
+                dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes}
+                position={indexWindow.plan.kind === "Intrinsic" ? null : { index: slot.index, count: items.length }} />
+            </Fragment> : null;
+          })}
+          {indexWindow.plan.kind === "Ready" && indexWindow.plan.tailGapPx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: indexWindow.plan.tailGapPx, flexShrink: 0 }} /> : null}
         </ResourceList>
         {destination ? <div className={styles.insertion} aria-hidden="true"
           data-append={destination.beforeId === null || undefined}

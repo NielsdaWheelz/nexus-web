@@ -39,6 +39,7 @@ function renderContext(context: CollectionContext): ReactNode {
 export default function CollectionRow({
   row, as = "li", primaryControl, occurrenceActions, actionFocus: suppliedActionFocus, afterRemoval,
   compactPrimaryControl = false, rowActionsAvailable = true, attention: suppliedAttention,
+  listPosition,
 }: {
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
@@ -49,6 +50,7 @@ export default function CollectionRow({
   readonly compactPrimaryControl?: boolean;
   readonly rowActionsAvailable?: boolean;
   readonly attention?: string;
+  readonly listPosition?: { readonly index: number; readonly count: number };
 }) {
   const media = row.resourceActions?.kind === "Media" ? row.resourceActions : null;
   const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
@@ -116,6 +118,8 @@ export default function CollectionRow({
   return <ResourceRow
     as={as} primary={row.primary} selected={row.selected}
     rootProps={{ "aria-current": row.selected ? "true" : undefined,
+      "aria-posinset": listPosition ? listPosition.index + 1 : undefined,
+      "aria-setsize": listPosition?.count,
       "data-collection-row-id": row.id, "data-collection-item-kind": row.kind }}
     title={media ? <MediaTitle subject={media.subject} /> : title}
     content={content}

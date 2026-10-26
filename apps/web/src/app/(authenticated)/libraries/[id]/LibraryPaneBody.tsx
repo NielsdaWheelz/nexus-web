@@ -439,7 +439,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       >
         <LibraryPodcastsSection library={library} active={active} source={shows} />
         <PlaybackSourceContext.Provider value={capture}>
-        <CollectionView
+        <CollectionView geometry="UniformIndex"
           returnScope="Library.Entries"
           rows={rows}
           empty={empty}

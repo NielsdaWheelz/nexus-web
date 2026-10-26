@@ -168,7 +168,7 @@ export default function LibrariesPaneBody() {
       {readFeedback.announcement}
       {creation.content}
       <LibraryInvitations returnFocus={() => inputRef.current} />
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Libraries.Items"
         rows={visible.map(presentLibrary)}
         status={list.status === "failed" ? "error" : list.status}

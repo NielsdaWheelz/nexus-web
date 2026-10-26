@@ -149,7 +149,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
       title={title}
     >
       <span className="sr-only" aria-live={suggestions.active ? "polite" : "off"} aria-atomic="true">{announcement}</span>
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope={returnScope}
         rows={presentedRows}
         status={waiting ? "loading" : "ready"}

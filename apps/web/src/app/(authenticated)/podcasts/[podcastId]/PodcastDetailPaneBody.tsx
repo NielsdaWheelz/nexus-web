@@ -12,10 +12,11 @@ import CollectionView from "@/components/collections/CollectionView";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
+import CollectionRow from "@/components/collections/CollectionRow";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import { projectCollectionConsumptionAction, projectPodcastTranscriptAction, projectPodcastLibrariesAction, projectPodcastLibraryRemovalAction } from "@/lib/actions/project";
-import { findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -173,6 +174,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const ready = head.status === "ready" ? head : null;
   const destinations = ready?.data.destinations ?? [];
   const namedDestinations = destinations.filter(destination => !destination.is_default);
+  const namedById = new Map(namedDestinations.map(destination => [destination.library_id, destination]));
   const libraryRows: CollectionRowView[] = namedDestinations.map(destination => ({
     id: destination.library_id, kind: "library", presentation: "Index",
     primary: { kind: "link", href: `/libraries/${destination.library_id}`, paneLabelHint: libraryDisplayName(destination) },
@@ -409,20 +411,14 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               aria-haspopup="dialog" aria-disabled={librariesAction.disabled}
               tooltip={{ text: `add to library: ${podcast.title}${librariesAction.disabledReason ? `: ${librariesAction.disabledReason}` : ""}` }}
               onClick={event => { if (librariesAction.disabled) return; const detail = prepareActionSelect(event, event.currentTarget); if (detail) librariesAction.onSelect(detail); }} /> : null}>
-            {libraryRows.length > 0 ? <CollectionView surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
+            {libraryRows.length > 0 ? <CollectionView geometry="UniformIndex" surface={false} returnScope={`PodcastDetail.Libraries:${podcastId}`} ariaLabel="subscription libraries" status="ready"
               rows={libraryRows}
-              rowControls={live && remoteReady() ? Object.fromEntries(namedDestinations.map(destination => {
+              renderRow={live && remoteReady() ? props => {
+                const destination = namedById.get(props.row.id)!;
                 const focus = {
                   trigger: null,
                   returnFocus: () => librariesCard.current?.querySelector<HTMLButtonElement>("header button") ?? librariesCard.current,
-                  get afterRemoval() {
-                    const paneId = librariesCard.current?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-                    const rows = Array.from(librariesCard.current?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? []);
-                    const after = rows.slice(rows.findIndex(item => item.dataset.collectionRowId === destination.library_id) + 1).map(item => item.dataset.collectionRowId!);
-                    return () => after.map(id => findPaneCollectionRowFocusTarget(paneId, id)).find(target => target !== null)
-                      ?? librariesCard.current?.querySelector<HTMLButtonElement>("header button")
-                      ?? librariesCard.current ?? findPaneLandmarkFocusTarget(paneId);
-                  },
+                  afterRemoval: props.afterRemoval,
                 };
                 const action = projectPodcastLibraryRemovalAction({
                   podcastId, title: podcast.title, libraryId: destination.library_id, libraryName: libraryDisplayName(destination),
@@ -431,14 +427,14 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                   ctx, run, focus,
                 });
                 const reasonId = `${detailId}-library-${destination.library_id}`;
-                return [destination.library_id, <span key={destination.library_id}>
+                return <CollectionRow {...props} primaryControl={<span>
                   <Button iconOnly icon={action.icon} aria-label={action.accessibleLabel} aria-haspopup="dialog"
                     aria-disabled={action.disabled} aria-describedby={action.disabledReason ? reasonId : undefined}
                     tooltip={{ text: action.disabledReason ? `${action.accessibleLabel}: ${action.disabledReason}` : action.accessibleLabel }}
                     onClick={event => { const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }} />
                   {action.disabledReason ? <span className="sr-only" id={reasonId}>{action.disabledReason}</span> : null}
-                </span>];
-              })) : undefined} /> : null}
+                </span>} />;
+              } : undefined} /> : null}
           </PaneSection> : null}
           {live && ready && podcast && (history.length > 0 || command.running !== null || recurring?.state === "pending" || recurring?.state === "running" || recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps) ? <PaneSection title="episode checks and additions">
             {command.running !== null || recurring?.state === "pending" || recurring?.state === "running" ? <p>checking for episodes…</p> : null}
@@ -472,7 +468,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
             }}>
             <PaneSection title="episodes">
-            <CollectionView
+            <CollectionView geometry="UniformIndex"
               surface={false}
               returnScope="PodcastDetail.Episodes"
               rows={visible.map(episode => presentMedia(episode.media_summary, {

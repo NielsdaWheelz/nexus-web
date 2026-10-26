@@ -271,7 +271,7 @@ export default function LecternPaneBody() {
         )}
         {valid ? (
           <PlaybackSourceContext.Provider value={capture}>
-          <CollectionView
+          <CollectionView geometry="UniformIndex"
             returnScope="Lectern.Items"
             ariaLabel="On the lectern"
             surface={false}

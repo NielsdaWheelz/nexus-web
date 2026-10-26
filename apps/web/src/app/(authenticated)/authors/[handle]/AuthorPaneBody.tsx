@@ -398,7 +398,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
             </section>
           ) : null}
           <section aria-label="Works">
-            <CollectionView
+            <CollectionView geometry="UniformIndex"
               returnScope="Author.Works"
               rows={visible}
               status={works.status === "loading" ? "loading" : "ready"}

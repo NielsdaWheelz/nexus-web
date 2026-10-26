@@ -265,7 +265,7 @@ export default function PodcastsPaneBody() {
   return (
     <>
       {readFeedback.announcement}
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Podcasts.Subscriptions"
         rows={visible.map((row) =>
           presentPodcast({

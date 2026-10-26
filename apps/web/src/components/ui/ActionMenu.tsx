@@ -43,6 +43,7 @@ import {
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useIndexRowWindow } from "@/lib/collections/indexRowWindow";
 import MobileSheet from "./MobileSheet";
 import OverflowMenuButton from "./OverflowMenuButton";
 import styles from "./ActionMenu.module.css";
@@ -375,6 +376,11 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   readonly onOpenChange?: (open: boolean) => void;
   readonly returnFocusTo?: ReturnFocusTarget;
 }) {
+  const rowWindow = useIndexRowWindow();
+  useLayoutEffect(() => {
+    rowWindow?.interact();
+    return rowWindow?.pin();
+  }, [rowWindow]);
   const [invocation, setInvocation] = useState<Invocation | null>(null);
   const current = useRef(invocation);
   const latest = useRef(source);
