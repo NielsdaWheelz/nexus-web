@@ -209,13 +209,18 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     }
   }
 
-  function isReady(port: Scrollport): boolean {
+  /** Refresh/filter retention uses the current body and measured extents. A
+   * separately loading suggestion section must not suspend an accepted layout. */
+  function positionReady(port: Scrollport): boolean {
     if ([...(collections.get(port.visitId) ?? [])].some(entry => entry.routeKey === port.routeKey && !entry.ready)) return false;
-    const entries = [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])];
-    const counted = entries.filter(
-      (entry) => entry.kind === "Body" || port.content.contains(entry.root),
-    );
-    return counted.some((entry) => entry.kind === "Body") && counted.every((e) => e.ready);
+    const bodies = [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])].filter(entry => entry.kind === "Body");
+    return bodies.length > 0 && bodies.every(entry => entry.ready);
+  }
+
+  /** Returning to a visit additionally waits for its self-loading descendants. */
+  function isReady(port: Scrollport): boolean {
+    return positionReady(port) && [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])]
+      .filter(entry => entry.kind === "Descendant" && port.content.contains(entry.root)).every(entry => entry.ready);
   }
 
   function applyHold(paneId: string): void {
@@ -225,7 +230,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     queueMicrotask(() => {
       held.scheduled = false;
       const port = scrollports.get(paneId);
-      if (holds.get(paneId) !== held || port === undefined || held.element !== port.element || !isReady(port)) return;
+      if (holds.get(paneId) !== held || port === undefined || held.element !== port.element || !positionReady(port)) return;
       flushSync(() => {
         port.element.scrollTop = held.top;
         refreshRanges(port);
@@ -312,7 +317,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const port = scrollports.get(paneId);
     if (!port || pending.has(paneId)) return null;
     const captured = refreshes.get(paneId);
-    if (captured) return captured;
+    if (captured?.port === port && captured.inputGeneration === port.inputGeneration) return captured;
+    refreshes.delete(paneId);
     const snapshot: RefreshSnapshot = { paneId, port, inputGeneration: port.inputGeneration,
       eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false };
     refreshes.set(paneId, snapshot);
@@ -327,7 +333,13 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     // registration. One end-of-commit attempt sees every section's current geometry.
     queueMicrotask(() => {
       snapshot.scheduled = false;
-      if (snapshot.restored || refreshes.get(snapshot.paneId) !== snapshot || !isReady(snapshot.port)) return;
+      if (snapshot.restored || refreshes.get(snapshot.paneId) !== snapshot) return;
+      if (scrollports.get(snapshot.paneId) !== snapshot.port || snapshot.port.inputGeneration !== snapshot.inputGeneration) {
+        snapshot.restored = true;
+        refreshes.delete(snapshot.paneId);
+        return;
+      }
+      if (!positionReady(snapshot.port)) return;
       flushSync(() => {
         snapshot.restored = true;
         refreshes.delete(snapshot.paneId);
@@ -349,6 +361,16 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         else { port.element.scrollTop = 0; refreshRanges(port); }
       });
     });
+  }
+
+  function resumeVisit(visitId: string): void {
+    for (const [paneId, port] of scrollports) {
+      if (port.visitId !== visitId) continue;
+      attempt(paneId);
+      const snapshot = refreshes.get(paneId);
+      if (snapshot?.requested) restoreRefresh(snapshot);
+      applyHold(paneId);
+    }
   }
 
   return {
@@ -402,6 +424,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         if (!(event instanceof KeyboardEvent) || SCROLL_KEY.test(event.key)) {
           port.inputGeneration += 1;
           holds.delete(paneId);
+          refreshes.delete(paneId);
         }
       };
       const intents = ["wheel", "touchstart", "pointerdown", "keydown"];
@@ -420,16 +443,11 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const key = `${visitId}|${routeKey}`;
       const entries = readiness.get(key) ?? new Set();
       readiness.set(key, entries.add(entry));
-      for (const [paneId, restore] of pending) {
-        if (restore.visitId === visitId) attempt(paneId);
-      }
-      for (const snapshot of refreshes.values()) {
-        if (snapshot.port.visitId === visitId && snapshot.requested) restoreRefresh(snapshot);
-      }
-      for (const [paneId, port] of scrollports) if (port.visitId === visitId) applyHold(paneId);
+      resumeVisit(visitId);
       return () => {
         entries.delete(entry);
         if (entries.size === 0) readiness.delete(key);
+        resumeVisit(visitId);
       };
     },
     forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
@@ -491,6 +509,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       entries?.delete(entry);
       if (entries?.size === 0) collections.delete(entry.visitId);
       updateAnchoring();
+      resumeVisit(entry.visitId);
     },
 
     /** Keeps the live offset across a same-path view swap (filters, sort). */
