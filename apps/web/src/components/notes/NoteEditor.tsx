@@ -746,6 +746,10 @@ function NoteEditorContent(props: NoteEditorProps) {
         warn("select text within one field", "select blocks to change more than one item.");
         return true;
       }
+      if ((inputType === "deleteContentBackward" || inputType === "deleteContentForward") && !selection.empty) {
+        current.dispatch(current.state.tr.deleteSelection().scrollIntoView());
+        return true;
+      }
       const body = field.node;
       const keys = structuralKeys(current.state);
       if (inputType === "insertLineBreak" && field.kind !== "title") return enter(current.state, current.dispatch);
@@ -1435,7 +1439,8 @@ function NoteEditorContent(props: NoteEditorProps) {
       }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
       {editorHost.embedded_preview === "workspace" ? [...embeds].map(([dom, embed]) => {
         const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : null;
-        const scope = `${context?.occurrenceKey ?? occurrenceKey}/${embed.key}`;
+        // A portal has a mount identity; history names the stable field occurrence.
+        const scope = embed.row_id !== null ? `${embed.row_id}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
         return createPortal(<OutlineEmbeddingOccurrence value={embed.row_id}><EmbeddedResource
           resourceRef={embed.ref} supplied={props.embeddedItem ?? null}

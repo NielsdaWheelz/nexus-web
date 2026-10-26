@@ -187,6 +187,26 @@ settlement. same-parent scalar history keeps the current proof; reparenting uses
 the target bookmark's proof. each occurrence retains its own typing origin and displayed
 frontier; another session’s received state is not proof of observation.
 
+an occurrence keeps its earliest unproved admitted source through rapid moves
+and history replay. a canonical target joins only its needed source proofs in
+one revision-consistent window admission; reciprocal moves can therefore settle
+together. every selected request and current placement receipt is revalidated
+after awaits, including dependencies already admitted. successful installation
+retires only placement metadata. the same field keeps its guarded relationship,
+body and baseline until canonical projection can take over synchronously.
+source proof may contain independent membership; it does not require absence.
+an installed ancestor can also withdraw an unfocused target from this projection.
+visible parents count before their first data window exists. retiring that local
+obligation keeps the field and never asserts canonical deletion; retained docs
+stay charged until the existing history/admission owners actually release them.
+detaching an embedded branch immediately revokes its projection and queries.
+the same record retains only owner ancestry while pending placement, history,
+focus or an unresolved capture needs that path. detached ancestry never loads or
+renders a window; only actual unfinished writing can keep its old host visible.
+registration identity fences late cleanup from a replacement attachment.
+standalone embedded outlines use their containing field occurrence and target as
+logical scope. the portal's separate mount key never enters history identity.
+
 pending outline export reads one fresh retained-cell snapshot as literal text,
 including visible completed segments and the active body. the workspace keeps
 that same account-scoped guard above its error boundaries. “copy pending outline
@@ -199,6 +219,9 @@ draft or new recovery owner.
 touch-capable panes expose six fixed actions: outdent, indent, move up, move down,
 undo and redo. desktop uses shortcuts. no insert or finish-editing control is
 needed: return inserts and normal focus/keyboard dismissal ends text editing.
+window navigation uses the same native-control recipe and comfortable touch size
+as other commands. noneditable islands remain interactive without being treated
+as soft-keyboard entry through the surrounding editor.
 android reports actual keyboard visibility through its existing bridge; an inset
 of zero alone does not imply dismissal.
 

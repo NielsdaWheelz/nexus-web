@@ -132,6 +132,7 @@ export class OutlineBinding implements EditorBinding {
     return bytes;
   }
   capturedDocuments(): readonly WritingDocument[] {return [...new Set([...this.fields.values()].flatMap(entry => entry.captureBytes > 0 && entry.field.document ? [entry.field.document] : []))];}
+  capturedRows(): readonly string[] {return [...this.fields.values()].filter(entry => entry.captureBytes > 0).map(entry => entry.row_id);}
   private releaseCapture(entry: BoundField, bytes: number): void {
     entry.captureBytes -= bytes;
     if (entry.retiring && entry.captureBytes === 0 && this.fields.get(entry.row_id) === entry) {

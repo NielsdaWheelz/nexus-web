@@ -16,7 +16,7 @@ export interface PendingOutlineField {
   row_id: string; parent_id: string | null; parent_ref: string; after_id: string | null; before_id?: string;
   ref: string | null; link: LinkState | null; kind: "body" | "title" | "reference";
   resource?: ResourceProjection | null; body: NoteBody; hidden: boolean; pending: boolean; origin: unknown;
-  relocating?: string; previousParent?: string | null; previousLink?: string; settledRevision?: string;
+  relocating?: string; previousParent?: string | null; previousParentRef?: string; settledRevision?: string;
   receiptOwner?: object; revision?: number;
 }
 interface BoundField {
@@ -128,7 +128,7 @@ export class OutlinePendingInput {
   private watch(ids: readonly string[], admission: AdmittedStructure, links: ReadonlyMap<string, AdmittedLink["link"]> = new Map()): void {
     const token = {}, owner = this.current();
     for (const id of ids) {
-      const row = this.fields.get(id); if (row) this.fields.set(id, {...row, receiptOwner: token, settledRevision: undefined});
+      const row = this.fields.get(id); if (row) this.fields.set(id, {...row, pending: true, receiptOwner: token, settledRevision: undefined});
       const bound = this.bound.get(id); if (bound) bound.settled = false;
     }
     for (const [id, link] of links) this.restoreRelationship(id, link);
@@ -170,7 +170,7 @@ export class OutlinePendingInput {
     const successor = crypto.randomUUID(), parent = {...row, ...placement};
     const target: PendingOutlineField = {...parent, row_id: successor, after_id: placement ? placement.after_id : row_id, before_id: undefined,
       ref: null, link: null, resource: null, kind: "body", body: right, hidden: false, pending: true, origin: owner.history.typingOrigin(),
-      relocating: undefined, previousParent: undefined, previousLink: undefined, settledRevision: undefined, receiptOwner: undefined};
+      relocating: undefined, previousParent: undefined, previousParentRef: undefined, settledRevision: undefined, receiptOwner: undefined};
     const admitted = owner.history.split({source: bound.document, displayed: {body_state: displayed.body_state, from, to},
       placement: this.placement(target.parent_id, target.parent_ref, target.after_id),
       change: {before: this.bookmark(row, {anchor: from + 1, head: to + 1}), after: document => this.bookmark({...target, ref: document.ref}, {anchor: 1, head: 1})}});
@@ -202,7 +202,7 @@ export class OutlinePendingInput {
     const admitted = owner.history.relink({occurrence: this.occurrence(row_id), placement: this.placement(parent_id, parent_ref, after_id),
       change: {before: {...this.bookmark(row, selection)!, resolve}, after: {...this.bookmark(target, selection, true)!, resolve}}});
     this.fields.set(row_id, {...target, before_id: undefined, relocating: token, previousParent: row.relocating ? row.previousParent : row.parent_id,
-      previousLink: row.relocating ? row.previousLink : row.link?.link_id, settledRevision: undefined});
+      previousParentRef: row.relocating ? row.previousParentRef : row.parent_ref, settledRevision: undefined});
     this.place(row_id, after_id, null);
     owner.publish([], admitted.committed); this.watch([row_id], admitted, new Map([[row_id, admitted.link]]));
   }
@@ -212,7 +212,7 @@ export class OutlinePendingInput {
     const placement = this.placement(row.parent_id, row.parent_ref, direction === "down" ? peer.row_id : null, direction === "up" ? peer.row_id : undefined);
     const admitted = owner.history.move({occurrence: this.occurrence(row_id), placement, change: {before: {...this.bookmark(row, selection)!, resolve}, after: {...this.bookmark({...row, after_id: direction === "down" ? peer.row_id : null, before_id: direction === "up" ? peer.row_id : undefined}, selection, true)!, resolve}}});
     this.fields.set(row_id, {...row, after_id: direction === "down" ? peer.row_id : null, before_id: direction === "up" ? peer.row_id : undefined,
-      relocating: token, previousParent: row.relocating ? row.previousParent : row.parent_id, previousLink: row.relocating ? row.previousLink : row.link?.link_id, settledRevision: undefined});
+      relocating: token, previousParent: row.relocating ? row.previousParent : row.parent_id, previousParentRef: row.relocating ? row.previousParentRef : row.parent_ref, settledRevision: undefined});
     this.place(row_id, direction === "down" ? peer.row_id : null, direction === "up" ? peer.row_id : null);
     owner.publish([], admitted.committed); this.watch([row_id], admitted, new Map([[row_id, admitted.link]]));
   }

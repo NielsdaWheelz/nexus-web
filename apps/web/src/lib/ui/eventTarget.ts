@@ -1,7 +1,6 @@
 // What an event's target is, for handlers that must stand down or must not
-// double-activate. Typing surfaces read contenteditable one way (present and
-// not "false"); any contenteditable region, read-only included, is interactive.
-const EDITABLE = "[contenteditable]:not([contenteditable='false'])";
+// double-activate. Native inheritance owns editability; an explicit false HTML
+// island also bounds ancestor textbox semantics. Read-only controls stay interactive.
 const TEXT_INPUT_TYPES = new Set([
   "email",
   "number",
@@ -44,12 +43,23 @@ const INTERACTIVE = [
   ].map((role) => `[role='${role}']`),
 ].join(",");
 
+function isEditableRegion(target: Element): boolean {
+  let context: Element | null = target;
+  while (context && !(context instanceof HTMLElement)) context = context.parentElement;
+  if (context instanceof HTMLElement && context.isContentEditable) return true;
+  const textbox = target.closest("[role='textbox']");
+  if (!textbox) return false;
+  for (let boundary = context; boundary; boundary = boundary.parentElement)
+    if (boundary instanceof HTMLElement && boundary.contentEditable === "false") return boundary.contains(textbox);
+  return true;
+}
+
 /** A typing surface (any input, textarea, select, editable region): global shortcuts stand down. */
 export function isEditableTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     (target.matches("input, textarea, select") ||
-      target.closest(EDITABLE) !== null)
+      isEditableRegion(target))
   );
 }
 
@@ -70,11 +80,9 @@ export function isNavigationAttention(event: Event): boolean {
 export function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target.matches("textarea")) return true;
-  if (target.matches("input"))
-    return TEXT_INPUT_TYPES.has(
-      target.getAttribute("type")?.toLowerCase() ?? "text",
-    );
-  return target.closest(`${EDITABLE}, [role='textbox']`) !== null;
+  if (target instanceof HTMLInputElement) return TEXT_INPUT_TYPES.has(target.type);
+  if (target instanceof HTMLSelectElement) return false;
+  return isEditableRegion(target);
 }
 
 /**
