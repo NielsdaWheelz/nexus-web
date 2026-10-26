@@ -16,3 +16,5 @@ recolours UA scrollbars and inherits into frames, which is a design call.
 
 resolved when: each room declares the `color-scheme` it means, and the Solar's
 `scrollbar-color` rule still wins under it.
+
+related: reader frames nest a room (`lib/documentReader/DocumentReader.tsx:289`) and inherit the Solar's `color-scheme: dark` today; see `solar-rules-reach-nested-reader-frames.md`.

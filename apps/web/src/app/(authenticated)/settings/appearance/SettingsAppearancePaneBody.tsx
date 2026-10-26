@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 // Imported here only: the inscription registry is data-heavy and must stay out
@@ -21,6 +21,7 @@ const INSCRIPTION = elvishInscriptions.elenSila;
 export default function SettingsAppearancePaneBody() {
   // the room is the document's (the server paints it from the nx-theme cookie)
   const [room, setRoom] = useState<AppTheme | null>(null);
+  const name = useId();
   useEffect(
     () => setRoom(parseRoom(document.documentElement.dataset.theme)),
     [],
@@ -49,7 +50,7 @@ export default function SettingsAppearancePaneBody() {
               <span className={styles.caption}>
                 <input
                   type="radio"
-                  name="appearance"
+                  name={name}
                   value={doorway.room}
                   checked={room === doorway.room}
                   onChange={() => void choose(doorway.room)}

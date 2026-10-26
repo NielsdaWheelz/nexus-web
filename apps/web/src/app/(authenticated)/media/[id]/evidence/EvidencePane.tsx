@@ -2,11 +2,15 @@
 
 // The shared resource rows, placed against measured reader passages while following.
 // All items uses normal flow; native sidebar scroll never changes the view or text.
-import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Check } from "lucide-react";
 import ResourceOutlineList, { OutlineSessionContext, ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import { useOutlineSession, type OutlineDestination } from "@/lib/notes/useOutlineSession";
 import { endpointForResource } from "@/lib/resourceGraph/links";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import RadioGroup from "@/components/ui/RadioGroup";
+import { cx } from "@/lib/ui/cx";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -43,8 +47,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const pane = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const firstType = useRef<HTMLButtonElement>(null);
-  const viewName = useId();
-  const helpId = useId();
+  const ids = useId();
   const pinned = useRef<{ element: HTMLElement; y: number; scrollTop: number } | null>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
   const switchAnchor = useRef<{ element: HTMLElement; offset: number } | null>(null);
@@ -130,9 +133,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       const measured = locatedRoots.flatMap((root) => {
         const extent = rootExtent(root.resolution, doc);
         if (!extent) return [];
-        const at = structure.fraction(extent.start);
         const held = focused === root.ref;
-        if (!held && (at < viewport.start - span || at > viewport.end + span)) return [];
+        if (!held && extent.kind === "text") {
+          const at = structure.fraction(extent.start);
+          if (at < viewport.start - span || at > viewport.end + span) return [];
+        }
         const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
         const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(root.ref)}"]:not([hidden])`);
         if (!geometry && !held) return [];
@@ -164,6 +169,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     const observer = new ResizeObserver(schedule);
     observer.observe(port);
+    // Outline feedback can move the list without resizing its rows.
+    const outline = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"]');
+    if (outline) observer.observe(outline);
     for (const row of port.querySelectorAll("[data-group]")) observer.observe(row);
     const unsubscribe = reader.subscribe(schedule);
     schedule();
@@ -240,6 +248,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   if (state.map.status === "loading" && data === null) return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t refresh connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry refresh", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return <div className={styles.pane}>{failure}<FeedbackState content={{ tone: "Neutral", title: "no connections available" }} announcement="None" /></div>;
+  const locked = session.activeReference !== null;
+  const reason = locked ? `${ids}-reason` : undefined;
   const projectedCounts = rootCounts(roots ?? []);
   const counts: Record<Filter, number> = { ...projectedCounts, links: projectedCounts.links + pending.length };
   const placed = roots?.filter((root) => root.resolution?.kind === "Resolved") ?? [];
@@ -287,19 +297,25 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     }}>
       {failure}
       <div className={styles.head}>
-        {!isMobile ? <>
-          <fieldset className={styles.modes} aria-describedby={helpId}>
-            <legend>connections view</legend>
-            <div className={styles.choices}>
-              <label><input type="radio" name={viewName} checked={following} disabled={session.activeReference !== null} onChange={() => chooseView(true)} />follow reading position</label>
-              <label><input type="radio" name={viewName} checked={!following} disabled={session.activeReference !== null} onChange={() => chooseView(false)} />all items</label>
-            </div>
-          </fieldset>
-          <p id={helpId} className={styles.help}>{following ? "items move with their passages as you scroll the text." : "browse all available items of the selected types."}</p>
-        </> : null}
-        <div role="group" aria-label="item types" className={styles.filters}>
-          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} disabled={session.activeReference !== null} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{FILTER_LABELS[filter]} {counts[filter]}</button>)}
+        {!isMobile ? <div className={styles.mode}>
+          <RadioGroup label="connections view" legend="Hidden" presentation="Segmented" value={following ? "follow" : "all"}
+            choices={[
+              { value: "follow", label: <>follow<span className="sr-only"> reading position</span></> },
+              { value: "all", label: <>all<span className="sr-only"> items</span></> },
+            ]}
+            disabled={locked} aria-describedby={reason} onChange={(value) => chooseView(value === "follow")} />
+        </div> : null}
+        <div role="group" aria-label="item types" aria-describedby={reason} className={styles.filters}>
+          {FILTERS.map((filter, index) => <Fragment key={filter}>
+            <Button ref={index === 0 ? firstType : undefined} className={styles.filter} aria-pressed={!hidden.has(filter)} disabled={locked}
+              aria-describedby={cx(`${ids}-${filter}`, reason)} icon={<Check className={hidden.has(filter) ? styles.unchecked : undefined} />}
+              onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>
+              {FILTER_LABELS[filter]} <span className={styles.count} aria-hidden="true">{counts[filter]}</span>
+            </Button>
+            <span id={`${ids}-${filter}`} hidden>{counts[filter] === 1 ? "1 item" : `${counts[filter]} items`}</span>
+          </Fragment>)}
         </div>
+        {locked ? <p id={reason} className={styles.reason}>finish linking or return to prose first</p> : null}
       </div>
       {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
       <div ref={list} className={styles.list} tabIndex={0} role="group" aria-label="connections" onScroll={(event) => {
@@ -321,7 +337,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           : !visible.size && !pending.length ? <FeedbackState content={{ tone: "Neutral", title: "no connections match the selected types" }} announcement="None"
             actions={[{ label: "show all types", onClick: () => { firstType.current?.focus({ preventScroll: true }); setHidden(new Set()); } }]} /> : null}
         <div data-aligned-connections={aligned || undefined}>
-          <ResourceOutlineList scope="reader-connections" ariaLabel="connections" viewLocked={session.activeReference !== null}>
+          <ResourceOutlineList scope="reader-connections" ariaLabel="connections" viewLocked={locked}>
             {[
               ...rows(placed),
               aligned ? <li key="placed-space" aria-hidden="true" style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }} /> : null,

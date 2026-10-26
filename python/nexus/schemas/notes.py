@@ -119,6 +119,20 @@ class OutlineOut(_Closed):
     next_cursor: str | None
 
 
+class OutlineChildrenOccurrenceRequest(_Closed):
+    resource_ref: str
+    excluded_edge_ids: list[UUID]
+    embedded_in_note_ref: str | None
+
+
+class OutlineChildrenRequest(_Closed):
+    occurrences: list[OutlineChildrenOccurrenceRequest] = Field(min_length=1, max_length=100)
+
+
+class OutlineChildrenOut(_Closed):
+    items: list[bool | None]
+
+
 class DailyPageOut(_Closed):
     """A latent day carries its page's future id and default title, and no links."""
 

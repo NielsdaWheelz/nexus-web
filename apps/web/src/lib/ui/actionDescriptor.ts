@@ -125,12 +125,28 @@ export type ActionDescriptor =
       readonly state?: never;
     });
 
+/** One named exclusive choice in a menu. Choosing sets absolutely, so `value`
+ *  is live state, not published meaning. Menus only. */
+export type MenuChoice = {
+  readonly kind: "choice";
+  readonly id: string;
+  readonly label: string; // accessible group name; sheet legend
+  readonly value: string;
+  readonly choices: readonly { readonly value: string; readonly label: string; readonly icon: ReactElement }[];
+  readonly onChange: (value: string) => void;
+  readonly disabled?: boolean;
+  readonly disabledReason?: string;
+  readonly separatorBefore?: boolean;
+  readonly indicator?: never;
+};
+export type MenuOption = ActionDescriptor | MenuChoice;
+
 /** Complete choices for one subject; callbacks remain current after publication. */
 export type MenuContent = {
   readonly sections: readonly {
     readonly id: string;
     readonly label: string | null;
-    readonly options: readonly ActionDescriptor[];
+    readonly options: readonly MenuOption[];
   }[];
 };
 

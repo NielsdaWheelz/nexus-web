@@ -1,16 +1,10 @@
 @import "./brand.css";
 
-/* Scale tokens, then the Press's palette. The Press is the default room, so
-   `[data-theme="dark"]` joins `:root` rather than repeating it: that is what
-   lets a nested element (a Settings doorway) enter the Press, as one enters
-   the Study or the Solar. Rooms redefine colour, shadow, grain, hairline,
-   body size, tracking and the section-title font only. */
-:root,
-[data-theme="dark"] {
+/* shared scales, motion and shell geometry inherit through nested rooms. */
+:root {
   --font-sans:
     var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     Roboto, Helvetica, Arial, sans-serif;
-  --font-serif: ui-serif, Charter, Georgia, "Times New Roman", Times, serif;
   --font-mono:
     var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
@@ -32,9 +26,6 @@
   --leading-normal: 1.5;
   --leading-relaxed: 1.6;
   --leading-loose: 1.75;
-
-  --pane-section-title-font:
-    normal 600 var(--text-lg) / var(--leading-snug) var(--font-sans);
 
   --tracking-tight: -0.02em;
   --tracking-normal: 0;
@@ -122,6 +113,16 @@
   --highlight-blue: rgba(33, 150, 243, 0.35);
   --highlight-pink: rgba(233, 30, 99, 0.35);
   --highlight-purple: rgba(156, 39, 176, 0.35);
+}
+
+/* the press is the default room. nested dark scopes redeclare only tokens
+   another room overrides, preserving the shared tokens of their ancestors. */
+:root,
+[data-theme="dark"] {
+  --font-serif: ui-serif, Charter, Georgia, "Times New Roman", Times, serif;
+
+  --pane-section-title-font:
+    normal 600 var(--text-lg) / var(--leading-snug) var(--font-sans);
 
   --surface-canvas: #0e0e10;
   --surface-1: #161618;

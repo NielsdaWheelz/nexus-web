@@ -25,6 +25,7 @@ import { NEW_PANE_HINT } from "@/lib/shortcuts";
 import {
   projectActionControlState,
   type ActionDescriptor,
+  type MenuOption,
 } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -84,7 +85,7 @@ export default function SurfaceHeader({
   };
   companionAction?: PaneCompanionAction;
   paneActions?: readonly ActionDescriptor[];
-  menuActions?: readonly ActionDescriptor[];
+  menuActions?: readonly MenuOption[];
   resourceRef?: CanonicalResourceRef;
   navigation: SurfaceHeaderNavigation;
   workspaceAction?: ReactNode;

@@ -380,6 +380,7 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
     const marks: Mark[] = [];
     const noteRefs: NoteRef[] = [];
     const markers: RailMarker[] = [];
+    const pdfMarkers = new Map<string, RailMarker>();
     const roots = new Map<string, EvidenceRoot>();
     const rootReads: ReaderRootRead[] = [];
     const placementRanks = new Map<string, number>();
@@ -433,11 +434,16 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
         roots.set(incoming.ref, { ...preferred, direct_facts: [...facts.values()] });
         placementRanks.set(incoming.ref, Math.max(rank, placementRanks.get(incoming.ref)!));
       }
-      if (id === mediaId) markers.push(...current.markers.filter((marker) => marker.id.startsWith("embed:")));
+      if (id === mediaId) for (const marker of current.markers) {
+        if (marker.id.startsWith("embed:")) markers.push(marker);
+        else if (doc.kind === "pdf" && roots.get(marker.id)?.resolution?.kind === "Resolved") pdfMarkers.set(marker.id, marker);
+      }
     }
     const position = (root: EvidenceRoot, end = false): number | null => {
       const extent = rootExtent(root.resolution, doc!);
-      return extent ? structure.fraction(end ? extent.end : extent.start) : null;
+      if (!extent) return null;
+      if (extent.kind === "text") return structure.fraction(end ? extent.end : extent.start);
+      return pdfMarkers.get(root.ref)?.position ?? null;
     };
     const orderedRoots = [...roots.values()].sort((a, b) => {
       const at = position(a), bt = position(b);
@@ -446,6 +452,8 @@ export function createAnnotationStore(mediaId: string, accountId: string): Annot
       return 0;
     });
     for (const root of orderedRoots) {
+      const pdfMarker = pdfMarkers.get(root.ref);
+      if (pdfMarker) { markers.push(pdfMarker); continue; }
       const at = position(root);
       if (at === null) continue;
       const item = rootItem(root), body = item.preview.body;

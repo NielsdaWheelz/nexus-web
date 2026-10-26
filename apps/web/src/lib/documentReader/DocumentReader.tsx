@@ -202,15 +202,18 @@ export function useReaderState<T>(
   return useSyncExternalStore(reader.subscribe, read, read);
 }
 
+/** Each reader font family's stack: the reader surface's face and its specimen. */
+export const READER_FONT_STACKS: Record<Schema<"ReaderProfileOut">["font_family"], string> = {
+  serif: "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif",
+  sans: "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+};
+
 /** Typography as CSS custom properties, from the reader profile. */
 export function readerSurfaceStyle(
   profile: Schema<"ReaderProfileOut">,
 ): CSSProperties {
   return {
-    "--reader-font-family":
-      profile.font_family === "sans"
-        ? "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-        : "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif",
+    "--reader-font-family": READER_FONT_STACKS[profile.font_family],
     "--reader-font-size-px": `${profile.font_size_px}px`,
     "--reader-line-height": String(profile.line_height),
     "--reader-column-width-ch": `${profile.column_width_ch}ch`,

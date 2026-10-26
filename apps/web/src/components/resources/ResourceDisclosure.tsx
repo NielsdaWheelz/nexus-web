@@ -77,7 +77,9 @@ export default function ResourceDisclosure({
     pending.find(
       (pending) => pending.acknowledged && pending.sourceRef !== resourceRef,
     )?.sourceRef ?? null;
-  const capability = read.insertionSource;
+  // A refresh retires read pages, not the acknowledged placement of an open
+  // editing host. A confirmed source adopts its current authority, including null.
+  const capability = read.source === null ? session.insertionCapability(resourceRef) : read.insertionSource;
   const source = readOnly ? null : capability;
   const durableOwner =
     capability?.kind === "resource" && capability.ref !== resourceRef
@@ -96,31 +98,8 @@ export default function ResourceDisclosure({
           ),
         }
       : branch;
-  const rows = session
-    .projectChildren({ endpoint: resourceRef, occurrencePrefix, path, branch })
-    .filter((row) => {
-      if (suppressedEdgeIds.includes(row.link.link_id)) return false;
-      if (
-        separateOwner &&
-        row.link.connection === null &&
-        pending.some(
-          (intent) =>
-            intent.acknowledged &&
-            intent.sourceRef === durableOwner &&
-            intent.edgeId === row.link.link_id,
-        )
-      )
-        return false;
-      const connection = row.link.connection;
-      return !(
-        embeddedInNoteRef !== null &&
-        connection?.origin === "note_body" &&
-        connection.kind === "context" &&
-        connection.ordinal === null &&
-        connection.source.ref === embeddedInNoteRef &&
-        connection.target.ref === resourceRef
-      );
-    });
+  const rows = session.projectChildren({endpoint: resourceRef, occurrencePrefix, path, branch,
+    suppressedEdgeIds, embeddedInNoteRef, separateOwner: separateOwner ? durableOwner : null});
   return (
     <>
       {read.status === "loading" ? (

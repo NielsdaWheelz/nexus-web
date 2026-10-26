@@ -6,10 +6,11 @@ their owned, database-wide admitted backend and materialize before retiring it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor
@@ -22,6 +23,7 @@ from nexus.schemas.resource_search import (
     ResourceTargetSearchRequest,
     ResourceTargetSearchResponse,
 )
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import locator_resolver, passage_anchors
 from nexus.services.resource_graph.edges import existing_link_pair
 from nexus.services.resource_graph.refs import (
@@ -32,7 +34,8 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import capture_evidence
-from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.items import resource_items_out, visible_refs
+from nexus.services.resource_items.locations import current_passages, media_passages
 from nexus.services.search.admission import search_session
 from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
@@ -178,61 +181,126 @@ def source_identity(
 ) -> tuple[str, ResourceRef | None]:
     """The identity a source occupies (itself, or its passage's anchor key) and the ref its
     existing links hang off (itself, or its saved anchor)."""
-    mode = capability(ref.scheme).link_mode
-    if mode == "none":
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
-    if mode == "direct":
-        if resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0].missing:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
-        return ref.uri, ref
-    quote = candidate_owner_and_quote(db, viewer_id=viewer_id, ref=ref)
-    if quote is None or resource_items_out(db, viewer_id=viewer_id, refs=[quote[0]])[0].missing:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
-    identity = _passage_identity(db, viewer_id, *quote)
-    if identity is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage no longer resolves")
+    identity = source_identities(db, viewer_id=viewer_id, refs=[ref])[ref.uri]
+    if isinstance(identity, InvalidRequestError | NotFoundError):
+        raise identity
     return identity
+
+
+def source_identities(
+    db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
+) -> dict[str, tuple[str, ResourceRef | None] | InvalidRequestError | NotFoundError]:
+    """Current source identities, with expected absence classified independently per ref.
+
+    The caller owns a repeatable read snapshot. Passage candidates need their current valid-location
+    proof before unique-quote identity; matching words alone never supply an anchor.
+    Each resolution stage shares owner source reads; one lookup finds saved anchors.
+    Singular callers raise the same classified error instead of collapsing absence.
+    """
+    refs = list({ref.uri: ref for ref in refs}.values())
+    if not refs:
+        return {}
+    visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
+    candidates = [
+        ref
+        for ref in refs
+        if ref.uri in visible and capability(ref.scheme).link_mode == "materialize_passage"
+    ]
+    current = current_passages(db, viewer_id=viewer_id, refs=candidates) if candidates else {}
+    media = (
+        media_passages(db, viewer_id=viewer_id, refs=candidates, current_passage_reads=current)
+        if candidates
+        else {}
+    )
+    quotes = {
+        uri: (passage.owner, passage.quote.exact)
+        for uri, passage in {**current, **media}.items()
+        if retrieval_locator_json(passage.locator) is not None
+    }
+    owners = (
+        visible_refs(db, viewer_id=viewer_id, refs=list({owner for owner, _ in quotes.values()}))
+        if quotes
+        else set()
+    )
+    quotes = {uri: quote for uri, quote in quotes.items() if quote[0].uri in owners}
+    identities = _passage_identities(db, viewer_id, quotes)
+    out: dict[str, tuple[str, ResourceRef | None] | InvalidRequestError | NotFoundError] = {}
+    for ref in refs:
+        mode = capability(ref.scheme).link_mode
+        if mode == "none":
+            out[ref.uri] = InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked"
+            )
+        elif mode == "direct":
+            out[ref.uri] = (
+                (ref.uri, ref)
+                if ref.uri in visible
+                else NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
+            )
+        elif ref.uri not in quotes:
+            out[ref.uri] = NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
+        else:
+            out[ref.uri] = identities.get(ref.uri) or NotFoundError(
+                ApiErrorCode.E_NOT_FOUND, "Passage no longer resolves"
+            )
+    return out
 
 
 def _passage_identity(
     db: Session, viewer_id: UUID, owner: ResourceRef, exact: str
 ) -> tuple[str, ResourceRef | None] | None:
     """The anchor key a quote occupies in its owner (and its saved anchor), if unique there."""
-    normalized = passage_anchors.normalize_quote_text(exact)
-    if not normalized:
-        return None
-    resolution = locator_resolver.resolve_passage_selector(
-        db, owner_scheme=owner.scheme, owner_id=owner.id, exact=normalized
-    )
-    if resolution.status is not QuoteStatus.unique:
-        return None
-    key = passage_anchors.compute_anchor_key(
-        exact=normalized, prefix=resolution.prefix, suffix=resolution.suffix
-    )
-    anchor_id = db.execute(
-        select(PassageAnchor.id).where(
-            PassageAnchor.user_id == viewer_id,
-            PassageAnchor.owner_scheme == owner.scheme,
-            PassageAnchor.owner_id == owner.id,
-            PassageAnchor.anchor_key == key,
-        )
-    ).scalar_one_or_none()
-    if anchor_id is None:
-        return f"{owner.uri}:{key}", None
-    anchor = ResourceRef("passage_anchor", anchor_id)
-    return anchor.uri, anchor
+    return _passage_identities(db, viewer_id, {owner.uri: (owner, exact)}).get(owner.uri)
 
 
-def candidate_owner_and_quote(
-    db: Session, *, viewer_id: UUID, ref: ResourceRef, reading_media_id: UUID | None = None
-) -> tuple[ResourceRef, str] | None:
-    """The exact current passage under its authorized reading owner, never its naked source."""
-    try:
-        captured = capture_evidence(
-            db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id
+def _passage_identities(
+    db: Session, viewer_id: UUID, quotes: Mapping[str, tuple[ResourceRef, str]]
+) -> dict[str, tuple[str, ResourceRef | None]]:
+    sources = locator_resolver.read_passage_sources(
+        db, list({(owner.scheme, owner.id) for owner, _ in quotes.values()})
+    )
+    keys: dict[str, tuple[ResourceRef, str]] = {}
+    for uri, (owner, exact) in quotes.items():
+        normalized = passage_anchors.normalize_quote_text(exact)
+        if not normalized:
+            continue
+        resolution = locator_resolver.resolve_passage_selector(
+            db,
+            owner_scheme=owner.scheme,
+            owner_id=owner.id,
+            exact=normalized,
+            source_reads=sources,
         )
-    except NotFoundError:
-        return None
-    if captured.quote is None or not isinstance(captured.target, CapturedPassageTarget):
-        return None
-    return require_ref(captured.target.owner_ref), captured.quote.exact
+        if resolution.status is QuoteStatus.unique:
+            keys[uri] = (
+                owner,
+                passage_anchors.compute_anchor_key(
+                    exact=normalized, prefix=resolution.prefix, suffix=resolution.suffix
+                ),
+            )
+    anchors = (
+        {
+            (row.owner_scheme, row.owner_id, row.anchor_key): ResourceRef("passage_anchor", row.id)
+            for row in db.execute(
+                select(
+                    PassageAnchor.id,
+                    PassageAnchor.owner_scheme,
+                    PassageAnchor.owner_id,
+                    PassageAnchor.anchor_key,
+                ).where(
+                    PassageAnchor.user_id == viewer_id,
+                    tuple_(
+                        PassageAnchor.owner_scheme, PassageAnchor.owner_id, PassageAnchor.anchor_key
+                    ).in_({(owner.scheme, owner.id, key) for owner, key in keys.values()}),
+                )
+            )
+        }
+        if keys
+        else {}
+    )
+    return {
+        uri: (anchor.uri, anchor)
+        if (anchor := anchors.get((owner.scheme, owner.id, key))) is not None
+        else (f"{owner.uri}:{key}", None)
+        for uri, (owner, key) in keys.items()
+    }
