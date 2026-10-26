@@ -47,6 +47,7 @@ import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import {
   AllSelection,
+  NodeSelection,
   EditorState,
   Plugin,
   PluginKey,
@@ -855,6 +856,18 @@ function NoteEditorContent(props: NoteEditorProps) {
             return true;
           }
         }
+        const selected = current.state.selection;
+        if (
+          (event.key === "Backspace" || event.key === "Delete") &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.shiftKey &&
+          selected instanceof NodeSelection &&
+          selected.node.isInline &&
+          selected.node.isAtom
+        )
+          return act(() => current.dispatch(current.state.tr.deleteSelection().scrollIntoView()));
         const allowBoundaryDeletion = !window.matchMedia(
           "(any-pointer: coarse)",
         ).matches;
@@ -878,20 +891,6 @@ function NoteEditorContent(props: NoteEditorProps) {
           )
             return act(latest.current.onEmptyBackspace);
         }
-        if (
-          (event.key === "Backspace" || event.key === "Delete") &&
-          !event.altKey &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.shiftKey &&
-          current.state.doc.firstChild?.type === schema.nodes.resource_embed &&
-          !current.state.selection.empty
-        )
-          return act(() =>
-            current.dispatch(
-              current.state.tr.deleteSelection().scrollIntoView(),
-            ),
-          );
         const keys = latest.current.keys;
         if (!keys || event.altKey || event.ctrlKey || event.metaKey)
           return false;
