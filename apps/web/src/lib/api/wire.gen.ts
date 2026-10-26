@@ -11485,7 +11485,7 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
             /** Records */
-            records: (components["schemas"]["ScopeIdentity"] | components["schemas"]["ScopeMediaMember"] | components["schemas"]["ScopeLibraryMember"] | components["schemas"]["ScopeConversationFact"] | components["schemas"]["ScopeSourceAlias"] | components["schemas"]["ScopeHighlightMember"] | components["schemas"]["ScopeReading"] | components["schemas"]["ScopeInterval"])[];
+            records: (components["schemas"]["ScopeIdentity"] | components["schemas"]["ScopeWorkspaceMember"] | components["schemas"]["ScopeMediaMember"] | components["schemas"]["ScopeLibraryMember"] | components["schemas"]["ScopeConversationFact"] | components["schemas"]["ScopeSourceAlias"] | components["schemas"]["ScopeHighlightMember"] | components["schemas"]["ScopeReading"] | components["schemas"]["ScopeInterval"])[];
             /** Restart */
             restart: boolean;
             /** Revision */
@@ -11642,6 +11642,16 @@ export interface components {
             reading_ref: string;
             /** Revision */
             revision: string;
+        };
+        /** ScopeWorkspaceMember */
+        ScopeWorkspaceMember: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "workspace_member";
+            /** Reading Ref */
+            reading_ref: string;
         };
         /** SearchMatchOut */
         SearchMatchOut: {

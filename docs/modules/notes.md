@@ -360,6 +360,16 @@ query execution applies eligibility and clipped lexical matching before paging;
 its excerpt is separate from canonical content. both sqlite hosts use the same
 fts tokenizer; native compound search rechecks the store revision before returning.
 
+`workspace_member` identifies readings admitted by canonical global search;
+independent retained-source readability does not add workspace membership.
+global search keeps ordinary owned rows available during hydration and validates
+highlight/media-passage candidates against complete active reading inputs.
+`activation_ref` carries the selected reading without changing the capture.
+the closed `source_alias` query returns active part-to-publication provenance in
+`canonical_source_ref`; the destination owns read permission and location bounds.
+a passage keys its semantic slice while its locator names the physical
+publication. highlight locators retain exact source-owner equality.
+
 auth/format failures pause transport while local writing remains available.
 permanent sync defects retain pending bytes and show one actionable error. no
 activity list, writing recovery inbox, global undo inventory or age-based causal

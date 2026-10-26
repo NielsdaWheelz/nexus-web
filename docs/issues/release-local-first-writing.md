@@ -1,7 +1,8 @@
 # local first writing hard cutover
 
-pending implementation and qualification; no deployment or data deletion has
-been performed. [specification](../local-first-writing-spec.md) owns the target.
+implementation is integrated; installed/mixed-device, shell-update and capacity
+qualification remain open. no deployment or production data deletion has been
+performed. [specification](../local-first-writing-spec.md) owns the target.
 this release replaces current online-first writing, not the media/download stack.
 
 prerequisites:

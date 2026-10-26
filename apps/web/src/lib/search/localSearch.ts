@@ -7,8 +7,9 @@
 // Scoped queries use the last complete local membership/text revision plus current
 // authored links. Missing scope inputs are explicit, never a remote-writing fallback.
 // Excerpts use separate literal matching text; canonical labels/captures stay intact.
+// search activation retains the selected reading and the canonical saved occurrence.
 import { useCallback, useEffect, useState } from "react";
-import type { QueryResult, ResourceProjection } from "@nexus/authored/types";
+import type { QueryResult, ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import type { SearchFamily, SearchScope } from "@nexus/authored/scope";
 import { capturedHighlightText } from "@nexus/authored/queries";
 import { useAuthoredStore } from "@/lib/authored/provider";
@@ -53,13 +54,14 @@ export function localResult(resource: ResourceProjection, text: string): LocalMa
   return kind === null ? null : localMatch(resource, kind, text);
 }
 
-export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string, matchText: string | null = null): LocalMatch {
+export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string,
+  { matchText, activationRef }: { matchText: string | null; activationRef: ResourceRef | null } = { matchText: null, activationRef: null }): LocalMatch {
   const body = matchText ?? (resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource.selection) : resource.kind === "note" ? resource.body_text ?? ""
     : resource.title ?? resource.local_date ?? "");
   const tokens = text.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   const lower = body.toLowerCase();
   const first = Math.min(...tokens.map(token => { const at = lower.indexOf(token); return at < 0 ? Infinity : at; }));
-  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource), excerpt: null };
+  if (!body || first === Infinity) return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }), excerpt: null };
   const start = Math.max(0, first - CONTEXT), end = Math.min(body.length, first + CONTEXT * 2);
   const slice = body.slice(start, end);
   const sliceLower = slice.toLowerCase();
@@ -69,7 +71,7 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
   // overlapping token spans keep the earliest; each character renders once.
   const kept: [number, number][] = [];
   for (const mark of marks) if (!kept.length || mark[0] >= kept.at(-1)![1]) kept.push(mark);
-  return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource),
+  return { resource, kind, label: localResourceLabel(resource), href: localResourceHref(resource, { activationRef }),
     excerpt: { text: slice, marks: kept, before: start > 0, after: end < body.length } };
 }
 
@@ -113,9 +115,9 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
           cursor = result.next_cursor;
           if (cursor === null) break;
         }
-        const matches = rows.flatMap(({ resource, match_text }) => {
+        const matches = rows.flatMap(({ resource, match_text, activation_ref }) => {
           const kind = kindOf(resource);
-          return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text, match_text)] : [];
+          return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text, { matchText: match_text, activationRef: activation_ref })] : [];
         });
         if (live) setState({ key, matches, complete: cursor === null, scopeAvailable: true, error: null });
       } catch (error) {

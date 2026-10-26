@@ -59,6 +59,7 @@ export type AuthoredQuery =
   | { kind: "adjacency_window"; ref: ResourceRef; link_id: string; cursor: string | null; limit: number }
   | { kind: "binding"; key: SemanticKey }
   | { kind: "resource"; ref: ResourceRef }
+  | { kind: "source_alias"; ref: ResourceRef }
   | { kind: "adjacency"; ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "pages"; cursor: string | null; limit: number }
   | { kind: "daily"; local_date: string }
@@ -67,8 +68,9 @@ export type AuthoredQuery =
   | { kind: "backlinks"; ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "search"; text: string; cursor: string | null; limit: number; scopes: import("./scope.ts").SearchScope[]; families: import("./scope.ts").SearchFamily[] | null }
   | { kind: "resolve"; refs: ResourceRef[] };
-export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null }
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean }
+export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null }
+/** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }

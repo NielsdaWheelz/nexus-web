@@ -33,11 +33,13 @@ function range(start: number, end: number): void {
 function literal(value: string | null): void {
   if (value !== null && typeof value !== "string") throw new TypeError("Expected literal text or null");
 }
-export function validateLocator(locator: Locator, source_ref: string): void {
+function validateLocatorCapture(locator: Locator, source_ref: string): void {
   if (!locator || typeof locator !== "object") throw new TypeError("Expected typed locator");
   if (!isResourceRef(source_ref)) throw new TypeError("Invalid locator source");
-  const source_id = source_ref.slice(source_ref.indexOf(":") + 1);
-  if ("media_id" in locator && (locator.media_id !== source_id || !source_ref.startsWith("media:"))) throw new TypeError("Locator media disagrees with immutable source");
+  if ("media_id" in locator) {
+    if (!source_ref.startsWith("media:")) throw new TypeError("Locator media requires a media source");
+    uuid(locator.media_id);
+  }
   switch (locator.type) {
     case "web_text_offsets":
     case "epub_fragment_offsets":
@@ -74,6 +76,10 @@ export function validateLocator(locator: Locator, source_ref: string): void {
     if (typeof locator.text_quote_selector.exact !== "string") throw new TypeError("Invalid quote selector");
     literal(locator.text_quote_selector.prefix); literal(locator.text_quote_selector.suffix);
   }
+}
+export function validateLocator(locator: Locator, source_ref: string): void {
+  validateLocatorCapture(locator, source_ref);
+  if ("media_id" in locator && source_ref !== `media:${locator.media_id}`) throw new TypeError("Locator media disagrees with immutable source");
 }
 function selection(value: SelectionCapture, source_ref: string): void {
   if (!source_ref.startsWith("media:") || !["web_text_offsets", "epub_fragment_offsets", "pdf_page_geometry"].includes(value.locator.type)) throw new TypeError("Highlight selections require media text or PDF geometry");
@@ -120,7 +126,8 @@ export function validateChange(change: Change): void {
     register(passage.capture); publication(passage.capture.value.publication);
     if (typeof passage.capture.value.quote_exact !== "string") throw new TypeError("Expected literal passage quote");
     if (normalizeQuote(passage.capture.value.quote_exact) !== passage.normalized_exact) throw new TypeError("Passage quote disagrees with semantic binding");
-    if (passage.capture.value.locator !== null) validateLocator(passage.capture.value.locator, passage.source_ref);
+    // A media passage keys its reading slice; placement must prove that slice's relation to the locator's physical source.
+    if (passage.capture.value.locator !== null) validateLocatorCapture(passage.capture.value.locator, passage.source_ref);
   }
   for (const stub of change.source_stubs) {
     if (!isResourceRef(stub.source_ref)) throw new TypeError("Invalid captured source ref");

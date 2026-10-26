@@ -12,7 +12,7 @@ import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "@nexus/authored/schema";
-import { bindingQueries, compileQuery, searchQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
+import { bindingQueries, compileQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
@@ -58,6 +58,10 @@ export class Persistence {
     return this.states(selection);
   }
   async query(query: AuthoredQuery): Promise<QueryResult> {
+    if (query.kind === "source_alias") {
+      const result = await sourceAliasQuery(plan => this.db.all(plan.sql, plan.params), query);
+      return {store_revision:(await this.replica()).store_revision,...result};
+    }
     if (query.kind === "search") {
       const result = await searchQuery(plan => this.db.all(plan.sql, plan.params), query, async (text, expression) => {
         await this.db.run(SEARCH_MATCH_SQL.search_match_create);
@@ -73,22 +77,22 @@ export class Persistence {
     const raw = await this.db.all(compiled.sql, compiled.params);
     if (query.kind === "outline_children") return {
       store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null,
-      previous_cursor: null, binding_id: null, positions: [],
+      previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],
       children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true,
     };
-    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, scope_available: true };
+    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true };
     if (query.kind === "positions") {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
-      return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, scope_available: true };
+      return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true };
     }
-    const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null }));
+    const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null }));
     const last = rows.at(-1);
     let next: string | null = null;
     if ("limit" in query && rows.length === Math.min(100, query.limit) && last) {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: typeof raw[0]?.previous_cursor === "string" ? raw[0].previous_cursor : null, binding_id: null, positions: [], children: [], scope_available: true };
+    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: typeof raw[0]?.previous_cursor === "string" ? raw[0].previous_cursor : null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {

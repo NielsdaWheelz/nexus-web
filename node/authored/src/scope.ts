@@ -13,6 +13,7 @@ export interface ScopeInterval {
 }
 export type ScopeInput =
   | { kind: "scope"; scope_ref: string }
+  | { kind: "workspace_member"; reading_ref: string }
   | { kind: "media_member"; root_ref: string; reading_ref: string }
   | { kind: "library_member"; library_ref: string; reading_ref: string }
   | { kind: "conversation_fact"; conversation_ref: string; target_ref: string }
@@ -40,6 +41,12 @@ export interface ScopeTextPage {
  * values and operation names, never SQL. Revisions isolate incomplete inputs. */
 export const SCOPE_SQL = {
   scope_state: `SELECT active_revision,staging_revision,metadata_cursor,metadata_complete FROM scope_state WHERE singleton=1`,
+  // Published provenance is a relationship proof, independent of reading permission
+  // and its blacklist. The destination reader must own its own authorized bounds.
+  scope_source_alias: `SELECT target_ref AS canonical_source_ref FROM scope_facts
+    WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1) AND kind='source_alias' AND owner_ref=?1
+    UNION SELECT source_ref FROM scope_readings
+    WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1) AND reading_ref=?1 LIMIT 1`,
   scope_active_refs: `SELECT scope_ref FROM (
     SELECT owner_ref AS scope_ref FROM scope_facts WHERE kind='scope' AND revision IN (SELECT active_revision FROM scope_state UNION ALL SELECT staging_revision FROM scope_state)
     UNION SELECT reading_ref FROM scope_readings WHERE revision IN (SELECT active_revision FROM scope_state UNION ALL SELECT staging_revision FROM scope_state)
@@ -59,7 +66,7 @@ export const SCOPE_SQL = {
   scope_metadata_facts: `INSERT OR IGNORE INTO scope_facts(revision,fact_key,kind,owner_ref,target_ref,state_json)
     SELECT ?,json_array(json_extract(value,'$.kind'),COALESCE(json_extract(value,'$.scope_ref'),json_extract(value,'$.root_ref'),json_extract(value,'$.library_ref'),json_extract(value,'$.conversation_ref'),json_extract(value,'$.highlight_ref'),json_extract(value,'$.reading_ref')),CASE WHEN json_extract(value,'$.kind')='source_alias' THEN json_extract(value,'$.source_ref') ELSE COALESCE(json_extract(value,'$.reading_ref'),json_extract(value,'$.target_ref')) END),
       json_extract(value,'$.kind'),COALESCE(json_extract(value,'$.scope_ref'),json_extract(value,'$.root_ref'),json_extract(value,'$.library_ref'),json_extract(value,'$.conversation_ref'),json_extract(value,'$.highlight_ref'),json_extract(value,'$.reading_ref')),CASE WHEN json_extract(value,'$.kind')='source_alias' THEN json_extract(value,'$.source_ref') ELSE COALESCE(json_extract(value,'$.reading_ref'),json_extract(value,'$.target_ref')) END,value
-    FROM json_each(?) WHERE json_extract(value,'$.kind') IN ('scope','media_member','library_member','conversation_fact','source_alias','highlight_member')`,
+    FROM json_each(?) WHERE json_extract(value,'$.kind') IN ('scope','workspace_member','media_member','library_member','conversation_fact','source_alias','highlight_member')`,
   scope_metadata_readings: `INSERT OR IGNORE INTO scope_readings(revision,reading_ref,source_ref,source_kind,body_generation,source_generation)
     SELECT ?,json_extract(value,'$.reading_ref'),json_extract(value,'$.source_ref'),json_extract(value,'$.source_kind'),json_extract(value,'$.body_generation'),json_extract(value,'$.source_generation') FROM json_each(?) WHERE json_extract(value,'$.kind')='reading'`,
   scope_metadata_intervals: `INSERT OR IGNORE INTO scope_intervals(revision,interval_key,reading_ref,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut)

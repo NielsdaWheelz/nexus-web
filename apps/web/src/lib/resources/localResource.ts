@@ -1,6 +1,6 @@
-/** Presentation facts derived only from a local authored projection: the literal label
- * and where it opens. Rows, menus and local search share these; no server read. */
-import type { ResourceProjection } from "@nexus/authored/types";
+/** local labels and routes. search may supply its selected reading without changing
+ * the captured source identity. rows and menus use canonical routes; no server read. */
+import type { ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 
 const ROUTES: Partial<Record<string, string>> = {
@@ -13,12 +13,19 @@ const routeFor = (ref: string): string | null => {
   return parsed && prefix ? `${prefix}/${parsed.id}` : null;
 };
 
-/** Where a local projection opens: its own route, or a highlight's place in its media. */
-export function localResourceHref(resource: ResourceProjection): string | null {
-  if (resource.kind !== "highlight") return routeFor(resource.ref);
-  const source = resource.source_ref ? parseResourceRef(resource.source_ref) : null;
+/** the canonical route, or a search winner's reading, with the saved occurrence intact. */
+export function localResourceHref(resource: ResourceProjection,
+  { activationRef }: { activationRef: ResourceRef | null } = { activationRef: null }): string | null {
   const own = parseResourceRef(resource.ref);
-  return source?.scheme === "media" && own ? `/media/${source.id}#highlight-${own.id}` : resource.source_ref ? routeFor(resource.source_ref) : null;
+  if (own?.scheme === "passage_anchor") {
+    const sourceRef = activationRef ?? resource.source_ref;
+    const href = sourceRef ? routeFor(sourceRef) : null;
+    return href ? `${href}#passage-${own.id}` : null;
+  }
+  if (resource.kind !== "highlight") return routeFor(resource.ref);
+  const sourceRef = activationRef ?? resource.source_ref;
+  const source = sourceRef ? parseResourceRef(sourceRef) : null;
+  return source?.scheme === "media" && own ? `/media/${source.id}#highlight-${own.id}` : sourceRef ? routeFor(sourceRef) : null;
 }
 
 /** The literal label a local projection supplies for menus, links and parents. */

@@ -99,8 +99,9 @@ def _ctes() -> str:
     return f"""WITH
         authorized AS MATERIALIZED ({requested_media_ids_cte_sql()}),
         retained_refs AS MATERIALIZED ({retained}),
+        workspace AS MATERIALIZED ({visible_media_ids_cte_sql()}),
         roots AS MATERIALIZED (
-            SELECT media_id FROM ({visible_media_ids_cte_sql()}) visible
+            SELECT media_id FROM workspace
             UNION SELECT m.id FROM retained_refs retained
                 JOIN media m ON retained.ref='media:'||m.id::text
                 JOIN authorized a ON a.media_id=m.id
@@ -173,6 +174,9 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
             jsonb_build_object('kind','scope','scope_ref','library:'||id::text) FROM scope_libraries
         UNION ALL SELECT 'scope:conversation:'||conversation_id::text,
             jsonb_build_object('kind','scope','scope_ref','conversation:'||conversation_id::text) FROM conversations
+        UNION ALL SELECT 'workspace:'||workspace.media_id::text,
+            jsonb_build_object('kind','workspace_member','reading_ref','media:'||workspace.media_id::text)
+            FROM workspace JOIN readings reading ON reading.media_id=workspace.media_id
         UNION ALL SELECT 'media:'||root_id::text||':'||media_id::text,
             jsonb_build_object('kind','media_member','root_ref','media:'||root_id::text,'reading_ref','media:'||media_id::text) FROM members
         UNION ALL SELECT 'library:'||library_id::text||':'||media_id::text,

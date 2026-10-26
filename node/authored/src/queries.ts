@@ -4,10 +4,10 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import type { AuthoredQuery, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture } from "./types.ts";
-import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, type ScopeInterval, type ScopeReading } from "./scope.ts";
+import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
-/** Literal full capture for an all-scope excerpt; a reading scope must clip first. */
+/** Literal stored capture; search supplies its authorized excerpt separately. */
 export function capturedHighlightText(selection: SelectionCapture): string {
   return HIGHLIGHT_TEXT_FIELDS.map(field => selection[field] ?? "").join("");
 }
@@ -80,7 +80,9 @@ const SEARCH_SQL = `WITH wanted AS MATERIALIZED(
   SELECT d.ref FROM search_fts f CROSS JOIN search_documents d ON d.rowid=f.rowid
   WHERE search_fts MATCH ?1 AND (?2 IS NULL OR ${SEARCH_FAMILY} IN (SELECT value FROM json_each(?2)))
     AND d.ref>?3 ORDER BY d.ref LIMIT ?4
-),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT projection_json,NULL AS link_json FROM readable ORDER BY ref`;
+),readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
+  SELECT r.projection_json,NULL AS link_json,p.state_json AS passage_json FROM readable r
+  LEFT JOIN passages p ON r.ref='passage_anchor:'||p.anchor_id ORDER BY r.ref`;
 const SEARCH_SCOPE_CTES = `requested(scope_ref) AS (SELECT value FROM json_each(?1)),
   revision(value) AS (SELECT active_revision FROM scope_state WHERE singleton=1),
   facts AS MATERIALIZED(
@@ -160,20 +162,24 @@ const SEARCH_READINGS_SQL = `WITH ${SEARCH_SCOPE_CTES}
     (m.source_ref IN (SELECT value FROM json_each(?2)) OR EXISTS(SELECT 1 FROM scope_facts owner WHERE owner.revision=m.revision AND owner.kind='source_alias' AND owner.owner_ref IN (SELECT value FROM json_each(?2)) AND owner.target_ref=m.source_ref))
     AND (m.reading_ref=m.source_ref OR NOT EXISTS(SELECT 1 FROM members root WHERE root.reading_ref=m.source_ref)))
   GROUP BY m.reading_ref HAVING m.reading_ref>COALESCE(json_extract(?3,'$'),'') ORDER BY m.reading_ref LIMIT 100`;
-// Exact conversation refs may resolve against independently authorized readings.
-// These rows never enter requested members or grant scope to another result.
-const SEARCH_EXACT_READINGS_SQL = `SELECT r.reading_ref,r.source_ref,r.source_kind,r.body_generation,r.source_generation,
+// All admits only workspace readings; exact conversation refs can use other
+// independently authorized readings for that row without widening requested scope.
+const SEARCH_AUTHORIZED_READINGS_SQL = `SELECT r.reading_ref,r.source_ref,r.source_kind,r.body_generation,r.source_generation,
     0 AS linked_allowed,
     EXISTS(SELECT 1 FROM scope_text_complete c WHERE c.revision=r.revision AND c.reading_ref=r.reading_ref) AS complete,
     json_quote(r.reading_ref) AS cursor_json
   FROM scope_readings r WHERE r.revision=(SELECT active_revision FROM scope_state WHERE singleton=1)
     AND r.source_ref IN (SELECT value FROM json_each(?1))
     AND NOT EXISTS(SELECT 1 FROM scope_revocations v WHERE v.scope_ref=r.reading_ref)
+    AND (?3=0 OR EXISTS(SELECT 1 FROM scope_facts workspace WHERE workspace.revision=r.revision
+      AND workspace.kind='workspace_member' AND workspace.owner_ref=r.reading_ref))
     AND (?2 IS NULL OR r.reading_ref=?2)
     AND (?2 IS NOT NULL OR r.reading_ref=r.source_ref OR NOT EXISTS(
       SELECT 1 FROM scope_readings root WHERE root.revision=r.revision AND root.reading_ref=r.source_ref
-        AND NOT EXISTS(SELECT 1 FROM scope_revocations v WHERE v.scope_ref=root.reading_ref)))
-    AND r.reading_ref>COALESCE(json_extract(?3,'$'),'') ORDER BY r.reading_ref LIMIT 100`;
+        AND NOT EXISTS(SELECT 1 FROM scope_revocations v WHERE v.scope_ref=root.reading_ref)
+        AND (?3=0 OR EXISTS(SELECT 1 FROM scope_facts workspace WHERE workspace.revision=root.revision
+          AND workspace.kind='workspace_member' AND workspace.owner_ref=root.reading_ref))))
+    AND r.reading_ref>COALESCE(json_extract(?4,'$'),'') ORDER BY r.reading_ref LIMIT 100`;
 const SEARCH_INTERVALS_SQL = `SELECT interval_key,reading_ref,fragment_id,fragment_idx,start_offset,end_offset,purpose,start_cut,end_cut
     ,json_array(reading_ref,interval_key) AS cursor_json
   FROM scope_intervals WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1)
@@ -183,7 +189,10 @@ const SEARCH_INTERVALS_SQL = `SELECT interval_key,reading_ref,fragment_id,fragme
 const SEARCH_FACTS_SQL = `WITH ${SEARCH_SCOPE_CTES} SELECT DISTINCT target_ref FROM facts WHERE target_ref IN (SELECT value FROM json_each(?2))`;
 const SEARCH_ALIASES_SQL = `SELECT owner_ref,target_ref FROM scope_facts
   WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1) AND kind='source_alias'
-    AND owner_ref IN (SELECT value FROM json_each(?1))`;
+    AND owner_ref IN (SELECT value FROM json_each(?1))
+  UNION SELECT reading_ref,source_ref FROM scope_readings
+  WHERE revision=(SELECT active_revision FROM scope_state WHERE singleton=1)
+    AND reading_ref IN (SELECT value FROM json_each(?1))`;
 const SEARCH_RESOURCES_SQL = `SELECT ref,visible FROM resources WHERE kind='note' AND ref IN (SELECT value FROM json_each(?1)) ORDER BY ref`;
 // Pick one positive window by its small cursor metadata before projecting text.
 // The candidate scan may visit the reading, but never retains every overlap blob.
@@ -240,7 +249,7 @@ export const SEARCH_MATCH_SQL = {
 } as const;
 /** Every read shape is finite and packaged by content identity for the native host. */
 export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
-  SEARCH_READINGS_SQL, SEARCH_EXACT_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL] as const;
+  SEARCH_READINGS_SQL, SEARCH_AUTHORIZED_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_FACTS_SQL, SEARCH_ALIASES_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias] as const;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
 function orderedIncident(where:string,direction:"ASC"|"DESC",limit:string,exclude:string,requireRootLive=true):string {
@@ -279,6 +288,7 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
       return { sql: "SELECT anchor_id AS binding_id FROM passages WHERE source_ref=? AND json_extract(state_json,'$.normalized_exact')=? AND json_extract(state_json,'$.prefix')=? AND json_extract(state_json,'$.suffix')=?", params: [key.source_ref, key.normalized_exact, key.prefix, key.suffix] };
     }
     case "resource": return { sql: `${READABLE} SELECT projection_json,NULL AS link_json FROM readable WHERE ref=?`, params: [query.ref] };
+    case "source_alias": return { sql: SCOPE_SQL.scope_source_alias, params: [query.ref] };
     case "resolve": {
       if (query.refs.length > 100) throw new TypeError("At most 100 references may be resolved");
       return { sql: `${READABLE} SELECT projection_json,NULL AS link_json FROM readable WHERE ref IN (${query.refs.map(() => "?").join(",") || "NULL"}) ORDER BY ref`, params: query.refs };
@@ -328,30 +338,37 @@ export function compileQuery(query: AuthoredQuery): CompiledQuery {
   }
 }
 
-type SearchRead = (plan: CompiledQuery) => Promise<Record<string, unknown>[]>;
+type QueryRead = (plan: CompiledQuery) => Promise<Record<string, unknown>[]>;
 type SearchReading = ScopeReading & { linked_allowed: boolean; intervals: ScopeInterval[] };
-type SearchText = { literal: string; lexical: string };
+type SearchText = { literal: string; lexical: string; activation_ref: string };
+type PassageMembership = { activation_ref: string | null } | false;
+
+/** Active published source identity only; this proves no reading permission. */
+export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
+  const rows = await read(compileQuery(query));
+  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true};
+}
 
 /** Both serialized hosts execute this same bounded search. SQL filters the family
  * and broad graph scope before candidate paging. Canonical containment, normalized
  * quote uniqueness and clipped FTS matching precede the requested result limit.
  * Only positive bounded quote windows cross the storage boundary; source text and
  * derived scope inputs never replace the canonical authored projection. */
-export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery, {kind: "search"}>,
+export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search"}>,
   matches: (text: string, expression: string) => Promise<boolean>): Promise<Omit<QueryResult, "store_revision">> {
-  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, positions: [], children: [], scope_available: true};
+  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true};
   const limit = Math.max(1, Math.min(100, Math.floor(query.limit)));
+  const all = query.scopes.some(scope => scope.kind === "all");
   const scopeRefs = query.scopes.flatMap(scope => scope.kind === "all" ? [] : [`${scope.kind}:${scope.id}`]);
   const scopesJson = JSON.stringify(scopeRefs);
   if (!query.scopes.length) return {...result, scope_available: false};
-  if (query.scopes.some(scope => scope.kind === "all")) {
-    const raw = await read(compileQuery(query));
-    result.rows = raw.map(row => ({resource: JSON.parse(String(row.projection_json)), link: null, match_text: null}));
-    if (result.rows.length === limit) result.next_cursor = result.rows.at(-1)!.resource.ref;
-    return result;
+  let requestedAvailable = true;
+  if (!all || scopeRefs.length) {
+    const available = await read({sql: SEARCH_SCOPE_AVAILABLE_SQL, params: [scopesJson]});
+    requestedAvailable = Number(available[0]?.available) === 1;
+    if (!all && !requestedAvailable) return {...result, scope_available: false};
   }
-  const available = await read({sql: SEARCH_SCOPE_AVAILABLE_SQL, params: [scopesJson]});
-  if (Number(available[0]?.available) !== 1) return {...result, scope_available: false};
+  const requestedInputs = requestedAvailable ? scopesJson : "[]";
   const expression = searchExpression(query.text) || '""';
   const readings = new Map<string, SearchReading>();
   const loadedSources = new Set<string>();
@@ -361,7 +378,7 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
   const peers = new Map<string, {ref: string; resource: ResourceProjection | null; scoped: boolean}[]>();
   const aliases = new Map<string, string>();
   const highlightTexts = new Map<string, SearchText[]>();
-  const passageMembership = new Map<string, boolean>();
+  const passageMembership = new Map<string, PassageMembership>();
   const directFacts = new Set<string>();
   const pageRead = async (sql: string, params: CompiledQuery["params"]) => {
     const rows: Record<string, unknown>[] = [];
@@ -374,9 +391,10 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
     }
   };
   const loadReadings = async (rows: Record<string, unknown>[], target: Map<string, SearchReading>): Promise<boolean> => {
-    if (rows.some(row => Number(row.complete) !== 1 || row.reading_ref !== row.source_ref && (row.body_generation === null || row.source_generation === null))) return false;
+    const ready = rows.filter(row => Number(row.complete) === 1 && (row.reading_ref === row.source_ref || row.body_generation !== null && row.source_generation !== null));
+    if (!all && ready.length !== rows.length) return false;
     const refs: string[] = [];
-    for (const row of rows) {
+    for (const row of ready) {
       const ref = String(row.reading_ref);
       if (target.has(ref)) continue;
       refs.push(ref);
@@ -393,10 +411,14 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
   const loadExactReadings = async (source: string, owner: string | null): Promise<boolean> => {
     const key = `${source}:${owner ?? ""}`;
     if (loadedExactSources.has(key)) return true;
-    if (!await loadReadings(await pageRead(SEARCH_EXACT_READINGS_SQL, [JSON.stringify([source]), owner]), exactReadings)) return false;
+    if (!await loadReadings(await pageRead(SEARCH_AUTHORIZED_READINGS_SQL, [JSON.stringify([source]), owner, 0]), exactReadings)) return false;
     loadedExactSources.add(key);
     return true;
   };
+  // Canonical owner order counts only body extent, never required-note bytes.
+  const extent = (reading: SearchReading) => reading.intervals.filter(interval => interval.purpose === "body").reduce((sum, interval) => sum + interval.end_offset - interval.start_offset, 0);
+  const readingOrder = (a: SearchReading, b: SearchReading) => Number(b.reading_ref === b.source_ref) - Number(a.reading_ref === a.source_ref)
+    || extent(a) - extent(b) || (a.reading_ref < b.reading_ref ? -1 : a.reading_ref > b.reading_ref ? 1 : 0);
   const textsForHighlight = (resource: ResourceProjection, linkedOnly: boolean, exact = false): SearchText[] => {
     const key = `${resource.ref}:${linkedOnly}:${exact}`;
     const known = highlightTexts.get(key);
@@ -412,9 +434,7 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
     });
     // Server reading_owner_sql: root, then smallest canonical extent, then id.
     // Choose before lexical evaluation; a wider sibling cannot rescue a miss.
-    const extent = (reading: SearchReading) => reading.intervals.filter(interval => interval.purpose === "body").reduce((sum, interval) => sum + interval.end_offset - interval.start_offset, 0);
-    containing.sort((a, b) => Number(b.reading_ref === b.source_ref) - Number(a.reading_ref === a.source_ref)
-      || extent(a) - extent(b) || (a.reading_ref < b.reading_ref ? -1 : a.reading_ref > b.reading_ref ? 1 : 0));
+    containing.sort(readingOrder);
     const reading = containing[0];
     let variants: SearchText[] = [];
     if (reading) {
@@ -425,7 +445,7 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
         fields = {...selection, ...clippedHighlightFields(selection, locator.start_offset, locator.end_offset,
           Math.min(...intervals.map(interval => interval.start_offset)), Math.max(...intervals.map(interval => interval.end_offset)))};
       }
-      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" ")}];
+      variants = [{literal: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(""), lexical: HIGHLIGHT_TEXT_FIELDS.map(field => fields[field] ?? "").join(" "), activation_ref: reading.reading_ref}];
     }
     highlightTexts.set(key, variants);
     return variants;
@@ -433,23 +453,24 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
   const noteInScope = (ref: string): boolean => directFacts.has(ref) || (peers.get(ref) ?? []).some(peer =>
     peer.scoped || [...readings.values()].some(reading => reading.linked_allowed && reading.reading_ref === peer.ref)
       || peer.resource?.kind === "highlight" && textsForHighlight(peer.resource, true).length > 0);
-  const passageInScope = async (passage: PassageState, ref: string): Promise<boolean | null> => {
+  const passageInScope = async (passage: PassageState, ref: string): Promise<PassageMembership | null> => {
     const known = passageMembership.get(ref);
     if (known !== undefined) return known;
     let admitted = false;
+    let activation_ref: string | null = null;
     if (passage.source_ref.startsWith("note_block:")) admitted = sourceNotes.has(passage.source_ref)
-      && (directFacts.has(ref) || sourceNotes.get(passage.source_ref) === true && noteInScope(passage.source_ref));
+      && (all || directFacts.has(ref) || sourceNotes.get(passage.source_ref) === true && noteInScope(passage.source_ref));
     else {
       const source = aliases.get(passage.source_ref) ?? passage.source_ref;
       const pools = directFacts.has(ref) ? [readings, exactReadings] : [readings];
       for (const pool of pools) {
         if (pool === exactReadings && !await loadExactReadings(source, passage.source_ref === source ? null : passage.source_ref)) return null;
-        for (const reading of pool.values()) {
+        for (const reading of [...pool.values()].sort(readingOrder)) {
           if (reading.source_ref !== source && reading.reading_ref !== source) continue;
           // Ordinary reopening of a part-owned capture retains that exact part.
           if (pool === exactReadings && passage.source_ref !== source && reading.reading_ref !== passage.source_ref) continue;
           // An admitted full source retains its stored quote even when unlocated.
-          if (reading.reading_ref === reading.source_ref) {admitted = true; break;}
+          if (reading.reading_ref === reading.source_ref) {admitted = true; activation_ref = reading.reading_ref; break;}
           const scanner = new ScopeQuoteScanner(passage.normalized_exact, passage.prefix, passage.suffix);
           let cursor: string | null = null;
           for (;;) {
@@ -461,17 +482,19 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
             if (scanner.ambiguous) break;
             cursor = String(window.cursor_json);
           }
-          if (scanner.result !== null) {admitted = true; break;}
+          if (scanner.result !== null) {admitted = true; activation_ref = reading.reading_ref; break;}
         }
         if (admitted) break;
       }
     }
-    passageMembership.set(ref, admitted);
-    return admitted;
+    const member = admitted ? {activation_ref} : false;
+    passageMembership.set(ref, member);
+    return member;
   };
   let cursor = query.cursor ?? "";
   for (;;) {
-    const raw = await read({sql: SEARCH_SCOPED_SQL, params: [scopesJson, expression, query.families === null ? null : JSON.stringify(query.families), cursor, 100]});
+    const families = query.families === null ? null : JSON.stringify(query.families);
+    const raw = await read({sql: all ? SEARCH_SQL : SEARCH_SCOPED_SQL, params: all ? [expression, families, cursor, 100] : [scopesJson, expression, families, cursor, 100]});
     if (!raw.length) return result;
     const candidates = raw.map(row => {
       const resource: ResourceProjection = JSON.parse(String(row.projection_json));
@@ -484,7 +507,7 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
     const missingNotes = noteRefs.filter(ref => !peers.has(ref));
     if (missingNotes.length) {
       for (const ref of missingNotes) peers.set(ref, []);
-      if (query.scopes.some(scope => scope.kind !== "conversation")) {
+      if (!all && query.scopes.some(scope => scope.kind !== "conversation")) {
         for (const row of await pageRead(SEARCH_LINKS_SQL, [scopesJson, JSON.stringify(missingNotes)])) {
           const resource: ResourceProjection | null = row.projection_json === null ? null : JSON.parse(String(row.projection_json));
           peers.get(String(row.owner_ref))!.push({ref: String(row.ref), resource, scoped: Number(row.external_member) === 1});
@@ -499,27 +522,28 @@ export async function searchQuery(read: SearchRead, query: Extract<AuthoredQuery
     const newSources = sources.filter(ref => !loadedSources.has(ref));
     if (newSources.length) {
       for (const row of await read({sql: SEARCH_ALIASES_SQL, params: [JSON.stringify(newSources)]})) aliases.set(String(row.owner_ref), String(row.target_ref));
-      const newReadings = await pageRead(SEARCH_READINGS_SQL, [scopesJson, JSON.stringify(newSources)]);
+      const newReadings = await pageRead(SEARCH_READINGS_SQL, [requestedInputs, JSON.stringify(newSources)]);
+      if (all) newReadings.push(...await pageRead(SEARCH_AUTHORIZED_READINGS_SQL, [JSON.stringify(newSources.map(ref => aliases.get(ref) ?? ref)), null, 1]));
       if (!await loadReadings(newReadings, readings)) return {...result, rows: [], next_cursor: null, scope_available: false};
       for (const source of newSources) loadedSources.add(source);
     }
     const factRefs = [...new Set([...candidates.map(candidate => candidate.resource.ref), ...noteRefs])];
-    for (const row of await read({sql: SEARCH_FACTS_SQL, params: [scopesJson, JSON.stringify(factRefs)]})) directFacts.add(String(row.target_ref));
+    for (const row of await read({sql: SEARCH_FACTS_SQL, params: [requestedInputs, JSON.stringify(factRefs)]})) directFacts.add(String(row.target_ref));
     for (const {resource, passage} of candidates) {
       let match: QueryRow | null = null;
       if (resource.kind === "note" || resource.kind === "page") {
-        if (noteInScope(resource.ref)) match = {resource, link: null, match_text: null};
+        if (all || noteInScope(resource.ref)) match = {resource, link: null, match_text: null, activation_ref: null};
       } else if (resource.kind === "highlight") {
         const requested = textsForHighlight(resource, false);
         if (!requested.length && directFacts.has(resource.ref) && resource.source_ref && !await loadExactReadings(resource.source_ref, null))
           return {...result, rows: [], next_cursor: null, scope_available: false};
         const texts = requested.length || !directFacts.has(resource.ref) ? requested : textsForHighlight(resource, false, true);
-        for (const text of texts) if (await matches(text.lexical, expression)) {match = {resource, link: null, match_text: text.literal}; break;}
+        for (const text of texts) if (await matches(text.lexical, expression)) {match = {resource, link: null, match_text: text.literal, activation_ref: text.activation_ref}; break;}
       } else if (passage) {
         const admitted = await passageInScope(passage, resource.ref);
         if (admitted === null) return {...result, rows: [], next_cursor: null, scope_available: false};
-        if (admitted) match = {resource, link: null, match_text: passage.capture.value.quote_exact};
-      }
+        if (admitted) match = {resource, link: null, match_text: passage.capture.value.quote_exact, activation_ref: admitted.activation_ref};
+      } else if (all) match = {resource, link: null, match_text: null, activation_ref: null};
       if (match) result.rows.push(match);
       if (result.rows.length === limit) return {...result, next_cursor: resource.ref};
     }

@@ -272,6 +272,11 @@ class ScopeIdentity(Closed):
     scope_ref: str
 
 
+class ScopeWorkspaceMember(Closed):
+    kind: Literal["workspace_member"]
+    reading_ref: str
+
+
 class ScopeMediaMember(Closed):
     kind: Literal["media_member"]
     root_ref: str
@@ -326,6 +331,7 @@ class ScopeInterval(Closed):
 
 ScopeInput = Annotated[
     ScopeIdentity
+    | ScopeWorkspaceMember
     | ScopeMediaMember
     | ScopeLibraryMember
     | ScopeConversationFact
