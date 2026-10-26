@@ -261,8 +261,9 @@ export class OutlineController {
           await Promise.all(retired.map(([, held]) => held.document.capture()));
           const keep = this.refs(this.reservedWindows ?? this.windows);
           for (const [ref, held] of retired) if (!keep.has(ref) && this.documents.get(ref) === held) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
-          if (this.active) {if (this.error === finishing) this.error = null; this.changed();}
+          if (this.active && this.error === finishing) this.error = null;
         } finally {for (const [ref] of retired) this.settlingRefs.delete(ref);}
+        if (this.active) this.changed();
       }).catch(error => {if (this.active) {this.error = error; this.notify();}});
     }
     return false;

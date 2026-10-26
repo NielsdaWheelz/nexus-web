@@ -13,7 +13,18 @@ protected writing and charging documents until their actual release. prove an
 empty full-history session can regain its tail without reloading or clearing
 writing, and without replaying an old input gesture.
 
-source correction is implemented: a manual tail atom requests the existing
-history/document retirement path before admitting an editable field. the focused
-64-note paging/history/tail case remains unexecuted; retain this issue until its
-actual admission, writing and order oracles pass.
+source correction adds a manual tail atom through the existing retirement owner.
+run `20261026-005311-8fc1d02bd564` on `930c4a7c2` passes all 48 independently
+edited and uploaded bodies, final-window paging and the actual rendered
+“finishing older edits; try again” feedback. the tail remains absent for the
+next 30 seconds (`outline-session-budget-tail.spec.ts:56`); the pending-copy case
+does not run. this is not a writing-loss or client-capacity verdict.
+
+`admitNew()` rebuilds after releasing documents while their references still
+remain in `settlingRefs`; its finally removes those references without another
+rebuild. refresh only after the existing release/charge cleanup has completed,
+without replaying the first gesture. retain this issue until actual admission,
+writing and order oracles pass.
+
+the source correction publishes after that cleanup; the retry uses the unchanged
+fixture and budget, with the second gesture still required to focus and write.
