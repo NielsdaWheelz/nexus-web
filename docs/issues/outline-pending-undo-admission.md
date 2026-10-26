@@ -53,3 +53,10 @@ foreign touches. a consumed inverse must publish its causally complete actual
 post-undo body before subsequent input; it cannot install inverse-only bytes into
 an obsolete displayed clone. the consumer rewrite and unchanged immediate-undo
 journey remain required.
+
+preserve offscreen settlement too: old-controller run
+`20261026-033916-75451f0eb8dc` passes real blocked creation, same-pane navigation
+with the prior session unmounted, exact durable body/link, and browser close
+without a loss warning. this is a baseline control; the transient owner-null
+early return was found in the consumer rewrite, not in `ec33256fa`. rerun this
+unchanged control on the integrated replacement.
