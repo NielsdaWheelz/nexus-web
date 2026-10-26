@@ -33,3 +33,11 @@ the unchanged companion witness passed in 6.4 seconds when first in fresh
 runtime `20261020-090719-3cff8aa446c9`, with process-scoped idle-sleep
 prevention. the earlier scheduling gap remains unexplained; no focus defect
 was observed.
+
+local-first composition `78505bfb1`, run `20261026-050117-e8cc22e5435d`,
+passes firefox and two held-writing controls, then fails the reader hook's shared
+50-second upload budget: epub ingestion completes while note indexing and
+connection discovery settle; the following pdf still returns
+`409 E_MEDIA_NOT_READY` after 17 polls. no annotation case runs. keep the reader
+qualification in a fresh runtime, with its actual upload path and unchanged
+deadlines. this observation adds no import-latency guarantee or queue-policy fix.
