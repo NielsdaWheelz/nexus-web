@@ -1,10 +1,11 @@
-# reopened store claims current before observing server head
+# cold-reopen synchronization status needs live qualification
 
-`Sync.facts.head` initializes to `"0"`. after opening a completed local corpus
-with no pending changes, `syncStatus` returns `current` before registration or
-pull has established the current server head. an offline cold launch can briefly
-claim up to date until its first request fails.
+the earlier initializer allegation is resolved in source:
+`apps/web/src/lib/authored/sync.ts:24` initializes `Sync.facts.head` to `null`.
+do not count this as a current source defect or infer live behavior from that
+initializer alone.
 
-represent an unobserved head as null and remain syncing until a real head,
-offline failure or explicit admission fact is known. prove cold reopening a
-completed corpus cannot publish current before the first remote observation.
+prove a fresh-process reopen of a completed local corpus cannot publish current
+before registration or pull establishes the remote head. observe its initial
+status while the real transport is held, then the offline failure or real head;
+retain writing availability. fold this into the remaining cold-launch campaign.
