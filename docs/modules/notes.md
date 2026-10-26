@@ -94,7 +94,9 @@ reference input have had their own admission.
 return splits prose at the selection; an empty nested item outdents. an empty
 top-level item stays empty. backward/forward deletion at a boundary joins adjacent
 notes; deleting an empty item unlinks its occurrence. code return remains an
-in-note break. explicit block removal unlinks exactly the selected relationships.
+in-note break. its native DOM parser preserves literal newlines; clipboard slices
+retain their separate existing import policy. explicit block removal unlinks
+exactly the selected relationships.
 text and structure share one session undo order. reference-query text retains its
 local editing history while the query owns input.
 

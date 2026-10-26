@@ -8,10 +8,10 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-mobile editor against local-first `c20ebe7b6`: +1,336 authored runtime lines
-(1,960 added, 624 deleted) under the historical classifier, plus 15 shared
+mobile editor against local-first `c20ebe7b6`: +1,348 authored runtime lines
+(1,973 added, 625 deleted) under the historical classifier, plus 15 shared
 `node/authored` runtime lines (16 added, one deleted). the combined runtime
-change is +1,351. fixed touch commands, prepared local windows and retained input
+change is +1,363. fixed touch commands, prepared local windows and retained input
 replace the insertion/finish controls, duplicate row reads and disposable input
 handoffs. native visibility and receipt publication have explicit owners. lab
 providers, configuration, docs and temporary cases are outside this count;
