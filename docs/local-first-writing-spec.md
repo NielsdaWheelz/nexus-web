@@ -251,9 +251,13 @@ before exceeding the cache budget. closing the outline releases its history.
 the visible outline uses one persistent editing host. its separate admission
 budget is 64 distinct documents or 16 mib encoded state across the entire
 session, including disclosed descendants, neighbors, tail, pending writing and
-history. release inactive windows and oldest whole history groups before loading
-more. growth of already protected writing may exceed that budget: preserve the
-text and stop additional loads until room exists. never discard accepted input
+history. charge each canonical document once and each independently retained
+displayed or frozen baseline separately, including hidden history occurrences;
+history metadata also counts. measure yjs encoding bytes and utf-8 metadata bytes.
+visual anchor identities alone do not retain writing. large repeated aliases can
+therefore admit fewer fields. release inactive windows and oldest whole history
+groups before loading more. growth of already protected writing may exceed that
+budget: preserve the text and stop additional loads until room exists. never discard accepted input
 or remount its editor to enforce a memory number. this is an admission bound,
 not a hard resident-memory ceiling.
 fts5 and indexed endpoint tables supply local queries. tokenization/query

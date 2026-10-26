@@ -208,6 +208,11 @@ writing or clipboard data.
 
 one session admits at most 64 unique document identities and 16 mib of encoded
 state across root, disclosed branches, neighbors, tail, pending input and history.
+the charge includes each canonical encoding once, each independent retained
+occurrence/frozen baseline encoding, and utf-8 history metadata. hidden history
+bindings remain charged; visual anchor ids alone retain no writing. the document
+count stays deduplicated by canonical ref, so large repeated aliases can exhaust
+the byte budget first.
 provisional fields reserve capacity before they become editable. this is a
 new-admission bound, not a heap guarantee or an authoring quota: accepted typing,
 composition and incoming growth remain protected and stop additional loads when
