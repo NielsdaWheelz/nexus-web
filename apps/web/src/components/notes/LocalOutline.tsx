@@ -78,7 +78,6 @@ export default function LocalOutline({ rootRef, prelude = EMPTY_INTENTS, apiRef,
   const history = inheritedHistory ?? ownHistory;
   useEffect(() => () => { ownHistory?.close(); }, [ownHistory]);
   const surface = useRef<HTMLDivElement>(null);
-  const moreItems = useRef<HTMLDivElement>(null);
   const registry = useRef(new Map<string, SelectedRow>());
   const editors = useRef(new Map<string, NoteEditorHandle>());
   const positions = useRef(new Map<string, FocusSelection>());
@@ -108,22 +107,6 @@ export default function LocalOutline({ rootRef, prelude = EMPTY_INTENTS, apiRef,
   const rootResource = root.data?.rows[0]?.resource;
   const rootLabel = rootResource ? localResourceLabel(rootResource) : rootRef;
   const rows = read.rows;
-  const nextCursor = read.data?.next_cursor;
-  useEffect(() => {
-    const target = moreItems.current;
-    if (!target || !nextCursor) return;
-    let requested = false;
-    const observer = new IntersectionObserver(entries => {
-      if (!requested && entries.some(entry => entry.isIntersecting)) {
-        requested = true;
-        read.more();
-      }
-    });
-    observer.observe(target);
-    return () => observer.disconnect();
-    // Admit one next page for each displayed cursor; autosave must not rearm it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextCursor]);
   const trailing = useRef<NoteEditorHandle | null>(null);
   const [trailingSerial, resetTrailing] = useState(0);
   const { platform } = useRenderEnvironment();
@@ -300,15 +283,16 @@ export default function LocalOutline({ rootRef, prelude = EMPTY_INTENTS, apiRef,
     await owner.focus({key, ref, selection: ref.startsWith("note_block:") ? "end" : null}, mayFocus);
     return true;
   }, [runtime, rootRef, occurrencePrefix, owner]);
+  const append = () => {
+    if (read.data?.next_cursor && read.tailEdge) {
+      if (anchor !== read.tailEdge.link.link_id) setWindow({root: rootRef, anchor: read.tailEdge.link.link_id});
+      else loadMore.current();
+    }
+    return owner.focus({key: `${occurrencePrefix}/input`, ref: rootRef, selection: {anchor: 1, head: 1}}, owner.lease());
+  };
   useLayoutEffect(() => {
     if (!apiRef) return;
-    const handle: LocalOutlineHandle = {append: () => {
-      if (read.data?.next_cursor && read.tailEdge) {
-        if (anchor !== read.tailEdge.link.link_id) setWindow({root: rootRef, anchor: read.tailEdge.link.link_id});
-        else loadMore.current();
-      }
-      return owner.focus({key: `${occurrencePrefix}/input`, ref: rootRef, selection: {anchor: 1, head: 1}}, owner.lease());
-    }, focusRoot: resolve => owner.focus({key: `${occurrencePrefix}/root`, ref: rootRef, selection: "end", resolve}, owner.lease()), focusNote: focusResource,
+    const handle: LocalOutlineHandle = {append, focusRoot: resolve => owner.focus({key: `${occurrencePrefix}/root`, ref: rootRef, selection: "end", resolve}, owner.lease()), focusNote: focusResource,
       focusFirst: () => { const first = rows[0]; if (first) act(focusResource(first.resource.ref)); else trailing.current?.focus({anchor: 1, head: 1}); }};
     apiRef.current = handle; return () => { if (apiRef.current === handle) apiRef.current = null; };
   });
@@ -759,6 +743,6 @@ export default function LocalOutline({ rootRef, prelude = EMPTY_INTENTS, apiRef,
             }}}/>
       })}
     </ResourceOutlineList>
-    {read.data?.next_cursor && !trailingAdmission ? <div ref={moreItems}><Button onClick={read.more}>show more items</Button></div> : read.data !== null && !filter.trim() && !draft ? renderDraft(null) : null}
+    {read.data?.next_cursor && !trailingAdmission ? <div><Button onClick={read.more}>show more items</Button>{!filter.trim() && !draft ? <Button disabled={!read.tailEdge} onClick={() => act(append())}>write at end</Button> : null}</div> : read.data !== null && !filter.trim() && !draft ? renderDraft(null) : null}
   </div></HistoryContext></SessionContext>;
 }

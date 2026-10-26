@@ -12,8 +12,15 @@ its outer `pre` parse rule preserves whitespace, but installed
 `prosemirror-view/src/domchange.ts:45` selects incremental preservation from
 the node type's `whitespace`, using the mode that converts newlines to spaces.
 
-repair the schema/parser contract that owns incremental whitespace. resolution
-requires actual native return followed by typing to retain the exact newline
-and characters in the canonical rich body, with ordinary prose and paste
-behavior preserved. the separate fast-return missing-letter issue remains
-unresolved; this control stopped before that phase.
+the candidate fix is `NativeNoteParser` in `NoteEditor.tsx`: its public `parse`
+override supplies full whitespace preservation when the existing top body has
+code presentation. prose native parsing and inherited `parseSlice` remain
+unchanged. installed `prosemirror-model/src/from_dom.ts` constructs a separate
+parse context in `parseSlice`; it never calls `parse`. the permanent body schema,
+mark permissions and code command behavior are unchanged.
+
+installed native qualification is pending. resolution requires actual native
+return followed by typing to retain the exact newline and characters in the
+canonical rich body, with ordinary prose and paste behavior preserved. the
+separate fast-return missing-letter issue remains unresolved; the control run
+stopped before that phase.

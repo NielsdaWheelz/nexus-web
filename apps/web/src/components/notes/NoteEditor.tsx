@@ -46,7 +46,7 @@ import {
   type OutlineBranch,
 } from "@/lib/resources/outlineProjection";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
-import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
+import { DOMParser as PMDOMParser, Fragment, Slice, type Node as PMNode, type ParseOptions } from "prosemirror-model";
 import {
   AllSelection,
   NodeSelection,
@@ -135,6 +135,17 @@ function flushNativeDOM(view: EditorView): void {
   observer.forceFlush();
   observer.flush();
 }
+
+/** Native code edits parse inside the existing body, bypassing its outer pre
+ * rule. Preserve their literal whitespace. Clipboard parsing uses parseSlice,
+ * which retains the schema's existing prose and HTML import policy. */
+class NativeNoteParser extends PMDOMParser {
+  override parse(dom: Node, options: ParseOptions = {}): PMNode {
+    return super.parse(dom, options.topNode?.attrs.presentation === "code"
+      ? {...options, preserveWhitespace: "full"} : options);
+  }
+}
+const nativeNoteParser = new NativeNoteParser(schema, PMDOMParser.fromSchema(schema).rules);
 
 export interface NoteEditorProps {
   reference?: ReferenceInputHost | null;
@@ -643,6 +654,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
+      domParser: nativeNoteParser,
       state: EditorState.create({
         doc: docFromBody(
           restoredReference
