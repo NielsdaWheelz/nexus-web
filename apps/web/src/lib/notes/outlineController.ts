@@ -879,7 +879,6 @@ export class OutlineController {
       this.waiting = null; this.selectionRow = request.row_id; this.selected.clear(); this.selected.add(request.row_id);
       this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, at))); this.view.focus(); request.resolve(); this.notify(); return;
     }
-    if (!row || !this.editableReady(row)) return;
     const field = fieldById(this.view.state.doc, request.row_id);
     if (!field) {
       const parent = [...this.tailIds].find(([, id]) => id === request.row_id)?.[0], window = parent ? this.windows.get(parent) : null;
@@ -887,6 +886,7 @@ export class OutlineController {
       if (branch && window?.afterEdge && window.tailEdge && branch.anchor !== window.tailEdge.link.link_id) {this.request({...branch, cursor: null, anchor: window.tailEdge.link.link_id}, request.lease); this.notify();}
       return;
     }
+    if (!row || !this.editableReady(row)) return;
     const at = request.selection === "end" ? {anchor: field.to, head: field.to} : {anchor: field.from + request.selection.anchor - 1, head: field.from + request.selection.head - 1};
     this.waiting = null; this.selectionRow = request.row_id; this.selection = request.selection === "end" ? {anchor: field.to - field.from + 1, head: field.to - field.from + 1} : request.selection;
     this.view.dispatch(this.view.state.tr.setSelection(TextSelection.create(this.view.state.doc, Math.min(field.to, at.anchor), Math.min(field.to, at.head)))); this.view.focus(); request.resolve();
