@@ -19,3 +19,12 @@ aliases remain intact. retain the ordinary no-history byte-bound control too.
 `671837d36` supplies the visible baseline set to the hypothetical estimate,
 leaving frozen captures charged and full actual admission unchanged. the combined
 root static gate passes. the pressure/retirement sequence is not live-qualified.
+
+the attempted public control is not a red: `20261026-042954-1993d49049f2`
+preserves exact 1.89m rich writing, then legitimately creates a successor on the
+first enter. ordinary `accept()` refresh had permission to retire history before
+that gesture; its assumed fourteen hidden baseline copies were not established.
+the invalid disposable case is retired. retain source-only attribution and the
+existing successful alias-byte/manual-retirement controls; a specific hidden
+pressure proof needs a sound ownership premise, not a larger timeout or private
+counter mutation.
