@@ -4,9 +4,12 @@
 // highlights and whole-document links are always present; the server's derived
 // evidence is a separate section that may load late or fail without hiding them.
 // All items uses normal flow; native sidebar scroll never changes the view or text.
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Check } from "lucide-react";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import RadioGroup from "@/components/ui/RadioGroup";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { deleteLink } from "@/lib/resourceGraph/links";
@@ -36,12 +39,12 @@ function entryMatches(entry: EvidenceEntry, id: string): boolean {
 }
 
 /** Where an entry sits in the mounted publication; null when it has no own extent. */
-function extentOf(entry: EvidenceEntry, doc: ReaderDocument): { start: ReaderPoint; anchor: MarkAnchor } | null {
+function extentOf(entry: EvidenceEntry, doc: ReaderDocument): { kind: "text"; start: Extract<ReaderPoint, {kind: "text"}>; anchor: MarkAnchor } | { kind: "pdf"; anchor: MarkAnchor } | null {
   if (entry.kind === "remote") return entry.root.resolution?.kind === "Resolved" ? rootExtent(entry.root.resolution, doc) : null;
   if (entry.kind !== "highlight" || entry.annotation.placement.kind !== "placed") return null;
   const anchor = entry.annotation.placement.anchor;
-  return { anchor, start: anchor.kind === "text" ? { kind: "text", unit: anchor.unit, offset: anchor.start }
-    : { kind: "pdf", page: anchor.page, y: Math.min(...anchor.quads.map(quad => quad.y1)) } };
+  return anchor.kind === "text" ? { kind: "text", anchor, start: { kind: "text", unit: anchor.unit, offset: anchor.start } }
+    : { kind: "pdf", anchor };
 }
 
 export default function EvidencePane({ state, reader, actions, openKey, onRetry }: {
@@ -64,8 +67,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const pane = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const firstType = useRef<HTMLButtonElement>(null);
-  const viewName = useId();
-  const helpId = useId();
+  const ids = useId();
   const pinned = useRef<{ element: HTMLElement; y: number; scrollTop: number } | null>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
   const switchAnchor = useRef<{ element: HTMLElement; offset: number } | null>(null);
@@ -108,8 +110,12 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const visible = useMemo(() => new Set(entries.filter(entry => [...entryFacets(entry)].some(facet => !hidden.has(facet))).map(entry => entry.key)), [entries, hidden]);
   const doc = document.status === "ready" ? document.doc : null;
   const placed = useMemo(() => doc ? entries.filter(entry => extentOf(entry, doc) !== null)
-    .map(entry => ({ entry, at: document.status === "ready" ? document.structure.fraction(extentOf(entry, doc)!.start) : 0 }))
-    .sort((a, b) => a.at - b.at || (a.entry.key < b.entry.key ? -1 : 1)).map(({ entry }) => entry) : [], [doc, document, entries]);
+    .map(entry => {
+      const extent = extentOf(entry, doc)!;
+      const marker = state.markers.find(marker => marker.id === (entry.kind === "remote" ? entry.root.ref : entry.kind === "highlight" ? entry.annotation.id : entry.link.resource.ref));
+      return { entry, at: extent.kind === "text" && document.status === "ready" ? document.structure.fraction(extent.start) : marker?.position ?? Number.POSITIVE_INFINITY };
+    })
+    .sort((a, b) => a.at - b.at || (a.entry.key < b.entry.key ? -1 : 1)).map(({ entry }) => entry) : [], [doc, document, entries, state.markers]);
   const locatedEntries = useMemo(() => placed.filter(entry => visible.has(entry.key)), [placed, visible]);
   const keys = placements.map((place) => place.key).join();
 
@@ -150,9 +156,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       const measured = locatedEntries.flatMap((entry) => {
         const extent = extentOf(entry, doc);
         if (!extent) return [];
-        const at = structure.fraction(extent.start);
         const held = focused === entry.key;
-        if (!held && (at < viewport.start - span || at > viewport.end + span)) return [];
+        if (!held && extent.kind === "text") {
+          const at = structure.fraction(extent.start);
+          if (at < viewport.start - span || at > viewport.end + span) return [];
+        }
         const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
         const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(entry.key)}"]:not([hidden])`);
         if (!geometry && !held) return [];
@@ -184,6 +192,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     const observer = new ResizeObserver(schedule);
     observer.observe(port);
+    const outline = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"]');
+    if (outline) observer.observe(outline);
     for (const row of port.querySelectorAll("[data-group]")) observer.observe(row);
     const unsubscribe = reader.subscribe(schedule);
     schedule();
@@ -290,18 +300,21 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     }}>
       {failures}
       <div className={styles.head}>
-        {!isMobile ? <>
-          <fieldset className={styles.modes} aria-describedby={helpId}>
-            <legend>connections view</legend>
-            <div className={styles.choices}>
-              <label><input type="radio" name={viewName} checked={following} onChange={() => chooseView(true)} />follow reading position</label>
-              <label><input type="radio" name={viewName} checked={!following} onChange={() => chooseView(false)} />all items</label>
-            </div>
-          </fieldset>
-          <p id={helpId} className={styles.help}>{following ? "items move with their passages as you scroll the text." : "browse all available items of the selected types."}</p>
-        </> : null}
+        {!isMobile ? <div className={styles.mode}>
+          <RadioGroup label="connections view" legend="Hidden" presentation="Segmented" value={following ? "follow" : "all"}
+            choices={[{ value: "follow", label: <>follow<span className="sr-only"> reading position</span></> },
+              { value: "all", label: <>all<span className="sr-only"> items</span></> }]}
+            onChange={value => chooseView(value === "follow")} />
+        </div> : null}
         <div role="group" aria-label="item types" className={styles.filters}>
-          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{FILTER_LABELS[filter]} {counts[filter]}</button>)}
+          {FILTERS.map((filter, index) => <Fragment key={filter}>
+            <Button ref={index === 0 ? firstType : undefined} className={styles.filter} aria-pressed={!hidden.has(filter)}
+              aria-describedby={`${ids}-${filter}`} icon={<Check className={hidden.has(filter) ? styles.unchecked : undefined} />}
+              onClick={() => setHidden(current => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>
+              {FILTER_LABELS[filter]} <span className={styles.count} aria-hidden="true">{counts[filter]}</span>
+            </Button>
+            <span id={`${ids}-${filter}`} hidden>{counts[filter] === 1 ? "1 item" : `${counts[filter]} items`}</span>
+          </Fragment>)}
         </div>
       </div>
       <div ref={list} className={styles.list} tabIndex={0} role="group" aria-label="connections" onScroll={(event) => {

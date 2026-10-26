@@ -24,6 +24,11 @@ ordinary finite lists use real layout; the 10,000-entry queue uses its own
 measured compact-row window. neither establishes the cause of the reported
 production fling failure; retain this record until that journey is reproduced.
 
+the complete-index cutover additionally removes finite prefix loading and uses
+native rows through 200, then actual measured uniform windows. local complete
+extent/end checks through 10,000 pass; they do not identify the old production
+ten-row cadence. the post-release reproduction below remains open.
+
 resolution: reproduce after the release on a cold and settled desktop lectern
 and podcast. capture loaded/dom row count, scroll height, frame stalls and
 network timing during a fling; compare with only shared index containment

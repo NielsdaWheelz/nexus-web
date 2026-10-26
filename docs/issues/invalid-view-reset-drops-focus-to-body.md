@@ -4,6 +4,11 @@ status: open
 origin: 2026-10-14 review of the cleanup stack's #578 absorption (finding 3); live run on 62c06aeff
 area: web / pane controls
 
+2026-10-25 update: complete-index rendering removes `lib/ui/viewTransitions.ts`
+and its delayed row publication. the evidence below is historical; it no longer
+establishes the current cause. reset-focus behavior on these four panes still
+needs live qualification. removing the animation alone does not close this issue.
+
 Reset view on an invalid-view notice unmounts its own button. These panes then
 leave focus on `<body>`:
 

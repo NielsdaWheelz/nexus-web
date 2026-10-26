@@ -42,6 +42,7 @@ import {
   useLectern,
   useLecternCommands,
 } from "@/lib/lectern/lectern";
+import type { LecternItem } from "@/lib/lectern/api";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   localContentAvailable,
@@ -99,6 +100,7 @@ export interface ActionContext {
   /** Shared lectern facts and the existing conditional-command owner. */
   readonly lectern: {
     readonly read: ReturnType<typeof useLectern>;
+    readonly itemsById: ReadonlyMap<string, LecternItem>;
   } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly queue: ReturnType<typeof usePlayerSession>["queue"];
@@ -228,9 +230,11 @@ export default function ResourceActionsProvider({
   const feedback = useFeedback();
   const read = useLectern();
   const commands = useLecternCommands();
+  const observedItems = read.status === "ready" ? read.data.items : null;
+  const itemsById = useMemo(() => new Map(observedItems?.map(item => [item.media_summary.media_id, item]) ?? []), [observedItems]);
   const lectern = useMemo(
-    () => ({ read, ...commands }),
-    [read, commands],
+    () => ({ read, itemsById, ...commands }),
+    [read, itemsById, commands],
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
@@ -408,7 +412,8 @@ export default function ResourceActionsProvider({
     <RuntimeContext.Provider value={runtime}>
       {children}
       {chatCommandFeedback}
-      <Dialog open={confirmation !== null} title={confirmation?.confirmation?.title ?? "confirm change"} onClose={() => setConfirmation(null)}>
+      <Dialog open={confirmation !== null} title={confirmation?.confirmation?.title ?? "confirm change"}
+        returnFocusFallback={confirmation?.afterRemoval} onClose={() => setConfirmation(null)}>
         {confirmation?.confirmation ? <>
           <p>{confirmation.confirmation.body.replaceAll("{title}", () => confirmation.title)}</p>
           <Button emphasis="strong" tone="danger" onClick={() => {

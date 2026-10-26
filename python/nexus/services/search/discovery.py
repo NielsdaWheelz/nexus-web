@@ -26,7 +26,6 @@ from uuid import UUID
 from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
 from provider_runtime.retry import DEFAULT_RETRY
 from provider_runtime.types import TransientExhausted
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.session import open_async_session
@@ -141,14 +140,9 @@ async def _embedding(
 
 
 def _snapshot[T](db: Session, deadline: float, read: Callable[[Session], T]) -> T:
-    def bounded(db: Session) -> T:
-        # Browser reads are short; compiling these visibility relations costs seconds.
-        db.execute(text("SET LOCAL jit = 'off'"))
-        return read(db)
-
     logger.info("search.snapshot.begin", mono_ns=time.monotonic_ns())
     try:
-        return read_snapshot(db, bounded, deadline=deadline)
+        return read_snapshot(db, read, deadline=deadline)
     finally:
         logger.info("search.snapshot.end", mono_ns=time.monotonic_ns())
 

@@ -1,22 +1,21 @@
 "use client";
 
-import { useCallback, useState, type ComponentProps } from "react";
+import { useCallback, useState } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import ActionMenu from "@/components/ui/ActionMenu";
+import { ActionMenuHost, ActionMenuInvocation, type ActionMenuProps, type ActionMenuSession } from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
 import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneSubject } from "@/lib/panes/paneChrome";
-import {useTouchCapable} from "@/lib/renderEnvironment/provider";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { ActionDescriptor, MenuContent, MenuSource, TrailingState } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor, MenuContent, MenuOption, MenuSource, TrailingState } from "@/lib/ui/actionDescriptor";
 
-type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 export interface ContextActionSection {
   readonly id: "Pane" | "Occurrence" | "View";
-  readonly actions: readonly ActionDescriptor[];
+  readonly actions: readonly MenuOption[];
 }
 
 /**
@@ -28,10 +27,7 @@ export interface ContextActionSection {
  * menu's trailing region (loading, ready or failed), never gating, reordering or
  * replacing the local snapshot.
  */
-export default function ContextualActionMenu({
-  sections, resourceRef, title, subjectKey, onDefect, actionFocus,
-  omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, ...props
-}: Pick<ActionMenuProps,
+type ContextualMenuProps = Pick<ActionMenuProps,
   "label" | "placement" | "align" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor"
 > & {
   readonly actionFocus?: PodcastActionFocus;
@@ -45,7 +41,21 @@ export default function ContextualActionMenu({
   readonly commandDisabledReason?: string;
   /** Loading defects belong to the resource's pane, even outside its provider. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
-}) {
+};
+
+export default function ContextualActionMenu(props: ContextualMenuProps) {
+  const pane = usePaneRuntime();
+  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${JSON.stringify(props.displayedActivation ?? null)}`;
+  return <ActionMenuHost {...props} title={props.title} subjectKey={subjectKey}>{session =>
+    <ContextualMenuInvocation {...props} subjectKey={subjectKey} session={session} />
+  }</ActionMenuHost>;
+}
+
+/** Authoritative facts and client subscriptions belong only to an invocation. */
+function ContextualMenuInvocation({
+  sections, resourceRef, title, subjectKey, onDefect, actionFocus,
+  omitResourceActions = [], showSourceSubject = false, displayedActivation, commandDisabledReason, session, ...props
+}: ContextualMenuProps & { readonly session: ActionMenuSession }) {
   const pane = usePaneRuntime();
   const paneSubject = usePaneSubject();
   const coarse=useTouchCapable();
@@ -104,18 +114,20 @@ export default function ContextualActionMenu({
   const remoteIds = new Set(!owned && remote?.kind === "Ready" ? remote.options.map(action => action.id) : []);
   const device = client.filter(action => !remoteIds.has(action.id) && !omitResourceActions.includes(action.id));
   if (device.length > 0) groups.push({ id: "Device", label: "on this device", options: device });
-  const blocked = (action: ActionDescriptor): ActionDescriptor => commandDisabledReason && action.kind === "command"
+  const blocked = (action: MenuOption): MenuOption => commandDisabledReason && action.kind === "command"
+    ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
+  const blockedRemote = (action: ActionDescriptor): ActionDescriptor => commandDisabledReason && action.kind === "command"
     ? { ...action, disabled: true, disabledReason: commandDisabledReason } : action;
   const content: MenuContent = { sections: groups.map((section) => ({
     ...section,
     label: groups.length > 1 || (showSourceSubject && section.id === "Resource") ? section.label : null,
     options: section.options.map(blocked),
   })) };
-  const identity = { title, subjectKey: `${pane?.visitId ?? "workspace"}:${subjectKey}:${resourceRef ?? "local"}:${JSON.stringify(displayedActivation ?? null)}` };
+  const identity = { title, subjectKey };
   const trailing: TrailingState = request === null ? null : remote?.kind === "Ready" ? {
     kind: "Ready", request, label: showSourceSubject ? `source: ${remote.facts.label}` : null,
     options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
-      !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blocked),
+      !((displayedActivation || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)).map(blockedRemote),
   } : remote?.kind === "Failed" ? {
     kind: "Failed", request, feedback: remote.connectionRequired ? { tone: "Neutral", title: "requires a connection" } : remote.feedback,
   } : { kind: "Loading", request };
@@ -126,5 +138,5 @@ export default function ContextualActionMenu({
       state: request === null ? null : local === null ? { kind: "Loading", request }
         : remote?.kind === "Ready" || remote?.kind === "Failed" && remote.connectionRequired ? { kind: "Ready", request, content } : remote,
     };
-  return <ActionMenu {...props} label={props.label ?? `more actions for ${title}`} source={source} />;
+  return <ActionMenuInvocation source={source} session={session} placement={props.placement} align={props.align} returnFocusTo={props.returnFocusTo} />;
 }

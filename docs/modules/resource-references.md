@@ -91,8 +91,16 @@ the former geometry. operational `Details` rows keep their wrapping layout.
 `ResourceRow`'s optional compact density keeps this geometry with smaller shared
 title/metadata type and padding; native touch target minima remain. the queue
 composes the shell with its own occurrence commands rather than generic media
-actions. finite lists use real row geometry, without guessed intrinsic extent.
-the queue's bounded dom measures these homogeneous compact rows; its rendering,
+actions. finite collections through 200 mount every row. eligible larger indices
+declare `UniformIndex` capability: one actual fractional row
+measurement determines the full extent, while visible rows, overscan and bounded
+interaction pins determine mounted content. complete data still supplies local
+filtering, counts and command captures. native find, selection and accessibility
+traversal reach mounted rows only; the app filter covers the complete source.
+`Search`, wrapping `Details` and outlines retain intrinsic layout. the
+[visual system](visual-system.md#index-rows) owns the common measured slot;
+the [pane memento](workspace.md#pane-history) alone restores pane scroll and logical
+anchors. the queue's bounded dom measures its homogeneous compact rows; its rendering,
 anchoring and partial accessibility-tree contract belongs to
 [playback sessions](playback-sessions.md#index-and-interaction).
 the row's `indexRow`

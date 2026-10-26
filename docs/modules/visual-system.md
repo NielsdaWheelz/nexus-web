@@ -16,7 +16,7 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
-- `lib/ui/{eventTarget,viewTransitions,actionDescriptor,copyText,rovingIndex}.ts`.
+- `lib/ui/{eventTarget,actionDescriptor,copyText,rovingIndex}.ts`.
 - `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`).
 
 ## rooms
@@ -35,9 +35,14 @@ routes set `[data-theme="oracle"]`, a manuscript palette that ignores the room.
 a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
-oracle and atlas routes. rooms redefine colour, shadow, grain, hairline, body
-size, tracking and the section-title font role only. text on an 18% tint of its
-own tone (`Pill`) reads the tone's `--*-ink` step, which holds 4.5:1 over that tint.
+oracle and atlas routes. shared defaults for scales, sans and mono faces,
+spacing, motion, dimensions, focus metrics, scrims, highlights and shell geometry
+live in a `:root`-only block before reduced-motion overrides. nested rooms inherit
+them from the nearest ancestor, including overrides supplied by context owners.
+the press block (`:root, [data-theme="dark"]`) declares only tokens another room
+overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
+the section-title font role. text on an 18% tint of its own tone (`Pill`) reads
+the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 ## the solar's ornament
 
@@ -194,11 +199,40 @@ and refresh content sits outside the listbox. it has no search field or visible
 category heading. command menus and library membership retain their own content
 and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
 
-choice triggers have a 32px minimum height; triggers and option rows have at
-least 44px with any coarse pointer. text can increase those heights. engagement
-uses existing colour and motion tokens; reduced motion removes transitions.
-chat's three-control composition, native effort gauge/range and whole-control
-wrapping belong to [chat](chat.md#generation-selection), not this primitive.
+choice triggers and segments have a 32px minimum height; triggers, option rows
+and segments have at least 44px with any coarse pointer. text can increase those
+heights. engagement uses existing colour and motion tokens; reduced motion
+removes transitions. chat's three-control composition, native effort gauge/range
+and whole-control wrapping belong to [chat](chat.md#generation-selection), not
+this primitive.
+
+an exclusive choice shown as its options is a native radio group, `RadioGroup`:
+one fieldset named by its legend, radios sharing one `useId` name, and an
+optional description after the options that describes the fieldset. it adds no
+role. inside `role=menu` the same choice is `menuitemradio`
+([overlays](overlays.md#surfaces)). `Inline` is the default presentation.
+`Segmented` sets each option as a `ChoiceField` segment in one track of equal
+columns whose labels wrap; its visible legend takes the form-label type, and a
+`Hidden` legend names the group to assistive technology only. a choice label may
+be a node, such as a font named in its own face, beside a decorative icon.
+
+`ChoiceField.module.css` owns the one segmented recipe for both roots: the
+`.segments` track, the `.segment` option and `.segmentInput`, the transparent
+native radio covering its label. state selectors match `aria-checked` and
+`aria-disabled` on menu buttons and the input's state on native labels.
+every segment reserves a transparent 1px border inside its box. selection is an
+accent fill read in `--accent-ink`; focus is an inward `--ring` outline and hover
+`--surface-hover`, the control tokens; none changes a box. selection is never
+expressed as disabled. disabled removes tone and hover, never the value: a
+disabled checked option keeps a neutral `--surface-active` fill. in forced
+colours segments opt out of adjustment and paint system colours, which hover
+leaves alone: unchecked `CanvasText` on `Canvas`, checked `HighlightText` on
+`Highlight` with a `currentColor` border, disabled `GrayText` on `Canvas`,
+keeping that border when checked. focus there insets two ring widths on every
+checked option, disabled or not, so the border marker survives, as a pressed
+control's ring does; it is `HighlightText` over an enabled checked fill and
+`CanvasText` otherwise. equal columns are an accepted cost: a narrow track may
+break a long word mid-word, but a label never overflows or clips.
 
 ## action controls
 
@@ -243,12 +277,31 @@ resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
 inside a reserved action column that never shifts content.
 
+### index rows
+
 index rows use the shared `ResourceRow` shell. its `indexRow` container owns
 author and shortcut demotion, metadata spacing and tight-row adaptation; see the
 [resource presentation contract](resource-references.md#presentation-contract).
 hosts hide whole `data-action-control-key` wrappers; action components do not
 infer placement from density. standalone preview controls retain their own layout.
 external media rows expose the same more trigger at every width.
+
+`CollectionView` callers explicitly declare `UniformIndex` capability before a
+list larger than 200 can window. its two text lines share a measured vertical
+slot across media, artwork and independent controls. rows without artwork or
+controls reserve the same minimum height, and all rows use one narrow-width
+fold threshold. width, font and control-size changes remeasure the actual
+fractional border box; the full extent is count × measured height. a hidden,
+inert canonical row supplies measurement while the existing loading state is
+visible. ready rows are never clipped to enforce an estimated height.
+
+`measuredIndexWindow.ts` owns the visible band, overscan and bounded interaction
+pins; `collectionWindow.ts` shares pure rank arithmetic with the queue. the
+complete source still owns matching, counts, summaries and commands. mounted
+rows expose their full logical positions and set size; native browser find,
+selection and accessibility traversal reach only mounted content. small lists
+and intrinsic search, details and outline presentations keep their own layout.
+the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
 `ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
 44×44px with any coarse pointer, and 2px gaps. outline indentation and creation

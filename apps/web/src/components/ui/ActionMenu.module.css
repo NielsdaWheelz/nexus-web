@@ -28,6 +28,14 @@
   max-width: 26rem;
 }
 
+/* A choice's track spans the row inside the rows' inline padding; its reason sits under it. */
+.choiceRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+}
+
 .separator {
   height: 1px;
   margin: var(--space-1) 0;

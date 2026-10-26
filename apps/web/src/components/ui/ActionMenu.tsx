@@ -14,6 +14,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type Ref,
+  type RefObject,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useNavigationIdentity } from "@/lib/host/policy";
@@ -22,8 +23,8 @@ import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
   prepareActionSelect,
   projectActionControlState,
-  type ActionDescriptor,
   type MenuContent,
+  type MenuOption,
   type MenuSource,
 } from "@/lib/ui/actionDescriptor";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
@@ -42,19 +43,21 @@ import {
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useIndexRowWindow } from "@/lib/collections/indexRowWindow";
 import MobileSheet from "./MobileSheet";
 import OverflowMenuButton from "./OverflowMenuButton";
+import RadioGroup from "./RadioGroup";
 import styles from "./ActionMenu.module.css";
+import choiceField from "./ChoiceField.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
+const TRAILING_INDEX = 10_000;
 // Moving focus into a sheet can dismiss the IME. Admit after its geometry quiets;
 // there is no portable keyboard-transition completion event.
 const MOBILE_ADMISSION_QUIET_MS = 150;
-const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
+const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 const FAILED: FeedbackContent = { tone: "Warning", title: "actions couldn’t load" };
-// Disabled-reason ids for trailing rows stay disjoint from published rows.
-const TRAILING_INDEX = 10_000;
 
 type TriggerAttributes = Pick<ButtonHTMLAttributes<HTMLButtonElement>, "tabIndex"> &
   Partial<Record<`data-${string}`, string | undefined>>;
@@ -111,14 +114,18 @@ type Invocation = {
   readonly meaning: string | null;
   readonly geometry: readonly number[] | null;
   readonly admission: { phase: "Focus" | "Settling" | "Ready"; timer: ReturnType<typeof setTimeout> | null } | null;
-  /** The side a menu with a trailing region published on; it keeps that side while the region settles. */
   readonly side: "above" | "below" | null;
 };
 
-/** Displayed meaning excludes closures and availability; execution reads current descriptors. */
+/** Displayed meaning excludes closures, availability and a choice's live value;
+ *  execution reads current descriptors. */
 function meaning(title: string, content: MenuContent): string {
   return JSON.stringify([title, content.sections.map((section) => [
     section.id, section.label, section.options.map((option) => {
+      if (option.kind === "choice") return [
+        option.id, option.kind, option.label, option.choices.map((entry) => [entry.value, entry.label]),
+        option.disabledReason, option.separatorBefore,
+      ];
       const state = option.kind === "command" ? option.state : undefined;
       return [
         option.id, option.kind, option.label, option.href, option.tone,
@@ -140,9 +147,7 @@ function viewportGeometry(): string {
   ]);
 }
 
-/** Scroll is intentional; sheet entry/drag transforms do not change content coordinates.
- * With a trailing region only the published rows count, at their absolute coordinates:
- * the region may grow the panel, never move those rows. */
+/** The trailing region may change after publication; only published rows define geometry. */
 function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, published: boolean): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
@@ -176,12 +181,9 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, publi
   ];
 }
 
-/** Height a trailing region may take without overflowing its scroller: the scroller's cap less the published content. */
 function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
   const published = scroller.querySelector<HTMLElement>(":scope > [data-menu-published]");
-  if (published === null) throw new Error("a trailing menu requires its published content block");
-  // max-block-size caps the border box. Measure the other flow block plus its
-  // padding/borders in fractional CSS pixels, even when the scroller is clipped.
+  if (!published) throw new Error("a trailing menu requires its published content block");
   const style = getComputedStyle(scroller);
   const used = published.getBoundingClientRect().height
     + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
@@ -189,15 +191,12 @@ function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
   if (!mobile) return parseFloat(style.maxBlockSize) - used;
   const panel = scroller.closest<HTMLElement>('[role="dialog"]');
   const parent = panel?.parentElement;
-  if (!panel || !parent)
-    throw new Error("a mobile trailing menu requires its sheet containing block");
-  // The sheet's 100% cap uses the backdrop content box, excluding safe-area padding.
+  if (!panel || !parent) throw new Error("a mobile trailing menu requires its sheet containing block");
   const containing = getComputedStyle(parent);
   const available = parent.getBoundingClientRect().height
     - parseFloat(containing.paddingTop) - parseFloat(containing.paddingBottom)
     - parseFloat(containing.borderTopWidth) - parseFloat(containing.borderBottomWidth);
-  const overhead = panel.getBoundingClientRect().height - scroller.getBoundingClientRect().height;
-  return available - overhead - used;
+  return available - (panel.getBoundingClientRect().height - scroller.getBoundingClientRect().height) - used;
 }
 
 /**
@@ -205,25 +204,8 @@ function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
  * has one hidden transient; publication has one desktop transient or mobile frame.
  * A complete measured result must beat its activation-time deadline. Published
  * meaning and geometry are immutable; callbacks and availability remain current.
- * A source's trailing region settles after publication, without a deadline, on the
- * panel's far side from its trigger; it is outside that snapshot and never moves,
- * replaces or closes the published rows or takes their focus.
  */
-export default function ActionMenu({
-  source,
-  label = `more actions for ${source.title}`,
-  className,
-  onOpenChange,
-  placement = "below",
-  align = "end",
-  renderTrigger,
-  renderContextAnchor,
-  triggerAttributes,
-  triggerRef,
-  triggerDisabled = false,
-  triggerDisabledReason,
-  returnFocusTo,
-}: {
+export interface ActionMenuProps {
   readonly source: MenuSource;
   readonly label?: string;
   readonly className?: string;
@@ -238,25 +220,203 @@ export default function ActionMenu({
   readonly returnFocusTo?: ReturnFocusTarget;
   readonly triggerDisabled?: boolean;
   readonly triggerDisabledReason?: string;
+}
+interface Presentation { readonly visible: boolean; readonly busy: boolean; readonly popup: "menu" | "dialog" }
+export interface ActionMenuSession {
+  readonly trigger: RefObject<HTMLElement | null>;
+  readonly root: RefObject<HTMLDivElement | null>;
+  readonly close: RefObject<(returnFocus?: boolean) => void>;
+  readonly menuId: string;
+  readonly subjectKey: string;
+  readonly title: string;
+  readonly mobile: boolean;
+  readonly pathname: string | null;
+  readonly viewport: string;
+  readonly startedAt: number;
+  readonly touch: boolean;
+  readonly edge: "first" | "last";
+  readonly dismiss: () => void;
+  readonly announce: (message: string) => void;
+  readonly present: (presentation: Presentation) => void;
+}
+
+/** A menu's real trigger stays mounted; only an invoked controller owns overlays. */
+export function ActionMenuHost({ title, subjectKey, label = `more actions for ${title}`, className,
+  renderTrigger, renderContextAnchor, triggerAttributes, triggerRef, triggerDisabled = false,
+  triggerDisabledReason, children,
+}: Omit<ActionMenuProps, "source"> & {
+  readonly title: string;
+  readonly subjectKey: string;
+  readonly children: (session: ActionMenuSession) => ReactNode;
 }) {
+  const [state, setState] = useState<{ session: ActionMenuSession | null; presentation: Presentation; announcement: string }>({
+    session: null, presentation: { visible: false, busy: false, popup: "menu" }, announcement: "",
+  });
+  const local = useRef({
+    trigger: { current: null as HTMLElement | null }, root: { current: null as HTMLDivElement | null },
+    session: null as ActionMenuSession | null,
+    subjectKey,
+    hold: null as { pointer: number; x: number; y: number; timer: ReturnType<typeof setTimeout>; owner: Layer | null; generation: number; subject: string } | null,
+    heldClick: false, touchGesture: false, releasePress: null as (() => void) | null,
+    cancelHold: null as (() => void) | null,
+  }).current;
+  local.subjectKey = subjectKey;
+  const triggerId = useId();
+  const menuId = `${triggerId}-menu`;
+  const reasonId = `${triggerId}-reason`;
+  const mobile = useIsMobileViewport();
+  const pathname = useNavigationIdentity();
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => { local.trigger.current = node; triggerRef?.(node); }, [local, triggerRef]);
+  local.cancelHold ??= function cancelHold() {
+    if (local.hold) clearTimeout(local.hold.timer);
+    local.hold = null;
+    window.removeEventListener("scroll", cancelHold, true);
+    window.removeEventListener("blur", cancelHold);
+  };
+  const cancelHold = local.cancelHold;
+  const consumeHeldClick = (pointer: number) => {
+    local.releasePress?.();
+    local.heldClick = true;
+    const release = () => {
+      window.removeEventListener("click", consume, true);
+      window.removeEventListener("pointerdown", release, true);
+      window.removeEventListener("pointercancel", release, true);
+      window.removeEventListener("keydown", release, true);
+      local.releasePress = null;
+      local.heldClick = false;
+    };
+    const consume = (event: globalThis.MouseEvent) => {
+      if (event instanceof globalThis.PointerEvent && event.pointerId > 0 && event.pointerId !== pointer) return;
+      release(); event.preventDefault(); event.stopImmediatePropagation();
+    };
+    local.releasePress = release;
+    window.addEventListener("click", consume, true);
+    window.addEventListener("pointerdown", release, true);
+    window.addEventListener("pointercancel", release, true);
+    window.addEventListener("keydown", release, true);
+  };
+  const begin = (edge: "first" | "last") => {
+    const dismiss = () => {
+      local.session = null;
+      setState(value => ({ ...value, session: null, presentation: { visible: false, busy: false, popup: "menu" } }));
+    };
+    const session: ActionMenuSession = {
+      trigger: local.trigger, root: local.root, close: { current: dismiss }, menuId, subjectKey, title, mobile, pathname,
+      startedAt: performance.now(), viewport: viewportGeometry(), touch: wasOverlayInvokedByTouch(), edge, dismiss,
+      announce: announcement => setState(value => value.announcement === announcement ? value : { ...value, announcement }),
+      present: presentation => setState(value => value.session !== session ||
+        value.presentation.visible === presentation.visible && value.presentation.busy === presentation.busy && value.presentation.popup === presentation.popup
+        ? value : { ...value, presentation }),
+    };
+    local.session = session;
+    setState({ session, presentation: { visible: false, busy: false, popup: mobile ? "dialog" : "menu" }, announcement: "" });
+  };
+  useLayoutEffect(() => () => { cancelHold(); local.releasePress?.(); }, [subjectKey, pathname, cancelHold, local]);
+  const { visible, busy } = state.presentation;
+  const popup = mobile ? "dialog" : state.presentation.popup;
+  const triggerProps: ActionMenuTriggerProps = {
+    ...triggerAttributes, ref: setTrigger, type: "button", id: triggerId, "aria-label": label,
+    "aria-describedby": triggerDisabled && triggerDisabledReason ? reasonId : undefined,
+    "aria-disabled": triggerDisabled || undefined, "aria-haspopup": popup,
+    "aria-controls": visible ? menuId : undefined, "aria-expanded": visible, "aria-busy": busy,
+    onClick: event => {
+      event.stopPropagation();
+      if (triggerDisabled) return;
+      if (local.session) local.session.close.current(false); else begin("first");
+    },
+    onKeyDown: event => {
+      if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+      if (event.key === "Tab" && local.session) { local.session.close.current(false); return; }
+      if (event.key === "Enter" || event.key === " ") {
+        if (event.repeat) event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const edge = event.key === "ArrowUp" ? "last" : event.key === "ArrowDown" ? "first" : null;
+      if (!edge) return;
+      event.preventDefault(); event.stopPropagation();
+      if (local.session) local.session.close.current(false); else begin(edge);
+    },
+  };
+  return <div ref={local.root} className={[styles.container, className].filter(Boolean).join(" ")} data-open={visible ? "true" : "false"}>
+    {renderContextAnchor ? renderContextAnchor({
+      ref: node => { local.trigger.current = node; }, id: triggerId,
+      "aria-haspopup": popup, "aria-controls": visible ? menuId : undefined, "aria-expanded": visible, "aria-busy": busy,
+      onContextMenu: event => {
+        event.preventDefault(); event.stopPropagation();
+        const pending = local.hold;
+        if (local.touchGesture || event.nativeEvent instanceof globalThis.PointerEvent && event.nativeEvent.pointerType === "touch") {
+          if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== local.subjectKey) { cancelHold(); return; }
+          consumeHeldClick(pending.pointer);
+        }
+        cancelHold();
+        if (!triggerDisabled && !local.session) begin("first");
+      },
+      onKeyDown: event => {
+        local.touchGesture = false;
+        if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return;
+        if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+        event.preventDefault(); event.stopPropagation(); cancelHold();
+        if (!triggerDisabled && !local.session) begin("first");
+      },
+      onPointerDown: event => {
+        cancelHold(); local.heldClick = false;
+        local.touchGesture = event.pointerType === "touch";
+        if (triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
+        const { pointerId: pointer, clientX: x, clientY: y } = event;
+        local.hold = { pointer, x, y, owner: getInteractionOwner(), generation: getInteractionGeneration(), subject: subjectKey,
+          timer: setTimeout(() => {
+            const pending = local.hold;
+            if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== local.subjectKey || !local.trigger.current?.isConnected) { cancelHold(); return; }
+            consumeHeldClick(pointer); cancelHold();
+            if (!local.session) begin("first");
+          }, 500),
+        };
+        window.addEventListener("scroll", cancelHold, true);
+        window.addEventListener("blur", cancelHold);
+      },
+      onPointerMove: event => {
+        const pending = local.hold;
+        if (pending && (event.pointerId !== pending.pointer || Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > 8)) cancelHold();
+      },
+      onPointerUp: cancelHold, onPointerCancel: cancelHold,
+      onClickCapture: event => { if (local.heldClick) { local.heldClick = false; event.preventDefault(); event.stopPropagation(); } },
+    }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
+    {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
+    {state.session !== null || state.announcement ? <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{state.announcement}</span> : null}
+    {state.session !== null ? children(state.session) : null}
+  </div>;
+}
+
+export default function ActionMenu({ source, ...props }: ActionMenuProps) {
+  return <ActionMenuHost {...props} title={source.title} subjectKey={source.subjectKey}>{session =>
+    <ActionMenuInvocation source={source} session={session} placement={props.placement} align={props.align} onOpenChange={props.onOpenChange} returnFocusTo={props.returnFocusTo} />
+  }</ActionMenuHost>;
+}
+
+/** Active-only preparation, measurement, overlay admission and menu execution. */
+export function ActionMenuInvocation({ source, session, placement = "below", align = "end", onOpenChange, returnFocusTo }: {
+  readonly source: MenuSource;
+  readonly session: ActionMenuSession;
+  readonly placement?: "below" | "above";
+  readonly align?: "start" | "center" | "end";
+  readonly onOpenChange?: (open: boolean) => void;
+  readonly returnFocusTo?: ReturnFocusTarget;
+}) {
+  const rowWindow = useIndexRowWindow();
+  useLayoutEffect(() => {
+    rowWindow?.interact();
+    return rowWindow?.pin();
+  }, [rowWindow]);
   const [invocation, setInvocation] = useState<Invocation | null>(null);
   const current = useRef(invocation);
   const latest = useRef(source);
   latest.current = source;
-  const [announcement, announce] = useState("");
-  const trigger = useRef<HTMLElement | null>(null);
-  const setTrigger = useCallback((node: HTMLButtonElement | null) => {
-    trigger.current = node;
-    triggerRef?.(node);
-  }, [triggerRef]);
-  const root = useRef<HTMLDivElement>(null);
+  const { trigger, root, menuId, announce } = session;
   const sheetBody = useRef<HTMLDivElement>(null);
   const modalLayer = useRef<Layer | null>(null);
   const skipReturn = useRef(false);
   const releasePress = useRef<(() => void) | null>(null);
-  const triggerId = useId();
-  const menuId = useId();
-  const reasonId = useId();
   const container = useOverlayContainer();
   const mobile = useIsMobileViewport();
   const pathname = useNavigationIdentity();
@@ -270,14 +430,13 @@ export default function ActionMenu({
   const content = invocation && (source.kind === "Immediate" ? source.content :
     prepared?.kind === "Ready" ? prepared.content : null);
   const feedback = invocation?.feedback ?? null;
-  const hasChoices = content?.sections.some((section) => section.options.length > 0) ?? false;
+  const hasOptions = content?.sections.some((section) => section.options.length > 0) ?? false;
   const requested = invocation !== null;
   const candidate = invocation !== null && (content !== null || feedback !== null);
   const sheet = candidate && invocation?.mobile === true;
   const visible = invocation?.visible === true && invocation.admission === null;
   const busy = invocation?.attempt?.timer != null;
   useMobileChromeHold(invocation !== null);
-  // A settling trailing region grows the panel away from its trigger, never flipping it.
   const lockedSide = trailingRegion ? invocation?.side ?? null : null;
   const menu = useAnchoredPosition<HTMLDivElement>(trigger, {
     enabled: candidate && !sheet && container !== null,
@@ -295,6 +454,7 @@ export default function ActionMenu({
   const change = (next: Invocation | null) => {
     current.current = next;
     setInvocation(next);
+    if (next === null) session.dismiss();
   };
   const close = (returnFocus = true) => {
     const active = current.current;
@@ -307,6 +467,7 @@ export default function ActionMenu({
     active.attempt?.controller.abort();
   };
   closeRef.current = close;
+  session.close.current = close;
   const fail = (attempt: Attempt, failure: FeedbackContent) => {
     const active = current.current;
     if (!active || active.attempt !== attempt) return;
@@ -320,15 +481,15 @@ export default function ActionMenu({
     const previous = current.current;
     if (retry && (!previous || previous.subject !== source.subjectKey || source.kind !== "Prepared")) return;
     if (previous?.admission?.timer) clearTimeout(previous.admission.timer);
-    const now = performance.now();
+    const now = retry ? performance.now() : session.startedAt;
     const attempt: Attempt | null = source.kind === "Prepared" ? {
       controller: new AbortController(), expires: now + PREPARATION_BUDGET_MS, timer: null,
     } : null;
     skipReturn.current = false;
     change({
-      subject: source.subjectKey, title: source.title, mobile, pathname, edge,
-      viewport: viewportGeometry(),
-      touch: retry ? false : wasOverlayInvokedByTouch(),
+      subject: session.subjectKey, title: session.title, mobile: session.mobile, pathname: session.pathname, edge,
+      viewport: retry ? viewportGeometry() : session.viewport,
+      touch: retry ? false : session.touch,
       attempt, visible: retry, feedback: retry ? previous?.feedback ?? null : null,
       meaning: null, geometry: null, side: null,
       admission: mobile ? { phase: "Focus", timer: null } : null,
@@ -339,6 +500,14 @@ export default function ActionMenu({
       source.prepare(attempt.controller.signal);
     } else announce("");
   };
+  useLayoutEffect(() => {
+    begin(session.edge);
+    // An invocation owns its activation deadline; strict replay reacquires it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+  useLayoutEffect(() => {
+    session.present({ visible, busy, popup: mobile || (candidate && !hasOptions) ? "dialog" : "menu" });
+  });
   const invalidate = () => {
     if (!current.current) return;
     close(true);
@@ -370,7 +539,7 @@ export default function ActionMenu({
         ? value.state.content : null;
     if (ready === null || active.meaning !== meaning(value.title, ready) ||
       node === null || active.geometry === null) return false;
-    const measured = geometry(trigger.current, node, active.mobile, latest.current.kind === "Prepared" && latest.current.trailing !== undefined);
+    const measured = geometry(trigger.current, node, active.mobile, trailingRegion);
     // Compositor/transform serialization noise can cross rounding boundaries.
     // Compare at 1/64 CSS px precision against the fixed publication snapshot.
     return active.geometry.length === measured.length && active.geometry.every(
@@ -381,7 +550,9 @@ export default function ActionMenu({
   // the complete host must be measured and still inside this attempt's budget.
   const publish = () => {
     const active = current.current;
-    if (!active) return;
+    // Initial begin schedules the admitted render; its ref alone cannot publish
+    // through the preceding commit, whose overlay is still closed.
+    if (invocation === null || !active) return;
     if (active.subject !== source.subjectKey || active.mobile !== mobile || active.pathname !== pathname) {
       closeRef.current(false);
       return;
@@ -420,7 +591,6 @@ export default function ActionMenu({
       return;
     }
     if (content && trailingRegion && !active.mobile && active.side === null) {
-      // Lock the side the panel actually took, then publish against its final row order.
       const placed = node.getBoundingClientRect().bottom <= trigger.current.getBoundingClientRect().top + 1 ? "above" : "below";
       change({ ...active, side: placed });
       return;
@@ -430,7 +600,6 @@ export default function ActionMenu({
       active.attempt.timer = null;
     }
     if (content && trailingRegion) {
-      // The region scrolls within the room the published rows leave, so its growth never scrolls them.
       const region = node.querySelector<HTMLElement>("[data-menu-trailing]");
       const room = region ? trailingRoom(node, active.mobile) : NaN;
       if (region && Number.isFinite(room)) region.style.maxBlockSize = `${Math.max(region.getBoundingClientRect().height, room)}px`;
@@ -442,7 +611,7 @@ export default function ActionMenu({
         meaning: content ? meaning(source.title, content) : null,
         geometry: content ? geometry(trigger.current, node, active.mobile, trailingRegion) : null,
       });
-      if (content && !hasChoices) announce("no actions available");
+      if (content && !hasOptions) announce("no actions available");
       else if (content) announce("");
     }
   };
@@ -552,7 +721,7 @@ export default function ActionMenu({
       window.removeEventListener("blur", retire);
       window.removeEventListener("scroll", scroll, true);
     };
-  }, [requested, visible, sheet]);
+  }, [requested, visible, sheet, root, trigger]);
   useLayoutEffect(() => () => {
     releasePress.current?.();
     const active = current.current;
@@ -560,10 +729,6 @@ export default function ActionMenu({
     if (active?.admission?.timer) clearTimeout(active.admission.timer);
     active?.attempt?.controller.abort();
   }, []);
-  // A settled trailing region is announced once; its rows never take focus.
-  const trailingNews = visible && trailing?.kind === "Ready" ? `${trailing.options.length || "no"} more ${trailing.options.length === 1 ? "action" : "actions"}`
-    : visible && trailing?.kind === "Failed" ? trailing.feedback.title : null;
-  useEffect(() => { if (trailingNews !== null) announce(trailingNews); }, [trailingNews]);
   const report = useRef(onOpenChange);
   report.current = onOpenChange;
   useEffect(() => {
@@ -578,8 +743,7 @@ export default function ActionMenu({
     if (!visible || sheet || !current.current) return;
     const node = menu.ref.current;
     if (!node) return;
-    // Initial focus belongs to the published rows, never to a trailing region.
-    const items = [...(node.querySelector<HTMLElement>("[data-menu-published]") ?? node).querySelectorAll<HTMLElement>(ITEMS)];
+    const items = [...node.querySelectorAll<HTMLElement>(ITEMS)];
     const controls = items.length ? items : focusableElements(node);
     (controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
   }, [visible, sheet, focusKey, menu.ref]);
@@ -619,9 +783,16 @@ export default function ActionMenu({
       return;
     }
     if (isEditableTarget(event.target)) return;
+    const active = document.activeElement;
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && active?.matches('[role="menuitemradio"]')) {
+      const radios = [...(active.closest("[data-menu-row]")?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])];
+      const index = radios.findIndex((radio) => radio === active) + (event.key === "ArrowRight" ? 1 : -1);
+      event.preventDefault();
+      radios[(index + radios.length) % radios.length]?.focus();
+      return;
+    }
     const items = [...event.currentTarget.querySelectorAll<HTMLElement>(ITEMS)];
     if (!items.length) return;
-    const active = document.activeElement;
     const at = items.findIndex((item) => item === active);
     const go = (index: number) => {
       event.preventDefault();
@@ -638,7 +809,61 @@ export default function ActionMenu({
     }
   };
 
-  const item = (option: ActionDescriptor, index: number) => {
+  const latestOption = (id: string) => {
+    const value = latest.current;
+    const ready = value.kind === "Immediate" ? value.content : value.state?.kind === "Ready" ? value.state.content : null;
+    const later = value.kind === "Prepared" && value.state?.kind === "Ready" && value.trailing?.kind === "Ready" &&
+      value.trailing.request === value.state.request ? value.trailing.options : [];
+    return [...ready?.sections.flatMap((section) => section.options) ?? [], ...later].find((entry) => entry.id === id);
+  };
+  const item = (option: MenuOption, index: number) => {
+    if (option.kind === "choice") {
+      if (sheet) return <li key={option.id}>
+        <div data-menu-row={option.id} className={styles.choiceRow}>
+          <RadioGroup label={option.label} value={option.value} choices={option.choices} onChange={option.onChange}
+            presentation="Segmented" legend="Hidden" description={option.disabled ? option.disabledReason : undefined}
+            disabled={option.disabled} />
+        </div>
+      </li>;
+      const reason = option.disabled && option.disabledReason ? `${menuId}-reason-${index}` : undefined;
+      const choose = (value: string, closing: boolean) => {
+        const choice = latestOption(option.id);
+        if (choice?.kind !== "choice" || !checks.current.stable()) {
+          invalidate();
+          return false;
+        }
+        if (choice.disabled) return false;
+        // Enter closes first, so focus is home before the value changes.
+        if (closing) flushSync(() => close(true));
+        if (choice.value !== value) choice.onChange(value);
+        return true;
+      };
+      return <li role="none" key={option.id}>
+        <div role="group" aria-label={option.label} data-menu-row={option.id}
+          data-action-availability={option.disabled ? "Blocked" : "Available"} className={styles.choiceRow}>
+          <div className={choiceField.segments}>
+            {option.choices.map((entry) => <button key={entry.value} type="button" role="menuitemradio"
+              aria-checked={entry.value === option.value} tabIndex={-1} data-action-id={`${option.id}.${entry.value}`}
+              className={choiceField.segment} aria-disabled={option.disabled || undefined} aria-describedby={reason}
+              // Click and Space's native click choose and keep the menu open.
+              onClick={(event) => {
+                event.stopPropagation();
+                if (choose(entry.value, false)) event.currentTarget.focus();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                choose(entry.value, true);
+              }}>
+              {entry.icon}
+              <span>{entry.label}</span>
+            </button>)}
+          </div>
+          {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
+        </div>
+      </li>;
+    }
     const attributes = {
       "data-action-id": option.id,
       "data-menu-row": option.id,
@@ -656,11 +881,8 @@ export default function ActionMenu({
     const reason = option.disabled && option.disabledReason ? `${menuId}-reason-${index}` : undefined;
     const activate = (event: MouseEvent | KeyboardEvent) => {
       if (!("key" in event)) event.stopPropagation();
-      const latestContent = latest.current.kind === "Immediate" ? latest.current.content :
-        latest.current.state?.kind === "Ready" ? latest.current.state.content : null;
-      const latestTrailing = latest.current.kind === "Prepared" && latest.current.trailing?.kind === "Ready" ? latest.current.trailing.options : [];
-      const action = [...latestContent?.sections.flatMap((section) => section.options) ?? [], ...latestTrailing].find((entry) => entry.id === option.id);
-      if (!action || action.kind === "custom" || !checks.current.stable()) {
+      const action = latestOption(option.id);
+      if (!action || action.kind === "custom" || action.kind === "choice" || !checks.current.stable()) {
         event.preventDefault();
         invalidate();
         return;
@@ -706,9 +928,8 @@ export default function ActionMenu({
     </li>;
   };
   let itemIndex = 0;
-  // The trailing region sits on the panel's far side from its trigger, so growth never moves published rows.
   const trailingFirst = sheet || (lockedSide ?? menu.side) === "above";
-  const body = content ? hasChoices ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
+  const body = content ? hasOptions ? <ul className={styles.sections} role={sheet ? undefined : "none"}>
     {content.sections.filter((section) => section.options.length > 0).map((section, sectionIndex) => <li key={section.id} role={sheet ? undefined : "none"}>
       {sectionIndex > 0 ? <div role="separator" className={styles.separator} /> : null}
       {section.label ? <div className={styles.sectionLabel}>{section.label}</div> : null}
@@ -723,7 +944,7 @@ export default function ActionMenu({
     content={feedback} announcement="None"
     actions={[{ label: "retry", busy, onClick: () => { if (!busy) begin(current.current?.edge ?? "first", true); } }]}
   /> : null;
-  const trailingView = trailingRegion && content && hasChoices ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
+  const trailingView = trailingRegion && content && hasOptions ? <div role="none" data-menu-trailing="" className={styles.trailingRegion}>
     {trailingFirst ? null : <div role="separator" className={styles.separator} />}
     {trailing?.kind === "Ready" && trailing.options.length > 0
       ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"} aria-label={trailing.label ?? undefined}>
@@ -733,9 +954,8 @@ export default function ActionMenu({
         </Fragment>)}
       </ul>
       : trailing?.kind === "Failed" ? <ul className={`${styles.sections} ${styles.trailing}`} role={sheet ? undefined : "group"}>
-        {/* reachable by arrow keys like the disabled line it replaces; it does nothing. */}
         <li role={sheet ? undefined : "none"}><button type="button" role={sheet ? undefined : "menuitem"} aria-disabled="true"
-          tabIndex={sheet ? 0 : -1} className={collection.row} data-action-availability="Blocked" onClick={(event) => event.preventDefault()}>
+          tabIndex={sheet ? 0 : -1} className={collection.row} data-action-availability="Blocked" onClick={event => event.preventDefault()}>
           <span className={`${collection.content} ${styles.menuText}`}>{trailing.feedback.title}</span></button></li>
       </ul>
       : <p className={`${styles.menuStatus} ${styles.trailing}`}>{trailing?.kind === "Ready" ? "no other actions" : "loading more actions…"}</p>}
@@ -746,125 +966,12 @@ export default function ActionMenu({
     <div role="none" data-menu-published="">{body}</div>
     {trailingFirst ? null : trailingView}
   </> : body;
-  const hold = useRef<{ pointer: number; x: number; y: number; timer: ReturnType<typeof setTimeout>; owner: Layer | null; generation: number; subject: string } | null>(null);
-  const heldClick = useRef(false);
-  const touchGesture = useRef(false);
-  const cancelHold = () => {
-    if (hold.current) clearTimeout(hold.current.timer);
-    hold.current = null;
-  };
-  const consumeHeldClick = (pointer: number) => {
-    releasePress.current?.();
-    heldClick.current = true;
-    const release = () => {
-      window.removeEventListener("click", consume, true);
-      window.removeEventListener("pointerdown", release, true);
-      window.removeEventListener("pointercancel", release, true);
-      window.removeEventListener("keydown", release, true);
-      releasePress.current = null;
-      heldClick.current = false;
-    };
-    const consume = (event: globalThis.MouseEvent) => {
-      if (event instanceof globalThis.PointerEvent && event.pointerId > 0 && event.pointerId !== pointer) return;
-      release(); event.preventDefault(); event.stopImmediatePropagation();
-    };
-    releasePress.current = release;
-    window.addEventListener("click", consume, true);
-    window.addEventListener("pointerdown", release, true);
-    window.addEventListener("pointercancel", release, true);
-    window.addEventListener("keydown", release, true);
-  };
-  useEffect(() => {
-    window.addEventListener("scroll", cancelHold, true);
-    window.addEventListener("blur", cancelHold);
-    return () => {
-      cancelHold();
-      window.removeEventListener("scroll", cancelHold, true);
-      window.removeEventListener("blur", cancelHold);
-    };
-  }, []);
-  useEffect(() => { cancelHold(); heldClick.current = false; }, [source.subjectKey, pathname]);
-  const popup = mobile || (candidate && !hasChoices) ? "dialog" : "menu";
-  const triggerProps: ActionMenuTriggerProps = {
-    ...triggerAttributes,
-    ref: setTrigger,
-    type: "button", id: triggerId, "aria-label": label,
-    "aria-describedby": triggerDisabled && triggerDisabledReason ? reasonId : undefined,
-    "aria-disabled": triggerDisabled || undefined,
-    "aria-haspopup": popup, "aria-controls": visible ? menuId : undefined,
-    "aria-expanded": visible, "aria-busy": busy,
-    onClick: (event) => {
-      event.stopPropagation();
-      if (triggerDisabled) return;
-      if (current.current) close(false); else begin("first");
-    },
-    onKeyDown: (event) => {
-      if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
-      if (event.key === "Tab" && current.current) { close(false); return; }
-      if (event.key === "Enter" || event.key === " ") {
-        // Native click opens on Enter's press or Space's release, before focus moves.
-        if (event.repeat) event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      const edge = event.key === "ArrowUp" ? "last" : event.key === "ArrowDown" ? "first" : null;
-      if (!edge) return;
-      event.preventDefault(); event.stopPropagation();
-      if (current.current) close(false); else begin(edge);
-    },
-  };
-  return <div ref={root} className={[styles.container, className].filter(Boolean).join(" ")} data-open={visible ? "true" : "false"}>
-    {renderContextAnchor ? renderContextAnchor({
-      ref: (node) => { trigger.current = node; },
-      id: triggerId, "aria-haspopup": popup, "aria-controls": visible ? menuId : undefined,
-      "aria-expanded": visible, "aria-busy": busy,
-      onContextMenu: (event) => {
-        event.preventDefault(); event.stopPropagation();
-        const pending = hold.current;
-        if (touchGesture.current || (event.nativeEvent instanceof globalThis.PointerEvent && event.nativeEvent.pointerType === "touch")) {
-          if (!pending || pending.owner !== getInteractionOwner() || pending.generation !== getInteractionGeneration() || pending.subject !== latest.current.subjectKey) { cancelHold(); return; }
-          consumeHeldClick(pending.pointer);
-        }
-        cancelHold();
-        if (!triggerDisabled && !current.current) begin("first");
-      },
-      onKeyDown: (event) => {
-        touchGesture.current = false;
-        if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return;
-        if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
-        event.preventDefault(); event.stopPropagation(); cancelHold();
-        if (!triggerDisabled && !current.current) begin("first");
-      },
-      onPointerDown: (event) => {
-        cancelHold(); heldClick.current = false;
-        touchGesture.current = event.pointerType === "touch";
-        if (triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
-        const { pointerId: pointer, clientX: x, clientY: y } = event;
-        const owner = getInteractionOwner();
-        const generation = getInteractionGeneration();
-        hold.current = { pointer, x, y, owner, generation, subject: source.subjectKey, timer: setTimeout(() => {
-          if (!hold.current || hold.current.owner !== getInteractionOwner() || hold.current.generation !== getInteractionGeneration() || hold.current.subject !== latest.current.subjectKey || !trigger.current?.isConnected) { cancelHold(); return; }
-          consumeHeldClick(pointer); cancelHold();
-          if (!current.current) begin("first");
-        }, 500) };
-      },
-      onPointerMove: (event) => {
-        const pending = hold.current;
-        if (pending && (event.pointerId !== pending.pointer || Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > 8)) cancelHold();
-      },
-      onPointerUp: () => cancelHold(), onPointerCancel: cancelHold,
-      onClickCapture: (event) => {
-        if (!heldClick.current) return;
-        heldClick.current = false; event.preventDefault(); event.stopPropagation();
-      },
-    }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
-    {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
-    <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</span>
+  return <>
     {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
-      className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
+      className={`${collection.surface} ${collection.contentViewport} ${styles.menu}`} role={hasOptions ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
       tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{composed}</div>, container) : null}
-    <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} heightLimit="available" onDismiss={() => close(true)}
+    {sheet ? <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} heightLimit="available" onDismiss={() => close(true)}
       interactionLayer={modalLayer} returnFocusTo={() => returnFocusTo?.() ?? trigger.current}
       skipReturnFocus={() => skipReturn.current} focusKey={focusKey}
       initialFocus={(panel) => {
@@ -875,12 +982,14 @@ export default function ActionMenu({
           return panel;
         }
         if (current.current?.touch) return panel;
-        if (!hasChoices) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
+        if (!hasOptions) return content ? panel : focusableElements(panel).find((element) => sheetBody.current?.contains(element)) ?? panel;
         const items = [...(panel.querySelector<HTMLElement>("[data-menu-published]") ?? panel).querySelectorAll<HTMLElement>("[data-menu-row]")];
         const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
-        return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
+        // A choice edge focuses its checked radio, the group's one native tab stop.
+        return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>('input[type="radio"]:checked:not(:disabled)')
+          ?? edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
       }}>
       <div ref={sheetBody} data-collection-viewport="" className={`${collection.contentViewport} ${styles.sheetBody}`} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{composed}</div>
-    </MobileSheet>
-  </div>;
+    </MobileSheet> : null}
+  </>;
 }

@@ -97,7 +97,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       const structure = structureOf(doc, null);
       const at = (anchor: MarkAnchor, end: boolean) => anchor.kind === "text"
         ? structure.fraction({ kind: "text", unit: anchor.unit, offset: end ? anchor.end : anchor.start })
-        : structure.fraction({ kind: "pdf", page: anchor.page, y: (end ? Math.max : Math.min)(...anchor.quads.flatMap(quad => [quad.y1, quad.y3])) });
+        : structure.fraction({ kind: "pdf", page: anchor.page, y: 0 });
       for (const annotation of localState.annotations) if (annotation.placement.kind === "placed")
         markers.push({ id: annotation.id, position: at(annotation.placement.anchor, false), end: at(annotation.placement.anchor, true),
           tone: "Highlight", label: "highlight", preview: annotation.selection.quote_exact });
@@ -108,6 +108,12 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         if (root.content.kind === "SourceReference" && extent.anchor.kind === "text") {
           const { unit, start, end } = extent.anchor;
           noteRefs.push({ key: root.content.stable_key, unit, start, end });
+        }
+        if (extent.kind === "pdf") {
+          const marker = wire?.identity === doc.identity ? wire.markers.find(item => item.item_id === root.ref) : null;
+          if (marker) markers.push({ id: marker.item_id, position: marker.position, end: marker.end_position,
+            tone: marker.tone, label: marker.label, preview: marker.preview });
+          continue;
         }
         const item = rootItem(root), body = item.preview.body, facet = markerFacet(root);
         markers.push({ id: root.ref, position: structure.fraction(extent.start), end: structure.fraction(extent.end),

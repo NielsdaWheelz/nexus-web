@@ -1,7 +1,8 @@
-"""Physical library media, filtered and keyset-paged under one total order.
+"""Complete library entry indexes and their atomic pane aggregate.
 
-Subscriptions have a separate section owned by podcasts.subscriptions_query. They
-never fold episodes, affect media counts, or participate in manual entry order.
+The caller owns one read-only repeatable-read snapshot for library detail, entries
+and the section owned by podcasts.subscriptions_query. Subscriptions never fold
+episodes, affect media counts, or participate in manual entry order.
 Publication order uses the full original calendar value, with undated works last
 in either direction. Feed release dates never stand in for original publication.
 """
@@ -16,9 +17,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.collection_page import CollectionQuery, parse_collection_query
+from nexus.schemas.collection_index import parse_index_query
 from nexus.schemas.library import (
-    LibraryEntriesPageOut,
+    LibraryEntriesIndexOut,
     LibraryMediaEntryOut,
     LibraryMetadataOut,
     LibraryOrderOut,
@@ -28,12 +29,12 @@ from nexus.services.collection_keyset import (
     Direction,
     KeysetValueKind,
     SortKey,
-    keyset_page,
     order_by_sql,
 )
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import primary_creator_rows_sql
 from nexus.services.library_entries import library_media_rows_sql, unfiled_media_ids_sql
+from nexus.services.podcasts.subscriptions_query import read_library_podcast_index
 
 
 def _nullable(column: str, direction: Direction, value: KeysetValueKind) -> tuple[SortKey, ...]:
@@ -67,11 +68,9 @@ class EntryView:
     completion: str | None
 
 
-def parse_entries_query(items: Sequence[tuple[str, str]]) -> tuple[EntryView, CollectionQuery]:
-    query = parse_collection_query(
-        items, domain_keys={"sort", "entry_type", "projection", "completion"}
-    )
-    view = EntryView(**{key: query.parameters.get(key) for key in EntryView.__slots__})
+def parse_entries_query(items: Sequence[tuple[str, str]]) -> EntryView:
+    query = parse_index_query(items, domain_keys={"sort", "entry_type", "projection", "completion"})
+    view = EntryView(**{key: query.get(key) for key in EntryView.__slots__})
     if (
         (view.sort is not None and view.sort not in _SORTS)
         or (view.entry_type is not None and view.entry_type not in _ENTRY_TYPES)
@@ -79,7 +78,7 @@ def parse_entries_query(items: Sequence[tuple[str, str]]) -> tuple[EntryView, Co
         or view.completion not in (None, "unfinished")
     ):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported library view")
-    return view, query
+    return view
 
 
 def entry_order_plan(view: EntryView, *, is_default: bool) -> tuple[SortKey, ...]:
@@ -138,7 +137,7 @@ def entry_fact_rows_sql(
     """
 
 
-def _page_sql(view: EntryView, *, is_default: bool, keyset: str, order: str) -> str:
+def _entries_sql(view: EntryView, *, is_default: bool) -> str:
     membership = (
         f"SELECT NULL::uuid AS entry_id, members.media_id, NULL::integer AS position, members.added_at "
         f"FROM ({library_media_rows_sql()}) members"
@@ -163,8 +162,7 @@ def _page_sql(view: EntryView, *, is_default: bool, keyset: str, order: str) -> 
         remaining=(view.sort or "").startswith("remaining"),
     )
     return f"""
-        SELECT * FROM ({facts}) facts WHERE {" AND ".join(predicates)} {keyset}
-        ORDER BY {order} LIMIT :limit
+        SELECT * FROM ({facts}) facts WHERE {" AND ".join(predicates)}
     """
 
 
@@ -174,9 +172,7 @@ def list_library_entries(
     library_id: UUID,
     *,
     view: EntryView,
-    cursor: str | None,
-    limit: int,
-) -> LibraryEntriesPageOut:
+) -> LibraryEntriesIndexOut:
     from nexus.services import media as media_service
 
     library = libraries.access(db, viewer_id, library_id, lock=False)
@@ -187,27 +183,23 @@ def list_library_entries(
         if library.mutable and all(value is None for value in asdict(view).values())
         else None
     )
-    rows, next_cursor = keyset_page(
-        db,
-        binding={
-            "list": "LibraryEntries",
-            "viewer": viewer_id,
-            "library": library_id,
-            "view": asdict(view),
-            "order_revision": order_revision,
-        },
-        plan=entry_order_plan(view, is_default=library.is_default),
-        cursor=cursor,
-        limit=limit,
-        params={"viewer_id": viewer_id, "library_id": library_id, "entry_type": view.entry_type},
-        sql=lambda keyset, order: _page_sql(
-            view, is_default=library.is_default, keyset=keyset, order=order
-        ),
+    order = order_by_sql(entry_order_plan(view, is_default=library.is_default), alias="facts")
+    rows = (
+        db.execute(
+            text(
+                f"SELECT * FROM ({_entries_sql(view, is_default=library.is_default)}) facts ORDER BY {order}"
+            ),
+            {"viewer_id": viewer_id, "library_id": library_id, "entry_type": view.entry_type},
+        )
+        .mappings()
+        .all()
     )
     summaries = media_service.media_summaries(
         db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows]
     )
-    return LibraryEntriesPageOut(
+    return LibraryEntriesIndexOut(
+        library=library.out(viewer_id),
+        podcasts=read_library_podcast_index(db, viewer_id, library_id),
         items=[
             LibraryMediaEntryOut(
                 kind="media",
@@ -217,7 +209,6 @@ def list_library_entries(
             )
             for row in rows
         ],
-        next_cursor=next_cursor,
         order_revision=order_revision,
     )
 
@@ -270,16 +261,10 @@ def ordered_selection_ids(
     if view.projection == "unfiled" and not library.is_default:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unfiled is a view of All")
     plan = entry_order_plan(view, is_default=library.is_default)
-    sql = _page_sql(
-        view, is_default=library.is_default, keyset="", order=order_by_sql(plan, alias="facts")
-    )
     rows = db.execute(
-        text(sql),
-        {
-            "viewer_id": viewer_id,
-            "library_id": library_id,
-            "entry_type": view.entry_type,
-            "limit": None,
-        },
+        text(
+            f"SELECT media_id FROM ({_entries_sql(view, is_default=library.is_default)}) facts ORDER BY {order_by_sql(plan, alias='facts')}"
+        ),
+        {"viewer_id": viewer_id, "library_id": library_id, "entry_type": view.entry_type},
     )
     return "All" if library.is_default else library.name, [row.media_id for row in rows]

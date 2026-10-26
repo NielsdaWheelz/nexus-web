@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
 import ResourceActions from "@/components/resources/ResourceActions";
 import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
@@ -38,7 +38,8 @@ function renderContext(context: CollectionContext): ReactNode {
  */
 export default function CollectionRow({
   row, as = "li", primaryControl, occurrenceActions, actionFocus: suppliedActionFocus, afterRemoval,
-  compactPrimaryControl = false, rowActionsAvailable = true, viewTransitionName, attention: suppliedAttention,
+  compactPrimaryControl = false, rowActionsAvailable = true, attention: suppliedAttention,
+  listPosition,
 }: {
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
@@ -48,8 +49,8 @@ export default function CollectionRow({
   readonly afterRemoval: () => HTMLElement | null;
   readonly compactPrimaryControl?: boolean;
   readonly rowActionsAvailable?: boolean;
-  readonly viewTransitionName?: string;
   readonly attention?: string;
+  readonly listPosition?: { readonly index: number; readonly count: number };
 }) {
   const media = row.resourceActions?.kind === "Media" ? row.resourceActions : null;
   const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
@@ -84,19 +85,19 @@ export default function CollectionRow({
     subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
     actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     label={menuLabel}
-    renderTrigger={(props) => <span className={styles.attentionTrigger}>
+    renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
       {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
-    </span>}
+    </>}
   /> : menuAvailable ? <ContextualActionMenu
     title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
     resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
     displayedActivation={attention !== null && row.kind === "podcast" ? undefined : row.primary.kind === "link" ? { kind: "route", href: row.primary.href, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null } : { kind: "none", href: null, resource_ref: row.resourceRef ?? row.id, unavailable_reason: null }}
     label={menuLabel} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
-    renderTrigger={(props) => <span className={styles.attentionTrigger}>
+    renderTrigger={(props) => <>
       <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
       {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
-    </span>}
+    </>}
   /> : null;
   const metadata = <span className={styles.supportLine}>
     {attention && !menuAvailable ? <span className={styles.reason}>{attention.split(";", 1)[0]}</span> : null}
@@ -114,12 +115,12 @@ export default function CollectionRow({
     case "Details": content = { kind: "Details", body: row.context ? renderContext(row.context) : null }; break;
     default: assertNever(row.presentation);
   }
-  const rootStyle: CSSProperties | undefined = viewTransitionName ? { viewTransitionName } : undefined;
   return <ResourceRow
     as={as} primary={row.primary} selected={row.selected}
     rootProps={{ "aria-current": row.selected ? "true" : undefined,
-      "data-collection-row-id": row.id, "data-collection-item-kind": row.kind,
-      style: rootStyle }}
+      "aria-posinset": listPosition ? listPosition.index + 1 : undefined,
+      "aria-setsize": listPosition?.count,
+      "data-collection-row-id": row.id, "data-collection-item-kind": row.kind }}
     title={media ? <MediaTitle subject={media.subject} /> : title}
     content={content}
     leadingVisual={row.artwork !== undefined ? <PodcastRowArtwork key={row.artwork.imageUrl} title={row.title.text} imageUrl={row.artwork.imageUrl} /> : undefined}

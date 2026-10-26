@@ -184,10 +184,10 @@ and presentation, and ends it. entering with an open transaction raises rather
 than discarding a caller's writes. reopening uses its caller's transaction and
 does no network work.
 
-browser snapshots disable postgres jit transaction-locally before retrieval:
-compiling the visibility relations is unsuitable for these bounded reads. other
-workloads retain their execution policy. configured api startup loads local
-embedding sdk code before readiness, without creating clients or making calls.
+search uses the shared application engine's jit-disabled execution policy
+([database layer](../architecture.md#71-the-database-layer)). configured api startup
+loads local embedding sdk code before readiness, without creating clients or
+making calls.
 
 the api container, disposable runtime and local commands select uvicorn's stock
 `asyncio` loop explicitly. optional `uvloop` is not required for search; the http

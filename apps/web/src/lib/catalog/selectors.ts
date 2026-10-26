@@ -4,7 +4,6 @@
  * unplayed orders, lectern membership) come from one projection of this device's
  * listening over the dated catalog, applied before filtering and sorting. */
 import { ApiError } from "@/lib/api/client";
-import type { ListPage } from "@/lib/api/useServerList";
 import type { Schema } from "@/lib/api/wire";
 import { decodeUpdatedTitleIndexView, updatedTitleSortOptionOf } from "@/lib/collections/updatedTitleIndexView";
 import {
@@ -96,21 +95,26 @@ function query(input: URLSearchParams, choices: Readonly<Record<string, readonly
   }
 }
 const sorted = <T,>(rows: readonly T[], rank: (row: T) => number) => [...rows].sort((a, b) => rank(a) - rank(b));
-const page = <T,>(items: readonly T[]): ListPage<T> => ({ items, next_cursor: null });
+const index = <T,>(items: T[]) => ({ items });
+const podcastRow = ({ id, title, contributors, image_url }: Schema<"PodcastListItemOut">): Schema<"PodcastIndexItemOut"> => ({ id, title, contributors, image_url });
 
-export function catalogLibraries(catalog: CatalogIndex, params = new URLSearchParams()): ListPage<Schema<"LibraryOut">> {
+export function catalogLibraries(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_LibraryOut_"> {
   query(params, { sort: ["created_desc", "name_asc", "name_desc"] });
   const sort = params.get("sort");
-  return page(sorted(catalog.value.libraries, row => sort === "created_desc" ? row.order.created_desc : sort === "name_asc" ? row.order.name_asc : sort === "name_desc" ? row.order.name_desc : row.order.default).map(row => row.value));
+  return index(sorted(catalog.value.libraries, row => sort === "created_desc" ? row.order.created_desc : sort === "name_asc" ? row.order.name_asc : sort === "name_desc" ? row.order.name_desc : row.order.default).map(row => row.value));
 }
 export const catalogLibrary = (catalog: CatalogIndex, id: string) => catalog.libraries.get(id)?.value ?? null;
-export const catalogLibraryShows = (catalog: CatalogIndex, id: string) => catalog.libraryShows.get(id) ?? null;
+/** Compact section and entry projection share this exact catalog capture. */
+function catalogLibraryPodcastIndex(catalog: CatalogIndex, id: string): Schema<"LibraryPodcastIndexOut"> | null {
+  const section = catalog.libraryShows.get(id);
+  return section === undefined ? null : { ...section, subscriptions: section.subscriptions.map(row => ({ ...row, podcast: podcastRow(row.podcast) })) };
+}
 export const catalogMedia = (catalog: CatalogIndex, id: string) => catalog.media.get(id)?.summary ?? null;
 export const catalogShow = (catalog: CatalogIndex, id: string) => catalog.shows.get(id)?.detail ?? null;
 export const catalogChat = (catalog: CatalogIndex, id: string) => catalog.chats.get(id) ?? null;
 export const catalogLectern = (catalog: CatalogIndex) => catalog.value.lectern;
 
-export function catalogEntries(catalog: CatalogIndex, id: string, params = new URLSearchParams()): ListPage<Schema<"LibraryMediaEntryOut">> | null {
+export function catalogEntries(catalog: CatalogIndex, id: string, params = new URLSearchParams()): Schema<"LibraryEntriesIndexOut"> | null {
   const library = catalog.libraries.get(id)?.value;
   if (!library) return null;
   query(params, {
@@ -152,11 +156,13 @@ export function catalogEntries(catalog: CatalogIndex, id: string, params = new U
       default: throw invalid();
     }
   });
-  return { ...page(ordered.map(row => ({ kind: "media" as const, entry_id: row.entry_id, added_at: row.added_at, media_summary: media(row).summary }))),
+  const podcasts = catalogLibraryPodcastIndex(catalog, id);
+  if (podcasts === null) return null;
+  return { library, podcasts, ...index(ordered.map(row => ({ kind: "media" as const, entry_id: row.entry_id, added_at: row.added_at, media_summary: media(row).summary }))),
     order_revision: !library.is_default && [...params].length === 0 ? library.order_revision : null };
 }
 
-export function catalogPodcasts(catalog: CatalogIndex, params = new URLSearchParams()): ListPage<Schema<"PodcastListItemOut">> | null {
+export function catalogPodcasts(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_PodcastIndexItemOut_"> | null {
   query(params, { sort: ["recent_episode", "unplayed_count", "alpha"], filter: ["all", "has_new", "not_in_library"], library_id: null });
   const sort = params.get("sort") ?? "recent_episode";
   const filter = params.get("filter") ?? "all";
@@ -177,22 +183,23 @@ export function catalogPodcasts(catalog: CatalogIndex, params = new URLSearchPar
     : sorted(rows, row => {
       switch (sort) { case "recent_episode": case "alpha": return index(row).order[sort]; default: throw invalid(); }
     });
-  return page(ordered.map(row => row.detail.podcast));
+  return { items: ordered.map(row => podcastRow(row.detail.podcast)) };
 }
 
-export function catalogEpisodes(catalog: CatalogIndex, id: string, params = new URLSearchParams()): ListPage<Schema<"PodcastEpisodeListItemOut">> | null {
-  if (!catalog.shows.has(id)) return null;
+export function catalogEpisodes(catalog: CatalogIndex, id: string, params = new URLSearchParams()): Schema<"PodcastEpisodeIndexOut"> | null {
+  const podcast = catalog.shows.get(id)?.detail;
+  if (podcast === undefined) return null;
   query(params, { state: ["all", "unplayed", "in_progress", "played"], sort: ["newest", "oldest", "duration_asc", "duration_desc"] });
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const rows = catalog.value.episodes.filter(row => row.podcast_id === id && (state === "all" || row.episode_state === state));
-  return page(sorted(rows, row => {
+  return { podcast, ...index(sorted(rows, row => {
     switch (sort) { case "newest": case "oldest": case "duration_asc": case "duration_desc": return row.order[sort]; default: throw invalid(); }
   }).map(row => {
     const media = catalog.media.get(row.media_id);
     if (!media) throw new Error("catalog episode has no media");
     return { id: row.media_id, media_summary: media.summary, transcript_state: row.transcript_state };
-  }));
+  })) };
 }
 function updatedRank(params: URLSearchParams): keyof Schema<"UpdatedTitleOrder"> {
   query(params, { sort: ["updated", "title"], direction: ["asc", "desc"] });
@@ -205,7 +212,7 @@ function updatedRank(params: URLSearchParams): keyof Schema<"UpdatedTitleOrder">
     case "title-desc": return "title_desc";
   }
 }
-export function catalogChats(catalog: CatalogIndex, params = new URLSearchParams()): ListPage<Schema<"ConversationListItemOut">> {
+export function catalogChats(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_ConversationListItemOut_"> {
   const rank = updatedRank(params);
-  return page(sorted(catalog.value.chats, row => row.order[rank]).map(row => row.value));
+  return index(sorted(catalog.value.chats, row => row.order[rank]).map(row => row.value));
 }

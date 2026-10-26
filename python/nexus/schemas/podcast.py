@@ -67,6 +67,15 @@ class PodcastListItemOut(BaseModel):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
+class PodcastIndexItemOut(BaseModel):
+    id: UUID
+    title: str
+    contributors: list[ContributorCreditOut]
+    image_url: str | None
+
+    model_config = _CLOSED
+
+
 class PodcastEpisodeCountsOut(BaseModel):
     known_count: int = Field(ge=0)
     unfinished_count: int = Field(ge=0)
@@ -257,6 +266,25 @@ class LibraryPodcastsOut(BaseModel):
     model_config = _CLOSED
 
 
+class LibraryPodcastIndexShowOut(BaseModel):
+    podcast: PodcastIndexItemOut
+    destinations: list[PodcastDestinationOut]
+    recurring: PodcastRecurringOut
+    imports: list[PodcastImportOut]
+
+    model_config = _CLOSED
+
+
+class LibraryPodcastIndexOut(BaseModel):
+    order_revision: OrderRevision
+    removal_revision: OrderRevision
+    can_add_content: bool
+    subscriptions: list[LibraryPodcastIndexShowOut]
+    imports: list[PodcastImportOut]
+
+    model_config = _CLOSED
+
+
 class LibraryPodcastOut(BaseModel):
     library_id: UUID
     podcast_id: UUID
@@ -431,6 +459,13 @@ class PodcastEpisodeListItemOut(BaseModel):
     transcript_state: MediaTranscriptState
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PodcastEpisodeIndexOut(BaseModel):
+    podcast: PodcastDetailOut
+    items: list[PodcastEpisodeListItemOut]
+
+    model_config = _CLOSED
 
 
 class PodcastEpisodeSelection(BaseModel):

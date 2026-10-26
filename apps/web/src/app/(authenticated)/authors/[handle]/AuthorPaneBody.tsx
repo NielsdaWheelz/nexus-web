@@ -3,10 +3,10 @@
 // The author pane: the person's other names and their visible works. The url
 // owns the works view (`sort`, `direction`) and passes it to the server, which
 // validates it; the text filter stays local. The filter and count cover the
-// loaded prefix; the list footer owns explicit continuation.
+// complete finite index; the local filter sees every visible kind.
 
 import { useCallback, useId, useMemo } from "react";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -26,19 +26,13 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
-import {
-  listRowStatus,
-  pageQuery,
-  useServerList,
-  type ListSnapshot,
-} from "@/lib/api/useServerList";
+import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
+import { useAuthorIndexReads } from "@/lib/panes/indexPaneEntry";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { browsePreviewHref } from "@/lib/browse/api";
 import {
-  getContributor,
   listContributorWorks,
   type ContributorDetail,
   type ContributorWork,
@@ -49,7 +43,6 @@ import {
 } from "@/lib/contributors/credits";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
-  useMediaQueryRevision,
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
@@ -74,7 +67,7 @@ import styles from "./page.module.css";
 const DETAIL =
   definePaneVisitDataKey<Visit<ContributorDetail>>("Author.Detail");
 const WORKS =
-  definePaneVisitDataKey<ListSnapshot<ContributorWork>>("Author.Works");
+  definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof listContributorWorks>>>>("Author.Works");
 
 /** The four views; the first is the default and owns no url keys. */
 const SORTS = [
@@ -173,24 +166,14 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     ...params.getAll("sort").map((value) => ["sort", value]),
     ...params.getAll("direction").map((value) => ["direction", value]),
   ]).toString();
-  const stale = `${useMediaQueryRevision()}:${useChangeStamp("Podcasts")}`;
-  const detail = useServerValue({
-    key: `/contributors/${encodeURIComponent(handle)}`,
-    stale,
-    visit: DETAIL,
-    load: (signal) => getContributor(handle, signal),
-  });
-  const works = useServerList<ContributorWork>({
-    key: `/contributors/${encodeURIComponent(handle)}/works?${view}`,
-    stale,
-    pageSize: 100,
-    active: active && detail.status === "ready",
-    visit: WORKS,
-    id: (work) => work.href,
-    fetchPage: (cursor, limit, signal) =>
-      listContributorWorks(handle, pageQuery(view, cursor, limit), signal),
-  });
-  const loaded = works.items;
+  const descriptors = useAuthorIndexReads();
+  const detail = useServerValue({ ...descriptors.detail, visit: DETAIL });
+  const works = useServerValue({ ...descriptors.works, visit: WORKS });
+  const loaded = works.status === "ready" ? works.data.items : [];
+  const worksFailure = works.status === "loading" ? null : works.error;
+  const detailFailure = detail.status === "ready" ? detail.error : null;
+  const worksBusy = indexReading(works);
+  const retryWorks = () => { void works.refetch().catch(() => {}); };
   const summaries = useMediaSummaries(
     loaded.flatMap((work) =>
       work.kind === "Media" ? [work.media_summary] : [],
@@ -199,16 +182,16 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   // A media work whose summary is no longer visible drops out.
   const rows = useMemo(
     () =>
-      loaded.flatMap((work) => {
+      (works.status === "ready" ? works.data.items : []).flatMap((work) => {
         if (work.kind !== "Media") return [presentWork(work)];
         const summary = summaries.resolve(work.media_summary);
         return summary === null
           ? []
           : [presentWork({ ...work, media_summary: summary })];
       }),
-    [loaded, summaries],
+    [works, summaries],
   );
-  const complete = works.complete;
+  const complete = (works.status === "ready");
   const matches = useCallback(
     (text: string) =>
       rows.filter((row) =>
@@ -226,7 +209,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     sourceKey: `Author.Works:${handle}`,
     getRowStatus: useCallback(
       (text: string) =>
-        listRowStatus(works, rows.length, matches(text).length, {
+        indexRowStatus(works, rows.length, matches(text).length, {
           singular: "work",
           plural: "works",
         }),
@@ -256,14 +239,13 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
   }, [clearQuery, inputRef, setView]);
   const invalidView =
-    works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
+    works.status === "failed" && works.error.code === "E_INVALID_REQUEST";
   const visible = matches(text);
   const emptyTitle = text
-    ? complete ? "no works match this filter." : "no matching work found so far."
-    : complete ? "no works yet." : "no works loaded so far.";
-  const readFeedback = useCollectionReadFeedback({
-    list: works, unit: { singular: "work", plural: "works" },
-    waiting: detail.status === "ready" && !invalidView && works.status === "loading",
+    ? "no works match this filter." : "no works yet.";
+  const readFeedback = useIndexReadFeedback({
+    value: works, requestedKey: descriptors.works.key, active, unit: { singular: "work", plural: "works" },
+    waiting: !invalidView && works.status === "loading",
     outcome: visible.length > 0 ? "results updated." : emptyTitle,
     returnFocus: () => inputRef.current,
   });
@@ -285,7 +267,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
         placement: "Inline",
         id: queryStatusId,
         visible: false,
-        content: <PaneFilterRowsStatus announceQueryChanges={works.current && works.failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+        content: <PaneFilterRowsStatus announceQueryChanges={(works.status === "ready") && worksFailure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}
       onReset={canReset ? resetView : undefined}
     />,
@@ -322,10 +304,10 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const { refetch: refetchDetail } = detail;
   const { refetch: refetchWorks } = works;
   const refresh = useCallback(async () => {
-    refetchDetail();
-    // a failed reread shows as the list's failure
-    refetchWorks().catch(() => {});
-    return { kind: "Complete" as const, announcement: "Refreshing author" };
+    try {
+      await Promise.all([refetchDetail(), refetchWorks()]);
+      return { kind: "Complete" as const, announcement: "author refreshed" };
+    } catch { return { kind: "Failed" as const, announcement: "couldn’t refresh author" }; }
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
     query: queryControls,
@@ -358,23 +340,23 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     detail.status === "failed"
       ? detail.error
       : works.status === "failed"
-        ? (works.failure?.error ?? null)
+        ? (worksFailure ?? null)
         : null;
   if (failure !== null) {
     const retry = () => {
       if (detail.status === "failed") detail.refetch();
-      if (works.status === "failed") works.retry();
+      if (works.status === "failed") retryWorks();
     };
     return (
       <>
       {readFeedback.announcement}
       <FeedbackNotice
-        content={authorError(failure, "This author couldn’t be loaded")}
-        announcement="Assertive"
+        content={authorError(failure, "couldn’t load author")}
+        announcement="Polite"
         actions={
           failure.code === "E_NOT_FOUND"
             ? undefined
-            : [{ label: "retry", onClick: retry, busy: (detail.status === "failed" && detail.retrying) || works.running !== null }]
+            : [{ label: "retry", onClick: retry, busy: (detail.status === "failed" && detail.retrying) || worksBusy }]
         }
       />
       </>
@@ -397,7 +379,10 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   return (
     <>
       {readFeedback.announcement}
-      <PaneSurface>
+      <PaneSurface state={detailFailure === null ? undefined : <FeedbackNotice
+        content={authorError(detailFailure, "couldn’t refresh author")}
+        announcement="None" actions={[{ label: "try again", onClick: detail.refetch, busy: indexReading(detail) }]}
+        returnFocus={() => inputRef.current} />}>
         <div className={styles.detail}>
           {otherNames.length > 0 ? (
             <section className={styles.otherNames}>
@@ -413,34 +398,31 @@ function AuthorPane({ handle }: { readonly handle: string }) {
             </section>
           ) : null}
           <section aria-label="Works">
-            <CollectionView
+            <CollectionView geometry="UniformIndex"
               returnScope="Author.Works"
               rows={visible}
               status={works.status === "loading" ? "loading" : "ready"}
               ariaLabel="Works"
-              rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
-              collectionBusy={works.running !== null}
+              anchorKey={text}
+              collectionBusy={worksBusy}
               surface={false}
               notice={<>
                 {works.status === "ready" &&
-                works.failure !== null &&
-                works.failure.op !== "More" ? (
+                worksFailure !== null ? (
                   <FeedbackNotice
-                    content={authorError(works.failure.error, "Works couldn’t be loaded")}
-                    announcement="Polite"
-                    actions={[{ label: "Retry", onClick: works.retry, busy: works.running !== null }]}
+                    content={authorError(worksFailure, "couldn’t refresh works")}
+                    announcement="None"
+                    actions={[{ label: "try again", onClick: retryWorks, busy: worksBusy }]}
+                    returnFocus={() => inputRef.current}
                   />
                 ) : (
                   <MediaSummaryNotice
                     error={summaries.error}
                     retry={summaries.retry}
-                  busy={summaries.retrying}
+                    busy={summaries.retrying}
                   />
                 )}
-                {text && works.current && !complete && works.failure === null && visible.length > 0
-                  ? <p>filter applies to loaded items.</p> : null}
               </>}
-              footer={readFeedback.notice}
               empty={
                 text ? (
                   <FeedbackNotice

@@ -107,10 +107,10 @@ export default function ResourceIndexRow({
         triggerRef={setMore} actionFocus={actionFocus} triggerAttributes={{ "data-row-actions-control": "" }}
         resourceRef={assumeCanonicalResourceRef(item.action_ref)} displayedActivation={item.activation}
         showSourceSubject={item.action_ref !== item.ref} label={menuLabel}
-        renderTrigger={(props) => <span className={styles.attentionTrigger}>
+        renderTrigger={(props) => <>
           <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
           {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
-        </span>}
+        </>}
       />
     </>}
     rootProps={{ "data-resource-ref": item.ref }}

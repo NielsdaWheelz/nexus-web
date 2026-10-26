@@ -26,7 +26,7 @@ from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
-from nexus.schemas.collection_page import CollectionPage, parse_collection_query
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.conversation import (
     ConversationListItemOut,
     ConversationOut,
@@ -41,7 +41,7 @@ from nexus.services.collection_keyset import (
     SortKey,
     decode_keyset_cursor,
     encode_keyset_cursor,
-    keyset_page,
+    order_by_sql,
 )
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
@@ -124,81 +124,85 @@ def conversation_index_rows_sql() -> str:
     """
 
 
+def _source_context_filter(db: Session, viewer_id: UUID, media_id: UUID | None) -> str:
+    """Current readable direct context, shared by the index and latest lookup."""
+    if media_id is None:
+        return ""
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    media_owners = owner_rows_sql(f"""
+        SELECT target_scheme AS scheme, target_id AS id
+        FROM ({context_facts_sql("c.id")}) context
+    """)
+    return f"""AND EXISTS (
+        SELECT 1 FROM ({media_owners}) owners
+        WHERE owners.owner_scheme = 'media' AND owners.owner_id = :media_id
+    )"""
+
+
 def index(
     db: Session, *, viewer_id: UUID, items: Sequence[tuple[str, str]]
-) -> CollectionPage[ConversationListItemOut]:
-    """One keyset page of owned chats; the cursor binds viewer, media, view and search.
+) -> CollectionIndex[ConversationListItemOut]:
+    """All owned chats in one ordered snapshot; title search is a literal substring.
 
-    Title search is a trimmed literal substring of at most 200 characters.
-    A readable media scope matches current direct context through one-hop endpoint
+    Readable media scope matches current direct context through one-hop endpoint
     ownership, never historical citations or paths through other resources.
     """
-
-    query = parse_collection_query(
-        items, domain_keys={"sort", "direction", "title_search", "media_id"}
-    )
-    search = query.parameters.get("title_search", "").strip()
-    plan = UPDATED_TITLE_PLANS.get(
-        (query.parameters.get("sort"), query.parameters.get("direction"))
-    )
+    query = parse_index_query(items, domain_keys={"sort", "direction", "title_search", "media_id"})
+    search = query.get("title_search", "").strip()
+    plan = UPDATED_TITLE_PLANS.get((query.get("sort"), query.get("direction")))
     if plan is None or len(search) > 200:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Unsupported chat index view, or a title_search over 200 characters",
         )
-    raw_media_id = query.parameters.get("media_id")
+    raw_media_id = query.get("media_id")
     try:
         media_id = UUID(raw_media_id) if raw_media_id is not None else None
     except ValueError as exc:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid media_id") from exc
-    media_filter = ""
-    if media_id is not None:
-        if not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        media_owners = owner_rows_sql(f"""
-            SELECT target_scheme AS scheme, target_id AS id
-            FROM ({context_facts_sql("c.id")}) context
-        """)
-        media_filter = f"""AND EXISTS (
-            SELECT 1 FROM ({media_owners}) owners
-            WHERE owners.owner_scheme = 'media' AND owners.owner_id = :media_id
-        )"""
-    # The DB CHECK keeps titles nonblank, so the presented title is the title itself.
-    rows, cursor = keyset_page(
-        db,
-        binding={
-            "list": "Chats",
-            "viewer": viewer_id,
-            "media_id": media_id,
-            "title_search": search,
-        },
-        plan=plan,
-        cursor=query.cursor,
-        limit=query.limit,
-        params={"viewer_id": viewer_id, "search": search, "media_id": media_id},
-        sql=lambda keyset, order: f"""
-            WITH facts AS (
-                SELECT c.* FROM ({conversation_index_rows_sql()}) c
-                WHERE true
-                  AND (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
-                  {media_filter}
-            )
-            SELECT * FROM facts WHERE true {keyset}
+    media_filter = _source_context_filter(db, viewer_id, media_id)
+    order = order_by_sql(plan, alias="c")
+    rows = db.execute(
+        text(f"""
+            SELECT c.* FROM ({conversation_index_rows_sql()}) c
+            WHERE (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
+              {media_filter}
             ORDER BY {order}
-            LIMIT :limit
-        """,
-    )
-    return CollectionPage[ConversationListItemOut](
+        """),
+        {"viewer_id": viewer_id, "search": search, "media_id": media_id},
+    ).mappings()
+    return CollectionIndex[ConversationListItemOut](
         items=[
             ConversationListItemOut(
-                id=row["id"],
-                title=row["title"],
-                message_count=row["message_count"],
-                updated_at=row["updated_at"],
+                **{key: row[key] for key in ConversationListItemOut.model_fields}
             )
             for row in rows
         ],
-        next_cursor=cursor,
+    )
+
+
+def latest(db: Session, *, viewer_id: UUID, media_id: UUID) -> ConversationListItemOut | None:
+    """The newest visible source-context chat, or null; SQL admits at most one row."""
+    media_filter = _source_context_filter(db, viewer_id, media_id)
+    order = order_by_sql(UPDATED_TITLE_PLANS[(None, None)], alias="c")
+    row = (
+        db.execute(
+            text(f"""
+            SELECT c.* FROM ({conversation_index_rows_sql()}) c
+            WHERE TRUE {media_filter} ORDER BY {order} LIMIT 1
+        """),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return (
+        None
+        if row is None
+        else ConversationListItemOut(
+            **{key: row[key] for key in ConversationListItemOut.model_fields}
+        )
     )
 
 

@@ -19,8 +19,7 @@ import { conversationViewHref } from "@/lib/chat/view";
 import { isApiError } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { getConversationCommands, getNewChatCommands, readConversationTree, recoveryOf, IDLE_COMMAND, type CommandOutcome, type ConversationTree } from "@/lib/chat/commands";
-import { fetchConversationIndex, type ConversationListItem } from "@/lib/chat/conversationIndex";
-import type { ListPage } from "@/lib/api/useServerList";
+import { fetchLatestSourceConversation, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { isSelectable } from "@/lib/chat/selection";
 import { chatView } from "@/lib/chat/tree";
@@ -42,7 +41,7 @@ import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/pa
 import type { MediaAnnotations } from "./annotations";
 import { createSelectionDrafts, emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue } from "./selectionDrafts";
 
-const DEFAULT_VISIT = definePaneVisitDataKey<Visit<ListPage<ConversationListItem>>>("Reader.ChatDefault");
+const DEFAULT_VISIT = definePaneVisitDataKey<Visit<{ conversation: ConversationListItem | null }>>("Reader.ChatDefault");
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number; mode: "Note" | "Ask" };
@@ -142,15 +141,15 @@ export function useSelectionComposer(input: {
   const defaultSource = draft?.sourceMediaId ?? null;
   const defaultRead = useServerValue({ key: defaultId ? `reader-chat-default:${defaultId}:${defaultSource}` : null,
     stale: "", visit: DEFAULT_VISIT,
-    load: signal => fetchConversationIndex(new URLSearchParams({ media_id: defaultSource!, limit: "1" }), signal),
+    load: async signal => ({ conversation: await fetchLatestSourceConversation(defaultSource!, signal) }),
   });
   useEffect(() => {
     if (!defaultId || !defaultSource || defaultRead.status === "loading") return;
     store.update(defaultId, entry => {
       if (entry.destination.kind !== "Resolving" || entry.sourceMediaId !== defaultSource) return entry;
       if (defaultRead.status === "failed") return { ...entry, destination: { kind: "LookupFailed" } };
-      const candidate = defaultRead.data.items[0];
-      return { ...entry, sourceHasChats: candidate !== undefined, destination: candidate
+      const candidate = defaultRead.data.conversation;
+      return { ...entry, sourceHasChats: candidate !== null, destination: candidate
         ? { kind: "Selected", id: candidate.id, title: candidate.title, read: 0, snapshot: { kind: "Loading" } }
         : { kind: "Absent" } };
     });

@@ -1,32 +1,27 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import { apiTransportFeedback } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
-import { useRefreshStamp } from "@/lib/consumption/refresh";
+import { useQuickReadsEntryRead } from "@/lib/panes/suggestionEntryReads";
 import { lecternFull, useLectern } from "@/lib/lectern/lectern";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { getQuickReads, presentSuggestionItem, type QuickReads } from "@/lib/suggestions";
+import { presentSuggestionItem, type QuickReads } from "@/lib/suggestions";
 import { definePaneVisitDataKey, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 
 const VISIT = definePaneVisitDataKey<Visit<QuickReads>>("Suggestions.QuickReads");
 
 /** The direct quick-read query keeps the normal read and inspected-add owners. */
-export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
+export default function QuickReadsSection() {
   const full = lecternFull(useLectern());
-  const [seen, setSeen] = useState(isActive);
-  if (isActive && !seen) setSeen(true);
-  const refresh = useRefreshStamp(isActive, null);
-  const read = useServerValue({
-    key: seen ? "/lectern/quick-reads" : null,
-    stale: String(refresh),
-    visit: VISIT,
-    load: getQuickReads,
-  });
+  const descriptor = useQuickReadsEntryRead();
+  // justify-defect: the lectern entry owns this section's exact read descriptor.
+  if (descriptor === null) throw new Error("quick reads without lectern entry");
+  const read = useServerValue({ ...descriptor, visit: VISIT });
   const loaded = read.status === "ready" ? read.data : null;
   const failure = read.status === "loading" ? null : read.error;
   // Quick reads are media only (the server's direct read).
@@ -43,10 +38,10 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
     content={apiTransportFeedback(failure, failureTitle) ?? {
       tone: "Danger", title: failureTitle, requestId: failure.requestId,
     }}
-    announcement="Polite" actions={[{ label: "retry", onClick: read.refetch }]} />;
+    announcement={loaded === null ? "Polite" : "None"} actions={[{ label: "try again", onClick: read.refetch }]} />;
   return (
     <PaneSection ref={rootRef} title="Quick reads" aria-label="Quick reads" tabIndex={-1}>
-      <CollectionView
+      <CollectionView geometry="UniformIndex"
         returnScope="Lectern.QuickReads" ariaLabel="Quick reads" rows={rows}
         status={read.status === "failed" ? "error" : read.status}
         notice={<>

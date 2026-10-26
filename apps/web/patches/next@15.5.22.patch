@@ -1,0 +1,70 @@
+diff --git a/dist/esm/server/send-response.js b/dist/esm/server/send-response.js
+index 50c9c0c3ecb6144c108f4c31d3c6ed6ac2e68188..921c82db3c88103dbe5d1aa913ead08c857c094b 100644
+--- a/dist/esm/server/send-response.js
++++ b/dist/esm/server/send-response.js
+@@ -29,22 +29,25 @@ import { splitCookiesString } from './web/utils';
+             'vary'
+         ];
+         (_response_headers = response.headers) == null ? void 0 : _response_headers.forEach((value, name)=>{
++            const lowercasedName = name.toLowerCase();
+             // `x-middleware-set-cookie` is an internal header not needed for the response
+-            if (name.toLowerCase() === 'x-middleware-set-cookie') {
++            if (lowercasedName === 'x-middleware-set-cookie') {
+                 return;
+             }
+             // The append handling is special cased for `set-cookie`.
+-            if (name.toLowerCase() === 'set-cookie') {
++            if (lowercasedName === 'set-cookie') {
+                 // TODO: (wyattjoh) replace with native response iteration when we can upgrade undici
+                 for (const cookie of splitCookiesString(value)){
+                     res.appendHeader(name, cookie);
+                 }
+             } else {
+-                // only append the header if it is either not present in the outbound response
+-                // or if the header supports multiple values
++                // Append headers that support multiple values. Otherwise, only set the
++                // header if it is not already present in the outbound response.
+                 const isHeaderPresent = typeof res.getHeader(name) !== 'undefined';
+-                if (headersWithMultipleValuesAllowed.includes(name.toLowerCase()) || !isHeaderPresent) {
++                if (headersWithMultipleValuesAllowed.includes(lowercasedName)) {
+                     res.appendHeader(name, value);
++                } else if (!isHeaderPresent) {
++                    res.setHeader(name, value);
+                 }
+             }
+         });
+diff --git a/dist/server/send-response.js b/dist/server/send-response.js
+index ad737fa8220040b606263a126371741117224c41..0b22af0328fdb0413b8abb300fcd2f680794881c 100644
+--- a/dist/server/send-response.js
++++ b/dist/server/send-response.js
+@@ -33,22 +33,25 @@ async function sendResponse(req, res, response, waitUntil) {
+             'vary'
+         ];
+         (_response_headers = response.headers) == null ? void 0 : _response_headers.forEach((value, name)=>{
++            const lowercasedName = name.toLowerCase();
+             // `x-middleware-set-cookie` is an internal header not needed for the response
+-            if (name.toLowerCase() === 'x-middleware-set-cookie') {
++            if (lowercasedName === 'x-middleware-set-cookie') {
+                 return;
+             }
+             // The append handling is special cased for `set-cookie`.
+-            if (name.toLowerCase() === 'set-cookie') {
++            if (lowercasedName === 'set-cookie') {
+                 // TODO: (wyattjoh) replace with native response iteration when we can upgrade undici
+                 for (const cookie of (0, _utils.splitCookiesString)(value)){
+                     res.appendHeader(name, cookie);
+                 }
+             } else {
+-                // only append the header if it is either not present in the outbound response
+-                // or if the header supports multiple values
++                // Append headers that support multiple values. Otherwise, only set the
++                // header if it is not already present in the outbound response.
+                 const isHeaderPresent = typeof res.getHeader(name) !== 'undefined';
+-                if (headersWithMultipleValuesAllowed.includes(name.toLowerCase()) || !isHeaderPresent) {
++                if (headersWithMultipleValuesAllowed.includes(lowercasedName)) {
+                     res.appendHeader(name, value);
++                } else if (!isHeaderPresent) {
++                    res.setHeader(name, value);
+                 }
+             }
+         });
