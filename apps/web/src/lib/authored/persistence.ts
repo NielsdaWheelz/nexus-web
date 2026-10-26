@@ -11,7 +11,7 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA } from "@nexus/authored/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, searchQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
@@ -162,7 +162,7 @@ export class Persistence {
     });
   }
   async pending(): Promise<Change[]> {
-    const rows = await this.db.all("SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 100");
+    const rows = await this.db.all(PENDING_CHANGES_SQL);
     const changes: Change[] = [];
     let bytes = 256;
     for (const row of rows) { if (bytes + Number(row.byte_length) > 3 * 1024 * 1024 - 1024) break; bytes += Number(row.byte_length) + 1; changes.push(JSON.parse(String(row.change_json))); }

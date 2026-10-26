@@ -1,6 +1,9 @@
 /** One device schema. Canonical JSON and derived columns commit together; projections
  * are never an independent authority. Both hosts require FTS5 and synchronous FULL. */
 import { PAGE_TITLE_SQL } from "./queries.ts";
+/** Both outboxes read the server's maximum 64 changes in immutable source order;
+ * each host then takes the prefix fitting the existing upload byte budget. */
+export const PENDING_CHANGES_SQL = "SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 64";
 export const DEVICE_SCHEMA = [
   "PRAGMA foreign_keys = ON",
   "PRAGMA synchronous = FULL",

@@ -11,7 +11,7 @@ import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEA
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA } from "../../node/authored/src/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -61,7 +61,7 @@ export default defineConfig({
           positions: [{ kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tail" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "before" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "after" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "bounds", position: "a0" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tie", position: "a0", cursor: null, limit: 100 } }],
           resolve: Array.from({ length: 101 }, (_, count) => ({ kind: "resolve", refs: Array(count).fill("") })),
         };
-        const statements: Record<string, string> = { search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
+        const statements: Record<string, string> = { pending_changes: PENDING_CHANGES_SQL, search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
         for (const sql of SEARCH_READ_SQL) statements[`search_read:${createHash("sha256").update(sql).digest("hex")}`] = sql;
         for (const query of Object.values(samples).flat()) {
           const { plan_key } = await nativeQueryPlan(query);

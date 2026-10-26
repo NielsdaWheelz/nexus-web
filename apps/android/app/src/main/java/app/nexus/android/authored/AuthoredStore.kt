@@ -147,7 +147,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         return rows("SELECT command_seq FROM pending_changes WHERE command_seq=?", sequence.toLong()).length() == 0
     }
     fun pending(): JSONArray {
-        val records = rows("SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 100")
+        val records = rows(queries.getString("pending_changes"))
         val changes = JSONArray(); var bytes = 256
         for (index in 0 until records.length()) { val row = records.getJSONObject(index); val size = row.getString("byte_length").toInt(); if (bytes + size > 3 * 1024 * 1024 - 1024) break; bytes += size + 1; changes.put(JSONObject(row.getString("change_json"))) }
         return changes
