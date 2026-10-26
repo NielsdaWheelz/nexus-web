@@ -24,7 +24,15 @@ before installation. its subsequent read found handset `RFCT51J2MCH`
 disconnected. no share behavior or device mutation occurred; native qualification
 still requires a connected handset and a fresh coordinated ownership window.
 
-the handset is now available. real installed run
-`20261026-094508-6d83ff7b001a` proves first offline share capture, then fails on
-activity recreation duplicating the note. [the concrete defect](share-note-recreation-duplicates.md)
-owns that repair; independent second-send and reconnect proof remain pending.
+real installed run `20261026-094508-6d83ff7b001a` reproduced recreation
+duplicating an offline capture. `0f5876dca` retains its native attempt identity,
+account and calendar date; canonical note/tombstone presence prevents replay.
+run `20261026-101324-f369d7d7991b` passes first offline capture, actual activity
+recreation with the same note/day/link, independent identical-text send with a
+fresh note/link, server absence while offline and both identities uploaded after
+reconnect. instrumentation and mappings were removed; other packages were intact.
+
+remaining proof is workspace reopening of those shared notes on the current
+paired candidate and browser share-entry admission. the installed share entry's
+local capture/recreation/synchronization is qualified; do not repeat it as an
+unreproduced defect or infer the remaining surfaces from it.
