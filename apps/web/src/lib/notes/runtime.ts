@@ -6,9 +6,9 @@
 import * as Y from "yjs";
 import { prepareChange, type Intent } from "@nexus/authored/commands";
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
-import { noteBodySchema, projectBody, type NoteBody } from "@nexus/authored/body";
-import { mergeChanges, mergeVector } from "@nexus/authored/merge";
-import type { AuthoredStore, Change, CommitFrame, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
+import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
+import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
+import type { AuthoredStore, Change, CommitFrame, Corpus, ResourceState, StateSelection, Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument { ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>; onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void }
@@ -19,11 +19,15 @@ export function writingStoreStopped(error:unknown):boolean {
   if(error instanceof LocalCommitError)return writingStoreStopped(error.cause);
   return error instanceof Error && "code" in error && error.code === "E_AUTHORED_WORKER_STOPPED";
 }
-export interface LocalCommit { command_seq: string; store_revision: string; change: Change }
+export interface LocalCommit {
+  command_seq: string; store_revision: string; change: Change;
+  before: { resources: { ref: string; touch_vv: Vector; delete_vv: Vector }[]; links: { link_id: string; add_vv: Vector; remove_vv: Vector }[] };
+}
 interface CachedDocument extends WritingDocument { pins: number; bytes: number; last_used: number; pending: number; receive(resource: ResourceState): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_refs: string[]; revision: number }
 interface FailedCommit {
-  intent: Intent; selection: StateSelection; change: Change | null; frame: CommitFrame | null;
+  intent: Intent; selection: StateSelection; change: Change | null;
+  prepared: { frame: CommitFrame; before: LocalCommit["before"] } | null;
   store: AuthoredStore | null; held: boolean; attempting: boolean;
   settled: Promise<LocalCommit>; resolve(receipt: LocalCommit): void; reject(error: Error): void;
   result: Promise<LocalCommit>; refuse(error: unknown): void; retry_failure: ((error: unknown) => void) | null;
@@ -94,7 +98,7 @@ export class WritingRuntime {
       let reject: (error: Error) => void = () => {};
       const settled = new Promise<LocalCommit>((done, failed) => { resolve = done; reject = failed; });
       void settled.catch(() => {});
-      const owner: FailedCommit = { intent: frozen, selection: inferred, change: null, frame: null, store: null, held: false, attempting: false, settled, resolve, reject, result, refuse, retry_failure: null };
+      const owner: FailedCommit = { intent: frozen, selection: inferred, change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, refuse, retry_failure: null };
       this.failed = owner;
       let receipt: LocalCommit;
       try { receipt = await this.attempt(owner); }
@@ -136,31 +140,43 @@ export class WritingRuntime {
   }
   private async prepareAndPersist(owner: FailedCommit, store: AuthoredStore): Promise<LocalCommit> {
     if (this.retired) throw new Error("Writing account is closed");
-    if (owner.frame === null) {
+    if (owner.prepared === null) {
       const { replica, states } = await store.readSnapshot(owner.selection);
       if (this.retired) throw new Error("Writing account is closed");
       if (owner.change === null) owner.change = prepareChange({ replica_id: replica.replica_id, command_seq: (BigInt(replica.command_seq) + 1n).toString(), lamport: (BigInt(replica.lamport) + 1n).toString() }, owner.intent, states);
-      owner.frame = { expected_store_revision: replica.store_revision, replica_id: replica.replica_id, change: owner.change, states: mergeChanges(states, [owner.change]) };
+      const before = commitBefore(owner.change, states, owner.selection);
+      owner.prepared = { before, frame: { expected_store_revision: replica.store_revision, replica_id: replica.replica_id, change: owner.change, states: mergeChanges(states, [owner.change]) } };
     }
-    const receipt = await this.persist(owner.frame, store);
+    const receipt = await this.persist(owner.prepared, store);
     // Subscriptions may arrive after the receipt. Install the complete committed
     // baseline before a later edit can reference identities introduced by it.
-    for (const resource of owner.frame.states.resources) {
+    for (const resource of owner.prepared.frame.states.resources) {
       const entry = this.documents.get(resource.ref);
-      if (entry && !this.retired) (await entry.promise).receive(resource);
+      if (!entry || this.retired) continue;
+      if (entry.value) entry.value.receive(resource);
+      else void entry.promise.then(document => {
+        if (!this.retired && this.documents.get(resource.ref) === entry) document.receive(resource);
+      }, () => {
+        // Document loading owns this failure. The command is already committed.
+      });
     }
     return receipt;
   }
-  private async persist(frame: CommitFrame, store: AuthoredStore): Promise<LocalCommit> {
+  private async persist(prepared: { frame: CommitFrame; before: LocalCommit["before"] }, store: AuthoredStore): Promise<LocalCommit> {
+    const { frame } = prepared;
     for (;;) {
       let result;
       try { result = await store.commit(frame); }
       catch (error) {
         const replica = await store.readReplica();
-        if (BigInt(replica.command_seq) >= BigInt(frame.change.command_seq)) return { command_seq: frame.change.command_seq, store_revision: replica.store_revision, change: frame.change };
+        if (BigInt(replica.command_seq) >= BigInt(frame.change.command_seq)) return { command_seq: frame.change.command_seq, store_revision: replica.store_revision, change: frame.change, before: prepared.before };
         throw error;
       }
-      if (result.kind === "committed") return { command_seq: result.command_seq, store_revision: result.store_revision, change: frame.change };
+      if (result.kind === "committed") return { command_seq: result.command_seq, store_revision: result.store_revision, change: frame.change, before: prepared.before };
+      prepared.before = commitBefore(frame.change, result.states, {
+        refs: frame.change.resources.map(resource => resource.ref),
+        link_ids: frame.change.links.map(link => link.link_id),
+      });
       frame.expected_store_revision = result.store_revision;
       frame.states = mergeChanges(result.states, [frame.change]);
     }
@@ -195,7 +211,7 @@ export class WritingRuntime {
    * canonical text for copying. It keeps no history and recovers nothing. */
   async uncommittedText(): Promise<string> {
     const texts = new Map<string, string>();
-    const text = (body: NoteBody) => projectBody(noteBodySchema.nodeFromJSON(body.body_pm_json)).text;
+    const text = (body: NoteBody) => rawBodyText(noteBodySchema.nodeFromJSON(body.body_pm_json));
     const creation = (intent: Intent): void => {
       if (intent.kind === "batch") intent.intents.forEach(creation);
       else if (intent.kind === "create_note") texts.set(intent.ref, text(intent.body));
@@ -208,7 +224,7 @@ export class WritingRuntime {
       const { doc } = await pending.promise;
       texts.set(ref, doc.share.has("title") ? doc.getText("title").toString() : text(readBody(doc)));
     }
-    return [...texts.values()].filter(text => text.trim() !== "").join("\n\n");
+    return [...texts.values()].filter(text => text !== "").join("\n\n");
   }
   async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
     if (this.retired) throw new Error("Writing account is closed");
@@ -252,12 +268,13 @@ export class WritingRuntime {
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
       capture: () => {
         const body_state = encodeBytes(Y.encodeStateAsUpdate(doc));
-        const observed = { ...observed_touch };
+        let observed: Vector = { ...observed_touch };
         const pending = [...pending_edits];
         return Promise.all(pending).then(receipts => {
           for (const receipt of receipts) {
             const patch = receipt.change.resources.find(patch => patch.ref === ref);
-            for (const [replica, sequence] of Object.entries(patch?.touch_vv ?? {})) if (BigInt(sequence) > BigInt(observed[replica] ?? "0")) observed[replica] = sequence;
+            const before = receipt.before.resources.find(resource => resource.ref === ref);
+            observed = advanceCoverage(observed, before ? { touch: before.touch_vv, removed: before.delete_vv } : null, patch?.touch_vv ?? {});
           }
           return { body_state, observed_touch: observed };
         });
@@ -321,6 +338,22 @@ export class WritingRuntime {
     if (this.opened_store) await (await this.opened_store).close();
     if (runtimes.get(this.accountId) === this) runtimes.delete(this.accountId);
   }
+}
+
+/** Absence is certified only by a complete request for that exact identity. */
+function commitBefore(change: Change, states: Corpus, requested: Pick<StateSelection, "refs" | "link_ids">): LocalCommit["before"] {
+  const resources = new Map(states.resources.map(resource => [resource.ref, resource]));
+  const links = new Map(states.links.map(link => [link.link_id, link]));
+  return {
+    resources: [...new Set(change.resources.map(resource => resource.ref))].flatMap(ref => {
+      const resource = resources.get(ref);
+      return resource || requested.refs.includes(ref) ? [{ ref, touch_vv: { ...resource?.touch_vv }, delete_vv: { ...resource?.delete_vv } }] : [];
+    }),
+    links: [...new Set(change.links.map(link => link.link_id))].flatMap(link_id => {
+      const link = links.get(link_id);
+      return link || requested.link_ids.includes(link_id) ? [{ link_id, add_vv: { ...link?.add_vv }, remove_vv: { ...link?.remove_vv } }] : [];
+    }),
+  };
 }
 
 function intentSelection(intent: Intent): StateSelection {

@@ -7,12 +7,18 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { RESOURCE_CLIPBOARD_TYPE } from "@/lib/ui/copyText";
 export const OUTLINE_CLIPBOARD = "application/x-nexus-authored-outline+json";
 export type ClipItem = {kind:"note";body:NoteBody;parent:number|null}|{kind:"resource";ref:string;label:string;parent:number|null};
+/** Copy writing literally; the canonical search-text projection trims spaces. */
+export function clipboardPlainText(content: Fragment): string {
+  return content.textBetween(0, content.size, "\n", node => node.type.name === "hard_break" ? "\n"
+    : node.type.name === "image" ? node.attrs.alt ?? ""
+    : node.type.name === "resource_embed" ? node.attrs.label ?? node.attrs.resource_ref : "");
+}
 export function writeOutlineClipboard(clipboard:DataTransfer,items:readonly ClipItem[]):void {
   clipboard.setData(OUTLINE_CLIPBOARD,JSON.stringify(items));
   const depths:number[]=[];
   clipboard.setData("text/plain",items.map((item,index)=>{
     depths[index]=item.parent===null?0:depths[item.parent]!+1;
-    return `${"  ".repeat(depths[index]!)}- ${item.kind==="note"?item.body.body_text:item.label}`;
+    return `${"  ".repeat(depths[index]!)}- ${item.kind==="note"?clipboardPlainText(noteBodySchema.nodeFromJSON(item.body.body_pm_json).content):item.label}`;
   }).join("\n"));
 }
 export function readOutlineClipboard(clipboard:DataTransfer):ClipItem[] {

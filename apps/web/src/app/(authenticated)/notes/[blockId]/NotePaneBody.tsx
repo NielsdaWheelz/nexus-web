@@ -3,11 +3,9 @@
  * arrivals inspect exact canonical text; they never edit or replace writing. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import LocalOutline, {type LocalOutlineHandle} from "@/components/notes/LocalOutline";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
-import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
-import { OutlineHistory } from "@/lib/notes/structure";
+import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneEntryDelivery, usePaneParam } from "@/lib/panes/paneRuntime";
@@ -18,14 +16,11 @@ export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
   const ref = `note_block:${blockId}`;
-  const runtime = useWritingRuntime();
   const read = useAuthoredQuery({ kind: "resource", ref });
   const resource = read.data?.rows[0]?.resource ?? null;
   const sourceView = useRef<HTMLDivElement>(null);
   const outline = useRef<LocalOutlineHandle | null>(null);
   const [error, setError] = useState<unknown | null>(null);
-  const history = useMemo(() => runtime ? new OutlineHistory(runtime, setError) : null, [runtime]);
-  useEffect(() => () => history?.close(), [history]);
   usePaneReturnReady(read.data !== null || read.error !== null);
   const { delivery, claim } = usePaneEntryDelivery();
   useEffect(() => {
@@ -60,8 +55,6 @@ export default function NotePaneBody() {
   return <div ref={sourceView} tabIndex={-1}>
     {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
     {error ? <p role="alert">{error instanceof Error ? error.message : "couldn’t save this change on this device."}</p> : null}
-    <LocalOutline rootRef={ref} apiRef={outline} session={history ?? undefined} rootEditor={owner => <BoundNoteEditor noteRef={ref} label="edit note" session={owner.history}
-      inspection={inspection?.text === resource.body_text ? inspection.view : null}
-      structuralKeys={owner.structuralKeys} onEditorReady={owner.onEditorReady} onSelectionChange={owner.onSelectionChange} onSplit={owner.onSplit}/>} />
+    <LocalOutline rootRef={ref} apiRef={outline} rootField={{label: "edit note", inspection: inspection?.text === resource.body_text ? inspection.view : null}} />
   </div>;
 }

@@ -199,11 +199,16 @@ const SPACE = /[\p{White_Space}\u001c-\u001f]/u;
 const TRAILING = /[\p{White_Space}\u001c-\u001f]+$/u;
 const BREAK = /(\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029])/u;
 
-/** Canonical prose projection never constructs inspection ranges while typing. */
-function textFromNode(block: PMNode): string {
+/** Literal canonical pieces for copying: preserve whitespace and line endings. */
+export function rawBodyText(block: PMNode): string {
   const pieces: string[] = [];
   block.descendants((node) => { pieces.push(textPiece(node)); });
-  const text = pieces.join("").split(BREAK).map((part, index) =>
+  return pieces.join("");
+}
+
+/** Canonical prose projection never constructs inspection ranges while typing. */
+function textFromNode(block: PMNode): string {
+  const text = rawBodyText(block).split(BREAK).map((part, index) =>
     index % 2 === 1 ? "\n" : part.replace(TRAILING, ""),
   ).join("");
   let first = 0;

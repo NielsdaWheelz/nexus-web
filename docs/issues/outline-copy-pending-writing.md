@@ -1,19 +1,22 @@
 # copying pending outline writing
 
-while a first local commit is failed or awaiting retry, `OutlineDraft.tsx` keeps
-later typing and completed return segments in its retained draft. those words
-have not yet entered the runtime document or its frozen creation intent.
-`LocalOutline.tsx`'s stopped-store “copy writing” action calls only
-`WritingRuntime.uncommittedText()`, which sees the frozen intent and runtime
-documents. it can therefore omit later words still owned by the temporary input.
-the draft's save-error UI currently offers retry but no complete draft copy.
+the prior outline copied only the runtime's frozen creation intent and shared
+documents. later typing and return segments still owned by its input could be
+omitted after a failed first local commit.
+
+the replacement retains those fields in `OutlinePendingInput` and supplies a
+fresh `copyText()` callback through the existing workspace work owner. both the
+mounted outline and stopped-workspace surface offer “copy pending outline text”.
+“copy unsaved note edits” remains a separate runtime export; the exports can
+overlap and must not be concatenated. the account-keyed work provider now outlives
+the workspace boundary. shelf passage input retains its existing ephemeral policy.
 
 reproduce with an actual first local commit failure, continue typing/returning,
 then use copy writing before restarting. compare copied text with every visible
-pending segment and the active body. this is source-evidenced, not fault-injection
-qualified.
+pending segment and the active body, including spaces and hard breaks. repeat the
+copy after further typing. source review is complete; real failure/clipboard and
+retained-boundary behavior remain unqualified.
 
-resolve at the retained input owner: expose a copy action that includes its
-current completed segments and active writing. preserve the runtime's exact-byte
-retry and the loss guard; no recovery inventory or new persistence is needed.
-prove all later words can be copied before an explicit restart/discard.
+prove all visible pending words can be copied before explicit restart/discard,
+without changing the runtime's exact-byte retry or loss guard. a stopped-store
+failure can prove copying, but cannot qualify successful retry.

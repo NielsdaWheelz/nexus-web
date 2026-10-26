@@ -16,6 +16,19 @@ export function mergeVector(a:Vector,b:Vector):Vector {
   for(const [replica,n] of Object.entries(b)) if(counter(n)>counter(out[replica]??"0")) out[replica]=n;
   return out;
 }
+/** Extend only lanes whose prestate touches are covered or already removed.
+ * A missing certificate proves nothing; unrelated prestate lanes are not acquired. */
+export function advanceCoverage(covered: Vector, before: { touch: Vector; removed: Vector } | null, added: Vector): Vector {
+  const next: Record<string, string> = { ...covered };
+  if (before === null) return next;
+  for (const [replica, sequence] of Object.entries(added)) {
+    const prior = counter(covered[replica] ?? "0");
+    const removed = counter(before.removed[replica] ?? "0");
+    if (counter(before.touch[replica] ?? "0") <= (prior > removed ? prior : removed) &&
+        counter(sequence) > prior) next[replica] = sequence;
+  }
+  return next;
+}
 export function isVisible(touch:Vector,deleted:Vector):boolean { return Object.entries(touch).some(([replica,n])=>counter(n)>counter(deleted[replica]??"0")); }
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>

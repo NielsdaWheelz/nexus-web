@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
+import { WorkProvider } from "@/lib/unsavedWork";
 import { FeedbackState } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
@@ -86,9 +87,9 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   if (signedOut) return <FeedbackState content={{ tone: "Neutral", title: "signed out on this device", message: failure?.message }} announcement="None" actions={[{ label: "sign in", onClick: signIn }]} />;
   if (failure) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open your workspace", message: failure.message }} announcement="Polite" actions={[{ label: "retry", onClick: () => retry(value => value + 1) }, { label: "sign in", onClick: signIn }]} />;
   if (!binding) return <FeedbackState content={{ tone: "Neutral", title: "opening your workspace…" }} announcement="None" />;
-  return <AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
+  return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
     readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}
     seeds={{}} entryFailure={null} locationLinkFailure={locationFailure}
-  /></AuthenticatedWorkspaceErrorBoundary>;
+  /></AuthenticatedWorkspaceErrorBoundary></WorkProvider>;
 }

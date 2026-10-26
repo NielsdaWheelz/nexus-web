@@ -18,6 +18,8 @@ import MachineText from "@/components/ui/MachineText";
 import {FeedbackNotice, FeedbackStatus, type FeedbackAction, type FeedbackContent} from "@/components/feedback/Feedback";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
+import NoteBodyPreview from "@/components/notes/NoteBodyPreview";
+import {parseBody} from "@nexus/authored/body";
 import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
 import {useChangeStamp} from "@/lib/api/changes";
@@ -86,6 +88,8 @@ type Shared = {
   historical?: boolean;
   /** Local note editing; terminal and historical occurrences never edit. */
   editable?: boolean;
+  /** The owning flat editor settles or refuses removal of its disclosed fields. */
+  beforeCollapse?: () => Promise<boolean>;
   annotationFocusRequest?: number | null;
   onAnnotationClose?: () => void;
 } & (
@@ -200,9 +204,10 @@ function AuthoredRow(props: Shared & {subject: string}) {
     onKeyDown={event => activateTargetLink({event, runtime, target: {href, labelHint: label}})}>{children}</a> : children;
   const sourceLabel = source.data?.rows[0]?.resource;
   const primary = !resource ? <span className={factualStyles.quiet}>{read.data ? "no longer available on this device" : "opening…"}</span>
-    : resource.kind === "note" ? <BoundNoteEditor noteRef={props.subject} label={`edit note: ${label}`} editable={editable}/>
-    : resource.kind === "page" ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable={editable}
-      placeholder={resource.local_date ?? "untitled page"}/>
+    : resource.kind === "note" ? editable ? <BoundNoteEditor noteRef={props.subject} label={`edit note: ${label}`} editable/>
+      : <NoteBodyPreview body={parseBody(resource.body_pm_json)}/>
+    : resource.kind === "page" ? editable ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable
+      placeholder={resource.local_date ?? "untitled page"}/> : <span data-resource-primary className={factualStyles.named}>{label}</span>
     : resource.kind === "highlight" ? <div className={styles.reference}>
       {link(<span data-resource-primary className={factualStyles.passage}>
         <mark className={factualStyles.exact} data-color={resource.color ?? undefined}>{resource.selection?.quote_exact || "selected region"}</mark>
@@ -263,8 +268,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, represen
   }, []);
   const childrenId = useId();
   const removal = incoming?.kind === "edge" && writing !== null && !historical ? factRemoval(incoming, writing) : null;
-  function toggle() {
+  async function toggle() {
     if (disclosureDisabled) return;
+    if (open && props.beforeCollapse && !await props.beforeCollapse()) return;
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
     if (placement) placement.toggle(); else if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }

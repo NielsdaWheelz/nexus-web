@@ -5,6 +5,7 @@ import { FeedbackNotice, FeedbackState, type FeedbackActions } from "@/component
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { getWritingRuntime, hasUncommittedWriting, writingStoreStopped } from "@/lib/notes/runtime";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import styles from "./layout.module.css";
 
@@ -44,11 +45,11 @@ const noRuntime = () => () => {};
 // A failed retry republishes its error into the runtime state this surface shows.
 const retry = (runtime: { retry(): Promise<void> }) => ({ label: "retry saving", onClick: () => { void runtime.retry().catch(() => {}); } });
 
-/** Stopping the workspace unmounts its editors and possibly their loss guard; the
- * writing runtime still holds any uncommitted words. This surface keeps guarding exit
- * and reload while they remain and, when this account owns them, offers the runtime's
- * retry and a copy of exactly those words. It adds no recovery of its own. */
+/** The account's guard retains visit input above this boundary. The writing runtime
+ * separately retains uncommitted note edits; its guard, retry and export remain
+ * necessary when AuthoredProvider unmounts. Their text exports may overlap. */
 function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: string | null }) {
+  const guard = useWorkGuard();
   const owner = useOptionalAuthenticatedAccount()?.accountId ?? accountId;
   const runtime = owner === null ? null : getWritingRuntime(owner);
   const saveState = useSyncExternalStore(runtime?.subscribe ?? noRuntime, () => runtime?.snapshot() ?? null, () => null);
@@ -77,6 +78,19 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
   const failed = saveState !== null && saveState.error !== null;
   const [retained, setRetained] = useState("");
   const [manual, setManual] = useState(false);
+  const [manualPending, setManualPending] = useState<string | null>(null);
+  const pendingText = guard.readCopyText({scopes: [{kind: "account"}], ownerIds: []});
+  const copyPending = () => {
+    const text = guard.readCopyText({scopes: [{kind: "account"}], ownerIds: []});
+    if (text === null) {setManualPending(null); return;}
+    void copyText(text).then(() => setManualPending(null), (error: unknown) => {
+      if (error instanceof ClipboardWriteUnavailableError) setManualPending(text); else reportError(error);
+    });
+  };
+  const pendingAction = pendingText !== null ? {label: "copy pending outline text", onClick: copyPending} : null;
+  const reloadAction = stale && STALE_BUILD_FEEDBACK.reload ? {label: "reload app", onClick: reload} : null;
+  const failureActions: FeedbackActions | undefined = pendingAction && reloadAction ? [pendingAction, reloadAction]
+    : pendingAction ? [pendingAction] : reloadAction ? [reloadAction] : undefined;
   useEffect(() => {
     if (!failed || runtime === null) return;
     let live = true;
@@ -86,7 +100,7 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
   const copyable = failed ? retained : "";
   const stopped = failed && writingStoreStopped(saveState?.error);
   const saveActions = (owner: { retry(): Promise<void> }): FeedbackActions => {
-    const copyAction = { label: "copy unsaved writing", onClick: () => { void copy(); } };
+    const copyAction = { label: "copy unsaved note edits", onClick: () => { void copy(); } };
     // the restart passes through the same loss confirmation as any other exit.
     const next = stopped ? { label: "restart nexus", onClick: reload } : retry(owner);
     return copyable === "" ? [next] : stopped ? [copyAction, next] : [next, copyAction];
@@ -112,7 +126,7 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
             message: "nexus needs a fix before this can continue.",
           }}
           // The stale build's reload passes through the same loss check as any other exit.
-          actions={stale && STALE_BUILD_FEEDBACK.reload ? [{ label: "reload app", onClick: reload }] : undefined}
+          actions={failureActions}
           announcement="None"
         />
       </div>
@@ -120,6 +134,10 @@ function StoppedWorkspace({ stale, accountId }: { stale: boolean; accountId: str
       {manual && copyable !== "" ? <>
         <p>copying is unavailable here. select the text and copy it.</p>
         <textarea className={styles.retained} readOnly value={copyable} aria-label="unsaved writing" />
+      </> : null}
+      {manualPending !== null ? <>
+        <p>copying is unavailable here. select the text and copy it.</p>
+        <textarea className={styles.retained} readOnly value={manualPending} aria-label="pending outline text" />
       </> : null}
     </main>
   );
