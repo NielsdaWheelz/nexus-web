@@ -83,6 +83,19 @@ function positions(query: Extract<AuthoredQuery,{kind:"positions"}>):CompiledQue
 export function compileQuery(query: AuthoredQuery): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
+    case "outline_children": {
+      if (query.occurrences.length > 100) throw new TypeError("At most 100 outline occurrences may be queried");
+      const eligible = (["a", "b"] as const).map(side => {
+        const other = side === "a" ? "b" : "a";
+        return `SELECT 1 FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=p.ref AND l.visible=1
+          AND NOT EXISTS(SELECT 1 FROM json_each(p.excluded) x WHERE x.value=l.link_id) AND ${live(`l.endpoint_${other}`)}`;
+      }).join(" UNION ALL ");
+      return {
+        sql: `WITH probes AS(SELECT CAST(key AS INTEGER) AS ordinal,json_extract(value,'$.ref') AS ref,json_extract(value,'$.excluded_link_ids') AS excluded FROM json_each(?))
+          SELECT CASE WHEN ${live("p.ref")} THEN EXISTS(${eligible}) ELSE NULL END AS child_available FROM probes p ORDER BY p.ordinal`,
+        params: [JSON.stringify(query.occurrences)],
+      };
+    }
     case "positions":return positions(query);
     case "binding": {
       const key = query.key;

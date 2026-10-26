@@ -25,6 +25,7 @@ internal class AppBridge(
     private val framing = OwnedOriginWebMessage(webView, "nexusApp", BuildConfig.NEXUS_BASE_URL, ::onMessage)
     private val documentOwner = java.util.UUID.randomUUID().toString()
     private var subscriber: JavaScriptReplyProxy? = null
+    private var keyboardVisible = false
     private val unsubscribe = session.subscribe {
         subscriber?.postMessage(JSONObject().put("kind", "session_changed")
             .put("remote_admission", session.remoteAdmission).toString())
@@ -34,6 +35,12 @@ internal class AppBridge(
     }
 
     fun install(): Boolean = framing.install()
+    fun setKeyboardVisible(visible: Boolean) {
+        if (visible == keyboardVisible) return
+        keyboardVisible = visible
+        subscriber?.postMessage(JSONObject().put("kind", "keyboard_changed")
+            .put("visible", visible).toString())
+    }
     fun onPageStarted() {
         session.documentExited("$documentOwner:${framing.currentDocumentGeneration()}")
         framing.onDocumentStarted()
@@ -62,6 +69,7 @@ internal class AppBridge(
                         subscriber = message.replyProxy
                         onHello()
                         JSONObject().put("remote_admission", session.remoteAdmission)
+                            .put("keyboard_visible", keyboardVisible)
                     }
                     "workspace_begin" -> JSONObject().put("write_id", session.workspaceBegin(document,
                         frame.getString("expected_revision"), frame.getInt("byte_count")) { message.documentGeneration == framing.currentDocumentGeneration() })

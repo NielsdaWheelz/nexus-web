@@ -109,10 +109,13 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
     }
     if (gone) { if (claim(delivery)) setEntryMessage("this page is no longer available."); return; }
     if (entry.kind === "EditPageTitle") {
+      const handle = outline.current;
+      if (!handle) return;
       if (!claim(delivery)) return;
       if (entry.pageId !== id) { setEntryMessage("this page is no longer available."); return; }
-      titleInput.current?.focus(); titleInput.current?.select();
+      void handle.focusRoot(document => ({anchor: 1, head: document.doc.getText("title").length + 1})).catch(setEntryError);
     } else if (entry.kind === "AppendNote") {
+      setFilter("");
       if (outline.current && claim(delivery)) void outline.current.append().catch(setEntryError);
     } else if (entry.kind === "FocusNote") {
       setFilter("");
@@ -122,24 +125,10 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
       void handle.focusNote(`note_block:${entry.noteBlockId}`, controller.signal).then(found => {
         if (controller.signal.aborted || !claim(delivery)) return;
         if (!found) { setEntryMessage("this note is no longer on this page."); return; }
-        const editor = [...surface.current?.querySelectorAll<HTMLElement>("[data-resource-ref]") ?? []]
-          .find(row => row.dataset.resourceRef === `note_block:${entry.noteBlockId}`)?.querySelector<HTMLElement>('[role="textbox"]');
-        if (editor?.isContentEditable) {
-          const range = editor.ownerDocument.createRange(); range.selectNodeContents(editor); range.collapse(false);
-          const selection = editor.ownerDocument.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
-        }
       }).catch(error => { if (!controller.signal.aborted) setEntryError(error); });
       return () => controller.abort();
     }
   }, [claim, delivery, gone, id, newPage, ready]);
-  const enterTitle = () => {
-    if (ref === null) return;
-    void (async () => {
-      const first = await (await writing.store).query({ kind: "adjacency", ref, cursor: null, limit: 1 });
-      if (first.rows.length) outline.current?.focusFirst();
-      else await outline.current?.append();
-    })().catch(setEntryError);
-  };
   const error = currentDaily?.error ?? read.error;
   if (error !== null && error !== undefined) return <FeedbackState content={{ tone: "Danger", title: "couldn’t open this page on this device" }} announcement="Assertive"
     actions={[{ label: "retry", onClick: localDate === null ? read.retry : () => setDailyAttempt(attempt => attempt + 1) }]} />;
@@ -151,9 +140,11 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
       actions={[{ label: "retry saving", onClick: () => { void writing.retry().catch(setEntryError); } }, { label: "copy text", onClick: () => { void navigator.clipboard.writeText(titleInput.current?.value ?? "").catch(setEntryError); } }]} /> : null}
     {entryError !== null ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
     {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
-    <div className={styles.title}><BoundPageTitleEditor pageRef={ref} prelude={prelude} initialTitle={initialTitle} placeholder={pageTitle("", date)} inputRef={titleInput} onEnter={enterTitle} /></div>
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
-    <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} />
+    <LocalOutline rootRef={ref} prelude={prelude} apiRef={outline} filter={filter} rootEditor={owner =>
+      <div className={styles.title}><BoundPageTitleEditor pageRef={ref} prelude={prelude} initialTitle={initialTitle} placeholder={pageTitle("", date)} inputRef={titleInput}
+        session={owner.history} onEditorReady={owner.onEditorReady} onSelectionChange={owner.onSelectionChange} onEnter={owner.onEnter}/></div>}/>
+
   </div>;
 }
 

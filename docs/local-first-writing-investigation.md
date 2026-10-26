@@ -401,7 +401,6 @@ dependency installation or runtime qualification was performed in this review.
 
 ## tracked repository gaps
 
-- [ordinary outline removal consumes independent notes](issues/outline-removal-consumes-independent-notes.md)
 - [server-only retention and causal deletion](issues/local-first-retention-requires-causal-deletion.md)
 - [daily-page identity](issues/local-first-daily-page-identity.md)
 - [concurrent highlight notes](issues/local-first-concurrent-highlight-notes.md)

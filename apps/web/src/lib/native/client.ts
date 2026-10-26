@@ -25,6 +25,20 @@ function readAdmission(value: unknown): RemoteAdmission {
   }
 }
 const catalogListeners = new Set<(status: CatalogStatus) => void>();
+let keyboardVisible: boolean | null = null;
+const keyboardListeners = new Set<() => void>();
+/** Native IME visibility is independent of resize/overlay geometry. Null in browsers. */
+export function readNativeKeyboardVisibility(): boolean | null { return keyboardVisible; }
+export function subscribeNativeKeyboardVisibility(listener: () => void): () => void {
+  keyboardListeners.add(listener);
+  return () => { keyboardListeners.delete(listener); };
+}
+function publishKeyboardVisibility(value: unknown): void {
+  if (typeof value !== "boolean") throw invalidReply();
+  if (value === keyboardVisible) return;
+  keyboardVisible = value;
+  for (const listener of keyboardListeners) listener();
+}
 function readCatalogStatusValue(value: unknown): CatalogStatus {
   if (!isRecord(value) || Object.keys(value).sort().join(",") !== "last_error,refreshing,snapshot" || typeof value.refreshing !== "boolean") throw invalidReply();
   const snapshot = value.snapshot;
@@ -46,6 +60,10 @@ if (port) port.onmessage = ({ data }) => {
     const frame: unknown = JSON.parse(typeof data === "string" ? data : "");
     if (!isRecord(frame)) throw invalidReply();
     if ("kind" in frame) {
+      if (frame.kind === "keyboard_changed") {
+        publishKeyboardVisibility(frame.visible);
+        return;
+      }
       if (frame.kind === "catalog_changed") {
         const status = readCatalogStatusValue(frame.catalog);
         for (const listener of catalogListeners) listener(status);
@@ -97,7 +115,9 @@ export async function readDeviceStartup(): Promise<DeviceStartup | null> {
 }
 export async function hello(): Promise<void> {
   const reply = await call("hello");
-  publishAdmission(readAdmission(reply.remote_admission));
+  const admission = readAdmission(reply.remote_admission);
+  publishKeyboardVisibility(reply.keyboard_visible);
+  publishAdmission(admission);
 }
 let checking: Promise<void> | null = null;
 export function sessionCheck(): Promise<void> {

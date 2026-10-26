@@ -76,6 +76,22 @@ readiness client's normal certificate verification; no global trust store or
 `ignoreHTTPSErrors` setting changes. native browser/device profiles must establish
 their own explicit trust before qualification.
 
+`openLabBrowser` defaults to chromium. `browser: "firefox"` uses the locked engine,
+`certutil` for its private nss trust, and `sqlite3` for an exact-origin normal
+persistent-storage grant in firefox permission schema 13. playwright 1.64.1's
+gecko bridge accepts that permission without applying it; the helper verifies the
+grant and real storage persistence before returning. on macos its app-data home
+also stays inside the owned temporary root. no global profile or trust changes.
+
+`openLabAndroid` requires an explicitly owned disposable package and matching apk.
+it installs and clears only that package, refuses existing reverse ports, and
+returns ownership before `attachPage()` waits for its webview. the caller owns
+real login and input. `close()` disconnects, stops the owned package and removes
+only its created mappings and returns the exact released mappings.
+`setWebReachable` controls only the owned web reverse; reconnect refuses occupied
+ports. `restart` preserves app data and replaces only its own process/cdp forward.
+no companion driver or device-wide settings change.
+
 setup requests use `browserRequest` in `scripts/lab/browser.ts`, preserving real
 browser http2, cookies and origin checks. an about:blank page first opens the
 same-origin `/robots.txt`, which runs no application or autosave. playwright's

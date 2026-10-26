@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ComponentProps } from "react";
+import { useCallback, useState, type ComponentProps } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
@@ -10,6 +10,7 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor, MenuContent, MenuSource, TrailingState } from "@/lib/ui/actionDescriptor";
+import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 export interface ContextActionSection {
@@ -45,13 +46,7 @@ export default function ContextualActionMenu({
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 }) {
   const pane = usePaneRuntime();
-  const [coarse, setCoarse] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia("(any-pointer: coarse)");
-    const update = () => setCoarse(query.matches);
-    update(); query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
+  const coarse = useTouchCapable();
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
   const client = useClientActions(resourceRef ?? null, title);

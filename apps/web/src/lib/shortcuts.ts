@@ -70,10 +70,51 @@ export const PANE_STRIP_SHORTCUTS = [
   },
 ] as const;
 
+/** The outline's local editing grammar; these are not app-wide shortcuts. */
+export function outlineShortcuts(platform: PlatformKind): readonly {
+  id: string; title: string; description: string; meta: string;
+}[] {
+  return [
+    {id: "Outline.Select", title: "select a block", description: "escape from note text selects its block. space selects a focused block. on touch screens, hold its bullet and choose select block.", meta: "Esc / Space"},
+    {id: "Outline.Browse", title: "browse blocks", description: "from a selected block, arrows follow the visible outline, including expanded children. shift extends the selection.", meta: "↑ / ↓"},
+    {id: "Outline.Insert", title: "insert or split a block", description: "return splits note text at the caret or inserts after a selected block. on an empty nested note it outdents; an empty root note stays put.", meta: "Enter"},
+    {id: "Outline.LineBreak", title: "insert a line break", description: "starts another line within the same note. return inside code also stays in the note.", meta: "Shift+Enter"},
+    {id: "Outline.Indent", title: "indent or outdent", description: "nests the block under the one above it, or moves it out a level. an unavailable move leaves the caret in place.", meta: "Tab / Shift+Tab"},
+    {id: "Outline.Move", title: "move a block up or down", description: "moves the block past its sibling. editing keeps the caret at the same text position.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
+    {id: "Outline.History", title: "undo or redo", description: "undoes or redoes the last change in this outline, including writing and block changes.", meta: usesMeta(platform) ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
+    {id: "Outline.Delete", title: "join or remove a block", description: "at a note boundary, joins an adjacent note. an empty note or selected block is unlinked; the resource remains. undo restores the change.", meta: "Backspace / Delete"},
+    {id: "Outline.Clear", title: "clear block selection", description: "clears the selection and returns focus to the bullet. tab then moves on.", meta: "Esc"},
+  ];
+}
+
 type Shortcut = (typeof SHORTCUTS)[keyof typeof SHORTCUTS];
 
-function usesMeta(platform: PlatformKind): boolean {
+export function usesMeta(platform: PlatformKind): boolean {
   return platform === "mac" || platform === "ios";
+}
+
+/** The same primary-modifier undo/redo grammar for text and selected blocks. */
+export function outlineHistoryCommand(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "altKey" | "ctrlKey">,
+  platform: PlatformKind,
+): "undo" | "redo" | null {
+  const primary = usesMeta(platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!primary || event.altKey) return null;
+  const key = event.key.toLowerCase();
+  return key === "z" ? event.shiftKey ? "redo" : "undo" : key === "y" && !event.shiftKey ? "redo" : null;
+}
+
+/** Tab/Shift+Tab and the move chord. Any extra modifier disqualifies. */
+export function outlineStructuralCommand(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "altKey" | "ctrlKey">,
+  platform: PlatformKind,
+): "indent" | "outdent" | "move_up" | "move_down" | null {
+  if (event.key === "Tab")
+    return event.metaKey || event.ctrlKey || event.altKey ? null : event.shiftKey ? "outdent" : "indent";
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return null;
+  const chord = usesMeta(platform) ? event.metaKey && !event.altKey : event.altKey && !event.metaKey;
+  if (!chord || !event.shiftKey || event.ctrlKey) return null;
+  return event.key === "ArrowUp" ? "move_up" : "move_down";
 }
 
 export function matchesShortcut(

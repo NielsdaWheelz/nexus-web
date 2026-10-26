@@ -123,6 +123,7 @@ export function useReferenceInput(
     search: { ...search, items: admitted ? search.items : [] },
     selected,
     bindings,
+    acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },
     isReady: () => true,
     reviewPosition() {
       const value = draft.read().state;

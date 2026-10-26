@@ -171,13 +171,23 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         require(planKey.startsWith("$kind:") && queries.has(planKey) && params.length() <= 100)
         val sql = queries.getString(planKey)
         val records = rows(sql, *Array(params.length()) { params.opt(it) })
-        if (kind == "binding") return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL).put("positions", JSONArray()).put("binding_id", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).getString("binding_id"))
+        if (kind == "outline_children") {
+            val children = JSONArray()
+            for (index in 0 until records.length()) {
+                val row = records.getJSONObject(index)
+                children.put(if (row.isNull("child_available")) JSONObject.NULL else row.getInt("child_available") == 1)
+            }
+            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray())
+                .put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL)
+                .put("binding_id", JSONObject.NULL).put("positions", JSONArray()).put("children", children)
+        }
+        if (kind == "binding") return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("children", JSONArray()).put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL).put("positions", JSONArray()).put("binding_id", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).getString("binding_id"))
         if (kind == "positions") {
             val positions = JSONArray()
             for (index in 0 until records.length()) positions.put(JSONObject(records.getJSONObject(index).getString("position_json")))
             val at = query.getJSONObject("at")
             val cursor: Any = if (at.getString("kind") == "tie" && positions.length() == minOf(100, at.getInt("limit")) && positions.length() > 0) records.getJSONObject(records.length() - 1).getString("cursor_json") else JSONObject.NULL
-            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("positions", positions).put("next_cursor", cursor).put("previous_cursor", JSONObject.NULL).put("binding_id", JSONObject.NULL)
+            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("children", JSONArray()).put("positions", positions).put("next_cursor", cursor).put("previous_cursor", JSONObject.NULL).put("binding_id", JSONObject.NULL)
         }
         val output = JSONArray()
         for (index in 0 until records.length()) {
@@ -190,7 +200,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             val record = records.getJSONObject(records.length() - 1)
             cursor = if (record.has("cursor_json")) record.getString("cursor_json") else last.getJSONObject("resource").getString("ref")
         }
-        return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("next_cursor", cursor).put("previous_cursor", if (records.length() > 0 && records.getJSONObject(0).has("previous_cursor")) records.getJSONObject(0).opt("previous_cursor") else JSONObject.NULL).put("positions", JSONArray()).put("binding_id", JSONObject.NULL)
+        return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("children", JSONArray()).put("next_cursor", cursor).put("previous_cursor", if (records.length() > 0 && records.getJSONObject(0).has("previous_cursor")) records.getJSONObject(0).opt("previous_cursor") else JSONObject.NULL).put("positions", JSONArray()).put("binding_id", JSONObject.NULL)
     }
     fun close() { connection.close() }
     companion object {

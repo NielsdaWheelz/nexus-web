@@ -128,10 +128,8 @@ export interface PaneLayout {
 /** Only the interacting outline publishes commands; route chrome keeps its owner. */
 export interface PaneOutlineCommands {
   readonly session: string;
-  readonly insertLabel: string;
   commandState(command: OutlineCommand): OutlineCommandState;
   executeCommand(command: OutlineCommand): void;
-  done(): void;
 }
 
 export interface PaneChromeState {

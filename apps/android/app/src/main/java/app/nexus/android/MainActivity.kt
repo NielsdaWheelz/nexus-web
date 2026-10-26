@@ -36,6 +36,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -324,6 +325,8 @@ class MainActivity : AppCompatActivity() {
         root.setOnApplyWindowInsetsListener { _, insets ->
             statusBarProtection.layoutParams.height = insets.systemBarAndDisplayCutoutTop()
             statusBarProtection.requestLayout()
+            appBridge.setKeyboardVisible(WindowInsetsCompat.toWindowInsetsCompat(insets, root)
+                .isVisible(WindowInsetsCompat.Type.ime()))
             insets
         }
         setContentView(root)

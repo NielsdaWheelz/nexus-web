@@ -147,6 +147,12 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         val request = JSONObject(pending.toString("UTF-8"))
                         val operation = request.getString("op")
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot")
+                        if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
+                            // The foreground sync retry owns reachability retry too: a server
+                            // can recover without Android announcing a network change.
+                            session.checkSession()
+                            require(current(message, account))
+                        }
                         val result = when (operation) {
                             "command_begin" -> {
                                 val token = UUID.randomUUID().toString()

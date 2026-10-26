@@ -10,8 +10,8 @@ import Button from "@/components/ui/Button";
 // changes reach peers independent of revision; own echoes are diff no-ops. The diff
 // never runs while composing or enters local history. Embedded
 // atom deletion changes this containing body through its existing versioned save.
-// With a coarse pointer, boundary deletion requires explicit block selection:
-// software keyboards can report held deletion as successive fresh key presses.
+// Hardware keys and semantic native input share the same structural grammar.
+// Composition and reference input keep their own editing ownership.
 import {
   useCallback,
   useContext,
@@ -23,6 +23,8 @@ import {
 } from "react";
 import type { WritingDocument } from "@/lib/notes/runtime";
 import { InlineBinding } from "@/lib/notes/editorBinding";
+import * as Y from "yjs";
+import { bodyInline } from "@nexus/authored/documents";
 import type { TextEditBase } from "@/lib/notes/editorTypes";
 import { createPortal } from "react-dom";
 import { useEditorDraft, useNoteEditorHost, useOptionalNoteEditorHost, WorkspaceNoteEditorHost } from "@/lib/notes/editorHost";
@@ -47,6 +49,7 @@ import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import {
   AllSelection,
+  NodeSelection,
   EditorState,
   Plugin,
   PluginKey,
@@ -84,6 +87,8 @@ import {
   type NoteBody,
 } from "@nexus/authored/body";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/editorTypes";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { outlineStructuralCommand, usesMeta } from "@/lib/shortcuts";
 import { inspectionDecorations } from "@/lib/notes/inspection";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteEditor.module.css";
@@ -100,11 +105,35 @@ export interface NoteInspection {
 /** What an outline row does with the keys that change structure. */
 export interface StructuralKeys {
   split?(left: NoteBody, right: NoteBody, displayed: import("@/lib/notes/editorTypes").DisplayedSplit | null): void;
-  emptyBackspace?(): void;
+  emptyDelete?(direction: "backward" | "forward"): void;
+  emptyEnter?(): void;
   join?(direction: "backward" | "forward"): void;
   indent?(at: { anchor: number; head: number }): void;
   outdent?(at: { anchor: number; head: number }): void;
+  move?(direction: "up" | "down", at: { anchor: number; head: number }): void;
   selectBlock?(): void;
+}
+
+/** The outline can preserve an occurrence's caret without reaching into its view. */
+export interface NoteEditorHandle {
+  readSelection(): { anchor: number; head: number };
+  captureSelection(): (document: WritingDocument) => FocusSelection;
+  focus(selection: FocusSelection | ((document: WritingDocument) => FocusSelection), preventScroll?: boolean): void;
+  canArrange(): boolean;
+  settleNativeInput(): boolean;
+  localHistory(command: "undo" | "redo"): {enabled: boolean; execute(): void} | null;
+}
+
+/** prosemirror-view 1.41.8 exposes no public DOM reconciliation operation.
+ * Its own keyboard path uses this observer. Handoff must consume native text
+ * before changing selection or destroying a view; parsing a second DOM model
+ * would bypass its node-view and composition rules. Requalify on library bumps. */
+function flushNativeDOM(view: EditorView): void {
+  // justify-type-assertion: the locked view has this exact observer contract;
+  // its public API cannot flush native edits before an asynchronous handoff.
+  const observer = (view as EditorView & {domObserver: {forceFlush(): void; flush(): void}}).domObserver;
+  observer.forceFlush();
+  observer.flush();
 }
 
 export interface NoteEditorProps {
@@ -135,11 +164,11 @@ export interface NoteEditorProps {
   keys?: StructuralKeys | null;
   onEdit(edit: NoteEdit): void;
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
+  onEditorReady?(editor: NoteEditorHandle | null): void;
   onAttachmentActiveChange?(active: boolean): void;
   onSave?(): void;
   onNewChat?(): void;
   onContinueChat?(): void;
-  onEmptyBackspace?(): void;
 }
 
 // [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
@@ -200,10 +229,13 @@ function NoteEditorContent(props: NoteEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const editorHandle = useRef<NoteEditorHandle | null>(null);
   const consumedFocus = useRef<number | null>(null);
-  const latest = useRef(props);
-  latest.current = { ...props, editable: props.editable };
+  const { platform } = useRenderEnvironment();
+  const latest = useRef({ ...props, platform });
+  latest.current = { ...props, platform, editable: props.editable };
   const busy = useRef(false);
+  const nativeInputOpen = useRef(false);
   const guard = useWorkGuard();
   const retainedInput = editorHost.retained_input;
   const linkDraft = useEditorDraft<LinkDialog | null>(`Notes.LinkInput:${props.editorKey}`, () => null,
@@ -244,7 +276,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const [referenceVisible, setReferenceVisible] = useState(true);
   const reference = useReferenceInput(props.editorKey, props.reference ?? null, referenceFocused && referenceVisible);
   const referenceReady = reference.isReady();
-  latest.current = { ...props, editable: props.editable && referenceReady };
+  latest.current = { ...props, platform, editable: props.editable && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const suspended = useRef(false);
@@ -506,6 +538,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     viewRef.current?.setProps({
       editable: () => latest.current.editable && !busy.current,
     });
+    const view = viewRef.current;
+    if (view) latest.current.onSelectionChange?.({anchor: view.state.selection.anchor, head: view.state.selection.head});
     if (!props.editable) setLinkVisible(false);
   }, [props.editable, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
@@ -541,6 +575,72 @@ function NoteEditorContent(props: NoteEditorProps) {
     const redoCommand: Command = (state, dispatch, current) => run(() => latest.current.history ? latest.current.history.redo() : ownRedo(state, dispatch, current))(state, dispatch, current);
     const binding = latest.current.writingDocument ? new InlineBinding(latest.current.writingDocument, latest.current.writingOrigin) : null;
     bindingRef.current = binding;
+    nativeInputOpen.current = false;
+    let nativePacket = 0;
+    let reconciling = false;
+    const reconcile = (current: EditorView) => {
+      if (reconciling || current.isDestroyed || current.composing || compositionBase.current !== null) return;
+      reconciling = true;
+      try { flushNativeDOM(current); } finally { reconciling = false; }
+    };
+    const releaseNativeInput = (current: EditorView) => {
+      if (current.isDestroyed) return;
+      // Keep the fence through reconciliation: transaction callbacks may ask
+      // for selection, but must not dispatch against unparsed native text.
+      reconcile(current);
+      if (current.isDestroyed) return;
+      nativeInputOpen.current = false;
+      latest.current.onSelectionChange?.({anchor: current.state.selection.anchor, head: current.state.selection.head});
+    };
+    const beginNativeInput = (current: EditorView, event: Event) => {
+      const packet = ++nativePacket;
+      nativeInputOpen.current = true;
+      // A consumed event has no browser edit to await. Otherwise input/keyup
+      // ends the native packet, including default actions after keydown.
+      queueMicrotask(() => { if (event.defaultPrevented && packet === nativePacket) releaseNativeInput(current); });
+    };
+    const structuralInput = (current: EditorView, inputType: string): boolean => {
+      if (!latest.current.editable || busy.current || current.composing ||
+        compositionBase.current !== null || referenceRef.current.getState() !== null) return false;
+      reconcile(current);
+      if (current.isDestroyed) return false;
+      const selected = current.state.selection;
+      if ((inputType === "deleteContentBackward" || inputType === "deleteContentForward") &&
+        selected instanceof NodeSelection && selected.node.isInline && selected.node.isAtom) {
+        current.dispatch(current.state.tr.deleteSelection().scrollIntoView());
+        return true;
+      }
+      syncNativeSelection(current);
+      const { selection } = current.state;
+      const body = current.state.doc.firstChild;
+      if (!body || body.type !== schema.nodes.body) return false;
+      const keys = latest.current.keys;
+      if (inputType === "insertLineBreak") return enter(current.state, current.dispatch);
+      if (inputType === "insertParagraph") {
+        if (latest.current.onSave) { latest.current.history?.boundary(); latest.current.onSave(); return true; }
+        if (body.attrs.presentation === "code" || !keys?.split) return enter(current.state, current.dispatch);
+        if (body.content.size === 0 && keys.emptyEnter) { keys.emptyEnter(); return true; }
+        const state = selection.empty ? current.state : current.state.apply(current.state.tr.deleteSelection());
+        const content = state.doc.firstChild!;
+        const offset = state.selection.$from.parentOffset;
+        keys.split(bodyFromNode(content.copy(content.content.cut(0, offset))),
+          bodyFromNode(content.copy(content.content.cut(offset))),
+          binding ? {body_state: binding.bodyState(), from: selection.from - 1, to: selection.to - 1} : null);
+        return true;
+      }
+      const backward = inputType === "deleteContentBackward";
+      if ((!backward && inputType !== "deleteContentForward") || !selection.empty) return false;
+      if (body.content.size === 0) {
+        if (keys?.emptyDelete) { keys.emptyDelete(backward ? "backward" : "forward"); return true; }
+      }
+      if (body.attrs.presentation === "code" || !keys?.join) return false;
+      if ((backward && selection.$from.parentOffset === 0) ||
+        (!backward && selection.$from.parentOffset === body.content.size)) {
+        keys.join(backward ? "backward" : "forward");
+        return true;
+      }
+      return false;
+    };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
       state: EditorState.create({
@@ -664,15 +764,16 @@ function NoteEditorContent(props: NoteEditorProps) {
       },
       handleDOMEvents: {
         keydown(current, event) {
-          // Returning true leaves the browser event alone while stopping PM's
-          // keymap/capture fallback from turning composition into a newline.
-          if (current.composing || event.isComposing || event.keyCode === 229)
-            return true;
           if (
             event.target instanceof HTMLElement &&
             event.target !== current.dom &&
             event.target.closest("input, textarea, select, button")
           )
+            return true;
+          beginNativeInput(current, event);
+          // Returning true leaves the browser event alone while stopping PM's
+          // keymap/capture fallback from turning composition into a newline.
+          if (current.composing || event.isComposing || event.keyCode === 229)
             return true;
           const intent = referenceRef.current.getState();
           if (intent && referenceRef.current.bindings.handleKey(event, current.composing)) {
@@ -706,10 +807,28 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (!latest.current.editable || busy.current) return true;
           return false;
         },
+        keyup(current) { releaseNativeInput(current); return false; },
+        input(current, event) {
+          if (event.target === current.dom) releaseNativeInput(current);
+          return false;
+        },
         // the browser's own undo (a menu, or Cmd-Z while no editor has focus) goes to ours.
         beforeinput(current, event) {
+          beginNativeInput(current, event);
           const redo = event.inputType === "historyRedo";
-          if (!redo && event.inputType !== "historyUndo") return false;
+          if (!redo && event.inputType !== "historyUndo") {
+            if (!event.cancelable || event.isComposing) return false;
+            if (event.inputType === "insertParagraph" && latest.current.editable && !busy.current &&
+              !current.composing && compositionBase.current === null && referenceRef.current.getState() !== null) {
+              event.preventDefault();
+              referenceRef.current.acceptSelected();
+              return true;
+            }
+            if (!structuralInput(current, event.inputType)) return false;
+            event.preventDefault();
+            return true;
+          }
+          if (!event.cancelable) return false;
           event.preventDefault();
           if (!latest.current.editable || busy.current || current.composing)
             return true;
@@ -733,7 +852,9 @@ function NoteEditorContent(props: NoteEditorProps) {
           return false;
         },
         blur(current) {
-          syncNativeSelection(current);
+          releaseNativeInput(current);
+          if (current.isDestroyed) return false;
+          if (!current.composing && compositionBase.current === null) syncNativeSelection(current);
           latest.current.history?.boundary();
           return false;
         },
@@ -751,52 +872,62 @@ function NoteEditorContent(props: NoteEditorProps) {
               },
             };
           latest.current.history?.boundary();
+          latest.current.onSelectionChange?.({anchor: current.state.selection.anchor, head: current.state.selection.head});
           return false;
         },
         compositionend(current) {
           latest.current.history?.boundary();
+          const packet = nativePacket;
           window.setTimeout(() => {
             if (current.isDestroyed || current.composing) return;
+            flushNativeDOM(current);
+            if (current.isDestroyed) return;
             const original = compositionBase.current;
             compositionBase.current = null;
-            if (!latest.current.editable) return;
-            if (original) {
-              const block = current.state.doc.firstChild!;
-              const committed = bodyFromNode(block);
-              if (referenceRef.current.getState() !== null) {
-                const raw = current.state.doc.textBetween(0, current.state.doc.content.size, "\n", "\n");
-                referenceRef.current.edit(raw);
-                if (!raw.startsWith("@")) literal(current);
+            if (packet === nativePacket) nativeInputOpen.current = false;
+            latest.current.onSelectionChange?.({anchor: current.state.selection.anchor, head: current.state.selection.head});
+            try {
+              if (!latest.current.editable) return;
+              if (original) {
+                const block = current.state.doc.firstChild!;
+                const committed = bodyFromNode(block);
+                if (referenceRef.current.getState() !== null) {
+                  const raw = current.state.doc.textBetween(0, current.state.doc.content.size, "\n", "\n");
+                  referenceRef.current.edit(raw);
+                  if (!raw.startsWith("@")) literal(current);
+                  return;
+                }
+                if (
+                  original.reference &&
+                  block.type === schema.nodes.body &&
+                  block.textContent === "@" &&
+                  block.childCount === 1 &&
+                  block.firstChild?.isText
+                ) {
+                  referenceRef.current.begin(original.body);
+                  current.updateState(EditorState.create({doc:docFromBody(original.body),plugins:current.state.plugins}));
+                  current.dispatch(current.state.tr.insertText("@",1));
+                }
+                else if (!sameBody(original.body, committed))
+                  reportEdit({
+                    before: original.body,
+                    after: committed,
+                    source: "composition",
+                    ...(original.editBase ? { editBase: original.editBase } : {}),
+                    selectionBefore: original.selection,
+                    selectionAfter: {
+                      anchor: current.state.selection.anchor,
+                      head: current.state.selection.head,
+                    },
+                  });
+                else if (!binding) replaceDoc(current, docFromBody(latest.current.body));
                 return;
               }
-              if (
-                original.reference &&
-                block.type === schema.nodes.body &&
-                block.textContent === "@" &&
-                block.childCount === 1 &&
-                block.firstChild?.isText
-              ) {
-                referenceRef.current.begin(original.body);
-                current.updateState(EditorState.create({doc:docFromBody(original.body),plugins:current.state.plugins}));
-                current.dispatch(current.state.tr.insertText("@",1));
-              }
-              else if (!sameBody(original.body, committed))
-                reportEdit({
-                  before: original.body,
-                  after: committed,
-                  source: "composition",
-                  ...(original.editBase ? { editBase: original.editBase } : {}),
-                  selectionBefore: original.selection,
-                  selectionAfter: {
-                    anchor: current.state.selection.anchor,
-                    head: current.state.selection.head,
-                  },
-                });
-              else replaceDoc(current, docFromBody(latest.current.body));
-              return;
+              if (referenceRef.current.getState() !== null) return;
+              if (!binding) replaceDoc(current, docFromBody(latest.current.body));
+            } finally {
+              binding?.refresh();
             }
-            if (referenceRef.current.getState() !== null) return;
-            replaceDoc(current, docFromBody(latest.current.body));
           }, 0);
           return false;
         },
@@ -841,7 +972,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           return true;
         };
         if (event.key === "Enter" && !event.altKey) {
-          const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+          const mac = usesMeta(latest.current.platform);
           const modifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
           const command = modifier
             ? event.shiftKey ? latest.current.onContinueChat : latest.current.onNewChat
@@ -855,91 +986,37 @@ function NoteEditorContent(props: NoteEditorProps) {
             return true;
           }
         }
-        const allowBoundaryDeletion = !window.matchMedia(
-          "(any-pointer: coarse)",
-        ).matches;
-        if (
-          allowBoundaryDeletion &&
-          event.key === "Backspace" &&
-          latest.current.onEmptyBackspace &&
-          !event.repeat &&
-          !event.altKey &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.shiftKey
-        ) {
-          syncNativeSelection(current);
-          const { selection } = current.state;
-          if (
-            selection.empty &&
-            selection.$from.parent.type === schema.nodes.body &&
-            selection.$from.parent.content.size === 0 &&
-            selection.$from.parentOffset === 0
-          )
-            return act(latest.current.onEmptyBackspace);
-        }
-        if (
-          (event.key === "Backspace" || event.key === "Delete") &&
-          !event.altKey &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.shiftKey &&
-          current.state.doc.firstChild?.type === schema.nodes.resource_embed &&
-          !current.state.selection.empty
-        )
-          return act(() =>
-            current.dispatch(
-              current.state.tr.deleteSelection().scrollIntoView(),
-            ),
-          );
         const keys = latest.current.keys;
-        if (!keys || event.altKey || event.ctrlKey || event.metaKey)
-          return false;
+        const structural = outlineStructuralCommand(event, latest.current.platform);
+        if (structural && keys?.selectBlock) {
+          syncNativeSelection(current);
+          const at = {anchor: current.state.selection.anchor, head: current.state.selection.head};
+          return act(() => {
+            if (structural === "indent") keys.indent?.(at);
+            else if (structural === "outdent") keys.outdent?.(at);
+            else keys.move?.(structural === "move_up" ? "up" : "down", at);
+          });
+        }
+        if (event.altKey || event.ctrlKey || event.metaKey) return false;
         if (event.key === "Escape")
-          return keys.selectBlock ? act(keys.selectBlock) : false;
-        if (!["Tab", "Backspace", "Delete", "Enter"].includes(event.key))
-          return false;
-        syncNativeSelection(current);
-        const { selection } = current.state;
-        const at = { anchor: selection.anchor, head: selection.head };
+          return keys?.selectBlock ? act(keys.selectBlock) : false;
         if (event.key === "Tab") {
-          const arrange = event.shiftKey ? keys.outdent : keys.indent;
-          return arrange ? act(() => arrange(at)) : false;
+          const arrange = event.shiftKey ? keys?.outdent : keys?.indent;
+          if (!arrange) return false;
+          syncNativeSelection(current);
+          return act(() => arrange({anchor: current.state.selection.anchor, head: current.state.selection.head}));
         }
         if (event.shiftKey) return false;
-        const { $from } = selection;
-        const paragraph = $from.parent.type === schema.nodes.body && $from.parent.attrs.presentation !== "code";
-        if (allowBoundaryDeletion && selection.empty && paragraph) {
-          const size = $from.parent.content.size;
-          if (
-            event.key === "Backspace" &&
-            !event.repeat &&
-            $from.parentOffset === 0
-          ) {
-            const remove =
-              size === 0
-                ? keys.emptyBackspace
-                : keys.join
-                  ? () => keys.join!("backward")
-                  : null;
-            return remove ? act(remove) : false;
-          }
-          if (event.key === "Delete" && $from.parentOffset === size)
-            return keys.join ? act(() => keys.join!("forward")) : false;
-        }
-        if (event.key !== "Enter" || !paragraph || !keys.split) return false;
-        if (event.repeat) {
+        if (event.key === "Enter" && event.repeat) {
           event.preventDefault();
           return true;
         }
-        const state = selection.empty
-          ? current.state
-          : current.state.apply(current.state.tr.deleteSelection());
-        const body = state.doc.firstChild!;
-        const offset = state.selection.$from.parentOffset;
-        const left = bodyFromNode(body.copy(body.content.cut(0, offset)));
-        const right = bodyFromNode(body.copy(body.content.cut(offset)));
-        return act(() => keys.split!(left, right, binding ? {body_state:binding.bodyState(),from:selection.from-1,to:selection.to-1} : null));
+        const inputType = event.key === "Enter" ? "insertParagraph"
+          : event.key === "Backspace" ? "deleteContentBackward"
+          : event.key === "Delete" ? "deleteContentForward" : null;
+        if (inputType === null || !structuralInput(current, inputType)) return false;
+        event.preventDefault();
+        return true;
       },
       dispatchTransaction(tr) {
         if (binding && tr.docChanged && tr.getMeta(SOURCE) !== "external" && referenceRef.current.getState() === null && !compositionBase.current?.reference) {
@@ -1003,7 +1080,70 @@ function NoteEditorContent(props: NoteEditorProps) {
     });
     viewRef.current = view;
     binding?.attach(view, () => compositionBase.current !== null || referenceRef.current.getState() !== null);
+    const handle: NoteEditorHandle = {
+      readSelection() {
+        if (!nativeInputOpen.current && !view.composing && compositionBase.current === null) syncNativeSelection(view);
+        const selection = {anchor: view.state.selection.anchor, head: view.state.selection.head};
+        latest.current.onSelectionChange?.(selection);
+        return selection;
+      },
+      captureSelection() {
+        const selection = handle.readSelection();
+        if (!binding) return () => selection;
+        const inline = bodyInline(binding.baseline);
+        const relative = (position: number) => Y.createRelativePositionFromTypeIndex(inline,
+          Math.max(0, Math.min(inline.length, position - 1)));
+        const anchor = relative(selection.anchor), head = relative(selection.head);
+        return document => {
+          const a = Y.createAbsolutePositionFromRelativePosition(anchor, document.doc);
+          const b = Y.createAbsolutePositionFromRelativePosition(head, document.doc);
+          return {anchor: a ? a.index + 1 : selection.anchor, head: b ? b.index + 1 : selection.head};
+        };
+      },
+      focus(selection, preventScroll = false) {
+        if (!view.editable || view.composing) return;
+        if (typeof selection === "function") {
+          const document = latest.current.writingDocument;
+          if (!document) return;
+          selection = selection(document);
+        }
+        const end = Math.max(1, view.state.doc.content.size - 1);
+        const anchor = selection === "end" ? end : Math.max(1, Math.min(selection.anchor, end));
+        const head = selection === "end" ? end : Math.max(1, Math.min(selection.head, end));
+        const at = view.state.doc.firstChild?.isTextblock
+          ? TextSelection.create(view.state.doc, anchor, head) : Selection.atEnd(view.state.doc);
+        const transaction = view.state.tr.setSelection(at);
+        view.dispatch(preventScroll ? transaction : transaction.scrollIntoView());
+        view.focus();
+      },
+      canArrange() {
+        return latest.current.editable && !busy.current && !nativeInputOpen.current && !view.composing &&
+          compositionBase.current === null && referenceRef.current.getState() === null;
+      },
+      settleNativeInput() {
+        if (!handle.canArrange()) return false;
+        reconcile(view);
+        if (view.isDestroyed || !handle.canArrange()) return false;
+        syncNativeSelection(view);
+        return true;
+      },
+      localHistory(command) {
+        const action = command === "undo" ? ownUndo : ownRedo;
+        if (!latest.current.editable || busy.current || nativeInputOpen.current || view.composing || compositionBase.current !== null)
+          return {enabled: false, execute() {}};
+        if (referenceRef.current.getState() === null) return null;
+        return {enabled: action(view.state), execute() {
+          if (latest.current.editable && !busy.current && !nativeInputOpen.current && !view.composing &&
+            compositionBase.current === null && referenceRef.current.getState() !== null)
+            action(view.state, view.dispatch, view);
+        }};
+      },
+    };
+    editorHandle.current = handle;
+    latest.current.onEditorReady?.(handle);
     return () => {
+      latest.current.onEditorReady?.(null);
+      editorHandle.current = null;
       binding?.close(); bindingRef.current = null;
       viewRef.current = null;
       view.destroy();
@@ -1058,19 +1198,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     const focus = latest.current.focus;
     if (!view || !focus || !view.editable || consumedFocus.current === focus.serial) return;
-    const size = view.state.doc.content.size;
-    const block = view.state.doc.firstChild;
-    const end = Math.max(1, size - 1);
-    const anchor =
-      focus.selection === "end" ? end : Math.min(focus.selection.anchor, end);
-    const head =
-      focus.selection === "end" ? end : Math.min(focus.selection.head, end);
-    const at = block?.isTextblock
-      ? TextSelection.create(view.state.doc, anchor, head)
-      : Selection.atEnd(view.state.doc);
-    const tr = view.state.tr.setSelection(at);
-    view.dispatch(focus.preventScroll ? tr : tr.scrollIntoView());
-    view.focus();
+    editorHandle.current?.focus(focus.selection, focus.preventScroll);
     consumedFocus.current = focus.serial;
   }, [visitId, bodyViewKey, props.editable, referenceReady, focusSerial]);
 
@@ -1111,7 +1239,6 @@ function NoteEditorContent(props: NoteEditorProps) {
       ref={shell}
       data-reference-editor={props.editorKey}
       tabIndex={-1}
-      data-outline-occurrence={occurrenceKey}
       data-row-focusable="true"
       className={styles.shell}
       onKeyDownCapture={(event) => {

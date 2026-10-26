@@ -104,8 +104,8 @@
   min-height: var(--outline-control-block-size);
 }
 .children {
-  margin-left: var(--space-4);
-  min-width: 18rem;
+  margin-inline-start: var(--space-4);
+  min-width: 0;
 }
 .details,
 .status {
@@ -127,4 +127,8 @@
   .arrow {
     transition: none;
   }
+}
+
+.row[data-writing="true"] > .head .bullet {
+  color: var(--ink-muted);
 }

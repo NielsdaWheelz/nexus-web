@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
-import LocalOutline from "@/components/notes/LocalOutline";
+import LocalOutline, {type LocalOutlineHandle} from "@/components/notes/LocalOutline";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
 import { OutlineHistory } from "@/lib/notes/structure";
@@ -22,14 +22,16 @@ export default function NotePaneBody() {
   const read = useAuthoredQuery({ kind: "resource", ref });
   const resource = read.data?.rows[0]?.resource ?? null;
   const sourceView = useRef<HTMLDivElement>(null);
+  const outline = useRef<LocalOutlineHandle | null>(null);
   const [error, setError] = useState<unknown | null>(null);
   const history = useMemo(() => runtime ? new OutlineHistory(runtime, setError) : null, [runtime]);
   useEffect(() => () => history?.close(), [history]);
   usePaneReturnReady(read.data !== null || read.error !== null);
   const { delivery, claim } = usePaneEntryDelivery();
   useEffect(() => {
-    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !claim(delivery)) return;
-    sourceView.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus();
+    const handle = outline.current;
+    if (delivery?.entry.kind !== "EditNoteBody" || !resource || !handle || !claim(delivery)) return;
+    void handle.focusRoot().catch(setError);
   }, [resource, delivery, claim]);
   const [inspection, setInspection] = useState<{ text: string; view: NoteInspection } | null>(null);
   const arrival = useSourceArrival({
@@ -58,9 +60,8 @@ export default function NotePaneBody() {
   return <div ref={sourceView} tabIndex={-1}>
     {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
     {error ? <p role="alert">{error instanceof Error ? error.message : "couldn’t save this change on this device."}</p> : null}
-    <BoundNoteEditor noteRef={ref} label="edit note" session={history ?? undefined}
+    <LocalOutline rootRef={ref} apiRef={outline} session={history ?? undefined} rootEditor={owner => <BoundNoteEditor noteRef={ref} label="edit note" session={owner.history}
       inspection={inspection?.text === resource.body_text ? inspection.view : null}
-      onSplit={position => { if (history) void history.split(ref, position, ref, null).catch(setError); }} />
-    <LocalOutline rootRef={ref} session={history ?? undefined} />
+      structuralKeys={owner.structuralKeys} onEditorReady={owner.onEditorReady} onSelectionChange={owner.onSelectionChange} onSplit={owner.onSplit}/>} />
   </div>;
 }
