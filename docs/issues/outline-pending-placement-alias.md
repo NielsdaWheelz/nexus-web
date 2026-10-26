@@ -32,3 +32,16 @@ resolve with immediate indent/outdent/undo and text history, retaining one
 intended occurrence, exact canonical relations/text, repeated-appearance controls
 and same native editing host. the same-parent-only source correction is not yet
 a green qualification.
+
+real held-writer run `20261026-070915-23d0f9169d20` also fails at the third
+outdent after outdent/undo: two occurrences of the same child exist while sql
+is still blocked. later cross-parent movement and typing are not reached.
+
+whole-window source gating also has a cycle: move c from a to b and d from b to
+a before either fresh window arrives. qualify an atomic smallest compatible
+source-proof closure from existing proposals, with one revision and budget.
+recheck all selected requests/leases/versions, current placement tokens and
+already-admitted source provenance against the actual reachable set before
+installation. only successfully installed targets retire placement metadata;
+retain the same field's guarded relationship/body/baseline until projection
+takes over. failed or superseded acquisition installs and retires nothing.
