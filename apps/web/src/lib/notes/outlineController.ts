@@ -296,7 +296,7 @@ export class OutlineController {
   private hasPendingWriting(): boolean {return [...this.pending.fields.values()].some(row => row.pending);}
   private refs(windows?: ReadonlyMap<string, OutlineWindow>, historyRefs = this.history.retainedRefs()): Set<string> {
     const current = windows ?? this.reservedWindows ?? this.windows;
-    return new Set([...(this.rootField ? [this.rootRef] : []), ...[...current.values()].flatMap(window => [...window.editableRefs]),
+    return new Set([...this.binding.capturedDocuments().map(document => document.ref), ...[...this.documents].filter(([, held]) => held.captureBytes > 0).map(([ref]) => ref), ...(this.rootField ? [this.rootRef] : []), ...[...current.values()].flatMap(window => [...window.editableRefs]),
       ...[...this.pending.retainedRefs()].filter(ref => /^(note_block|page):/u.test(ref)), ...[...this.protectedRows()].flatMap(id => {const ref = this.rows.get(id)?.ref; return ref && /^(note_block|page):/u.test(ref) ? [ref] : [];}),
       ...[...historyRefs].filter(ref => /^(note_block|page):/u.test(ref)), ...(windows === undefined ? [...this.documents.keys(), ...this.settlingRefs] : [])]);
   }
@@ -327,7 +327,11 @@ export class OutlineController {
     return held.document.capture().then(() => {}).finally(() => {held.captureBytes -= bytes;});
   }
   private capturedBytes(): number {return [...this.documents.values()].reduce((bytes, held) => bytes + held.captureBytes, this.pending.encodedBytes());}
-  private bytes(wanted = this.refs(), historyBytes = this.history.retainedBytes()): number {return [...this.documents].reduce((n, [ref, held]) => n + (wanted.has(ref) ? Y.encodeStateAsUpdate(held.document.doc).byteLength : 0), this.reservedBytes) + this.binding.encodedBytes() + this.capturedBytes() + historyBytes;}
+  private bytes(wanted = this.refs(), historyBytes = this.history.retainedBytes()): number {
+    const captured = this.binding.capturedDocuments();
+    return [...wanted].reduce((bytes, ref) => {const document = this.writing(ref) ?? captured.find(document => document.ref === ref); return bytes + (document ? Y.encodeStateAsUpdate(document.doc).byteLength : 0);},
+      this.reservedBytes + this.binding.encodedBytes() + this.capturedBytes() + historyBytes);
+  }
   private denied(parent: string, message: string): void {if (this.attempted.has(parent)) {this.error = new Error(message); this.notify();}}
   private navigationValid(parent: string): boolean {
     const request = this.requests.get(parent);
@@ -355,7 +359,7 @@ export class OutlineController {
       try {
         await Promise.all(retired.map(([ref]) => this.captureDocument(ref)));
         const keep = this.refs(this.reservedWindows ?? this.windows);
-        for (const [ref, held] of retired) if (!keep.has(ref) && this.documents.get(ref) === held) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
+        for (const [ref, held] of retired) if (!keep.has(ref) && this.documents.get(ref) === held && held.captureBytes === 0) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
         if (this.active && this.error === finishing) this.error = null;
       } finally {for (const [ref] of retired) this.settlingRefs.delete(ref);}
       if (this.active) this.changed();
@@ -409,7 +413,8 @@ export class OutlineController {
       const baselineRefs = this.baselineRefs(next);
       const size = (ref: string, opened?: ReadonlyMap<string, Held>) => {
         const held = opened?.get(ref) ?? this.documents.get(ref);
-        if (held) return Y.encodeStateAsUpdate(held.document.doc).byteLength;
+        const document = held?.document ?? this.binding.capturedDocuments().find(document => document.ref === ref);
+        if (document) return Y.encodeStateAsUpdate(document.doc).byteLength;
         const state = snapshot.states.resources.find(state => state.ref === ref);
         return state?.kind === "note" ? decodeBytes(state.body_state).byteLength : state?.kind === "page" ? decodeBytes(state.title_state).byteLength : 0;
       };
@@ -438,7 +443,7 @@ export class OutlineController {
       const retainedFields = new Map<string, OutlineBindingField>();
       for (const row of this.rows.values()) if (this.editableReady(row) && !this.blockedRows.has(row.row_id)) retainedFields.set(row.row_id, this.field(row.row_id));
       this.binding.update(retainedFields, this.history.retainedOccurrences());
-      for (const [ref, held] of retired) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
+      for (const [ref, held] of retired) if (held.captureBytes === 0) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
       released = retired.length > 0;
       const acquired: [string, Held][] = [];
       try {
@@ -913,7 +918,7 @@ export class OutlineController {
         try {
           await Promise.all(retired.map(([ref]) => this.captureDocument(ref)));
           const keep = this.refs(this.windows);
-          for (const [ref, held] of retired) if (!keep.has(ref) && this.documents.get(ref) === held) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
+          for (const [ref, held] of retired) if (!keep.has(ref) && this.documents.get(ref) === held && held.captureBytes === 0) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
           if (this.active) this.changed();
         } finally {for (const [ref] of retired) this.settlingRefs.delete(ref);}
       }).catch(error => {if (this.active) {this.error = error; this.notify();}});
