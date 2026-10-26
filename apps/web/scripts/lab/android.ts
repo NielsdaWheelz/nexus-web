@@ -16,7 +16,8 @@ export async function openLabAndroid(input: {
 }): Promise<{
   attachPage(): Promise<Page>; close(): Promise<AndroidLabRelease>;
   setWebReachable(reachable: boolean): Promise<void>;
-  restart(pathname: string): Promise<{ page: Page; previous_pid: string; pid: string; released_forward: string | null }>;
+  /** Relaunch with retained app data; previous_pid is null if the package already exited. */
+  restart(pathname: string): Promise<{ page: Page; previous_pid: string | null; pid: string; released_forward: string | null }>;
 }> {
   const run = promisify(execFile);
   const adb = async (...args: string[]) => (await run(input.adb_file, ["-s", input.serial, ...args], { timeout: 30_000 })).stdout.trim();
@@ -86,7 +87,14 @@ export async function openLabAndroid(input: {
     }, restart: async pathname => {
       const target = new URL(pathname, input.web_origin);
       if (!pathname.startsWith("/") || target.origin !== input.web_origin) throw new Error("android lab restart requires an owned application path");
-      const previous_pid = (await adb("shell", "pidof", input.package_name)).split(" ")[0] ?? "";
+      let previous_pid: string | null = null;
+      try {
+        previous_pid = (await adb("shell", "pidof", input.package_name)).split(" ")[0] ?? "";
+        if (!/^[1-9]\d*$/.test(previous_pid)) throw new Error("android lab owned process returned an invalid pid");
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === 1 &&
+          "stdout" in error && error.stdout === "" && "stderr" in error && error.stderr === "")) throw error;
+      }
       await browser?.close(); browser = null; page = null;
       const released_forward = forward;
       if (forward) { await adb("forward", "--remove", forward); forward = null; }
@@ -94,7 +102,8 @@ export async function openLabAndroid(input: {
       await adb("shell", "am", "start", "-W", "-n", `${input.package_name}/app.nexus.android.MainActivity`, "-a", "android.intent.action.VIEW", "-d", `'${target.href.replaceAll("'", "'\\''")}'`);
       const reopened = await attachPage();
       const pid = (await adb("shell", "pidof", input.package_name)).split(" ")[0] ?? "";
-      if (pid === previous_pid) throw new Error("android lab restart retained the previous process");
+      if (!/^[1-9]\d*$/.test(pid)) throw new Error("android lab restarted process is missing");
+      if (previous_pid !== null && pid === previous_pid) throw new Error("android lab restart retained the previous process");
       return { page: reopened, previous_pid, pid, released_forward };
     } };
   } catch (error) {
