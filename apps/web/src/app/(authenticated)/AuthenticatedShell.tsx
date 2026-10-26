@@ -133,10 +133,12 @@ function Workspace(props: {
   const [columnWidthPx, setColumnWidthPx] = useState(() =>
     estimatePrimaryWidthPx(profile),
   );
+  if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "column-render", now: performance.now(), columnWidthPx, observationReady }));
   useLayoutEffect(() => {
     const node = probe.current!;
     const measure = () => {
       const width = Math.ceil(node.getBoundingClientRect().width);
+      console.info("index-ssr-diag " + JSON.stringify({ event: "column-measure-before-setter", now: performance.now(), width, stack: new Error().stack }));
       if (width > 0) setColumnWidthPx(width);
     };
     measure();

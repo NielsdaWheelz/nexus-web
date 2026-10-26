@@ -57,6 +57,7 @@ function LibraryEntry({ query, params, children }: EntryProps) {
   const stale = `${useChangeStamp("Libraries", "Entries", "Podcasts")}|${follows ? consumption : "-"}|${useMediaQueryRevision()}|${useRefreshStamp(usePaneIsActive(), 60_000)}|${group.stale}`;
   const read = useMemo(() => ({ key: `/libraries/${id}/entries?${text}`, stale, load: (signal: AbortSignal) => libraryEntriesIndex(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
   const suggestions = useMemo(() => suggestionRead(id), [id]);
+  if (typeof window !== "undefined") console.info("index-ssr-diag " + JSON.stringify({ event: "library-entry-render", now: performance.now(), key: read.key, stale, group: { key: group.key, live: group.live, stale: group.stale, admission: group.admission, promoted: group.promoted } }));
   return <Entries.Provider value={{ read, group }}><SuggestionEntryRead.Provider value={suggestions}><PaneEntryReads reads={[read, suggestions]}>{children}</PaneEntryReads></SuggestionEntryRead.Provider></Entries.Provider>;
 }
 function PodcastsEntry({ query, children }: EntryProps) {
