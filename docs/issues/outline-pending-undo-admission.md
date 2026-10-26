@@ -17,3 +17,21 @@ the editor owner must preserve undo in the existing ordered input owner without
 dropping later writing or adding an independent queue. resolve with the same
 immediate-undo journey and affected pending/structural history cases on the
 integrated candidate. waiting for save before pressing undo would evade the bug.
+
+the raw-stage repair needs canonical identity, not just delayed dispatch. for
+raw `ab`, delete `b`, then receive unseen `x` before `b`: canonical yjs undo can
+restore `b` with anchors depending on `x`. replaying that inverse into a frozen
+raw clone lacks its dependencies; restoring the earlier body loses concurrent
+writing. `commands.ts` currently creates the note's actual initializer only
+after runtime store/lease admission, so immediate history cannot own it.
+
+a new note must receive its one real initializer at semantic admission, with
+creation reserved before subsequent edits. this alone is insufficient: split
+and join also change existing documents. ordinary document listeners would
+autosave those changes separately from their atomic structural command. the
+runtime needs one bounded synchronous command admission that captures the actual
+canonical yjs mutations and persists them with their graph intents. callbacks
+must await only predecessor proofs captured before their own reservation, never
+their own pending frontier. history must seal the actual group at admission,
+rather than select the latest group after waiting. the exact api and exception
+ownership remain under review; runtime code is unchanged.
